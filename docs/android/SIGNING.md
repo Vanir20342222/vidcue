@@ -1,6 +1,6 @@
 # Android APK signing and updates
 
-The current [mobile.9 APK and public inspection](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.9) use the permanent certificate below. Source `553fe494b800d472de239285391c6643cc97e246` passed exact-main checks; the public APK hash was independently verified. [Qualification and release build metadata](MOBILE9_RELEASE.md).
+The current [mobile.10 APK and public inspection](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.10) use the permanent certificate below. Source `686e3794b023acee4b7355c437bb84f887a42ac6` passed exact-main checks; the public APK hash was independently verified. [Qualification and release build metadata](MOBILE10_RELEASE.md).
 
 Development APKs from the Android workflow use debug identities. New debug
 builds use `dev.ytui.android.preview` and the launcher label **ytui Preview**.
@@ -50,8 +50,8 @@ install -d -m 700 "$HOME/.local/share/ytui-signing"
 umask 077
 age --decrypt -i "$HOME/.ssh/id_ed25519" ytui-android-signing-backup.age |
   tar -xf - -C "$HOME/.local/share/ytui-signing"
-export YTUI_ANDROID_VERSION_CODE=9
-export YTUI_ANDROID_VERSION_NAME=0.2.0-alpha.12-mobile.9
+export YTUI_ANDROID_VERSION_CODE=10
+export YTUI_ANDROID_VERSION_NAME=0.2.0-alpha.12-mobile.10
 python3 tools/android/sign-local.py "$HOME/.local/share/ytui-signing"
 ```
 

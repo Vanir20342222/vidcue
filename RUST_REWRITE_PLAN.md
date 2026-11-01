@@ -1,5 +1,13 @@
 # ytui Rust rewrite plan
 
+M9 release: [published mobile.10](docs/android/MOBILE10_RELEASE.md) packages the
+merged content-first Android restyle from source `686e379` as release code 10.
+Exact-main Android/Rust/secret checks pass: 37 native passes, one public skip,
+367 Rust/media passes, 31 explicit ignores. The signed release passes 20 JVM
+tests and APK identity/alignment inspection. The public download's hash, size,
+version and existing stable certificate are independently verified. This release
+does not close physical/live-service or feature-parity gates.
+
 M9 UI review: [PR #27 integration](docs/android/UI_PR27_REVIEW.md) merges the
 artwork/VU/chip/About refinements with a corrected tablet search-width cap and
 portrait/landscape geometry regression. Pre-merge qualification passes 33 native

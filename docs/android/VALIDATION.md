@@ -1,5 +1,19 @@
 # Android validation record (M9)
 
+## Published content-first UI release: mobile.10 (2026-11-01)
+
+[Download, checksum and qualification](MOBILE10_RELEASE.md). Version
+**0.2.0-alpha.12-mobile.10**, code **10**, packages source
+`686e3794b023acee4b7355c437bb84f887a42ac6` and the merged PR #29 restyle.
+Exact-main Android/Rust/secret checks pass: **37 native passes**, one explicit
+public-YouTube skip, zero failures; 367 Rust/media passes and 31 explicit ignores.
+All five actual-window synthetic startup checks remain below 2000 ms. The
+separately signed release passes **20 JVM tests**, lint and source/package/
+version/certificate/both-ABI/16 KiB inspection. The publisher passes, and an
+independent public APK download matches the built hash, size and stable identity.
+Existing saved themes and stable-channel private data remain compatible; physical
+updates, live YouTube and broader M9 gates remain separate.
+
 ## Content-first Android restyle (2026-10-30)
 
 [Scope, decisions and retained failures](CONTENT_FIRST_RESTYLE.md), implementation
