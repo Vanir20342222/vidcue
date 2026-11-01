@@ -80,9 +80,13 @@ class NativeUiTest {
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input")
         compose.onNodeWithTag("search-field").performTextInput(" Grüße")
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input Grüße")
+        compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
         captureSettled("native-search.png")
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithTag("search-field").assertIsDisplayed()
+        compose.waitUntil(10_000) {
+            compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
+        }
         compose.onNodeWithTag("settings-button").performClick()
         compose.onNodeWithTag("settings-Network").performClick()
         compose
@@ -198,6 +202,7 @@ class NativeUiTest {
                 .getJSONObject("data")
                 .optBoolean("connected"),
         )
+        compose.onNodeWithTag("menu-button").performClick()
         compose.onNodeWithTag("feeds-button").performClick()
         compose.onNodeWithText("Subscriptions").performClick()
         compose.waitUntil(10_000) {
@@ -382,6 +387,34 @@ class NativeUiTest {
         } finally {
             device.setOrientationNatural()
             device.unfreezeRotation()
+        }
+    }
+
+    @Test
+    fun focusedSearchBackRestoresHeaderWithoutLeavingTheActivity() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val previous =
+            device.executeShellCommand("settings get secure show_ime_with_hard_keyboard").trim()
+        try {
+            // On hardware-keyboard emulators, focus must also work without a soft IME.
+            device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 0")
+            compose.onNodeWithTag("search-field").performClick().performTextInput("retained query")
+            compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+            captureSettled("restyle-fidelity-focused-search.png")
+            device.pressBack()
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("search-field").assertTextContains("retained query")
+            Assert.assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
+            captureSettled("restyle-fidelity-search-return.png")
+        } finally {
+            if (previous == "null")
+                device.executeShellCommand("settings delete secure show_ime_with_hard_keyboard")
+            else
+                device.executeShellCommand(
+                    "settings put secure show_ime_with_hard_keyboard $previous"
+                )
         }
     }
 

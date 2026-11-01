@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -435,18 +436,45 @@ internal fun MediaIconButton(glyph: Glyph, label: String, tag: String = "", acti
 }
 
 @Composable
+internal fun MediaModeButton(
+    glyph: Glyph,
+    label: String,
+    tag: String,
+    checked: Boolean,
+    action: () -> Unit,
+) {
+    IconToggleButton(
+        checked,
+        { action() },
+        Modifier.size(48.dp).testTag(tag).semantics {
+            contentDescription = label
+            selected = checked
+        },
+        colors =
+            IconButtonDefaults.iconToggleButtonColors(
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                checkedContentColor = MaterialTheme.colorScheme.primary,
+            ),
+    ) {
+        MediaIcon(glyph, Modifier.size(20.dp))
+    }
+}
+
+@Composable
 internal fun SettingGroup(
     title: String,
     subtitle: String = "",
+    showTitle: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(top = 16.dp, start = 4.dp),
-        )
+        if (showTitle)
+            Text(
+                title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(top = 16.dp, start = 4.dp),
+            )
         if (subtitle.isNotBlank())
             Text(
                 subtitle,

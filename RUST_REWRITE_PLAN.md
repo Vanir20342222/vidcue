@@ -1,5 +1,10 @@
 # ytui Rust rewrite plan
 
+M9 UI fidelity follow-up: the owner requested iterative comparison with an
+independent judge at every revision. [Findings, evidence boundary and rubric](docs/android/UI_FIDELITY_REVIEW.md)
+track the mobile.10 baseline and current work. Original reference screenshots
+remain missing, so a literal 1:1 or perfection claim is not an acceptance result.
+
 M9 release: [published mobile.10](docs/android/MOBILE10_RELEASE.md) packages the
 merged content-first Android restyle from source `686e379` as release code 10.
 Exact-main Android/Rust/secret checks pass: 37 native passes, one public skip,

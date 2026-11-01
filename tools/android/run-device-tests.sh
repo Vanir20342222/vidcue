@@ -36,6 +36,9 @@ collect_evidence() {
         adb pull /sdcard/Android/data/$test_package/files/startup-$state.png "$evidence/startup-$state.png" > /dev/null 2>&1 || true
     done
     mkdir -p "$evidence/native-ui"
+    for motion in restyle-fidelity-motion.mp4 restyle-fidelity-motion.json; do
+        adb pull "/sdcard/Android/data/$test_package/files/$motion" "$evidence/$motion" > /dev/null 2>&1 || true
+    done
     for screenshot in native-search native-account native-tablet native-catalog native-catalog-error native-music native-wide-catalog native-player native-player-{vinyl,vu,orbit} native-settings native-card-menu native-video-fullscreen native-video-return native-video-controls native-theme-{0..12}; do
         adb pull "/sdcard/Android/data/$test_package/files/$screenshot.png" "$evidence/native-ui/$screenshot.png" > /dev/null 2>&1 || true
     done

@@ -168,7 +168,14 @@ internal fun FocusedPlayer(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceEvenly,
                     ) {
-                        MediaIconButton(Glyph.Shuffle, "Shuffle") { vm.command("shuffle") }
+                        MediaModeButton(
+                            Glyph.Shuffle,
+                            "Shuffle",
+                            "player-shuffle",
+                            player.value.optBoolean("shuffle"),
+                        ) {
+                            vm.command("shuffle")
+                        }
                         MediaIconButton(Glyph.Previous, "Previous track") { vm.command("previous") }
                         FilledIconButton(
                             { vm.command("pause") },
@@ -189,7 +196,14 @@ internal fun FocusedPlayer(
                         MediaIconButton(Glyph.Next, "Next track", "player-next") {
                             vm.command("next")
                         }
-                        MediaIconButton(Glyph.Repeat, "Repeat one") { vm.command("repeat") }
+                        MediaModeButton(
+                            Glyph.Repeat,
+                            "Repeat one",
+                            "player-repeat",
+                            player.value.optBoolean("repeat_one"),
+                        ) {
+                            vm.command("repeat")
+                        }
                     }
             }
         }
