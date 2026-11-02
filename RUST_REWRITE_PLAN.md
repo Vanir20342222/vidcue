@@ -1,5 +1,12 @@
 # ytui Rust rewrite plan
 
+M9 category loading (2026-11-02): Android prepares nearby video/Music category
+pages and the other media tab's Home in the background, reuses in-flight work,
+and retains first pages for one minute within bounded memory. Existing preload
+and metered-data preferences apply. Nine focused offline Kotlin cache tests pass;
+Android build/device latency remains unqualified in this SDK-less workspace.
+See [validation](docs/android/VALIDATION.md#category-preloading-2026-11-02).
+
 M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
 restyle brief to the remaining Downloads, player, options, account, lyrics and
 settings surfaces, and fixes search focus re-entry. Local build, JVM and lint
@@ -557,6 +564,10 @@ See [the usage guide](docs/RUST.md) and [remaining parity](docs/PARITY.md).
 - Explicit local resume on `u` / `:resume`, bounded private positions, offline
   catalog and startup mode, and early-window-close handling. The user selected
   local resume actions, no automatic playback or YouTube history write-back.
+  On 2026-11-02 the user requested instant continue: `resume_on_play`
+  (default on, Settings → General) makes normal video playback start at the
+  saved local position. It never starts playback by itself; music/stations and
+  finished videos start from the top. Android parity for this option is open.
 - Recurring collection watches with a complete initial baseline, duplicate checks,
   persistence, resource limits/backoff and account/generation invalidation.
 - State format 2 adds a SQLite version-1 backup before upgrade; stale owned

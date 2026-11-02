@@ -24,6 +24,8 @@ public final class PlaybackService extends MediaSessionService {
 
   static volatile PlaybackService current;
   ExoPlayer player;
+  /** Speed to restore after a press-and-hold gesture; null when none is held. */
+  private Float heldSpeedRestore;
   Player controlsPlayer;
   MediaSession session;
   LiveMetadataPlayer sessionPlayer;
@@ -1110,8 +1112,21 @@ public final class PlaybackService extends MediaSessionService {
       case "speed":
         if (currentRequest.optBoolean("preview")) break;
         float speed = (float) Math.max(0.25, Math.min(4, command.optDouble("value", 1)));
+        heldSpeedRestore = null;
         player.setPlaybackSpeed(speed);
         prefs.edit().putFloat("speed", speed).apply();
+        break;
+      case "speed_hold":
+        // Press-and-hold fast playback: temporary, never saved as the user's speed.
+        if (command.optBoolean("active")) {
+          if (currentRequest.optBoolean("preview") || heldSpeedRestore != null) break;
+          heldSpeedRestore = player.getPlaybackParameters().speed;
+          player.setPlaybackSpeed(
+              Math.max(heldSpeedRestore, MobileSettings.integer("hold_speed") / 100f));
+        } else if (heldSpeedRestore != null) {
+          player.setPlaybackSpeed(heldSpeedRestore);
+          heldSpeedRestore = null;
+        }
         break;
       case "quality":
         changeQuality(command.optString("value"));

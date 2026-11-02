@@ -1,5 +1,37 @@
 # Android validation record (M9)
 
+## Category preloading (2026-11-02)
+
+Android's native ViewModel now caches network first pages for 60 seconds, with
+12 entries and a 2 MiB serialized-text estimate. Video and Music use distinct
+keys, including network revision; account changes, account-index changes and
+proxy edits clear cached/private navigation state. Selecting the current source
+again refreshes its UI entry. Local saved items and pagination bypass this cache.
+
+After a 300 ms settling delay, browsing prepares up to three nearby server
+categories, Home for the other media tab, and signed-in playlist/liked sources
+(at most six targets per batch). Only one speculative browse runs at a time;
+tapping a pending target shares its fetch. Cancelled batches do not schedule
+more work. Existing preload/mobile-data preferences apply, active playback
+suppresses new speculative browsing, and errors stop a batch without retries or
+visible error overlays. Category chips remain available while changing filters.
+
+Focused verification: **9 JUnit tests passed**, compiled directly with Kotlin
+2.1.21, kotlinx-coroutines 1.10.2 and JUnit 4.13.2. They exercise reuse/expiry,
+joining a cancelled preload waiter, account clearing and late replies, failed
+fetch recovery, entry/byte eviction, oversize rejection, explicit refresh,
+tab isolation, and rapid navigation without cancelling the visible request.
+Kotlin formatting and `git diff --check` also pass.
+
+This workspace has no Android SDK or Gradle installation/cache. The new cache
+and its tests were compiled in isolation; the complete Android app build,
+instrumentation, physical category-switch latency and live-service behavior
+have **not** been qualified for this change. On an Android-equipped worker run
+`apps/android/gradlew -p apps/android :app:testDebugUnitTest :app:lintDebug`
+and exercise video/Music category switching, refresh, pagination, account
+switch/disconnect, and preload disabled/metered-network settings on a device.
+No APK was built or published; M9's existing physical/live gates remain open.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version
@@ -776,3 +808,33 @@ including `up_next_lists_queue_then_context_and_skips_to_a_chosen_entry`),
 The Kotlin/Java changes were **not compiled or run** in the authoring container
 (no Android SDK); APK build, emulator and live related/playlist acceptance are
 pending. The landscape watch layout still shows no inline list.
+
+## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
+
+Implemented (Android UI only; desktop and shared palettes unchanged):
+
+- Motion settings under Settings → Appearance → Motion: animation style
+  (smooth/snappy/bouncy/gentle), animation speed (50–200 %), animated cards and
+  haptic feedback. All Compose transitions read `Motion` (`Motion.kt`); the shared
+  "Reduced motion" setting still turns every animation into an instant change.
+- Smoother transitions: finger-following drag-to-minimize for the music player,
+  direction-aware feed slide when swiping tabs/categories, player open/close with
+  slide+scale, staggered card entry, press-in card feedback, artwork fade-in,
+  animated play/pause glyph and a mini-player progress bar that glides between
+  position snapshots (seeks and track changes still jump).
+- New gestures, each with its own toggle under Settings → Appearance → Gestures
+  (behind the existing "Swipe gestures" master switch): mini player swipe
+  (sideways next/previous, up to open, down to stop); swipe music artwork for
+  next/previous; double-tap music artwork to pause; video double-tap centre to
+  pause (left/right still seek); press-and-hold for temporary fast playback
+  (`speed_hold`, never saved as the user's speed; rate selectable 1.25–3×);
+  video vertical swipe for brightness (left) and media volume (right), restoring
+  system brightness when the video view leaves; pinch to zoom/fit video.
+- The native video surface is never moved by a Compose graphics layer; video
+  minimize recognises the swipe without following the finger.
+
+Checks: JVM unit tests `MotionTest` cover speed/style scaling, clamping and
+reduced-motion snapping. No Android SDK was available in the authoring
+container, so compilation and emulator/physical-device behaviour of the new
+gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
+Tab S9) are not yet qualified and must be checked before release.
