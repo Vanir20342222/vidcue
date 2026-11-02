@@ -415,6 +415,7 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                     drag = null
                 },
                 modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+                marks = player.sponsorMarks(),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(time(drag ?: player.position), style = MaterialTheme.typography.labelMedium)
@@ -424,7 +425,18 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
     }
 }
 
-/** Keep Material's seek semantics/drag handling; draw a slim line and persistent round playhead. */
+/** SponsorBlock segments as (start, end) seconds for drawing on the seek timeline. */
+internal fun PlayerState.sponsorMarks(): List<Pair<Float, Float>> =
+    value.optJSONArray("segments")?.objects()?.mapNotNull { mark ->
+        val start = mark.optDouble("start").toFloat()
+        val end = mark.optDouble("end").toFloat()
+        if (start.isFinite() && end.isFinite() && end > start) start to end else null
+    } ?: emptyList()
+
+/**
+ * Keep Material's seek semantics/drag handling; draw a slim line and persistent round playhead.
+ * [marks] are (start, end) values in [valueRange] highlighted on the track, e.g. sponsor segments.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MediaSeekSlider(
@@ -433,9 +445,11 @@ internal fun MediaSeekSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
+    marks: List<Pair<Float, Float>> = emptyList(),
 ) {
     val accent = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.outlineVariant
+    val markColor = MaterialTheme.colorScheme.tertiary
     Slider(
         value,
         onValueChange,
@@ -462,6 +476,22 @@ internal fun MediaSeekSlider(
                     androidx.compose.ui.geometry.Offset(size.width * fraction, size.height / 2),
                     size.height,
                 )
+                val span = state.valueRange.endInclusive - state.valueRange.start
+                if (span > 0f) {
+                    marks.forEach { (start, end) ->
+                        val from = ((start - state.valueRange.start) / span).coerceIn(0f, 1f)
+                        val to = ((end - state.valueRange.start) / span).coerceIn(from, 1f)
+                        if (to > from) {
+                            val y = size.height / 2
+                            drawLine(
+                                markColor,
+                                androidx.compose.ui.geometry.Offset(size.width * from, y),
+                                androidx.compose.ui.geometry.Offset(size.width * to, y),
+                                size.height,
+                            )
+                        }
+                    }
+                }
             }
         },
     )

@@ -1868,6 +1868,7 @@ private fun PlayerPane(
                                 seek = null
                             },
                             modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+                            marks = player.sponsorMarks(),
                         )
                         Row(Modifier.fillMaxWidth()) {
                             Text(
