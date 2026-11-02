@@ -2,22 +2,41 @@
 
 The app combines the shared Rust engine with a native Jetpack Compose phone/tablet UI. Media3 handles video, background playback, media controls and offline transfers. The explicit account sign-in page is its only WebView. No Python or mpv executable runs on Android.
 
-[Download mobile.9 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.9/ytui-0.2.0-alpha.12-mobile.9.apk) · [Release/checksum](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.9) · [UI release and validation](MOBILE9_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
+[Download mobile.10 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk) · [Release/checksum](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.10) · [UI release and validation](MOBILE10_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
+
+## Documents
+
+Current guides: [UX overhaul](UX_OVERHAUL.md) and [UI fidelity review](UI_FIDELITY_REVIEW.md)
+(the Home tab, watch page, Downloads and search-focus work now on `main`), [plan](PLAN.md),
+[parity](PARITY.md), [validation record](VALIDATION.md), [signing and updates](SIGNING.md)
+and the [device checklist](DEVICE_ACCEPTANCE.md).
+
+Releases and qualification, newest first: [mobile.10](MOBILE10_RELEASE.md),
+[mobile.9](MOBILE9_RELEASE.md), [player/library qualification (mobile.4)](PLAYER_LIBRARY_VALIDATION_2026-10-29.md).
+
+Design history and reviews: [content-first restyle](CONTENT_FIRST_RESTYLE.md),
+[UI PR #27 review](UI_PR27_REVIEW.md), [media UI redesign](MEDIA_UI_REDESIGN.md),
+[native UI migration](NATIVE_UI_MIGRATION.md), [player/library plan](PLAYER_LIBRARY_PLAN.md)
+and [radio artwork](RADIO_ARTWORK.md).
+
+Startup latency: [two-second target](TWO_SECOND_STARTUP.md), [mobile.5 validation](STARTUP_VALIDATION_2026-10-29.md),
+[mobile.6](MOBILE6_STARTUP_FOLLOWUP.md), [mobile.7](MOBILE7_STARTUP_FOLLOWUP.md) and
+[mobile.8](MOBILE8_INDEXED_STARTUP.md).
 
 ## Install an APK
 
-Open the downloaded APK in Android Files and allow installation from that source when prompted. Version **0.2.0-alpha.12-mobile.9**, code **9**, includes ARM64 for Galaxy Tab S9/Nothing Phone (3a) and x86-64 for emulators, requires Android 8/API 26+, and targets API 35. The public download hash and signing certificate were verified.
+Open the downloaded APK in Android Files and allow installation from that source when prompted. Version **0.2.0-alpha.12-mobile.10**, code **10**, includes ARM64 for Galaxy Tab S9/Nothing Phone (3a) and x86-64 for emulators, requires Android 8/API 26+, and targets API 35. The public download hash and signing certificate were verified.
 
-Open **ytui** (`dev.ytui.android.stable`). Install over mobile.4–8 to retain your account, settings and offline library; do not uninstall. Older Preview/original packages remain separate with their own private data. A first stable-channel installation needs sign-in/folder selection once. Future stable updates use the same private identity. No GitHub signing-secret setup is needed; [recovery and updates](SIGNING.md) explain the encrypted owner backup. Debug Actions artifacts install as **ytui Preview** and may have disposable identities.
+Open **ytui** (`dev.ytui.android.stable`). Install over mobile.4–9 to retain your account, settings and offline library; do not uninstall. Older Preview/original packages remain separate with their own private data. A first stable-channel installation needs sign-in/folder selection once. Future stable updates use the same private identity. No GitHub signing-secret setup is needed; [recovery and updates](SIGNING.md) explain the encrypted owner backup. Debug Actions artifacts install as **ytui Preview** and may have disposable identities.
 
-This is a development preview, with 28 passing runtime cases and one explicitly skipped public YouTube case. Real YouTube latency, audible output, physical-device updates and [parity/device gates](PARITY.md) remain open. [Device checklist](DEVICE_ACCEPTANCE.md).
+This is a development preview. The mobile.10 qualification recorded 37 native passes and one explicitly skipped public YouTube case; `main` has since gained the [UX overhaul](UX_OVERHAUL.md), whose exact-commit Android run (four emulator shards) also succeeded but is not part of that signed APK. Real YouTube latency, audible output, physical-device updates and [parity/device gates](PARITY.md) remain open. [Device checklist](DEVICE_ACCEPTANCE.md).
 
 ## Navigate
 
 First installations default to 1080p with H.264/AAC preference for mobile decoding
 and portable file export; audio-only playback still selects the best audio.
 Existing quality choices are preserved. Choose Best explicitly for unrestricted formats.
-Use the bottom navigation for YouTube, Music, Radio and Downloads. Search accepts words
+Use the bottom navigation for Home, Music, Radio and Downloads (the first tab is labelled YouTube in mobile.10 and earlier; Subscriptions and Watch later are Home filter chips on current `main`). Search accepts words
 or a media URL. **Browse** selects provider shelves; categories and pagination use
 server responses. The top **⋮** menu, **sliders** (Settings) and **profile** (Account) icons provide touch controls.
 Tap artwork to play/open it. The card's **⋮** menu contains preview, queue, save
