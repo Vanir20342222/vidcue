@@ -1194,8 +1194,12 @@ private fun BrowsePane(
             ) {
                 if (tab in 1..2)
                     items(
-                        listOf(
+                        // Library feeds the Browse sheet already offers, surfaced
+                        // where people look for them (Home only for video feeds).
+                        listOfNotNull(
                             "For you" to "Home",
+                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
+                            if (tab == 1) "Watch later" to "WatchLater" else null,
                             "My playlists" to "Playlists",
                             "Liked" to "Liked",
                         )
@@ -1213,8 +1217,14 @@ private fun BrowsePane(
                         category.optString("title"),
                         modifier = Modifier.testTag("category-${category.optString("title")}"),
                         selected =
-                            feed.request !in listOf("Home", "Playlists", "Liked") &&
-                                category.opt("request")?.toString() == feed.request.toString(),
+                            feed.request !in
+                                listOf(
+                                    "Home",
+                                    "Subscriptions",
+                                    "WatchLater",
+                                    "Playlists",
+                                    "Liked",
+                                ) && category.opt("request")?.toString() == feed.request.toString(),
                     ) {
                         vm.navigate(request = category.get("request"))
                     }

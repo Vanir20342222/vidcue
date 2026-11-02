@@ -205,7 +205,10 @@ class NativeUiTest {
         )
         compose.onNodeWithTag("menu-button").performClick()
         compose.onNodeWithTag("feeds-button").performClick()
-        compose.onNodeWithText("Subscriptions").performClick()
+        // Home also offers a Subscriptions chip; choose the Browse sheet's row.
+        compose
+            .onNode(hasText("Subscriptions") and hasAnyAncestor(hasTestTag("panel-body")))
+            .performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("feed-account-action").fetchSemanticsNodes().isNotEmpty()
         }
