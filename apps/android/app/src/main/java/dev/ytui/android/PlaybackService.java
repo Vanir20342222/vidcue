@@ -824,7 +824,8 @@ public final class PlaybackService extends MediaSessionService {
                         .put("op", "queue_commit")
                         .put("url", queuedUrl)
                         .put("context_id", contextId)
-                        .put("context_entry", started.optBoolean("context_entry")));
+                        .put("context_entry", started.optBoolean("context_entry"))
+                        .put("skip_before", started.optBoolean("context_skip")));
               rpc(
                   new JSONObject()
                       .put("op", "history_record")
@@ -912,6 +913,7 @@ public final class PlaybackService extends MediaSessionService {
 
   void contextAvailable(String id, boolean complete) {
     if (current != this || !id.equals(activeContext)) return;
+    MediaBridge.event("up_next_changed", "");
     if (complete) {
       contextReady = true;
       contextPreparing = false;

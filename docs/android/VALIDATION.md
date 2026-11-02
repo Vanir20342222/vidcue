@@ -756,3 +756,23 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 ## CI layout change, 2026-11-02 (M9)
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
+
+## Watch-page Up next follow-up, 2026-11-02 (M9)
+
+The video watch page's **Up next** now shows what Next/autoplay will actually
+take, in the same order: the manual queue, then the active playback context —
+the rest of the playlist the video was started from ("From this playlist") or
+the related videos YouTube returned for it ("Recommended"). The first entry
+that will play is labelled "Plays next" (omitted while shuffle is on). Tapping
+a playlist entry continues that playlist from it; tapping a recommendation
+starts it with its own related list. When "Related media autoplay" is off,
+recommendations are still listed (display-only fetch) but not marked to play.
+
+The Rust engine gains a read-only `up_next` op and a `skip_before` option on
+context `queue_commit`; `PlaybackService` emits `up_next_changed` when a context
+becomes available. Checks run: `cargo test -p ytui-mobile --lib` (40 passed,
+including `up_next_lists_queue_then_context_and_skips_to_a_chosen_entry`),
+`cargo clippy -p ytui-mobile --all-targets -D warnings` and `cargo fmt --check`.
+The Kotlin/Java changes were **not compiled or run** in the authoring container
+(no Android SDK); APK build, emulator and live related/playlist acceptance are
+pending. The landscape watch layout still shows no inline list.
