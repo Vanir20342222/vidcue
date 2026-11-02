@@ -160,6 +160,16 @@ internal object OnboardingSteps {
 
 private const val PageMillis = 280
 
+/** "catppuccin-mocha" -> "Catppuccin Mocha"; the ytui brand keeps its lower-case name. */
+internal fun themeLabel(id: String): String =
+    id.split('-', '_', ' ')
+        .filter { it.isNotEmpty() }
+        .joinToString(" ") { word ->
+            if (word.equals("ytui", ignoreCase = true)) "ytui"
+            else word.replaceFirstChar(Char::titlecase)
+        }
+        .ifEmpty { id }
+
 /** Full-screen first-run setup. Calls [onFinish] on skip and on completion; callers persist. */
 @Composable
 internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) {
@@ -350,7 +360,11 @@ private fun Staggered(index: Int, modifier: Modifier = Modifier, content: @Compo
     }
 }
 
-/** Centres and caps width at 560dp; scrolls when the page is taller than the viewport. */
+/**
+ * Caps width at 560dp and scrolls when the page is taller than the viewport. Centred
+ * pages (welcome, ready) sit in the middle; setup pages start at a fixed offset so the
+ * icon and heading do not jump between steps of different heights.
+ */
 @Composable
 private fun PageColumn(
     horizontal: Alignment.Horizontal = Alignment.Start,
@@ -358,6 +372,7 @@ private fun PageColumn(
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val minimum = maxHeight
+        val centred = horizontal == Alignment.CenterHorizontally
         Column(
             Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -366,9 +381,18 @@ private fun PageColumn(
                 Modifier.heightIn(min = minimum)
                     .widthIn(max = 560.dp)
                     .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
+                    .padding(
+                        start = 24.dp,
+                        end = 24.dp,
+                        top = if (centred) 16.dp else (minimum * 0.08f).coerceIn(16.dp, 72.dp),
+                        bottom = 16.dp,
+                    ),
                 horizontalAlignment = horizontal,
-                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+                verticalArrangement =
+                    Arrangement.spacedBy(
+                        16.dp,
+                        if (centred) Alignment.CenterVertically else Alignment.Top,
+                    ),
             ) {
                 content()
             }
@@ -632,7 +656,7 @@ private fun ThemeChip(name: String, selected: Boolean, onClick: () -> Unit) {
             }
         }
         Text(
-            name.replaceFirstChar(Char::titlecase),
+            themeLabel(name),
             style = MaterialTheme.typography.labelLarge,
             color = label,
         )
@@ -746,7 +770,7 @@ private fun ReadyPage(vm: YtuiViewModel) {
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .testTag("onboarding-summary")
             ) {
-                SummaryRow("Theme", config.optString("theme", "system").replaceFirstChar(Char::titlecase))
+                SummaryRow("Theme", themeLabel(config.optString("theme", "system")))
                 SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
                 SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
                 SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))

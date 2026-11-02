@@ -285,11 +285,15 @@ private fun AuthIntro(
     LaunchedEffect(Unit) { if (!reduced) entry.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("sign-in-intro")) {
         val wide = maxWidth >= 720.dp
+        val viewport = maxHeight
         Column(
             Modifier.fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = if (wide) 32.dp else 16.dp, vertical = if (wide) 40.dp else 12.dp),
+                // Centre the card when it fits; scroll from the top when it does not.
+                .heightIn(min = viewport)
+                .padding(horizontal = if (wide) 32.dp else 16.dp, vertical = if (wide) 24.dp else 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
             Column(
                 Modifier.widthIn(max = 1040.dp).fillMaxWidth().graphicsLayer {
@@ -516,7 +520,7 @@ private fun AuthReturnStrip(
                     when {
                         message.isNotBlank() -> message
                         busy -> "Saving your session…"
-                        found && showWeb -> "You're signed in. Tap Use this session to return to ytui."
+                        found && showWeb -> "Signed in. Tap Use this session to finish."
                         showWeb -> "You'll come back here once you're signed in"
                         else -> "You'll come back here once you're signed in"
                     }
