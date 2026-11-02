@@ -1149,12 +1149,23 @@ class CatalogUiTest {
                                 collapse.height >= 48f * density - 1f
                         )
                     }
+                    // Re-show the auto-hiding controller immediately before the
+                    // UiAutomator lookup; match the id like MediaRuntimeTest does,
+                    // independent of the debug application id.
+                    scenario.onActivity {
+                        generateSequence(it.findViewById<android.view.View>(R.id.ytui_collapse)) {
+                                view ->
+                                view.parent as? android.view.View
+                            }
+                            .filterIsInstance<androidx.media3.ui.PlayerView>()
+                            .first()
+                            .showController()
+                    }
                     val collapse =
                         device.wait(
                             androidx.test.uiautomator.Until.findObject(
                                 androidx.test.uiautomator.By.res(
-                                    instrumentation.targetContext.packageName,
-                                    "ytui_collapse",
+                                    java.util.regex.Pattern.compile(".*:id/ytui_collapse")
                                 )
                             ),
                             3000,
