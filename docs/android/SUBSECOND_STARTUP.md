@@ -79,9 +79,46 @@ metadata from `warmup_bytes_at_tap`, and includes actual codec initialization
 durations alongside the older tap-relative codec events. New native tests use
 real loopback sockets to check pool/header isolation, proxy changes, cancellation,
 parallel paired warming, tail-index cache reuse and rejected stale descriptors.
-A separate prepared-card test includes the actual card tap, Rust lease lookup,
+A separate cold/prepared-card test includes the actual card tap, Rust lease lookup,
 player/service/UI handoff, playing state and window-pixel readback under 1000 ms.
 The pre-existing 2000 ms cold/indexed/HLS regression gates stay unchanged.
 
 Local debug/instrumentation APK builds, 21 JVM tests, lint and diff checks pass.
-The exact-source emulator run is pending. No physical subsecond result is asserted.
+The first exact-source emulator run is recorded below. No physical subsecond
+result is asserted.
+
+## Revision 1 qualification and follow-up
+
+Source `91b9a06`, workflow merge `1b4704a`: Android run
+[41463430970](https://github.com/Vanir20342222/ytui/actions/runs/41463430970)
+has **43 passing, one failing and one explicitly skipped public-YouTube test**
+(JUnit XML counts). The six new socket/cache tests passed. Rust formatting,
+Clippy, workspace tests and real-media checks passed in run `41463430996`;
+secret scans passed. The APK and native evidence are retained as workflow
+artifacts `13151050462` and `13153490015`.
+
+The new prepared-card case had actual visible/playing startup at **734 ms**, but
+window pixel confirmation at **1020 ms** failed the strict <1000 ms gate. Original
+2000 ms tests passed: progressive cold usable786/window1028 ms, indexed cold
+usable1164/window1450 ms, HLS cold usable703/window976 ms. Indexed startup remains
+above the new goal. These are loopback media, not live YouTube measurements.
+
+The observer waited for AndroidX ActivityScenario UI idleness after the tap:
+`onActivity` calls `Instrumentation.waitForIdleSync` before scheduling work.
+The follow-up binds the observer before tapping and posts PixelCopy requests
+directly to the main thread while frames render. It retains the original tap
+clock, actual Window (including overlays), focus/bounds checks, RGB-frame check,
+playing requirement and unchanged <1000 ms deadline. Both cold and prefetched
+cards run this gate, including offline lookup. Existing 2000 ms observers remain
+unchanged. This corrects observer scheduling; it does not qualify faster app
+playback until a fresh run passes.
+
+Readiness now also rechecks cached ranges after LRU eviction, including the
+notification status and duplicate-prefetch path. Publication is guarded against
+an old cancelled preload. The paired-stream socket test removes its own cached
+ranges and checks that readiness becomes false; quality mismatches also reject
+readiness. The streaming cache still has bounded LRU storage: bytes are not
+pinned and only the first settled visible candidate receives byte warming.
+
+Follow-up local debug/instrumentation APKs, 21 JVM tests and lint pass. Fresh
+exact-source emulator qualification is pending.

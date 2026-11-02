@@ -752,3 +752,13 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 ## M9 startup latency work, 2026-10-29
 
 [Research and implementation](TWO_SECOND_STARTUP.md) and [mobile.5 qualification](STARTUP_VALIDATION_2026-10-29.md) distinguish the successful offline/native checks from the still-open physical Tab S9 / live YouTube two-second gate. Failed and infrastructure-contaminated attempts are preserved in those records.
+
+
+## M9 subsecond startup candidate, 2026-11-02
+
+[Research, changes and retained failures](SUBSECOND_STARTUP.md) record the
+strict <1000 ms target. PR32 remains a draft and must not be merged. The first
+native run passed 43 tests, failed the new window-readback deadline (1020 ms),
+and explicitly skipped one optional public-YouTube case. Actual usable startup
+was 734 ms for that prepared fixture; this is not a physical/live qualification.
+The observer scheduling and cache-eviction follow-up require a fresh native run.

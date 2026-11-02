@@ -197,6 +197,17 @@ class PlaybackPerformanceTest {
                 server.takeRequest(200, TimeUnit.MILLISECONDS),
             )
             Assert.assertEquals(2, server.requestCount)
+            Assert.assertFalse(
+                "A different selected quality is a different preload",
+                PlaybackCache.readyFor(media, false, "720"),
+            )
+            val key = stream.getString("url")
+            for (span in PlaybackCache.cache().getCachedSpans(key).toList()) PlaybackCache.cache()
+                .removeSpan(span)
+            Assert.assertFalse(
+                "Evicted bytes must not be advertised ready at the tap",
+                PlaybackCache.readyFor(media, false, "best"),
+            )
         }
     }
 

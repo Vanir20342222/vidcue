@@ -55,11 +55,45 @@ final class VisibleVideoProbe {
   static Result capture(
       ActivityScenario<RustActivity> scenario, long timing, String filename, long budgetMs)
       throws Exception {
+    return capture(action -> scenario.onActivity(action::accept), timing, filename, budgetMs);
+  }
+
+  private interface Scheduler {
+    void onActivity(java.util.function.Consumer<RustActivity> action);
+  }
+
+  /** Bind before the tap: observing a frame must not wait for UI idleness. */
+  static Observer observe(ActivityScenario<RustActivity> scenario) {
+    java.util.concurrent.atomic.AtomicReference<RustActivity> activity =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    scenario.onActivity(activity::set);
+    return new Observer(activity.get());
+  }
+
+  static final class Observer {
+    private final RustActivity activity;
+
+    private Observer(RustActivity activity) {
+      this.activity = activity;
+    }
+
+    Result capture(long timing, String filename, long budgetMs) throws Exception {
+      return VisibleVideoProbe.capture(
+          action -> MediaBridge.main.post(() -> action.accept(activity)),
+          timing,
+          filename,
+          budgetMs);
+    }
+  }
+
+  private static Result capture(Scheduler scheduler, long timing, String filename, long budgetMs)
+      throws Exception {
     CompletableFuture<Frame> future = new CompletableFuture<>();
-    scenario.onActivity(
+    scheduler.onActivity(
         activity -> {
           PlayerView view = find(activity.getWindow().getDecorView());
-          if (!activity.hasWindowFocus()
+          if (activity.isDestroyed()
+              || !activity.hasWindowFocus()
               || view == null
               || !view.isShown()
               || view.getWidth() < 1

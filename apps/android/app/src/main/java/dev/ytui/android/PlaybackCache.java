@@ -26,6 +26,9 @@ final class PlaybackCache {
   private static volatile long activeRequest;
   private static volatile boolean bytesPaused;
   private static String upcomingScope = "";
+  // Guarded by PlaybackCache.class; readiness must survive an actual cache check,
+  // rather than relying on a flag after the LRU has evicted a prefix.
+  private static final List<DataSpec> readySpans = new ArrayList<>();
   private static final Set<CacheWriter> writers = ConcurrentHashMap.newKeySet();
   private static final ConcurrentHashMap<Long, PlaybackHttp.Cancellation> networkCalls =
       new ConcurrentHashMap<>();
@@ -70,6 +73,7 @@ final class PlaybackCache {
     byteWorkers.purge();
     upcomingUrl = "";
     upcomingScope = "";
+    readySpans.clear();
     ready = false;
   }
 
@@ -91,7 +95,26 @@ final class PlaybackCache {
             + NativeBridge.accountIntent()
             + ":"
             + NetworkSettings.revision.get();
-    return ready && upcomingUrl.equals(media.optString("url")) && upcomingScope.equals(scope);
+    return ready
+        && upcomingUrl.equals(media.optString("url"))
+        && upcomingScope.equals(scope)
+        && cachedRanges();
+  }
+
+  private static boolean cachedRanges() {
+    if (readySpans.isEmpty()) return false;
+    for (DataSpec spec : readySpans) {
+      if (!cache()
+          .isCached(CacheKeyFactory.DEFAULT.buildCacheKey(spec), spec.position, spec.length)) {
+        ready = false;
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static synchronized boolean isReady() {
+    return ready && cachedRanges();
   }
 
   static boolean allowed(JSONObject media) {
@@ -147,7 +170,7 @@ final class PlaybackCache {
     if (url.equals(upcomingUrl)
         && scope.equals(upcomingScope)
         && current != null
-        && (!current.isDone() || ready)) return;
+        && (!current.isDone() || ready && cachedRanges())) return;
     cancel();
     bytesPaused = false;
     long token = intent.get();
@@ -181,14 +204,18 @@ final class PlaybackCache {
                       || account != NativeBridge.accountIntent()
                       || network != NetworkSettings.revision.get()) return;
                   boolean warmed = warmTracks(stream, audio, token);
-                  if (token == intent.get()
-                      && !bytesPaused
-                      && warmed
-                      && account == NativeBridge.accountIntent()
-                      && network == NetworkSettings.revision.get()) {
-                    ready = true;
-                    MediaBridge.notifyUi();
+                  boolean publish = false;
+                  synchronized (PlaybackCache.class) {
+                    if (token == intent.get()
+                        && !bytesPaused
+                        && warmed
+                        && account == NativeBridge.accountIntent()
+                        && network == NetworkSettings.revision.get()) {
+                      ready = true;
+                      publish = true;
+                    }
                   }
+                  if (publish) MediaBridge.notifyUi();
                 } catch (Exception ignored) {
                   /* speculative failure never interrupts current playback */
                 } finally {
@@ -268,7 +295,9 @@ final class PlaybackCache {
       playlistBytes = output.toByteArray();
       if (playlistSource.getUri() != null) playlistUri = playlistSource.getUri();
     }
-    if (!cache().isCached(url, 0, playlistBytes.length)) return false;
+    if (!recordCached(
+        new DataSpec.Builder().setUri(url).setLength(playlistBytes.length).build(), token))
+      return false;
     androidx.media3.exoplayer.hls.playlist.HlsPlaylist parsed =
         new androidx.media3.exoplayer.hls.playlist.HlsPlaylistParser()
             .parse(playlistUri, new java.io.ByteArrayInputStream(playlistBytes));
@@ -332,14 +361,20 @@ final class PlaybackCache {
     } finally {
       writers.remove(writer);
     }
+    return recordCached(spec, token);
+  }
+
+  private static boolean recordCached(DataSpec spec, long token) {
     String key = CacheKeyFactory.DEFAULT.buildCacheKey(spec);
     long length = spec.length;
     long total = ContentMetadata.getContentLength(cache().getContentMetadata(key));
     if (total >= 0) length = Math.min(length, Math.max(0, total - spec.position));
-    return token == intent.get()
-        && !bytesPaused
-        && length > 0
-        && cache().isCached(key, spec.position, length);
+    if (length <= 0 || !cache().isCached(key, spec.position, length)) return false;
+    synchronized (PlaybackCache.class) {
+      if (token != intent.get() || bytesPaused) return false;
+      readySpans.add(spec.buildUpon().setLength(length).build());
+      return true;
+    }
   }
 
   private PlaybackCache() {}

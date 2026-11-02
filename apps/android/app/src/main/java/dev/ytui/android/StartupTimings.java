@@ -56,6 +56,11 @@ final class StartupTimings {
     return id;
   }
 
+  static synchronized long latestToken() {
+    Sample sample = samples.peekLast();
+    return sample == null ? 0 : sample.id;
+  }
+
   private static Sample find(long id) {
     for (Sample sample : samples) if (sample.id == id) return sample;
     return null;

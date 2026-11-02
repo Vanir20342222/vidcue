@@ -33,7 +33,7 @@ collect_evidence() {
     adb pull /sdcard/Android/data/$test_package/files/startup-hls-timings.txt "$evidence/startup-hls-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-indexed-timings.txt "$evidence/startup-indexed-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-subsecond-timings.txt "$evidence/startup-subsecond-timings.txt" > /dev/null 2>&1 || true
-    for state in cold prepared missing-frame settings hls hls-prepared indexed subsecond subsecond-failed; do
+    for state in cold prepared missing-frame settings hls hls-prepared indexed subsecond subsecond-cold subsecond-failed; do
         adb pull /sdcard/Android/data/$test_package/files/startup-$state.png "$evidence/startup-$state.png" > /dev/null 2>&1 || true
     done
     mkdir -p "$evidence/native-ui"

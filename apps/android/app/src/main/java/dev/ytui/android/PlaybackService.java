@@ -1618,7 +1618,7 @@ public final class PlaybackService extends MediaSessionService {
               .put("suppression", player.getPlaybackSuppressionReason())
               .put("paused", pausedByUser)
               .put("navigation_pending", navigationPending || queuedNext > 0)
-              .put("next_preloaded", PlaybackCache.ready)
+              .put("next_preloaded", PlaybackCache.isReady())
               .put("start_ms", startMs)
               .put("first_frame_ms", firstFrameMs)
               .put("tap_to_output_ms", StartupTimings.total(startupToken))
