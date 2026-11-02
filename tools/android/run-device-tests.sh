@@ -58,8 +58,14 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     shard_index="${YTUI_ANDROID_SHARD_INDEX:-0}"
     [[ "$num_shards" =~ ^[1-9][0-9]?$ && "$shard_index" =~ ^[0-9]+$ ]] && (( shard_index < num_shards )) ||
         { echo 'Invalid YTUI_ANDROID_NUM_SHARDS/YTUI_ANDROID_SHARD_INDEX.' >&2; exit 1; }
-    adb install -r -t "$YTUI_ANDROID_TEST_APKS/app-debug.apk"
-    adb install -r -t "$YTUI_ANDROID_TEST_APKS/app-debug-androidTest.apk"
+    # upload-artifact keeps paths relative to the files' common ancestor
+    # (outputs/apk/), so the APKs arrive as debug/… and androidTest/debug/….
+    app_apk="$(find "$YTUI_ANDROID_TEST_APKS" -type f -name app-debug.apk | head -n 1)"
+    test_apk="$(find "$YTUI_ANDROID_TEST_APKS" -type f -name app-debug-androidTest.apk | head -n 1)"
+    [[ -n "$app_apk" && -n "$test_apk" ]] ||
+        { echo "Test APKs not found under $YTUI_ANDROID_TEST_APKS:" >&2; find "$YTUI_ANDROID_TEST_APKS" -type f >&2; exit 1; }
+    adb install -r -t "$app_apk"
+    adb install -r -t "$test_apk"
     runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
     [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
