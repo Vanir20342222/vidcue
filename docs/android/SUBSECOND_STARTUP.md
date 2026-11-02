@@ -309,3 +309,40 @@ accepted watch page puts its normal minimize control inside the native view.
 Both direct and sharded public runners retain explicit Best/1000 ms arguments
 and all timing/failure artifacts. New qualification is required against this
 integrated source; previous main/branch results cannot qualify the merge.
+
+
+## Integrated revision 7 and rejected foreground-service start
+
+Source `2f5462a`, merge `1b0a69d`, run
+[41500209162](https://github.com/Vanir20342222/ytui/actions/runs/41500209162)
+built the exact app/test APKs and passed Rust checks and both secret scans.
+Local integrated checks passed 23 JVM tests, lint, APK builds and six publication
+boundary cases. APK `13167863626` has SHA256
+`dc7d9d553f73e7487807c17b15bbef8549d3f6a251f055d970422e8cf6d7209d`.
+It is retained evidence, not the recommended candidate after the crash below.
+
+Shard 1 passed all nine cases, including proxy/header/account isolation, native
+transport contrast and indexed cold playback. Shard 0 passed rapid cancellation,
+early native-view creation and retained view identity through actual handoff.
+Strict performance failures remain: paired indexed handoff had no visible/playing
+completion by 1000 ms (handoff230, decoder676 ms after handoff); cold progressive
+usable964/window1001 ms missed the one-second pixel deadline. No threshold or
+clock changes are applied. Shards 0/1/3 artifacts are respectively `13169221249`,
+`13169096406` and `13170000163`. Shard 2 (`13169541190`) also passed, including
+the original two-second card checks and expanded catalog/theme UI coverage.
+Raw runner results total 48 passes, two latency failures, one crash failure and
+one opt-in public skip; five further declared cases did not run after the crash.
+The 57-case suite therefore remains incomplete and failed.
+
+The rejected-service functional test found an actual Android crash:
+`ForegroundServiceDidNotStartInTimeException` on teardown. Calling stopSelf does
+not discharge an outstanding startForegroundService obligation. The fix validates
+required media/stream URLs before the bridge starts a service, without disturbing
+current media. Service play also validates before mutating state. For requests
+rejected inside the actual service, the exceptional path briefly fulfills the
+foreground obligation, then removes the notification and stops using its start
+ID. Successful playback retains Media3's notification lifecycle. Failure events
+use the rejected request's token rather than a previous source token. The native
+regression now exercises both bridge preflight and a direct malformed FGS intent,
+requires clean UI/service teardown and checks JNI remains available. Fresh native
+qualification is required; compilation alone does not qualify this fix.

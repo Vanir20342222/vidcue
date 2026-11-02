@@ -183,7 +183,18 @@ public final class MediaBridge {
                           .setAction("play")
                           .putExtra("request", playRequest.toString());
                   try {
+                    // Reject malformed descriptors before creating an Android
+                    // foreground-service obligation or interrupting current media.
+                    PlaybackService.validateRequest(playRequest);
                     context.startForegroundService(intent);
+                  } catch (JSONException invalid) {
+                    long timing = playRequest.optLong("startup_token");
+                    StartupTimings.ended(timing, "failed", SystemClock.elapsedRealtime());
+                    event(
+                        "playback_start_failed",
+                        "Invalid playback request",
+                        Long.toString(timing),
+                        0);
                   } catch (RuntimeException unavailable) {
                     long timing = playRequest.optLong("startup_token");
                     StartupTimings.ended(timing, "failed", SystemClock.elapsedRealtime());

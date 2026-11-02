@@ -185,45 +185,69 @@ class PreparationUiTest {
             val vm = AtomicReference<YtuiViewModel>()
             scene.onActivity { vm.set(ViewModelProvider(it)[YtuiViewModel::class.java]) }
             compose.waitUntil(10000) { vm.get().ready.value }
-            val staleToken = StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true)
-            val token = StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true)
-            val media =
-                MediaCard(
-                    json(
-                        "url" to "http://127.0.0.1/invalid-fixture",
-                        "title" to "Rejected surface fixture",
-                        "kind" to "video",
+            for (directService in listOf(false, true)) {
+                val staleToken =
+                    StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true)
+                val token = StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true)
+                val media =
+                    MediaCard(
+                        json(
+                            "url" to "http://127.0.0.1/invalid-fixture",
+                            "title" to "Rejected surface fixture",
+                            "kind" to "video",
+                        )
                     )
+                scene.onActivity {
+                    vm.get().actionError.value = null
+                    vm.get().prepareVideoSurface(media, staleToken)
+                    vm.get().prepareVideoSurface(media, token)
+                }
+                MediaBridge.event(
+                    "playback_start_failed",
+                    "Stale rejection",
+                    staleToken.toString(),
+                    0,
                 )
-            scene.onActivity {
-                vm.get().prepareVideoSurface(media, staleToken)
-                vm.get().prepareVideoSurface(media, token)
-            }
-            MediaBridge.event("playback_start_failed", "Stale rejection", staleToken.toString(), 0)
-            kotlinx.coroutines.runBlocking { vm.get().snapshot() }
-            Assert.assertEquals(token, vm.get().player.value.preparing?.token)
-            Assert.assertNull(vm.get().actionError.value)
-            // Missing stream URL is rejected before any external request or decode.
-            MediaBridge.execute(
-                json(
-                        "op" to "play",
-                        "request" to
-                            json(
-                                "media" to media.value,
-                                "stream" to JSONObject(),
-                                "audio" to false,
-                                "startup_token" to token,
-                            ),
+                kotlinx.coroutines.runBlocking { vm.get().snapshot() }
+                Assert.assertEquals(token, vm.get().player.value.preparing?.token)
+                Assert.assertNull(vm.get().actionError.value)
+                val request =
+                    json(
+                        "media" to media.value,
+                        "stream" to JSONObject(),
+                        "audio" to false,
+                        "startup_token" to token,
                     )
-                    .toString()
-            )
-            compose.waitUntil(10000) {
-                vm.get().actionError.value == "Invalid playback request" &&
-                    vm.get().player.value.preparing == null &&
-                    !vm.get().playerOpen.value
+                // Exercise both preflight validation and an actual rejected FGS
+                // intent. The latter previously crashed the process on teardown.
+                if (directService) {
+                    MediaBridge.context.startForegroundService(
+                        android.content
+                            .Intent(MediaBridge.context, PlaybackService::class.java)
+                            .setAction("play")
+                            .putExtra("request", request.toString())
+                    )
+                } else {
+                    MediaBridge.execute(json("op" to "play", "request" to request).toString())
+                }
+                compose.waitUntil(10000) {
+                    vm.get().actionError.value == "Invalid playback request" &&
+                        vm.get().player.value.preparing == null &&
+                        !vm.get().playerOpen.value
+                }
+                if (directService) {
+                    MediaRuntimeTest.await("Rejected foreground service must finish safely") {
+                        PlaybackService.current == null
+                    }
+                }
+                Assert.assertEquals(-1L, StartupTimings.total(token))
+                compose.onNodeWithTag("preparing-video").assertDoesNotExist()
+                val settings = JSONObject(NativeBridge.request(json("op" to "settings").toString()))
+                Assert.assertTrue(
+                    "JNI must remain available after rejected start",
+                    settings.optBoolean("ok"),
+                )
             }
-            Assert.assertEquals(-1L, StartupTimings.total(token))
-            compose.onNodeWithTag("preparing-video").assertDoesNotExist()
         }
     }
 

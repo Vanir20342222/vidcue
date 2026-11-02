@@ -578,11 +578,13 @@ public final class PlaybackService extends MediaSessionService {
     }
     boolean startsPlayback = "play".equals(intent.getAction());
     if (startsPlayback) {
+      JSONObject request = null;
       try {
         // The external session must leave EMPTY before notification updates run.
         // Otherwise System UI can remove the preparation notification and send
         // a delayed Stop to the newly playing session.
-        play(new JSONObject(intent.getStringExtra("request")));
+        request = new JSONObject(intent.getStringExtra("request"));
+        play(request);
         sessionPlayer.metadataChanged();
         // Direct app playback has no controller bind to register the session.
         // Register only now, so its first notification update sees BUFFERING
@@ -590,11 +592,23 @@ public final class PlaybackService extends MediaSessionService {
         if (!getSessions().contains(session)) addSession(session);
       } catch (Exception e) {
         error = "Invalid playback request";
-        StartupTimings.ended(startupToken, "failed", SystemClock.elapsedRealtime());
-        MediaBridge.event("playback_start_failed", error, Long.toString(startupToken), 0);
+        long rejectedToken = request == null ? 0 : request.optLong("startup_token");
+        StartupTimings.ended(rejectedToken, "failed", SystemClock.elapsedRealtime());
+        MediaBridge.event("playback_start_failed", error, Long.toString(rejectedToken), 0);
         publish();
+        // stopSelf alone does not discharge startForegroundService's promise:
+        // Android can crash the process immediately when it tears this service
+        // down. Settle that obligation only on this exceptional path, then
+        // remove the notification. Successful playback stays owned by Media3.
+        startForeground(
+            NotificationIds.PLAYBACK,
+            new android.app.Notification.Builder(this, "ytui-playback")
+                .setSmallIcon(R.drawable.ic_ytui)
+                .setContentTitle("Playback could not start")
+                .setOnlyAlertOnce(true)
+                .build());
         stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        stopSelfResult(id);
         return START_NOT_STICKY;
       }
     }
@@ -605,7 +619,17 @@ public final class PlaybackService extends MediaSessionService {
     return super.onStartCommand(intent, flags, id);
   }
 
+  static void validateRequest(JSONObject request) throws JSONException {
+    JSONObject media = request.getJSONObject("media"), stream = request.getJSONObject("stream");
+    if (media.isNull("url")
+        || media.getString("url").trim().isEmpty()
+        || stream.isNull("url")
+        || stream.getString("url").trim().isEmpty())
+      throw new JSONException("Missing playback URL");
+  }
+
   void play(JSONObject request) throws JSONException {
+    validateRequest(request);
     // Resolution is finished: hand cached bytes to the foreground reader and
     // stop speculative prefix I/O competing with initial audio/video buffering.
     // Cancellation retains completed cache spans and Rust stream leases.
