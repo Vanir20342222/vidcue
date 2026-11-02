@@ -142,6 +142,32 @@ UI/UX, bug fixes and performance work.
 | Video overlay | A decision on the −5/+15 asymmetry | Owner decision (open question 3) |
 | Large text | PR #31's navigation measurement failure at 2× | Owned by the PR #31 revision series |
 
+## PR #31 integration decision
+
+PR #31 (`feat/android-ui-fidelity`, final `616072a`) was left unmerged so that
+this branch could choose which parts to keep. All of #31's history is merged
+into this branch, so its authorship and evidence are preserved. Decisions:
+
+| #31 change | Decision | Reason |
+| --- | --- | --- |
+| Quiet history/timer/feeds sheets, compact empty queue, queue overflow menu with real reorder/remove | **Keep** | Judged and native-tested. This branch builds its sheets on the same pattern |
+| Settings hierarchy (one Back, no repeated heading); Account without marketing hero | **Keep, extended** | This branch adds a single primary action and a signed-in state on top |
+| Browse moved into More | **Keep** | This branch additionally surfaces Subscriptions and Watch later as Home chips |
+| Measured 2× navigation (two rows, full words), fill-width aligned labels | **Keep** | Supersedes this branch's exact-width label variant, which is dropped |
+| Per-button native transport discs, keyline progress, contrast test | **Keep** | Fixes bright-video legibility without the shared-strip ellipse |
+| Shuffle/repeat selected state (two Media3 status booleans) | **Keep** | Real state feedback, and it is additive |
+| Search editing state hoisted to the header owner | **Keep** | Base for the focus fix |
+| Search exit via `clearFocus` (rev. 3) | **Discard** | It re-entered the search field and reopened the keyboard (both native failures) |
+| Search exit lands on the results grid (`616072a`) | **Keep, combined** | Paired with this branch's non-text focus sink (fallback and first target) and content-touch release |
+| Headerless video watch page, capped 16:9 height, 2:1 landscape split, title-area swipe handle, native collapse tag | **Keep** | Combined with this branch's action row, inline Up next and "Playing" label |
+| Watch action row with only queue, fullscreen and more | **Replace** | This branch's row adds sleep timer and save offline, with #31's narrow-width scroll |
+| "YouTube" tab label | **Discard** | The owner approved "Home" |
+| Evidence tooling: white fixture, all-theme matrix, motion recording, decoded-cover probes | **Keep** | #31's own fix to wait for the keyboard to close before tapping Rename is kept. This branch also moves #31's collapse-button size check to after the controls are laid out. Neither change relaxes an assertion |
+
+After this merge, PR #31 has nothing left that is not in this branch. It can be
+closed as superseded once this branch's PR is reviewed. Closing it and
+opening the PR are left to the owner.
+
 ## Decisions where the brief left room or was wrong
 
 - **Snackbars are not reintroduced.** `aaf12c5` removed confirmations on
