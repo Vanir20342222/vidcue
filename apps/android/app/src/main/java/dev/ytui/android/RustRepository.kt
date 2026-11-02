@@ -97,6 +97,9 @@ internal object RustRpc {
             StartupTimings.ended(timing, "cancelled", android.os.SystemClock.elapsedRealtime())
             NativeBridge.cancel(id)
             future.cancel(true)
+            // Cancelled queued requests must not consume admission capacity while
+            // older native calls finish; the latest tap still needs a slot.
+            pool.purge()
         }
     }
 
@@ -161,7 +164,12 @@ internal data class FeedState(
     val failedAppend: Boolean = false,
 )
 
-internal data class PlayerState(val value: JSONObject = JSONObject()) {
+internal data class PreparingVideo(val token: Long, val media: MediaCard, val restoreOpen: Boolean)
+
+internal data class PlayerState(
+    val value: JSONObject = JSONObject(),
+    val preparing: PreparingVideo? = null,
+) {
     val title: String
         get() = value.optString("title")
 
@@ -182,7 +190,7 @@ internal data class PlayerState(val value: JSONObject = JSONObject()) {
                 ?: 0f
 
     val video: Boolean
-        get() = value.optBoolean("video")
+        get() = preparing != null || value.optBoolean("video")
 
     val preview: Boolean
         get() = value.optBoolean("preview")
@@ -252,6 +260,8 @@ internal class YtuiViewModel : ViewModel() {
     private val history = Array(4) { ArrayDeque<FeedState>() }
     private val feedJobs = arrayOfNulls<Job>(4)
     private var playbackJob: Job? = null
+    private var latestPlaybackIntent = -1L
+    private var lastVideoPreparation: PreparingVideo? = null
     private var seekTarget: Pair<String, Float>? = null
     private var seekDeadline = 0L
     private var accountEpoch = 0L
@@ -323,7 +333,15 @@ internal class YtuiViewModel : ViewModel() {
                             seekTarget = null
                         else it.put("position", pending.second)
                     }
-                    player.value = PlayerState(it)
+                    val preparing = player.value.preparing
+                    val accepted =
+                        preparing != null &&
+                            it.optBoolean("video") &&
+                            it.optJSONObject("media")?.optString("url") == preparing.media.url &&
+                            it.optLong("startup_token") == preparing.token
+                    // Keep intent and actual mode in one state emission: accepting
+                    // the source must not briefly recreate the view in music mode.
+                    player.value = PlayerState(it, preparing.takeUnless { accepted })
                 }
                 value.optJSONArray("downloads")?.let { downloads.value = it.objects() }
                 value.optJSONArray("events")?.objects()?.forEach { event ->
@@ -332,6 +350,33 @@ internal class YtuiViewModel : ViewModel() {
                         "storage_updated" -> {
                             mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
                             OfflineStore.dirty = true
+                        }
+                        "playback_start_failed" -> {
+                            val preparing =
+                                lastVideoPreparation?.takeIf {
+                                    it.token == latestPlaybackIntent &&
+                                        it.token.toString() == event.optString("request_token")
+                                }
+                            if (preparing != null) {
+                                player.update { current ->
+                                    if (current.preparing?.token == preparing.token)
+                                        current.copy(preparing = null)
+                                    else current
+                                }
+                                if (playerOpen.value) playerOpen.value = preparing.restoreOpen
+                                status.value = text
+                                actionError.value = text
+                                lastVideoPreparation = null
+                            } else if (
+                                latestPlaybackIntent >= 0 &&
+                                    latestPlaybackIntent.toString() ==
+                                        event.optString("request_token")
+                            ) {
+                                // Audio and previews have no preparing-video panel,
+                                // but their current start failures must remain visible.
+                                status.value = text
+                                actionError.value = text
+                            }
                         }
                         "show_player" -> playerOpen.value = true
                         "shared" -> sharedQuery.value = text
@@ -615,6 +660,19 @@ internal class YtuiViewModel : ViewModel() {
         }
     }
 
+    /** UI preparation only: no source, queue/history acceptance or timing completion. */
+    internal fun prepareVideoSurface(
+        media: MediaCard,
+        timing: Long,
+        restoreOpen: Boolean = playerOpen.value && (player.value.preparing?.restoreOpen ?: true),
+    ) {
+        val preparation = PreparingVideo(timing, media, restoreOpen)
+        latestPlaybackIntent = timing
+        lastVideoPreparation = preparation
+        player.update { it.copy(preparing = preparation) }
+        playerOpen.value = true
+    }
+
     fun play(
         media: MediaCard,
         preview: Boolean = false,
@@ -647,72 +705,125 @@ internal class YtuiViewModel : ViewModel() {
             if (!download && !preview)
                 StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), !audio)
             else 0L
+        if (!download) {
+            latestPlaybackIntent = timing
+            if (audio || preview) lastVideoPreparation = null
+        }
         if (timing != 0L) StartupTimings.playerCache(timing, PlaybackService.warmReady())
         if (timing != 0L)
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context = if (!preview && !download && !queued) context(media) else null
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
+        val prepareSurface = !download && !preview && !audio
+        val restoreOpen = playerOpen.value && (player.value.preparing?.restoreOpen ?: true)
         if (!download) playbackJob?.cancel()
         if (!download) PlaybackCache.pauseBytes()
+        if (prepareSurface) prepareVideoSurface(media, timing, restoreOpen)
         val job = task {
-            actionError.value = null
-            status.value = if (download) "Preparing download…" else "Resolving playback…"
-            val offlineAt = android.os.SystemClock.elapsedRealtime()
-            val local =
-                if (!download && !preview && mobile.value.optBoolean("prefer_offline", true))
-                    withContext(Dispatchers.IO) { OfflineStore.find(media.value, audio, quality) }
-                else null
-            StartupTimings.stage(
-                timing,
-                "offline",
-                android.os.SystemClock.elapsedRealtime() - offlineAt,
-            )
-            val stream =
-                local?.optJSONObject("stream")
-                    ?: RustRpc.objectCall(
-                        "resolve",
-                        "startup_token" to timing,
-                        "media" to media.value,
-                        "audio" to audio,
-                        "quality" to quality,
+            var handedOff = false
+            try {
+                actionError.value = null
+                status.value = if (download) "Preparing download…" else "Resolving playback…"
+                val offlineAt = android.os.SystemClock.elapsedRealtime()
+                val local =
+                    if (!download && !preview && mobile.value.optBoolean("prefer_offline", true))
+                        withContext(Dispatchers.IO) {
+                            OfflineStore.find(media.value, audio, quality)
+                        }
+                    else null
+                StartupTimings.stage(
+                    timing,
+                    "offline",
+                    android.os.SystemClock.elapsedRealtime() - offlineAt,
+                )
+                val stream =
+                    local?.optJSONObject("stream")
+                        ?: RustRpc.objectCall(
+                            "resolve",
+                            "startup_token" to timing,
+                            "media" to media.value,
+                            "audio" to audio,
+                            "quality" to quality,
+                        )
+                if (epoch != accountEpoch || network != NetworkSettings.revision.get()) {
+                    StartupTimings.ended(
+                        timing,
+                        "cancelled",
+                        android.os.SystemClock.elapsedRealtime(),
                     )
-            if (epoch != accountEpoch || network != NetworkSettings.revision.get()) return@task
-            StartupTimings.resolved(
-                timing,
-                android.os.SystemClock.elapsedRealtime(),
-                local != null || stream.optBoolean("resolution_cache_hit"),
-            )
-            if (local == null) MediaBridge.recordResolutionTimings(timing, stream)
-            StartupTimings.route(
-                timing,
-                if (local != null) "offline"
-                else stream.optString("resolution_route", "direct-media"),
-            )
-            val item = media.value.copyJson()
-            PlaybackService.mergeMetadata(item, stream)
-            val request =
-                (local ?: JSONObject())
-                    .apply { put("media", item) }
-                    .apply {
-                        put("stream", stream)
-                        put("startup_token", timing)
-                        put("audio", audio)
-                        put("quality", quality)
-                        put("preview", preview)
-                        put("resume", resume)
-                        put("queued", queued)
-                        put("context_id", context?.optString("context_id"))
-                        put("context", context)
+                    return@task
+                }
+                StartupTimings.resolved(
+                    timing,
+                    android.os.SystemClock.elapsedRealtime(),
+                    local != null || stream.optBoolean("resolution_cache_hit"),
+                )
+                if (local == null) MediaBridge.recordResolutionTimings(timing, stream)
+                StartupTimings.route(
+                    timing,
+                    if (local != null) "offline"
+                    else stream.optString("resolution_route", "direct-media"),
+                )
+                val item = media.value.copyJson()
+                PlaybackService.mergeMetadata(item, stream)
+                val request =
+                    (local ?: JSONObject())
+                        .apply { put("media", item) }
+                        .apply {
+                            put("stream", stream)
+                            put("startup_token", timing)
+                            put("audio", audio)
+                            put("quality", quality)
+                            put("preview", preview)
+                            put("resume", resume)
+                            put("queued", queued)
+                            put("context_id", context?.optString("context_id"))
+                            put("context", context)
+                        }
+                /* request retains the cache-only source marker when saved offline. */
+                effect(if (download) "download" else "play", "request" to request)
+                if (prepareSurface) {
+                    val accepted =
+                        withTimeoutOrNull(5000) {
+                            while (
+                                PlaybackService.current?.startupToken != timing &&
+                                    player.value.preparing?.token == timing
+                            ) delay(16)
+                            PlaybackService.current?.startupToken == timing ||
+                                player.value.value.optLong("startup_token") == timing
+                        } == true
+                    if (!accepted)
+                        throw RpcError(
+                            "playback_start",
+                            actionError.value ?: "Player could not start. Try again.",
+                        )
+                }
+                handedOff = true
+                if (
+                    !download &&
+                        !prepareSurface &&
+                        (!audio ||
+                            config.value.optString("music_player_style").endsWith("-fullscreen"))
+                )
+                    playerOpen.value = true
+                status.value = if (download) "Download queued" else "Starting playback"
+            } finally {
+                if (!handedOff && prepareSurface) {
+                    StartupTimings.ended(
+                        timing,
+                        if (isActive) "failed" else "cancelled",
+                        android.os.SystemClock.elapsedRealtime(),
+                    )
+                    val own = player.value.preparing?.takeIf { it.token == timing }
+                    if (own != null) {
+                        player.update {
+                            if (it.preparing?.token == timing) it.copy(preparing = null) else it
+                        }
+                        if (playerOpen.value) playerOpen.value = own.restoreOpen
                     }
-            /* request retains the cache-only source marker when saved offline. */
-            effect(if (download) "download" else "play", "request" to request)
-            if (
-                !download &&
-                    (!audio || config.value.optString("music_player_style").endsWith("-fullscreen"))
-            )
-                playerOpen.value = true
-            status.value = if (download) "Download queued" else "Starting playback"
+                }
+            }
         }
         if (!download) playbackJob = job
     }
@@ -886,6 +997,8 @@ internal class YtuiViewModel : ViewModel() {
     private fun invalidateAccount() {
         PlaybackCache.cancel()
         accountEpoch++
+        latestPlaybackIntent = -1L
+        lastVideoPreparation = null
         playbackJob?.cancel()
         for (index in 1..2) {
             feedJobs[index]?.cancel()

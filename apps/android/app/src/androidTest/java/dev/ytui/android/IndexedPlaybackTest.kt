@@ -268,6 +268,8 @@ class IndexedPlaybackTest {
                         PlaybackService.current == null
                     }
                     val observer = VisibleVideoProbe.observe(scene)
+                    val model = java.util.concurrent.atomic.AtomicReference<YtuiViewModel>()
+                    scene.onActivity { model.set(ViewModelProvider(it)[YtuiViewModel::class.java]) }
                     val media =
                         json(
                             "url" to cdn.url(0),
@@ -309,7 +311,13 @@ class IndexedPlaybackTest {
                             "quality" to "best",
                             "startup_token" to token,
                         )
-                    MediaBridge.execute(json("op" to "play", "request" to request).toString())
+                    // The already resolved source still uses the same early-surface
+                    // action as card playback. Both UI preparation and dispatch remain
+                    // inside the original handoff timer; there is no idle wait here.
+                    MediaBridge.main.post {
+                        model.get().prepareVideoSurface(MediaCard(media), token)
+                        MediaBridge.execute(json("op" to "play", "request" to request).toString())
+                    }
                     var frame: VisibleVideoProbe.Result
                     do {
                         compose.mainClock.advanceTimeByFrame()

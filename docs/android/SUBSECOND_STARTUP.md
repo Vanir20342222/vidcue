@@ -227,3 +227,69 @@ lifecycle behavior and a Compose SDK34 synchronization workaround. No surface
 switch is included here. Such a candidate would also require compositor-level
 pixel verification because Window PixelCopy alone does not include a separate
 SurfaceView layer, plus fullscreen/controls/gesture regression qualification.
+
+
+## Revision 5: observer correction did not qualify the deadline
+
+Source `7af124c`, merge `ea1791f`, Android run `41491374334` retains another
+strict failure: prepared indexed usable677/window1006 ms, one readback request
+with 328 ms observer time. Cold progressive usable924/window1003 ms also failed.
+These are valid misses, not passes based on the earlier frame callback. Full
+failure pixels show decoded video after the deadline. Artifact `13163869920`
+retains the evidence. Physical YouTube under one second remains open.
+
+## Early video-surface preparation (new candidate)
+
+Video selection now publishes a scoped preparing intent and opens/binds its
+real native surface while Rust resolves, overlapping layout/control/surface
+creation with extraction. Intent and accepted native state share one PlayerState
+emission, so handoff does not briefly recreate a video view in the music branch.
+An old/empty native snapshot cannot erase the preparing selection. A black loading
+overlay blocks old controls until the matching native source/token is accepted.
+Covered native views cannot complete visible-frame timings; revealing an already
+rendered current source schedules the normal view-frame guard. No placeholder or
+old frame can satisfy a new timing token.
+
+Cancellation/failure cleanup is token-scoped, preserves a newer selection and
+restores the prior panel state without reopening a minimized panel. A bounded
+five-second service-handoff wait reports an actual start failure rather than
+leaving preparation stuck if the OS refuses the service. Audio, preview and
+download paths keep their existing presentation. A new native functional case
+blocks actual foreground resolution, checks prebinding/no frame acceptance,
+minimizes/reselects and verifies view identity survives real playback handoff.
+A separate case checks invalid resolution restores browsing. These deliberately
+blocked cases are not latency qualification.
+
+The prepared indexed gate now dispatches the same early-surface UI action before
+its already-resolved stream. All preparation/dispatch still happens after the
+original handoff timer begins, without ActivityScenario idle waits in that
+interval. Actual Window RGB pixels and active playback must still complete
+before 1000 ms. New native and physical qualification is required; no speed
+claim follows from local compilation.
+
+Cancelled Kotlin RPC futures are purged immediately from their bounded executor
+queue. A cancelled queued selection must not exhaust admission capacity while
+older native calls finish. The new preparation test makes twelve rapid selections
+with both real foreground workers held, then requires the latest actual card
+selection to resolve/play after release; no rejected stale queue entries may
+erase that selection.
+
+The accepted-source snapshot includes its startup token, so UI handoff does not
+rely on a service still being alive when an already-captured snapshot is applied.
+An explicit token-scoped start-failure event survives immediate service teardown;
+only the matching preparing intent is cleared/restored. A native negative case
+rejects a missing stream URL without network/decode and verifies error delivery
+and UI cleanup. Newer selections ignore an old request's failure.
+
+The latest playback intent is retained independently of a preparing panel that
+may already have been cleared by an accepted snapshot. That preserves scoped
+failure delivery during immediate service teardown, ignores old failure events
+after a newer selection, and keeps current audio/preview start errors visible.
+Account changes invalidate that intent. Foreground-service start rejection in
+the platform bridge uses the same token-scoped failure path.
+
+The underlying browse layer is transparent while an opaque full-screen video
+panel covers it, retaining composition/scroll/artwork state while skipping
+covered drawing. The full player remains a separate sibling layer. Music
+transition behavior is unchanged; native/fullscreen/window-pixel regression
+qualification must confirm the layer boundary.

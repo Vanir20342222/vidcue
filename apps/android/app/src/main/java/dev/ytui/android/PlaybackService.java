@@ -590,6 +590,8 @@ public final class PlaybackService extends MediaSessionService {
         if (!getSessions().contains(session)) addSession(session);
       } catch (Exception e) {
         error = "Invalid playback request";
+        StartupTimings.ended(startupToken, "failed", SystemClock.elapsedRealtime());
+        MediaBridge.event("playback_start_failed", error, Long.toString(startupToken), 0);
         publish();
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
@@ -1650,6 +1652,7 @@ public final class PlaybackService extends MediaSessionService {
                   isLive() && !streamTitle.isEmpty() && media != null
                       ? media.optString("title")
                       : "")
+              .put("startup_token", startupToken)
               .put("playing", player.isPlaying())
               .put("playback_state", player.getPlaybackState())
               .put("play_when_ready", player.getPlayWhenReady())

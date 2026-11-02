@@ -35,7 +35,7 @@ final class VisibleVideoProbe {
     }
   }
 
-  private static PlayerView find(View root) {
+  static PlayerView find(View root) {
     if (root instanceof PlayerView) return (PlayerView) root;
     if (root instanceof ViewGroup) {
       ViewGroup group = (ViewGroup) root;

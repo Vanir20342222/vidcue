@@ -177,11 +177,22 @@ public final class MediaBridge {
                 break;
               case "play":
                 {
+                  JSONObject playRequest = request.getJSONObject("request");
                   Intent intent =
                       new Intent(context, PlaybackService.class)
                           .setAction("play")
-                          .putExtra("request", request.getJSONObject("request").toString());
-                  context.startForegroundService(intent);
+                          .putExtra("request", playRequest.toString());
+                  try {
+                    context.startForegroundService(intent);
+                  } catch (RuntimeException unavailable) {
+                    long timing = playRequest.optLong("startup_token");
+                    StartupTimings.ended(timing, "failed", SystemClock.elapsedRealtime());
+                    event(
+                        "playback_start_failed",
+                        "Playback could not start. Try again.",
+                        Long.toString(timing),
+                        0);
+                  }
                   break;
                 }
               case "download_playlist":

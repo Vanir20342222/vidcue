@@ -25,11 +25,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
 import androidx.media3.ui.PlayerView
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
-internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit)? = null) {
+internal fun VideoSurface(
+    modifier: Modifier = Modifier,
+    onCollapse: (() -> Unit)? = null,
+    playbackPlayer: Player? = PlaybackService.current?.controlsPlayer,
+    covered: Boolean = false,
+) {
     val collapse by rememberUpdatedState(onCollapse)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
@@ -67,7 +73,8 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
                     if (collapse == null) android.view.View.GONE else android.view.View.VISIBLE
                 setOnClickListener { collapse?.invoke() }
             }
-            val actual = PlaybackService.current?.controlsPlayer
+            val actual = playbackPlayer
+            (view.tag as VisibleFrameTracker).setPresentable(!covered)
             (view.tag as VisibleFrameTracker).bind(actual)
             view.keepScreenOn = actual?.playWhenReady == true
         },
@@ -110,6 +117,25 @@ internal fun FocusedPlayer(
         val landscape = maxWidth > maxHeight * 1.25f
         @Composable
         fun Controls(modifier: Modifier) {
+            val preparing = player.preparing
+            if (preparing != null) {
+                Column(modifier.padding(horizontal = MediaTokens.textInset)) {
+                    Text(
+                        preparing.media.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (preparing.media.creator.isNotBlank())
+                        Text(
+                            preparing.media.creator,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
+                return
+            }
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
@@ -199,13 +225,37 @@ internal fun FocusedPlayer(
                 modifier.then(if (player.video) Modifier else dismiss),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                if (player.video && allowVideoSurface)
-                    VideoSurface(
+                if (player.video && allowVideoSurface) {
+                    Box(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
-                            .aspectRatio(16f / 9f),
-                        onCollapse = minimize,
-                    )
-                else if (player.video) {
+                            .aspectRatio(16f / 9f)
+                    ) {
+                        VideoSurface(
+                            Modifier.fillMaxSize(),
+                            onCollapse = minimize,
+                            playbackPlayer = PlaybackService.current?.controlsPlayer,
+                            covered = player.preparing != null,
+                        )
+                        player.preparing?.let { preparing ->
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .background(Color.Black)
+                                    .testTag("preparing-video")
+                                    .semantics { contentDescription = "Preparing video" }
+                                    .pointerInput(preparing.token) {
+                                        awaitPointerEventScope {
+                                            while (true) awaitPointerEvent().changes.forEach {
+                                                it.consume()
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator()
+                            }
+                        }
+                    }
+                } else if (player.video) {
                     // The root's distinct mode flow can lag the player snapshot
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))

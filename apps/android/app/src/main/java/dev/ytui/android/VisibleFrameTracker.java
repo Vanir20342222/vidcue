@@ -9,6 +9,14 @@ import androidx.media3.ui.PlayerView;
 final class VisibleFrameTracker implements Player.Listener {
   private final PlayerView view;
   private Player player;
+  private boolean presentable = true;
+
+  void setPresentable(boolean next) {
+    boolean changed = presentable != next;
+    presentable = next;
+    PlaybackService service = PlaybackService.current;
+    if (changed && next && service != null && service.firstFrameMs > 0) onRenderedFirstFrame();
+  }
 
   VisibleFrameTracker(PlayerView view) {
     this.view = view;
@@ -25,7 +33,7 @@ final class VisibleFrameTracker implements Player.Listener {
   @Override
   public void onRenderedFirstFrame() {
     PlaybackService service = PlaybackService.current;
-    if (service == null) return;
+    if (service == null || !presentable) return;
     final long generation = service.generation, timing = service.startupToken;
     // A codec's surface-release event precedes TextureView drawing. Allow a
     // complete UI frame before recording view output, without blocking the UI.
@@ -36,6 +44,7 @@ final class VisibleFrameTracker implements Player.Listener {
                   if (PlaybackService.current == service
                       && service.generation == generation
                       && service.startupToken == timing
+                      && presentable
                       && player == service.controlsPlayer
                       && view.getPlayer() == player
                       && view.isShown()
