@@ -29,6 +29,26 @@ Checks actually run on 2026-11-02 (`apps/android`, debug variant):
 - `:app:compileDebugAndroidTestKotlin`: passed. This compiles `OnboardingUiTest`
   but does not run it.
 
+Follow-up from code review and Robolectric/Roborazzi renders (phone and tablet,
+throwaway rig outside the repository; renders are visual previews, not device
+acceptance):
+
+- Onboarding no longer composes the app beneath it, so keyboard/D-pad focus,
+  TalkBack and a notification-opened player cannot reach hidden content.
+- Theme and Reduce-motion controls stay disabled until the user's settings have
+  loaded, and remain disabled if loading failed. `save_settings` replaces the whole
+  document, so an early tap could otherwise reset existing settings.
+- The sign-in web stage reloads if nothing was restored after rotation or process
+  death. Reduced motion is read from settings when the sign-in activity is recreated
+  alone. Size changes snap under reduced motion. The pulse no longer recomposes every
+  frame. Stale sign-in messages clear on Continue and when a session is detected.
+- Replaying setup from Settings keeps the saved completion flag. The onboarding
+  Account step offers cookie-file import and shows sign-in errors. Pages have
+  headings, the overlay has a pane title and step changes are announced.
+- Checks re-run: `compileDebugKotlin`, `compileDebugJavaWithJavac`, full
+  `testDebugUnitTest` (including `ThemeLabelTest`) and `compileDebugAndroidTestKotlin`
+  all pass.
+
 Not run and not claimed: no emulator or instrumentation run (including
 `OnboardingUiTest` and the existing `NativeUiTest`), no physical Galaxy Tab S9 run,
 no TalkBack check, and no live Google sign-in. The JVM result is logic-only and does

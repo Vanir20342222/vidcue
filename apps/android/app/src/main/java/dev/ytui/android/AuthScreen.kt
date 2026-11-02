@@ -4,7 +4,6 @@ import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
@@ -72,6 +71,17 @@ internal object AuthUi {
     internal val sessionFound = MutableStateFlow(false)
     /** Mirrors the app's reduced-motion setting; the activity has no view model. */
     @Volatile internal var reducedMotion = false
+        private set
+    @Volatile private var motionKnown = false
+
+    @JvmStatic
+    fun motion(reduced: Boolean) {
+        reducedMotion = reduced
+        motionKnown = true
+    }
+
+    /** False after process death restores the sign-in activity without the app UI. */
+    @JvmStatic fun motionKnown(): Boolean = motionKnown
 
     const val HELP_URL = "https://github.com/Vanir20342222/ytui/tree/main/docs/android"
     const val PRIVACY_URL = "https://policies.google.com/privacy"
@@ -157,7 +167,7 @@ internal fun AuthScreen(activity: AuthActivity, webView: android.webkit.WebView,
             AnimatedContent(
                 targetState = showWeb,
                 transitionSpec = {
-                    if (reduced) ContentTransform(EnterTransition.None, ExitTransition.None)
+                    if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
                     else if (targetState)
                         (fadeIn(tween(220, 80)) +
                             slideInVertically(tween(320, easing = FastOutSlowInEasing)) {
@@ -528,7 +538,7 @@ private fun AuthReturnStrip(
                     text,
                     Modifier.weight(1f),
                     transitionSpec = {
-                        if (reduced) ContentTransform(EnterTransition.None, ExitTransition.None)
+                        if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
                         else fadeIn(tween(200)) togetherWith fadeOut(tween(120))
                     },
                     label = "sign-in-return-text",
@@ -545,22 +555,21 @@ private fun AuthReturnStrip(
                     enter = if (reduced) EnterTransition.None else fadeIn(tween(200)) + scaleIn(tween(240), 0.9f),
                     exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
                 ) {
+                    // Read inside the layer block: the pulse redraws without recomposing.
                     val pulse =
-                        if (found && !busy && !reduced) {
-                            val transition = rememberInfiniteTransition(label = "sign-in-pulse")
-                            transition
-                                .animateFloat(
-                                    1f,
-                                    1.05f,
-                                    infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                                    label = "sign-in-pulse-scale",
-                                )
-                                .value
-                        } else 1f
+                        if (found && !busy && !reduced)
+                            rememberInfiniteTransition(label = "sign-in-pulse").animateFloat(
+                                1f,
+                                1.05f,
+                                infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                                label = "sign-in-pulse-scale",
+                            )
+                        else null
                     Box(
                         Modifier.graphicsLayer {
-                                scaleX = pulse
-                                scaleY = pulse
+                                val scale = pulse?.value ?: 1f
+                                scaleX = scale
+                                scaleY = scale
                             }
                             .semantics {
                                 stateDescription = if (found) "Signed-in session detected" else "Waiting for sign-in"

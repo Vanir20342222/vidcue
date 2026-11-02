@@ -27,6 +27,7 @@ public final class AuthActivity extends ComponentActivity {
       AuthUi.reset(false);
       NativeBridge.beginAccountChange();
     } else AuthUi.showWeb(state.getBoolean("auth-web"));
+    if (!AuthUi.motionKnown()) restoreMotionSetting();
     web = new WebView(this);
     web.getSettings().setJavaScriptEnabled(true);
     web.getSettings().setDomStorageEnabled(true);
@@ -51,9 +52,11 @@ public final class AuthActivity extends ComponentActivity {
           public void onPageFinished(WebView view, String url) {
             AuthUi.page(url);
             // Only cookie names are checked; the user still confirms explicitly.
-            AuthUi.sessionFound(
+            boolean found =
                 AuthUi.looksSignedIn(
-                    CookieManager.getInstance().getCookie("https://www.youtube.com")));
+                    CookieManager.getInstance().getCookie("https://www.youtube.com"));
+            if (found && !ComposeHost.authBusy()) ComposeHost.authMessage("");
+            AuthUi.sessionFound(found);
           }
         });
     web.setWebChromeClient(
@@ -65,18 +68,36 @@ public final class AuthActivity extends ComponentActivity {
         });
     ComposeHost.attachAuth(this, web);
     if (state != null) loaded = web.restoreState(state) != null;
+    // Nothing committed before rotation, or the WebView package changed across process
+    // death: the web stage would otherwise stay blank.
+    if (state != null && AuthUi.showingWeb() && !loaded) load();
+  }
+
+  private void load() {
+    loaded = true;
+    if (BuildConfig.DEBUG && getIntent().getBooleanExtra("ytui.offline-auth", false))
+      web.loadData(
+          "<p>Offline sign-in UI fixture. No account is contacted.</p>", "text/html", "UTF-8");
+    else web.loadUrl("https://www.youtube.com/feed/you");
+  }
+
+  /** Only when the process was recreated straight into sign-in; the app sets it otherwise. */
+  private void restoreMotionSetting() {
+    try {
+      org.json.JSONObject data =
+          new org.json.JSONObject(NativeBridge.request("{\"op\":\"settings\"}"))
+              .optJSONObject("data");
+      AuthUi.motion(data != null && data.optBoolean("reduced_motion"));
+    } catch (Exception ignored) {
+      // Keep the default; motion preference is cosmetic.
+    }
   }
 
   /** Leaves the native account card for the provider's own sign-in page. */
   void beginWeb() {
     if (ComposeHost.authBusy()) return;
-    if (!loaded) {
-      loaded = true;
-      if (BuildConfig.DEBUG && getIntent().getBooleanExtra("ytui.offline-auth", false))
-        web.loadData(
-            "<p>Offline sign-in UI fixture. No account is contacted.</p>", "text/html", "UTF-8");
-      else web.loadUrl("https://www.youtube.com/feed/you");
-    }
+    ComposeHost.authMessage("");
+    if (!loaded) load();
     AuthUi.showWeb(true);
   }
 

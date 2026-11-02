@@ -84,7 +84,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -192,6 +196,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) 
             Modifier.fillMaxSize()
                 .background(background)
                 .safeDrawingPadding()
+                .semantics { paneTitle = "Setup" }
                 .testTag("onboarding")
                 .pointerInput(step, gestures, rtl) {
                     if (!gestures) return@pointerInput
@@ -213,7 +218,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) 
                 targetState = step,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 transitionSpec = {
-                    if (reduced) EnterTransition.None togetherWith ExitTransition.None
+                    if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
                     else {
                         val forward = OnboardingSteps.isForward(initialState, targetState)
                         val sign = if (forward) 1 else -1
@@ -285,6 +290,7 @@ private fun StepDots(step: Int) {
         Modifier.semantics(mergeDescendants = true) {
                 contentDescription = "Setup progress"
                 stateDescription = OnboardingSteps.stateDescription(step)
+                liveRegion = LiveRegionMode.Polite
             }
             .testTag("onboarding-steps"),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -411,6 +417,7 @@ private fun PageTitle(title: String, body: String, center: Boolean = false, firs
         Staggered(firstIndex) {
             Text(
                 title,
+                Modifier.semantics { heading() },
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 textAlign = align,
@@ -448,6 +455,7 @@ private fun SettingSwitchRow(
     subtitle: String,
     checked: Boolean,
     tag: String,
+    enabled: Boolean = true,
     onChange: (Boolean) -> Unit,
 ) {
     Row(
@@ -455,7 +463,7 @@ private fun SettingSwitchRow(
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .toggleable(checked, role = Role.Switch, onValueChange = onChange)
+            .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag(tag),
         verticalAlignment = Alignment.CenterVertically,
@@ -470,7 +478,7 @@ private fun SettingSwitchRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Switch(checked, null)
+        Switch(checked, null, enabled = enabled)
     }
 }
 
@@ -590,11 +598,23 @@ private fun PulseRings(color: Color, reduced: Boolean) {
 private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     val config by vm.config.collectAsState()
     val themes by vm.themes.collectAsState()
+    val ready by vm.ready.collectAsState()
+    // Saving writes the whole settings document. Until the user's own settings have
+    // loaded (or if loading failed), editing here could replace them with defaults.
+    val editable = ready && config.length() > 0
     val selected = config.optString("theme", "system")
     val choices = listOf("system") + themes.filter { it != "system" }
     PageColumn {
         PageBadge(Glyph.Palette)
         PageTitle("Look & feel", "Pick a colour theme. It applies right away and you can change it any time in Settings.")
+        if (!editable)
+            Text(
+                if (ready) "Your settings could not be loaded, so they are left unchanged. Choose a theme later in Settings."
+                else "Loading your settings…",
+                Modifier.testTag("onboarding-settings-pending"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         Staggered(3, Modifier.fillMaxWidth()) {
             FlowRow(
                 Modifier.fillMaxWidth().selectableGroup(),
@@ -602,7 +622,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (name in choices)
-                    ThemeChip(name, name == selected) {
+                    ThemeChip(name, name == selected, editable) {
                         vm.updateConfig(dark) { it.put("theme", name) }
                     }
             }
@@ -614,6 +634,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 "Fewer animations and still visualizers",
                 config.optBoolean("reduced_motion"),
                 "onboarding-reduce-motion",
+                enabled = editable,
             ) { value ->
                 vm.updateConfig(dark) { it.put("reduced_motion", value) }
             }
@@ -622,7 +643,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
 }
 
 @Composable
-private fun ThemeChip(name: String, selected: Boolean, onClick: () -> Unit) {
+private fun ThemeChip(name: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val reduced = LocalReducedMotion.current
     val colors = MaterialTheme.colorScheme
     val container by colorTween(if (selected) colors.onBackground else colors.surfaceContainerHigh, reduced)
@@ -633,7 +654,7 @@ private fun ThemeChip(name: String, selected: Boolean, onClick: () -> Unit) {
             .clip(MediaTokens.pill)
             .background(container)
             .border(BorderStroke(1.dp, outline), MediaTokens.pill)
-            .selectable(selected, role = Role.RadioButton, onClick = onClick)
+            .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 18.dp)
             .testTag("onboarding-theme-$name"),
         verticalAlignment = Alignment.CenterVertically,
@@ -715,7 +736,7 @@ private fun AccountPage(vm: YtuiViewModel) {
             AnimatedContent(
                 connected,
                 transitionSpec = {
-                    if (reduced) EnterTransition.None togetherWith ExitTransition.None
+                    if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
                     else fadeIn(tween(220)) togetherWith fadeOut(tween(120))
                 },
                 label = "account-state",
@@ -743,11 +764,31 @@ private fun AccountPage(vm: YtuiViewModel) {
                         }
                     }
                 } else {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                        Action("Sign in to YouTube", "onboarding-sign-in") { vm.effect("login") }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Action("Sign in to YouTube", "onboarding-sign-in") {
+                            vm.actionError.value = null
+                            vm.effect("login")
+                        }
+                        // The sign-in card's "import instead" link returns here, so offer it.
+                        QuietAction("Import a cookie file", Modifier.testTag("onboarding-import")) {
+                            vm.actionError.value = null
+                            vm.effect("pick", "kind" to "cookies")
+                        }
                     }
                 }
             }
+        }
+        // Errors (e.g. sign-in unavailable behind an explicit proxy) would otherwise be
+        // reported only by the app hidden beneath setup.
+        val error by vm.actionError.collectAsState()
+        error?.let {
+            Text(
+                it,
+                Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                    .testTag("onboarding-error"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

@@ -273,7 +273,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         )
     SideEffect {
         ComposeHost.colorScheme = colors
-        AuthUi.reducedMotion = config.optBoolean("reduced_motion")
+        AuthUi.motion(config.optBoolean("reduced_motion"))
     }
     LaunchedEffect(Unit) { vm.initialize(dark) }
     LaunchedEffect(dark) { vm.systemTheme(dark) }
@@ -327,13 +327,13 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             LocalReducedMotion provides config.optBoolean("reduced_motion"),
         ) {
             Box(Modifier.fillMaxSize()) {
-                BoxWithConstraints(
+                // While setup is shown the app beneath is not composed at all, so neither
+                // touch, keyboard focus, TalkBack nor a notification-opened player can reach
+                // it. Feeds and settings keep loading in the view model.
+                if (!onboarding) BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .background(background)
-                        .then(
-                            if (playerOpen || onboarding) Modifier.clearAndSetSemantics {}
-                            else Modifier
-                        )
+                        .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
                         .safeDrawingPadding()
@@ -513,7 +513,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     }
                 }
-                if (!fullscreen) {
+                if (!fullscreen && !onboarding) {
                     @Composable
                     fun PlaybackPanel(allowVideoSurface: Boolean) {
                         Panel(
@@ -562,7 +562,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     }
                 }
-                when (dialog) {
+                if (!onboarding) when (dialog) {
                     "player-options" ->
                         Panel("Playback options", { dialog = "" }) {
                             PlayerPane(
@@ -583,8 +583,9 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             dark,
                             onAccount = { dialog = "account" },
                             onSetup = {
+                                // Replay keeps the saved completion, so a process death
+                                // mid-replay does not turn it into a first run again.
                                 dialog = ""
-                                OnboardingStore.reset(activity)
                                 onboarding = true
                             },
                         ) {
@@ -652,19 +653,9 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         if (reducedMotion) ExitTransition.None
                         else fadeOut(tween(280)) + scaleOut(tween(320), targetScale = 1.04f),
                 ) {
-                    // Opaque and touch-absorbing: nothing underneath reacts during setup.
-                    Box(
-                        Modifier.fillMaxSize()
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    awaitFirstDown(requireUnconsumed = false)
-                                }
-                            }
-                    ) {
-                        Onboarding(vm, dark) {
-                            OnboardingStore.complete(activity)
-                            onboarding = false
-                        }
+                    Onboarding(vm, dark) {
+                        OnboardingStore.complete(activity)
+                        onboarding = false
                     }
                 }
             }
