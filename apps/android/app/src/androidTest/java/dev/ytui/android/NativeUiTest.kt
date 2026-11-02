@@ -3,6 +3,7 @@ package dev.ytui.android
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.text.TextLayoutResult
@@ -80,9 +81,13 @@ class NativeUiTest {
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input")
         compose.onNodeWithTag("search-field").performTextInput(" Grüße")
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input Grüße")
+        compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
         captureSettled("native-search.png")
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithTag("search-field").assertIsDisplayed()
+        compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Leave search").performClick()
+        awaitBrowsingHeader("keyboard-exit")
         compose.onNodeWithTag("settings-button").performClick()
         compose.onNodeWithTag("settings-Network").performClick()
         compose
@@ -198,8 +203,12 @@ class NativeUiTest {
                 .getJSONObject("data")
                 .optBoolean("connected"),
         )
+        compose.onNodeWithTag("menu-button").performClick()
         compose.onNodeWithTag("feeds-button").performClick()
-        compose.onNodeWithText("Subscriptions").performClick()
+        // Home also offers a Subscriptions chip; choose the Browse sheet's row.
+        compose
+            .onNode(hasText("Subscriptions") and hasAnyAncestor(hasTestTag("panel-body")))
+            .performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("feed-account-action").fetchSemanticsNodes().isNotEmpty()
         }
@@ -382,6 +391,89 @@ class NativeUiTest {
         } finally {
             device.setOrientationNatural()
             device.unfreezeRotation()
+        }
+    }
+
+    @Test
+    fun focusedSearchBackRestoresHeaderWithoutLeavingTheActivity() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        val previous =
+            device.executeShellCommand("settings get secure show_ime_with_hard_keyboard").trim()
+        try {
+            // On hardware-keyboard emulators, focus must also work without a soft IME.
+            device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 0")
+            compose.onNodeWithTag("search-field").performClick().performTextInput("retained query")
+            compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+            captureSettled("restyle-fidelity-focused-search.png")
+            val keyboardShowing = AtomicBoolean()
+            // A fresh emulator can show the IME a moment after focus despite the
+            // hardware-keyboard setting; let it settle so Back is counted right.
+            runCatching {
+                compose.waitUntil(3_000) {
+                    scenario.onActivity {
+                        keyboardShowing.set(
+                            ViewCompat.getRootWindowInsets(it.window.decorView)
+                                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                        )
+                    }
+                    keyboardShowing.get()
+                }
+            }
+            device.pressBack()
+            if (keyboardShowing.get()) {
+                compose.waitUntil(10_000) {
+                    scenario.onActivity {
+                        keyboardShowing.set(
+                            ViewCompat.getRootWindowInsets(it.window.decorView)
+                                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                        )
+                    }
+                    !keyboardShowing.get()
+                }
+                compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+                captureSettled("restyle-fidelity-search-ime-dismissed.png")
+                device.pressBack()
+            }
+            awaitBrowsingHeader("hardware-back-exit")
+            compose.onNodeWithTag("search-field").assertTextContains("retained query")
+            Assert.assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
+            captureSettled("restyle-fidelity-search-return.png")
+        } finally {
+            if (previous == "null")
+                device.executeShellCommand("settings delete secure show_ime_with_hard_keyboard")
+            else
+                device.executeShellCommand(
+                    "settings put secure show_ime_with_hard_keyboard $previous"
+                )
+        }
+    }
+
+    private fun awaitBrowsingHeader(stage: String) {
+        try {
+            compose.onNodeWithTag("search-field").assertIsNotFocused()
+            compose.onNodeWithTag("feed-list").assertIsFocused()
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (error: Throwable) {
+            captureSettled("restyle-fidelity-search-$stage-failed.png")
+            val focus =
+                compose
+                    .onNodeWithTag("search-field")
+                    .fetchSemanticsNode()
+                    .config
+                    .getOrNull(SemanticsProperties.Focused)
+            scenario.onActivity {
+                val vm = androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java]
+                val request = vm.feeds[vm.tab.value].value.request
+                android.util.Log.i(
+                    "SearchEvidence",
+                    "stage=$stage focused=$focus " +
+                        "requestKeys=${(request as? JSONObject)?.keys()?.asSequence()?.toList()} " +
+                        "stringRequest=${request is String}",
+                )
+            }
+            throw error
         }
     }
 

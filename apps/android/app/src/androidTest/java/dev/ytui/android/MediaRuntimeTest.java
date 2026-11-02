@@ -405,13 +405,18 @@ public final class MediaRuntimeTest {
       device.dumpWindowHierarchy(
           new File(context.getExternalFilesDir(null), "native-video-controls.xml"));
       for (boolean pause : new boolean[] {true, false}) {
-        fullscreenExit(device);
-        androidx.test.uiautomator.UiObject2 toggle =
-            device.wait(
-                androidx.test.uiautomator.Until.findObject(
-                    androidx.test.uiautomator.By.res(
-                        java.util.regex.Pattern.compile(".*:id/exo_play_pause"))),
-                5000);
+        // The controller auto-hides; re-show it (via the exit-button helper) and
+        // retry rather than racing a single lookup against the hide timer.
+        androidx.test.uiautomator.UiObject2 toggle = null;
+        for (int attempt = 0; attempt < 3 && toggle == null; attempt++) {
+          fullscreenExit(device);
+          toggle =
+              device.wait(
+                  androidx.test.uiautomator.Until.findObject(
+                      androidx.test.uiautomator.By.res(
+                          java.util.regex.Pattern.compile(".*:id/exo_play_pause"))),
+                  5000);
+        }
         assertNotNull("The native play/pause button must be reachable", toggle);
         toggle.click();
         await(

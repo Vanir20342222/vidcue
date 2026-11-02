@@ -1,23 +1,36 @@
 package dev.ytui.android
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
+
+/** Transfer state → the action `download_toggle` actually performs for it. */
+private fun transferAction(item: JSONObject): Pair<Glyph, String> {
+    val state = item.optString("state")
+    return when {
+        item.optString("id").startsWith("job:") -> Glyph.Repeat to "Restart preparation"
+        state.contains("failed", ignoreCase = true) -> Glyph.Repeat to "Retry download"
+        state == "Paused" -> Glyph.Play to "Resume download"
+        else -> Glyph.Pause to "Pause download"
+    }
+}
 
 @Composable
 internal fun OfflineLibrary(vm: YtuiViewModel) {
@@ -30,9 +43,11 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     var add by remember { mutableStateOf(false) }
     var newPlaylist by remember { mutableStateOf(false) }
     var addTo by remember { mutableStateOf<JSONObject?>(null) }
+    var options by remember { mutableStateOf<JSONObject?>(null) }
     var opened by rememberSaveable { mutableStateOf("") }
     var removing by remember { mutableStateOf<JSONObject?>(null) }
     var deleting by remember { mutableStateOf<JSONObject?>(null) }
+    val thumbnails = config.optBoolean("thumbnails", true)
     val available =
         downloads.filter {
             it.optString("state") == "Complete" && it.optJSONObject("media") != null
@@ -46,17 +61,33 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         vm.effect("library_visible", "value" to !playerOpen)
         onDispose { vm.effect("library_visible", "value" to false) }
     }
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "Library",
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // No page heading: the tab label already names this screen. One filter
+        // row carries the sections, with the two creation actions at its end.
+        Row(
+            Modifier.fillMaxWidth().padding(end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            LazyRow(
                 Modifier.weight(1f),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
-            )
+                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(listOf("Offline", "Playlists", "Transfers")) { title ->
+                    val count =
+                        when (title) {
+                            "Transfers" -> transfers.size
+                            else -> 0
+                        }
+                    MediaChip(
+                        if (count > 0) "$title · $count" else title,
+                        selected = section == title,
+                        modifier = Modifier.testTag("library-$title"),
+                    ) {
+                        section = title
+                    }
+                }
+            }
             MediaIconButton(Glyph.Link, "Save a video or playlist offline", "add-download") {
                 add = true
             }
@@ -64,62 +95,46 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 newPlaylist = true
             }
         }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(listOf("Offline", "Playlists", "Transfers")) { title ->
-                MediaChip(
-                    title,
-                    selected = section == title,
-                    modifier = Modifier.testTag("library-$title"),
-                ) {
-                    section = title
-                }
-            }
-        }
-        if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
+        if (error != null)
+            Text(
+                error!!,
+                Modifier.padding(horizontal = MediaTokens.textInset),
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = MediaTokens.textInset, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            if (section == "Offline") {
-                if (available.isEmpty())
-                    item {
-                        EmptyMediaState(
-                            Glyph.Download,
-                            "No offline media",
-                            "Save songs or videos to play without a connection.",
-                        )
-                    }
-                items(available, key = { it.optString("id") }) { item ->
-                    var menu by remember { mutableStateOf(false) }
-                    Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Artwork(
-                                MediaCard(item.getJSONObject("media")),
-                                Modifier.size(76.dp).clip(RoundedCornerShape(12.dp)),
-                                config.optBoolean("thumbnails", true),
-                            )
-                            Column(
-                                Modifier.weight(1f).clickable { vm.playOffline(item) },
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
+            when (section) {
+                "Offline" -> {
+                    if (available.isEmpty())
+                        item {
+                            EmptyMediaState(
+                                Glyph.Download,
+                                "No offline media",
+                                "Save songs or videos to play without a connection.",
                             ) {
-                                Text(
-                                    item.optString("title"),
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
+                                Action("Save from a link") { add = true }
+                            }
+                        }
+                    items(available, key = { it.optString("id") }) { item ->
+                        val media = MediaCard(item.getJSONObject("media"))
+                        MediaListRow(
+                            item.optString("title"),
+                            listOfNotNull(
                                     if (item.optBoolean("audio")) "Audio" else "Video",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    media.creator.ifBlank { null },
                                 )
+                                .joinToString(" · "),
+                            Modifier.testTag("offline-item-${item.optString("id")}").semantics {
+                                contentDescription = "Play offline ${item.optString("title")}"
+                            },
+                            artwork = { Artwork(media, it, thumbnails) },
+                            square = item.optBoolean("audio"),
+                            onClick = { vm.playOffline(item) },
+                            extra = {
                                 item
                                     .optString("storage_error")
                                     .takeIf { it.isNotBlank() }
@@ -128,86 +143,50 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                             it,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.error,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                     }
-                            }
-                            MediaIconButton(Glyph.Play, "Play offline ${item.optString("title")}") {
-                                vm.playOffline(item)
-                            }
-                            Box {
-                                MediaIconButton(Glyph.More, "Offline media options") { menu = true }
-                                DropdownMenu(menu, { menu = false }) {
-                                    DropdownMenuItem(
-                                        text = { Text("Add to offline playlist") },
-                                        onClick = {
-                                            menu = false
-                                            addTo = item
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Export file") },
-                                        onClick = {
-                                            menu = false
-                                            vm.effect(
-                                                "download_export",
-                                                "id" to item.optString("id"),
-                                            )
-                                        },
-                                        enabled = item.optBoolean("cached"),
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Retry folder save") },
-                                        onClick = {
-                                            menu = false
-                                            vm.effect("folder_retry")
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Remove offline copy") },
-                                        onClick = {
-                                            menu = false
-                                            removing = item
-                                        },
-                                    )
-                                }
+                            },
+                        ) {
+                            MediaIconButton(
+                                Glyph.More,
+                                "Offline media options",
+                                "offline-menu-${item.optString("id")}",
+                            ) {
+                                options = item
                             }
                         }
                     }
                 }
-            } else if (section == "Playlists") {
-                if (playlists.isEmpty())
+                "Playlists" -> {
                     item {
-                        EmptyMediaState(
-                            Glyph.Queue,
-                            "No offline playlists",
-                            "Create a playlist, then add media from the Offline tab.",
+                        SheetAction(
+                            text = { Text("New playlist") },
+                            leadingIcon = { MediaIcon(Glyph.Plus) },
+                            onClick = { newPlaylist = true },
                         )
                     }
-                items(playlists, key = { it.optString("id") }) { playlist ->
-                    Surface(
-                        onClick = { opened = playlist.optString("id") },
-                        shape = RoundedCornerShape(20.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    if (playlists.isEmpty())
+                        item {
+                            EmptyMediaState(
+                                Glyph.Queue,
+                                "No offline playlists",
+                                "Create a playlist, then add media from Offline.",
+                            )
+                        }
+                    items(playlists, key = { it.optString("id") }) { playlist ->
+                        val members = playlist.optJSONArray("items")?.objects() ?: emptyList()
+                        val first = members.firstOrNull()
+                        MediaListRow(
+                            playlist.optString("title"),
+                            if (members.size == 1) "1 item" else "${members.size} items",
+                            artwork = { modifier ->
+                                if (first != null) Artwork(MediaCard(first), modifier, thumbnails)
+                                else GlyphTile(Glyph.Queue, modifier)
+                            },
+                            onClick = { opened = playlist.optString("id") },
                         ) {
-                            val first = playlist.optJSONArray("items")?.optJSONObject(0)
-                            if (first != null)
-                                Artwork(
-                                    MediaCard(first),
-                                    Modifier.size(72.dp).clip(RoundedCornerShape(12.dp)),
-                                )
-                            else MediaIcon(Glyph.Queue, Modifier.size(36.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(playlist.optString("title"), fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "${playlist.optJSONArray("items")?.length() ?: 0} items",
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
-                            }
                             MediaIconButton(
                                 Glyph.Play,
                                 "Play offline playlist ${playlist.optString("title")}",
@@ -217,42 +196,89 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         }
                     }
                 }
-            } else {
-                if (transfers.isEmpty())
-                    item { EmptyMediaState(Glyph.Check, "No active transfers", "") }
-                items(transfers, key = { it.optString("id") }) { item ->
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                    ) {
-                        Column(
-                            Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(item.optString("title"), fontWeight = FontWeight.SemiBold)
-                            Text(
-                                item.optString("state"),
-                                style = MaterialTheme.typography.bodySmall,
+                else -> {
+                    if (transfers.isEmpty())
+                        item {
+                            EmptyMediaState(
+                                Glyph.Check,
+                                "No active transfers",
+                                "Saves in progress appear here.",
                             )
-                            val progress =
-                                item
-                                    .optDouble("progress")
-                                    .toFloat()
-                                    .takeIf { it.isFinite() }
-                                    ?.coerceIn(0f, 1f) ?: 0f
-                            LinearProgressIndicator({ progress }, Modifier.fillMaxWidth())
-                            Row {
-                                TextButton({
+                        }
+                    items(transfers, key = { it.optString("id") }) { item ->
+                        val progress =
+                            item
+                                .optDouble("progress")
+                                .toFloat()
+                                .takeIf { it.isFinite() }
+                                ?.coerceIn(0f, 1f) ?: 0f
+                        val (glyph, label) = transferAction(item)
+                        MediaListRow(
+                            item.optString("title"),
+                            item.optString("state") +
+                                if (progress > 0f) " · ${(progress * 100).toInt()}%" else "",
+                            artwork = { modifier ->
+                                item.optJSONObject("media")?.let {
+                                    Artwork(MediaCard(it), modifier, thumbnails)
+                                } ?: GlyphTile(Glyph.Download, modifier)
+                            },
+                            extra = {
+                                LinearProgressIndicator(
+                                    { progress },
+                                    Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
+                                    trackColor = MaterialTheme.colorScheme.outlineVariant,
+                                    gapSize = 0.dp,
+                                    drawStopIndicator = {},
+                                )
+                            },
+                        ) {
+                            if (!item.optString("id").startsWith("export:"))
+                                MediaIconButton(glyph, label) {
                                     vm.effect("download_toggle", "id" to item.optString("id"))
-                                }) {
-                                    Text("Pause / retry")
                                 }
-                                TextButton({ removing = item }) { Text("Remove") }
+                            MediaIconButton(Glyph.Close, "Remove ${item.optString("title")}") {
+                                removing = item
                             }
                         }
                     }
                 }
             }
+        }
+    }
+    options?.let { item ->
+        val media = MediaCard(item.getJSONObject("media"))
+        fun execute(action: () -> Unit) {
+            options = null
+            action()
+        }
+        Panel("", { options = null }) {
+            ActionSheetHeader(media, thumbnails, square = item.optBoolean("audio"))
+            SheetAction(
+                text = { Text("Play") },
+                leadingIcon = { MediaIcon(Glyph.Play) },
+                onClick = { execute { vm.playOffline(item) } },
+            )
+            SheetAction(
+                text = { Text("Add to offline playlist") },
+                leadingIcon = { MediaIcon(Glyph.Queue) },
+                onClick = { execute { addTo = item } },
+            )
+            SheetAction(
+                text = { Text("Export file") },
+                leadingIcon = { MediaIcon(Glyph.ArrowRight) },
+                enabled = item.optBoolean("cached"),
+                onClick = { execute { vm.effect("download_export", "id" to item.optString("id")) } },
+            )
+            SheetAction(
+                text = { Text("Retry folder save") },
+                leadingIcon = { MediaIcon(Glyph.Repeat) },
+                onClick = { execute { vm.effect("folder_retry") } },
+            )
+            SheetAction(
+                text = { Text("Remove offline copy", color = MaterialTheme.colorScheme.error) },
+                leadingIcon = { MediaIcon(Glyph.Close, tint = MaterialTheme.colorScheme.error) },
+                onClick = { execute { removing = item } },
+            )
         }
     }
     if (add)
@@ -262,33 +288,71 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         }
     if (addTo != null)
         Panel("Add to offline playlist", { addTo = null }) {
-            Action("Create playlist") { newPlaylist = true }
-            for (playlist in playlists) Action(playlist.optString("title")) {
-                val item =
-                    addTo!!
-                        .getJSONObject("media")
-                        .copyJson()
-                        .put("offline_id", addTo!!.optString("id"))
+            SheetAction(
+                text = { Text("New playlist") },
+                leadingIcon = { MediaIcon(Glyph.Plus) },
+                onClick = { newPlaylist = true },
+            )
+            for (playlist in playlists) {
                 val members = playlist.optJSONArray("items")?.objects() ?: emptyList()
-                if (members.none { it.optString("url") == item.optString("url") })
-                    vm.updateOfflinePlaylist(playlist.optString("id"), items = members + item)
-                addTo = null
+                val contained =
+                    members.any {
+                        it.optString("url") == addTo!!.getJSONObject("media").optString("url")
+                    }
+                SheetAction(
+                    text = {
+                        Column {
+                            Text(playlist.optString("title"))
+                            Text(
+                                if (contained) "Already added" else "${members.size} items",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    leadingIcon = { MediaIcon(if (contained) Glyph.Check else Glyph.Queue) },
+                    onClick = {
+                        val item =
+                            addTo!!
+                                .getJSONObject("media")
+                                .copyJson()
+                                .put("offline_id", addTo!!.optString("id"))
+                        if (!contained)
+                            vm.updateOfflinePlaylist(
+                                playlist.optString("id"),
+                                items = members + item,
+                            )
+                        addTo = null
+                    },
+                )
             }
         }
     if (newPlaylist) {
         var name by remember { mutableStateOf("") }
         Panel("New offline playlist", { newPlaylist = false }) {
-            OutlinedTextField(
+            MediaTextField(
                 name,
                 { if (it.length <= 120) name = it },
-                Modifier.fillMaxWidth().testTag("offline-playlist-name"),
-                label = { Text("Playlist name") },
-                singleLine = true,
+                "Playlist name",
+                Modifier.testTag("offline-playlist-name"),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                    KeyboardActions(
+                        onDone = {
+                            if (name.isNotBlank()) {
+                                vm.createOfflinePlaylist(name.trim())
+                                newPlaylist = false
+                                section = "Playlists"
+                            }
+                        }
+                    ),
             )
-            Action("Create", enabled = name.isNotBlank()) {
-                vm.createOfflinePlaylist(name.trim())
-                newPlaylist = false
-                section = "Playlists"
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Action("Create", enabled = name.isNotBlank()) {
+                    vm.createOfflinePlaylist(name.trim())
+                    newPlaylist = false
+                    section = "Playlists"
+                }
             }
         }
     }
@@ -296,67 +360,93 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         .firstOrNull { it.optString("id") == opened }
         ?.let { playlist ->
             var name by remember(opened) { mutableStateOf(playlist.optString("title")) }
+            val items = playlist.optJSONArray("items")?.objects() ?: emptyList()
             Panel("Offline playlist", { opened = "" }, scroll = false) {
-                OutlinedTextField(
+                MediaTextField(
                     name,
                     { if (it.length <= 120) name = it },
-                    Modifier.fillMaxWidth().testTag("offline-playlist-edit-name"),
-                    label = { Text("Name") },
-                    singleLine = true,
+                    "Name",
+                    Modifier.testTag("offline-playlist-edit-name"),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions =
+                        KeyboardActions(
+                            onDone = {
+                                if (name.isNotBlank() && name != playlist.optString("title"))
+                                    vm.updateOfflinePlaylist(opened, title = name)
+                            }
+                        ),
                 )
-                Row {
-                    TextButton(
-                        { vm.updateOfflinePlaylist(opened, title = name) },
-                        enabled = name.isNotBlank(),
-                    ) {
-                        Text("Rename")
+                // Wraps at large font scales instead of clipping the destructive action.
+                FlowRow(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Action("Play all", enabled = items.isNotEmpty()) {
+                        vm.playOfflinePlaylist(playlist)
                     }
-                    TextButton({ vm.playOfflinePlaylist(playlist) }) { Text("Play all") }
-                    TextButton({ deleting = playlist }) { Text("Delete playlist") }
+                    SecondaryAction(
+                        "Rename",
+                        enabled = name.isNotBlank() && name != playlist.optString("title"),
+                    ) {
+                        vm.updateOfflinePlaylist(opened, title = name)
+                    }
+                    QuietAction("Delete playlist", destructive = true) { deleting = playlist }
                 }
-                val items = playlist.optJSONArray("items")?.objects() ?: emptyList()
-                LazyColumn(Modifier.weight(1f)) {
+                if (items.isEmpty())
+                    Text(
+                        "Add media from Offline with its ⋮ menu.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                LazyColumn(Modifier.weight(1f, fill = false)) {
                     itemsIndexed(items, key = { _, it -> it.optString("offline_id") }) { index, item
                         ->
-                        Column(Modifier.padding(vertical = 8.dp)) {
-                            Text(
-                                item.optString("title"),
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            val saved =
-                                available.any { it.optString("id") == item.optString("offline_id") }
-                            Row {
-                                TextButton(
-                                    { vm.playOfflinePlaylist(playlist, index) },
-                                    enabled = saved,
-                                ) {
-                                    Text(if (saved) "Play" else "Copy unavailable")
-                                }
-                                MediaIconButton(Glyph.Up, "Move up") {
-                                    if (index > 0)
+                        val saved =
+                            available.any { it.optString("id") == item.optString("offline_id") }
+                        var menu by remember(item.optString("offline_id")) { mutableStateOf(false) }
+                        MediaListRow(
+                            item.optString("title"),
+                            if (saved) item.optString("creator") else "Offline copy unavailable",
+                            artwork = { Artwork(MediaCard(item), it, thumbnails) },
+                            enabled = saved,
+                            onClick = { vm.playOfflinePlaylist(playlist, index) },
+                        ) {
+                            Box {
+                                MediaIconButton(Glyph.More, "Playlist item actions") { menu = true }
+                                DropdownMenu(menu, { menu = false }) {
+                                    fun move(to: Int) {
+                                        menu = false
                                         vm.updateOfflinePlaylist(
                                             opened,
                                             items =
                                                 items.toMutableList().apply {
-                                                    add(index - 1, removeAt(index))
+                                                    add(to, removeAt(index))
                                                 },
                                         )
-                                }
-                                MediaIconButton(Glyph.Down, "Move down") {
-                                    if (index + 1 < items.size)
-                                        vm.updateOfflinePlaylist(
-                                            opened,
-                                            items =
-                                                items.toMutableList().apply {
-                                                    add(index + 1, removeAt(index))
-                                                },
-                                        )
-                                }
-                                MediaIconButton(Glyph.Close, "Remove from playlist") {
-                                    vm.updateOfflinePlaylist(
-                                        opened,
-                                        items = items.filterIndexed { at, _ -> at != index },
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("Move up") },
+                                        leadingIcon = { MediaIcon(Glyph.Up) },
+                                        enabled = index > 0,
+                                        onClick = { move(index - 1) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Move down") },
+                                        leadingIcon = { MediaIcon(Glyph.Down) },
+                                        enabled = index + 1 < items.size,
+                                        onClick = { move(index + 1) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Remove from playlist") },
+                                        leadingIcon = { MediaIcon(Glyph.Close) },
+                                        onClick = {
+                                            menu = false
+                                            vm.updateOfflinePlaylist(
+                                                opened,
+                                                items = items.filterIndexed { at, _ -> at != index },
+                                            )
+                                        },
                                     )
                                 }
                             }
@@ -368,7 +458,8 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     if (removing != null)
         AlertDialog(
             onDismissRequest = { removing = null },
-            title = { Text("Remove offline copy?") },
+            shape = MediaTokens.dialog,
+            title = { Text("Remove offline copy?", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     "${removing!!.optString("title")} will be removed from app storage and its saved folder copy. Your playlists keep their references."
@@ -387,7 +478,8 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     if (deleting != null)
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete playlist?") },
+            shape = MediaTokens.dialog,
+            title = { Text("Delete playlist?", fontWeight = FontWeight.Bold) },
             text = { Text("Saved media files will stay in your library.") },
             confirmButton = {
                 TextButton({
@@ -405,25 +497,35 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
 @Composable
 private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
     var url by rememberSaveable { mutableStateOf("") }
+    fun save() {
+        if (url.isBlank()) return
+        runCatching { vm.linked(url.trim()) }
+            .onSuccess {
+                vm.play(it, download = true)
+                close()
+            }
+            .onFailure { vm.actionError.value = "Enter a valid HTTP(S) media URL" }
+    }
     Panel("Save offline", close) {
-        OutlinedTextField(
+        MediaTextField(
             url,
             { url = it },
-            Modifier.fillMaxWidth().testTag("download-url-field"),
-            label = { Text("Video or playlist URL") },
-            singleLine = true,
+            "Video or playlist link",
+            Modifier.testTag("download-url-field"),
+            keyboardOptions =
+                KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                    imeAction = ImeAction.Go,
+                ),
+            keyboardActions = KeyboardActions(onGo = { save() }),
         )
         Text(
-            "Choose quality, audio-only mode and Music/Video folders in Settings → Offline & storage.",
+            "Quality, audio-only saves and Music/Video folders are in Settings › Offline & storage.",
             style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Action("Save offline", enabled = url.isNotBlank()) {
-            runCatching { vm.linked(url.trim()) }
-                .onSuccess {
-                    vm.play(it, download = true)
-                    close()
-                }
-                .onFailure { vm.actionError.value = "Enter a valid HTTP(S) media URL" }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Action("Save offline", enabled = url.isNotBlank()) { save() }
         }
     }
 }

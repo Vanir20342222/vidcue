@@ -14,15 +14,18 @@ permissions:
 concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: never
+  # GitHub-hosted runners have 4 vCPUs; build.sh defaults to 2 for small PCs.
+  YTUI_BUILD_JOBS: '4'
 jobs:
   apk:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 25
     env:
-      CARGO_INCREMENTAL: '0'
       # Keep app and instrumentation Gradle invocations on the same build marker.
       YTUI_ANDROID_REVISION: ${{ github.sha }}
-      YTUI_ANDROID_PUBLIC_URL: ${{ inputs.public_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -37,19 +40,31 @@ jobs:
           cache-on-failure: true
           cache-workspace-crates: true
           key: android-workspace-v1
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
-      - name: Install pinned Android build tools
-        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      - name: Use all runner cores for Gradle (CI only; project defaults stay low)
+        run: |
+          mkdir -p "$HOME/.gradle"
+          cat >> "$HOME/.gradle/gradle.properties" <<'PROPS'
+          org.gradle.workers.max=4
+          org.gradle.caching=true
+          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          PROPS
+      - name: Install pinned Android build tools and fixture media
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018' &
+          sdk=$!
+          bash tools/ci-install-media.sh ffmpeg
+          wait "$sdk"
       - name: Check private signing and APK publication boundaries offline
         run: python3 -m unittest discover -s tools/android -p 'test_*.py' -v
       - name: Build both Rust ABIs and check the Android host
         run: tools/android/build.sh
       - name: Build synthetic media fixtures and instrumentation APK
         run: |
-          bash tools/ci-install-media.sh ffmpeg
           tools/android/test-fixtures.sh
           apps/android/gradlew -p apps/android --no-daemon :app:assembleDebugAndroidTest
       - name: Inspect APK signing and 16 KiB alignment
@@ -63,12 +78,51 @@ jobs:
             apps/android/app/build/outputs/apk/debug/SHA256-and-checks.txt
             apps/android/app/build/reports/
           retention-days: 30
+      - name: Hand the exact tested APKs to the emulator shards
+        uses: actions/upload-artifact@v4
+        with:
+          name: ytui-android-test-apks-${{ github.sha }}
+          path: |
+            apps/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          retention-days: 3
+          compression-level: 0
+
+  device:
+    needs: apk
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    env:
+      YTUI_ANDROID_PUBLIC_URL: ${{ inputs.public_url }}
+      YTUI_ANDROID_TEST_APKS: ${{ github.workspace }}/test-apks
+      YTUI_ANDROID_NUM_SHARDS: '4'
+      YTUI_ANDROID_SHARD_INDEX: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Restore emulator system image
+        id: sysimg
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_HOME }}/system-images/android-35/google_apis/x86_64
+          key: sysimg-android-35-google_apis-x86_64-v1
       - name: Install emulator image with bounded download recovery
+        if: steps.sysimg.outputs.cache-hit != 'true'
         run: |
           for attempt in 1 2 3; do
             if sdkmanager 'system-images;android-35;google_apis;x86_64'; then
@@ -77,13 +131,21 @@ jobs:
             if [ "$attempt" = 3 ]; then exit 1; fi
             echo "System-image download failed; retrying ($attempt/3)."
           done
-      - name: Run actual JNI, isolated solver and media instrumentation
+      - name: Download the APKs built by the apk job
+        uses: actions/download-artifact@v4
+        with:
+          name: ytui-android-test-apks-${{ github.sha }}
+          path: test-apks
+          merge-multiple: true
+      - name: Run actual JNI, isolated solver and media instrumentation (shard ${{ matrix.shard }}/4)
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
           target: google_apis
           arch: x86_64
           profile: pixel_7
+          cores: 4
+          ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -no-snapshot -camera-back none -camera-front none
           script: tools/android/run-device-tests.sh
@@ -91,9 +153,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: android-device-tests-${{ github.sha }}
-          path: |
-            apps/android/app/build/reports/androidTests/
-            apps/android/app/build/outputs/androidTest-results/
-            target/android-device-evidence/
+          name: android-device-tests-${{ github.sha }}-shard-${{ matrix.shard }}
+          path: target/android-device-evidence/
           if-no-files-found: ignore
