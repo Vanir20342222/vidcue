@@ -1,5 +1,10 @@
 # ytui Rust rewrite plan
 
+M9 subsecond-startup candidate: [scope, research and measurement](docs/android/SUBSECOND_STARTUP.md)
+track the new <1000 ms visible-and-playing target, separately from the earlier
+Tab S9 <2000 ms acceptance. This is an unmerged performance branch; native and
+physical qualification remain pending.
+
 M9 release: [published mobile.10](docs/android/MOBILE10_RELEASE.md) packages the
 merged content-first Android restyle from source `686e379` as release code 10.
 Exact-main Android/Rust/secret checks pass: 37 native passes, one public skip,

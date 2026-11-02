@@ -49,6 +49,12 @@ final class VisibleVideoProbe {
 
   static Result capture(ActivityScenario<RustActivity> scenario, long timing, String filename)
       throws Exception {
+    return capture(scenario, timing, filename, 2000);
+  }
+
+  static Result capture(
+      ActivityScenario<RustActivity> scenario, long timing, String filename, long budgetMs)
+      throws Exception {
     CompletableFuture<Frame> future = new CompletableFuture<>();
     scenario.onActivity(
         activity -> {
@@ -84,7 +90,7 @@ final class VisibleVideoProbe {
           }
         });
     Frame frame;
-    long remaining = 2000 - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
+    long remaining = budgetMs - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
     try {
       frame = future.get(Math.max(1, remaining), TimeUnit.MILLISECONDS);
     } catch (TimeoutException late) {

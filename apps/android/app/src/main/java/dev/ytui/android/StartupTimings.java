@@ -5,6 +5,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Local, bounded, identifier-free tap-to-output measurements. All times are monotonic. */
 final class StartupTimings {
+  static final long TARGET_MS = 1000;
   static final String[] PHASES = {
     "selection",
     "offline",
@@ -24,7 +25,9 @@ final class StartupTimings {
     "net_response",
     "net_byte",
     "codec",
-    "audio_codec"
+    "audio_codec",
+    "codec_init",
+    "audio_codec_init"
   };
   private static final AtomicLong ids = new AtomicLong();
   private static final ArrayDeque<Sample> samples = new ArrayDeque<>();
@@ -35,6 +38,7 @@ final class StartupTimings {
     String route = "unknown", cache = "unknown", disposition = "pending/cancelled";
     String quality = "unknown", transport = "unknown";
     long ended = -1;
+    int byteCache = -1;
     long[] stages = new long[PHASES.length];
 
     Sample(long id, long tap, boolean video) {
@@ -108,6 +112,11 @@ final class StartupTimings {
     sample.prepared = "ready".equals(source);
   }
 
+  static synchronized void byteCache(long id, boolean ready) {
+    Sample sample = find(id);
+    if (sample != null && sample.byteCache < 0) sample.byteCache = ready ? 1 : 0;
+  }
+
   static synchronized void ended(long id, String disposition, long now) {
     Sample sample = find(id);
     if (sample != null
@@ -173,8 +182,8 @@ final class StartupTimings {
   static synchronized String report() {
     StringBuilder text =
         new StringBuilder("ytui startup timings (milliseconds)\n")
-            .append("Target: video tap to visible frame <= 2000 ms\n")
-            .append("Usable start requires both visible output and active playback <= 2000 ms.\n")
+            .append("Target: video tap to visible frame < 1000 ms\n")
+            .append("Usable start requires both visible output and active playback < 1000 ms.\n")
             .append(
                 "Resolve includes offline lookup and queue selection. Pending attempts are"
                     + " included.\n");
@@ -192,7 +201,7 @@ final class StartupTimings {
           .append(
               sample.output < 0
                   ? " " + sample.disposition
-                  : sample.video && sample.output > 2000 ? " OVER TARGET" : "")
+                  : sample.video && sample.output >= TARGET_MS ? " OVER TARGET" : "")
           .append(" cache=")
           .append(sample.cache);
       if (sample.ended >= 0) text.append(" ended_ms=").append(sample.ended);
@@ -203,11 +212,13 @@ final class StartupTimings {
           .append(sample.quality)
           .append(" transport=")
           .append(sample.transport);
+      if (sample.byteCache >= 0)
+        text.append(" warmup_bytes_at_tap=").append(sample.byteCache == 1 ? "ready" : "not_ready");
       text.append(" started=")
           .append(sample.playing)
           .append(" usable_start=")
           .append(usable(sample.id));
-      if (sample.video && usable(sample.id) > 2000) text.append(" USABLE OVER TARGET");
+      if (sample.video && usable(sample.id) >= TARGET_MS) text.append(" USABLE OVER TARGET");
       else if (sample.video && sample.output >= 0 && sample.playing < 0)
         text.append(" ").append(sample.ended >= 0 ? sample.disposition : "waiting_for_playback");
       text.append('\n');

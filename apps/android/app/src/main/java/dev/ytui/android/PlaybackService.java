@@ -160,7 +160,7 @@ public final class PlaybackService extends MediaSessionService {
                         }))
             .setLoadControl(
                 new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(5000, 20000, 250, 750)
+                    .setBufferDurationsMs(5000, 20000, 100, 750)
                     .build())
             .build();
     player.setAudioAttributes(
@@ -200,15 +200,19 @@ public final class PlaybackService extends MediaSessionService {
           @Override
           public void onVideoDecoderInitialized(
               EventTime time, String name, long at, long duration) {
-            if (at >= startupAt && StartupTimings.total(startupToken) < 0)
+            if (at >= startupAt && StartupTimings.total(startupToken) < 0) {
               StartupTimings.stage(startupToken, "codec", at - startupAt);
+              StartupTimings.stage(startupToken, "codec_init", duration);
+            }
           }
 
           @Override
           public void onAudioDecoderInitialized(
               EventTime time, String name, long at, long duration) {
-            if (at >= startupAt && StartupTimings.total(startupToken) < 0)
+            if (at >= startupAt && StartupTimings.total(startupToken) < 0) {
               StartupTimings.stage(startupToken, "audio_codec", at - startupAt);
+              StartupTimings.stage(startupToken, "audio_codec_init", duration);
+            }
           }
         });
     controlsPlayer = new ControlsPlayer(player);
@@ -617,12 +621,7 @@ public final class PlaybackService extends MediaSessionService {
     JSONObject stream = request.getJSONObject("stream"), media = request.getJSONObject("media");
     if (stream.optBoolean("live")) media.put("live", true);
     pendingQueueUrl = request.optBoolean("queued") ? media.optString("url") : "";
-    DefaultHttpDataSource.Factory http =
-        new DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(12000)
-            .setAllowCrossProtocolRedirects(false)
-            .setDefaultRequestProperties(headers(stream.optJSONObject("headers")));
+    HttpDataSource.Factory http = PlaybackHttp.factory(headers(stream.optJSONObject("headers")));
     DataSource.Factory upstream =
         request.optBoolean("offline")
             ? OfflineStore.offlineFactory()

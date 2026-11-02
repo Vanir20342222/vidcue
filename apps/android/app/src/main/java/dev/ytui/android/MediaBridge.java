@@ -61,6 +61,7 @@ public final class MediaBridge {
           new JSONObject(NativeBridge.request("{\"op\":\"settings\"}")).getJSONObject("data"));
     } catch (Exception ignored) {
     }
+    PlaybackHttp.warm();
   }
 
   static void event(String kind, String text) {

@@ -587,15 +587,26 @@ internal class YtuiViewModel : ViewModel() {
             )
                 return
             try {
-                RustRpc.objectCall(
-                    "resolve",
-                    "media" to media.value,
-                    "audio" to media.audio,
-                    "quality" to quality,
-                    "speculative" to true,
-                )
+                val account = NativeBridge.accountIntent()
+                val network = NetworkSettings.revision.get()
+                val resolved =
+                    RustRpc.objectCall(
+                        "resolve",
+                        "media" to media.value,
+                        "audio" to media.audio,
+                        "quality" to quality,
+                        "speculative" to true,
+                    )
                 if (playbackJob?.isActive == true || playerOpen.value) return
-                if (index == 0) PlaybackCache.prefetch(media.value, media.audio, quality)
+                if (index == 0)
+                    PlaybackCache.prefetchResolved(
+                        media.value,
+                        media.audio,
+                        quality,
+                        resolved,
+                        account,
+                        network,
+                    )
             } catch (cancel: CancellationException) {
                 throw cancel
             } catch (_: Exception) {
@@ -636,6 +647,8 @@ internal class YtuiViewModel : ViewModel() {
             if (!download && !preview)
                 StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), !audio)
             else 0L
+        if (timing != 0L)
+            StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context = if (!preview && !download && !queued) context(media) else null
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
