@@ -1,5 +1,10 @@
 # ytui Rust rewrite plan
 
+M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
+restyle brief to the remaining Downloads, player, options, account, lyrics and
+settings surfaces, and fixes search focus re-entry. Local build, JVM and lint
+checks pass. Native CI and screenshot acceptance of that revision are pending.
+
 M9 UI fidelity follow-up: the owner requested iterative comparison with an
 independent judge at every revision. [Findings, evidence boundary and rubric](docs/android/UI_FIDELITY_REVIEW.md)
 track the mobile.10 baseline and current work. Original reference screenshots

@@ -731,11 +731,14 @@ internal fun MediaTextField(
     visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
         androidx.compose.ui.text.input.VisualTransformation.None,
     minLines: Int = 1,
+    keyboardActions: androidx.compose.foundation.text.KeyboardActions =
+        androidx.compose.foundation.text.KeyboardActions.Default,
 ) {
     TextField(
         value,
         onValueChange,
         modifier.fillMaxWidth(),
+        keyboardActions = keyboardActions,
         label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         singleLine = singleLine,
         minLines = minLines,

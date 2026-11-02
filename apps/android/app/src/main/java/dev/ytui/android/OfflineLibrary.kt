@@ -5,6 +5,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -14,6 +16,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
@@ -332,6 +335,17 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 { if (it.length <= 120) name = it },
                 "Playlist name",
                 Modifier.testTag("offline-playlist-name"),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                    KeyboardActions(
+                        onDone = {
+                            if (name.isNotBlank()) {
+                                vm.createOfflinePlaylist(name.trim())
+                                newPlaylist = false
+                                section = "Playlists"
+                            }
+                        }
+                    ),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Action("Create", enabled = name.isNotBlank()) {
@@ -353,6 +367,14 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     { if (it.length <= 120) name = it },
                     "Name",
                     Modifier.testTag("offline-playlist-edit-name"),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions =
+                        KeyboardActions(
+                            onDone = {
+                                if (name.isNotBlank() && name != playlist.optString("title"))
+                                    vm.updateOfflinePlaylist(opened, title = name)
+                            }
+                        ),
                 )
                 // Wraps at large font scales instead of clipping the destructive action.
                 FlowRow(
@@ -475,6 +497,15 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
 @Composable
 private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
     var url by rememberSaveable { mutableStateOf("") }
+    fun save() {
+        if (url.isBlank()) return
+        runCatching { vm.linked(url.trim()) }
+            .onSuccess {
+                vm.play(it, download = true)
+                close()
+            }
+            .onFailure { vm.actionError.value = "Enter a valid HTTP(S) media URL" }
+    }
     Panel("Save offline", close) {
         MediaTextField(
             url,
@@ -482,9 +513,11 @@ private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
             "Video or playlist link",
             Modifier.testTag("download-url-field"),
             keyboardOptions =
-                androidx.compose.foundation.text.KeyboardOptions(
-                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri
+                KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                    imeAction = ImeAction.Go,
                 ),
+            keyboardActions = KeyboardActions(onGo = { save() }),
         )
         Text(
             "Quality, audio-only saves and Music/Video folders are in Settings › Offline & storage.",
@@ -492,14 +525,7 @@ private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Action("Save offline", enabled = url.isNotBlank()) {
-                runCatching { vm.linked(url.trim()) }
-                    .onSuccess {
-                        vm.play(it, download = true)
-                        close()
-                    }
-                    .onFailure { vm.actionError.value = "Enter a valid HTTP(S) media URL" }
-            }
+            Action("Save offline", enabled = url.isNotBlank()) { save() }
         }
     }
 }
