@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity;
 public final class AuthActivity extends ComponentActivity {
   WebView web;
   private String flow;
+  private boolean loaded;
   private static String activeFlow = "";
   private static String completedFlow = "";
   private static java.lang.ref.WeakReference<AuthActivity> active =
@@ -23,8 +24,9 @@ public final class AuthActivity extends ComponentActivity {
     activeFlow = flow;
     if (state == null) {
       ComposeHost.resetAuth();
+      AuthUi.reset(false);
       NativeBridge.beginAccountChange();
-    }
+    } else AuthUi.showWeb(state.getBoolean("auth-web"));
     web = new WebView(this);
     web.getSettings().setJavaScriptEnabled(true);
     web.getSettings().setDomStorageEnabled(true);
@@ -39,13 +41,53 @@ public final class AuthActivity extends ComponentActivity {
                     || host.equals("google.com")
                     || host.endsWith(".google.com"));
           }
+
+          @Override
+          public void onPageStarted(WebView view, String url, android.graphics.Bitmap icon) {
+            AuthUi.page(url);
+          }
+
+          @Override
+          public void onPageFinished(WebView view, String url) {
+            AuthUi.page(url);
+            // Only cookie names are checked; the user still confirms explicitly.
+            AuthUi.sessionFound(
+                AuthUi.looksSignedIn(
+                    CookieManager.getInstance().getCookie("https://www.youtube.com")));
+          }
+        });
+    web.setWebChromeClient(
+        new WebChromeClient() {
+          @Override
+          public void onProgressChanged(WebView view, int progress) {
+            AuthUi.progress(progress);
+          }
         });
     ComposeHost.attachAuth(this, web);
-    if (state != null) web.restoreState(state);
-    else if (BuildConfig.DEBUG && getIntent().getBooleanExtra("ytui.offline-auth", false))
-      web.loadData(
-          "<p>Offline sign-in UI fixture. No account is contacted.</p>", "text/html", "UTF-8");
-    else web.loadUrl("https://www.youtube.com/feed/you");
+    if (state != null) loaded = web.restoreState(state) != null;
+  }
+
+  /** Leaves the native account card for the provider's own sign-in page. */
+  void beginWeb() {
+    if (ComposeHost.authBusy()) return;
+    if (!loaded) {
+      loaded = true;
+      if (BuildConfig.DEBUG && getIntent().getBooleanExtra("ytui.offline-auth", false))
+        web.loadData(
+            "<p>Offline sign-in UI fixture. No account is contacted.</p>", "text/html", "UTF-8");
+      else web.loadUrl("https://www.youtube.com/feed/you");
+    }
+    AuthUi.showWeb(true);
+  }
+
+  /** Help/privacy/terms links open in the user's browser, never inside the sign-in view. */
+  void openExternal(String url) {
+    try {
+      startActivity(
+          new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+    } catch (android.content.ActivityNotFoundException ignored) {
+      ComposeHost.authMessage("No browser is available to open " + url);
+    }
   }
 
   void useSession() {
@@ -115,6 +157,7 @@ public final class AuthActivity extends ComponentActivity {
   @Override
   protected void onSaveInstanceState(Bundle state) {
     state.putString("auth-flow", flow);
+    state.putBoolean("auth-web", AuthUi.showingWeb());
     web.saveState(state);
     super.onSaveInstanceState(state);
   }
