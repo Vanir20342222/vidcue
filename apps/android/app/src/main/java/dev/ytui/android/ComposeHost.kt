@@ -528,6 +528,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                     dialog = "queue"
                                                     vm.loadQueue()
                                                 },
+                                                onSleep = { dialog = "sleep" },
+                                                onSettings = { dialog = "player-options" },
                                             )
                                         }
                                     }
@@ -618,26 +620,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             dialog = ""
                         }
                     "sleep" ->
-                        Panel("Sleep timer", { dialog = "" }) {
-                            for (minutes in listOf(15, 30, 60, 120)) {
-                                SheetAction(
-                                    text = { Text("$minutes minutes") },
-                                    leadingIcon = { MediaIcon(Glyph.Sleep) },
-                                    onClick = {
-                                        vm.command("sleep", "seconds" to minutes * 60)
-                                        dialog = ""
-                                    },
-                                )
-                            }
-                            SheetAction(
-                                text = { Text("Cancel timer") },
-                                leadingIcon = { MediaIcon(Glyph.Close) },
-                                onClick = {
-                                    vm.command("sleep_cancel")
-                                    dialog = ""
-                                },
-                            )
-                        }
+                        Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
                     "about" ->
                         Panel("About ytui", { dialog = "" }) {
                             Text(
@@ -1718,24 +1701,29 @@ private fun PlayerDock(vm: YtuiViewModel) {
             Modifier.fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
                 .testTag("mini-player"),
-        shape = MediaTokens.pill,
+        shape = MediaTokens.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp,
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth().padding(8.dp),
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Artwork(media, Modifier.size(48.dp), config.optBoolean("thumbnails", true))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Artwork(
+                    media,
+                    Modifier.size(44.dp).clip(MediaTokens.small),
+                    config.optBoolean("thumbnails", true),
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         player.title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
                     Text(
                         media.creator.ifBlank {
@@ -1755,9 +1743,9 @@ private fun PlayerDock(vm: YtuiViewModel) {
                 ) {
                     vm.command("pause")
                 }
-                MediaIconButton(Glyph.Next, "Next track", "dock-next") { vm.command("next") }
                 // The mini player can be dismissed, as on YouTube; this is the
-                // existing stop command, not a new playback mode.
+                // existing stop command, not a new playback mode. Next stays
+                // available from the expanded player to keep the dock uncluttered.
                 MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
                     vm.command("stop")
                 }
@@ -1769,19 +1757,48 @@ private fun PlayerDock(vm: YtuiViewModel) {
                     modifier = Modifier.fillMaxWidth().height(2.dp),
                     gapSize = 0.dp,
                     drawStopIndicator = {},
+                    trackColor = Color.Transparent,
                 )
         }
     }
 }
 
+/** Sleep timer choices shared by the main sheet and the fullscreen options panel. */
 @Composable
-private fun PlayerPane(
+internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
+    for (minutes in listOf(15, 30, 60, 120)) {
+        SheetAction(
+            text = { Text("$minutes minutes") },
+            leadingIcon = { MediaIcon(Glyph.Sleep) },
+            onClick = {
+                vm.command("sleep", "seconds" to minutes * 60)
+                done()
+            },
+        )
+    }
+    SheetAction(
+        text = { Text("Cancel timer") },
+        leadingIcon = { MediaIcon(Glyph.Close) },
+        onClick = {
+            vm.command("sleep_cancel")
+            done()
+        },
+    )
+}
+
+/**
+ * Playback options. `expanded` is the full options list (main sheet and fullscreen panel);
+ * otherwise this is the tablet side pane's compact transport.
+ */
+@Composable
+internal fun PlayerPane(
     vm: YtuiViewModel,
     expanded: Boolean,
     showSurface: Boolean = true,
     onQueue: () -> Unit,
     onSleep: () -> Unit = {},
     onDone: () -> Unit = {},
+    onSettings: (() -> Unit)? = null,
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -1806,7 +1823,8 @@ private fun PlayerPane(
                 // Compact side panel (tablet): surface, title, seek and transport.
                 if (player.video && showSurface) {
                     VideoSurface(
-                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium)
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium),
+                        onSettings = onSettings,
                     )
                 } else if (showSurface && tab in 2..3) Visualizer(player, config)
                 else if (showSurface)
