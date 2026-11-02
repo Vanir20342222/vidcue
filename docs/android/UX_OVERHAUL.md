@@ -201,6 +201,28 @@ Native, revision `1988e72`
   prompted: the volume slider now uses the same slim line and round dot as the
   seek bar.
 
+Native, revision `8e04e9c`
+([Android 41454172214](https://github.com/Vanir20342222/ytui/actions/runs/41454172214)):
+
+- 38 passes, 4 failures and 1 public skip. The navigation-width overflow is
+  fixed. The four failures are all retained and addressed in the next revision:
+  - **Artwork regression (mine).** Replacing `BoxWithConstraints` with
+    `onSizeChanged` broke reused lazy-grid nodes. A recycled card of unchanged
+    size never re-reported its size, so its cover stayed a placeholder (capture
+    `restyle-fidelity-cover-failed`). The next revision restores
+    constraint-based sizing and keeps the first-frame cache paint.
+  - **Chip order (mine).** The new Subscriptions and Watch later chips pushed
+    Liked off narrow screens. They now follow Liked.
+  - **Search focus (UX).** With the keyboard dismissed, the search field kept
+    focus after the user touched the feed, so the app header (and Settings)
+    stayed hidden. Touching feed content now ends an unsubmitted search, as
+    tapping outside a field does elsewhere. Submitted results keep their search
+    header.
+  - **`MediaRuntimeTest` stale object.** A UiAutomator `StaleObjectException`
+    clicking the native play/pause button after leaving fullscreen. It passed
+    in the previous run with the same player code; it is being watched in the
+    rerun rather than changed.
+
 **Earlier text, kept for history:** a native Android CI run and screenshot
 review of this revision were pending. The
 session could not push (GitHub returned 403), so no native, contrast, motion or

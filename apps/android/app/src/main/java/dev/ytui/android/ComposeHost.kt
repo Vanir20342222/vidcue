@@ -15,6 +15,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -50,7 +52,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -1202,10 +1203,10 @@ private fun BrowsePane(
                         // where people look for them (Home only for video feeds).
                         listOfNotNull(
                             "For you" to "Home",
-                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
-                            if (tab == 1) "Watch later" to "WatchLater" else null,
                             "My playlists" to "Playlists",
                             "Liked" to "Liked",
+                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
+                            if (tab == 1) "Watch later" to "WatchLater" else null,
                         )
                     ) { (label, request) ->
                         MediaChip(
@@ -1243,7 +1244,19 @@ private fun BrowsePane(
                 refreshing = true
                 vm.navigate(request = feed.request, remember = false)
             },
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            modifier =
+                Modifier.weight(1f).fillMaxWidth().pointerInput(searchActive) {
+                    // Touching content ends an unsubmitted search session, as tapping
+                    // outside a field does elsewhere. The touch itself is not consumed.
+                    if (searchActive)
+                        awaitEachGesture {
+                            awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
+                            )
+                            releaseSearchFocus()
+                        }
+                },
         ) {
             LazyVerticalGrid(
                 columns =
@@ -1375,23 +1388,20 @@ internal fun Artwork(
     enabled: Boolean = true,
     shape: androidx.compose.ui.graphics.Shape = MediaTokens.small,
 ) {
-    // Measured size instead of BoxWithConstraints: no subcomposition per list item.
-    var pixels by remember { mutableIntStateOf(0) }
-    Box(
-        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer).onSizeChanged {
-            if (it.width > 0) pixels = it.width.coerceIn(32, 768)
-        }
+    // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
+    // and a reused node of unchanged size never reports its size again.
+    BoxWithConstraints(
+        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
+        val pixels = with(LocalDensity.current) { maxWidth.roundToPx().coerceIn(32, 768) }
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
         var bitmap by
             remember(media.key, source, pixels, enabled) {
-                mutableStateOf(
-                    if (enabled && pixels > 0) ArtworkCache.cached(media, pixels) else null
-                )
+                mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
             }
         LaunchedEffect(media.key, source, pixels, enabled) {
-            if (pixels == 0 || bitmap != null) return@LaunchedEffect
+            if (bitmap != null) return@LaunchedEffect
             bitmap =
                 if (enabled) runCatching { ArtworkCache.load(media, pixels) }.getOrNull() else null
         }
