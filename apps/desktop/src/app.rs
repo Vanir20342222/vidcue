@@ -3393,13 +3393,32 @@ impl App {
             media.url = path.to_string_lossy().into();
         }
         let audio = matches!(media.kind, MediaKind::Song | MediaKind::Station);
-        if self
-            .player
-            .try_send(PlayerCommand::Play { media, audio })
-            .is_err()
-        {
+        // Videos continue from their saved local position; music, stations and
+        // finished/near-start videos start from the beginning.
+        let resume_at = (self.config.playback_history
+            && self.config.resume_on_play
+            && media.kind == MediaKind::Video)
+            .then(|| self.snapshot.positions.for_media(&media).map(|p| p.seconds))
+            .flatten();
+        let command = match resume_at {
+            Some(seconds) => PlayerCommand::PlayAt {
+                media,
+                audio,
+                seconds,
+            },
+            None => PlayerCommand::Play { media, audio },
+        };
+        if self.player.try_send(command).is_err() {
             self.status = "Player is busy; retry playback".into();
             return false;
+        }
+        if let Some(seconds) = resume_at {
+            let seconds = seconds as u64;
+            self.status = format!(
+                "Resumed at {}:{:02} · :player-seek 0 to start over",
+                seconds / 60,
+                seconds % 60
+            );
         }
         true
     }

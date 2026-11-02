@@ -406,6 +406,10 @@ Coverage includes:
   fixture bytes. The loopback API verifies that no Cookie header is sent.
 - Local resume excludes preview/live positions, never starts at launch, passes a
   saved start time to fake mpv, and does not treat an early window close as EOF.
+- M5 `resume_on_play` (default on): ordinary playback of a partly watched video
+  sends `PlayAt` with the saved position; songs, finished videos and the disabled
+  setting send plain `Play`; the settings field round-trips. Unit-level only; not
+  yet checked against live mpv in Ghostty on the target machine.
 - Offline catalog skips missing/sidecar files and remote thumbnails; offline mode
   holds remote jobs and rejects remote playback/provider navigation.
 - Watch baseline/new-item/duplicate behavior, failed-poll backoff, and stale-result
