@@ -391,182 +391,246 @@ const RADIO_SCENES: &[ArtScene] = &[
     ArtScene {
         keywords: &["lofi", "lo fi"],
         photos: &[
-                "6/6b/Laptop_and_lamp_on_table_(Unsplash).jpg",
-                "e/e8/Afternoon_Coffee.jpg",
+            "6/6b/Laptop_and_lamp_on_table_(Unsplash).jpg",
+            "e/e8/Afternoon_Coffee.jpg",
         ],
     },
     ArtScene {
-        keywords: &["chill", "chillout", "chill out", "downtempo", "relax", "relaxing", "lounge"],
+        keywords: &[
+            "chill",
+            "chillout",
+            "chill out",
+            "downtempo",
+            "relax",
+            "relaxing",
+            "lounge",
+        ],
         photos: &[
-                "0/0e/Another_photo_of_Beach_in_Samal.jpg",
-                "4/43/20190415_Yehliu_geopark_beach-1.jpg",
+            "0/0e/Another_photo_of_Beach_in_Samal.jpg",
+            "4/43/20190415_Yehliu_geopark_beach-1.jpg",
         ],
     },
     ArtScene {
         keywords: &["ambient", "meditative", "meditation", "meditate", "zen"],
-        photos: &[
-                "f/fa/Foggy_Bohemia_sunrise_(52873160744).jpg",
-        ],
+        photos: &["f/fa/Foggy_Bohemia_sunrise_(52873160744).jpg"],
     },
     ArtScene {
         keywords: &["synthwave", "retrowave", "outrun", "vaporwave"],
         photos: &[
-                "0/0f/Light-sign-typography-lighting_(24298939656)_(cropped_2).jpg",
-                "0/06/Red_neon_coin_sign_(Unsplash).jpg",
+            "0/0f/Light-sign-typography-lighting_(24298939656)_(cropped_2).jpg",
+            "0/06/Red_neon_coin_sign_(Unsplash).jpg",
         ],
     },
     ArtScene {
         keywords: &["edm", "festival", "trance", "hardstyle"],
         photos: &[
-                "e/e8/2025_Innings_Festival.jpg",
-                "f/ff/20231008_dance_gavin_dance.jpg",
+            "e/e8/2025_Innings_Festival.jpg",
+            "f/ff/20231008_dance_gavin_dance.jpg",
         ],
     },
     ArtScene {
         keywords: &["house", "techno", "deep house", "tech house"],
         photos: &[
-                "9/90/DJ_equipment_set_up_for_a_party_at_a_venue_in_the_evening_with_people_in_the_background_enjoying_the_music.jpg",
-                "b/bd/DJ_Setup_at_a_Local_Bar_in_Osaka_City.jpg",
+            "9/90/DJ_equipment_set_up_for_a_party_at_a_venue_in_the_evening_with_people_in_the_background_enjoying_the_music.jpg",
+            "b/bd/DJ_Setup_at_a_Local_Bar_in_Osaka_City.jpg",
         ],
     },
     ArtScene {
         keywords: &["dubstep", "riddim", "brostep"],
         photos: &[
-                "2/2b/Matatu_Speaker_10.jpg",
-                "b/b5/Onkyo_speakers_UWA-7ST_30W_6Ω_2.jpg",
+            "2/2b/Matatu_Speaker_10.jpg",
+            "b/b5/Onkyo_speakers_UWA-7ST_30W_6Ω_2.jpg",
         ],
     },
     ArtScene {
         keywords: &["drum bass", "dnb", "jungle"],
         photos: &[
-                "c/c2/Avono_troupe_drummer_on_the_move_at_SK_Fest_2024_02.jpg",
-                "a/a7/Bajju_troupe_drummers_on_the_move_at_SK_Fest_2024_01.jpg",
+            "c/c2/Avono_troupe_drummer_on_the_move_at_SK_Fest_2024_02.jpg",
+            "a/a7/Bajju_troupe_drummers_on_the_move_at_SK_Fest_2024_01.jpg",
         ],
     },
     ArtScene {
         keywords: &["trap", "drill"],
         photos: &[
-                "6/6d/Graffiti_aus_der_Hall_of_Fame_in_Ingolstadt.jpg",
-                "4/49/-072_-_Graffiti_(25707685586).jpg",
+            "6/6d/Graffiti_aus_der_Hall_of_Fame_in_Ingolstadt.jpg",
+            "4/49/-072_-_Graffiti_(25707685586).jpg",
         ],
     },
     ArtScene {
         keywords: &["phonk", "memphis", "drift"],
         photos: &[
-                "8/8d/Imani-bahati-white-cassette-tape-with-white-background.jpg",
-                "b/be/Fiarex_80_(vakexpositie_electronica)_in_RAI,_microcomputer_mini-datacassettereco,_Bestanddeelnr_931-1263.jpg",
+            "8/8d/Imani-bahati-white-cassette-tape-with-white-background.jpg",
+            "b/be/Fiarex_80_(vakexpositie_electronica)_in_RAI,_microcomputer_mini-datacassettereco,_Bestanddeelnr_931-1263.jpg",
         ],
     },
     ArtScene {
-        keywords: &["chiptune", "chiptunes", "chip", "8 bit", "chip music", "gameboy"],
-        photos: &[
-                "5/52/Photo_of_DSi_and_Game_Boy_Color_on_Game_Boy_Camera.jpg",
+        keywords: &[
+            "chiptune",
+            "chiptunes",
+            "chip",
+            "8 bit",
+            "chip music",
+            "gameboy",
         ],
+        photos: &["5/52/Photo_of_DSi_and_Game_Boy_Color_on_Game_Boy_Camera.jpg"],
     },
     ArtScene {
         keywords: &["amiga", "tracker", "demoscene", "module", "modules"],
         photos: &[
-                "1/17/Amiga_1200_(45977917314).jpg",
-                "c/c8/Amiga_1200_interner_Erweiterungsslot_mit_Entwicklerverewigung.jpg",
+            "1/17/Amiga_1200_(45977917314).jpg",
+            "c/c8/Amiga_1200_interner_Erweiterungsslot_mit_Entwicklerverewigung.jpg",
         ],
     },
     ArtScene {
         keywords: &["hip hop", "hiphop", "rap", "rapper"],
-        photos: &[
-                "8/87/Microphone_4_images.jpg",
-        ],
+        photos: &["8/87/Microphone_4_images.jpg"],
     },
     ArtScene {
         keywords: &["pop", "hits", "top 40"],
         photos: &[
-                "4/40/First_News_of_Peace!_Confetti_thrown_by_happy_crowds._Liberty_sings._Flags_waved._Nov._11-1918._(12795375585)_(cropped).jpg",
+            "4/40/First_News_of_Peace!_Confetti_thrown_by_happy_crowds._Liberty_sings._Flags_waved._Nov._11-1918._(12795375585)_(cropped).jpg",
         ],
     },
     ArtScene {
-        keywords: &["electronic", "electro", "dance", "dj", "club", "synth", "synthesizer"],
+        keywords: &[
+            "electronic",
+            "electro",
+            "dance",
+            "dj",
+            "club",
+            "synth",
+            "synthesizer",
+        ],
         photos: &[
-                "a/a3/Farfisa_pergamon_synthesizer.jpg",
-                "9/9c/Arturia_MiniFreak_on_a_desk.jpg",
+            "a/a3/Farfisa_pergamon_synthesizer.jpg",
+            "9/9c/Arturia_MiniFreak_on_a_desk.jpg",
         ],
     },
     ArtScene {
         keywords: &["jazz", "bebop", "swing", "bossa"],
-        photos: &[
-                "e/e5/Colorful_jazz_concert_(Unsplash).jpg",
-        ],
+        photos: &["e/e5/Colorful_jazz_concert_(Unsplash).jpg"],
     },
     ArtScene {
         keywords: &["blues", "soul", "funk", "r b", "motown", "groove"],
         photos: &[
-                "3/33/Blues_Harp,_MS-Series,_Hohner.jpg",
-                "8/80/2011-365-95_Harping_the_Blues_(5593753947).jpg",
+            "3/33/Blues_Harp,_MS-Series,_Hohner.jpg",
+            "8/80/2011-365-95_Harping_the_Blues_(5593753947).jpg",
         ],
     },
     ArtScene {
         keywords: &["rock", "metal", "punk", "grunge", "indie", "alternative"],
         photos: &[
-                "7/7b/02_Marlin_guitar_Body_Stratocaster_style_03.jpg",
-                "4/4a/03_Marlin_guitar_Body_Stratocaster_style_02.jpg",
+            "7/7b/02_Marlin_guitar_Body_Stratocaster_style_03.jpg",
+            "4/4a/03_Marlin_guitar_Body_Stratocaster_style_02.jpg",
         ],
     },
     ArtScene {
-        keywords: &["gospel", "christian", "religious", "worship", "church", "hymn", "choir", "spiritual"],
+        keywords: &[
+            "gospel",
+            "christian",
+            "religious",
+            "worship",
+            "church",
+            "hymn",
+            "choir",
+            "spiritual",
+        ],
         photos: &[
-                "6/6b/111._Esperanto_Weltkongress_Graz_2026_-_Chor_singt_die_Friedenshymne.jpg",
-                "2/2f/Charlwood_Music_Festival_2026_Charlwood_Singers_St_Nicholas_Church_Charlwood_Surrey_England_03.jpg",
+            "6/6b/111._Esperanto_Weltkongress_Graz_2026_-_Chor_singt_die_Friedenshymne.jpg",
+            "2/2f/Charlwood_Music_Festival_2026_Charlwood_Singers_St_Nicholas_Church_Charlwood_Surrey_England_03.jpg",
         ],
     },
     ArtScene {
-        keywords: &["country", "folk", "bluegrass", "americana", "acoustic", "banjo"],
+        keywords: &[
+            "country",
+            "folk",
+            "bluegrass",
+            "americana",
+            "acoustic",
+            "banjo",
+        ],
         photos: &[
-                "9/94/2016_NAMM_Show_-_Ortega_Guitars_booth_-_Acoustic_bass_guitars,_Ukulele_by_range_(baritone,_tenour,_soprano,_sopranino),_Mandolins,_Banjos,_Banjo_ukuleles,_and_Nylon-string_guitars_(2016-01-24_17.03.02_by_Pete_Brown).jpg",
-                "8/82/Bacon_&_Day_Silver_Bell_Banjo_(c.1922,_reproduction),_Gibson_Banjo,_Concertone_Banjo_(c.1920s),_Museum_of_Making_Music.jpg",
+            "9/94/2016_NAMM_Show_-_Ortega_Guitars_booth_-_Acoustic_bass_guitars,_Ukulele_by_range_(baritone,_tenour,_soprano,_sopranino),_Mandolins,_Banjos,_Banjo_ukuleles,_and_Nylon-string_guitars_(2016-01-24_17.03.02_by_Pete_Brown).jpg",
+            "8/82/Bacon_&_Day_Silver_Bell_Banjo_(c.1922,_reproduction),_Gibson_Banjo,_Concertone_Banjo_(c.1920s),_Museum_of_Making_Music.jpg",
         ],
     },
     ArtScene {
         keywords: &["reggae", "dancehall", "ska", "caribbean", "steel"],
         photos: &[
-                "4/48/Funeral_day_Steelasophical_Steel_Band.jpg",
-                "7/73/Drum_band_(3865678258).jpg",
+            "4/48/Funeral_day_Steelasophical_Steel_Band.jpg",
+            "7/73/Drum_band_(3865678258).jpg",
         ],
     },
     ArtScene {
-        keywords: &["classical", "orchestra", "symphony", "opera", "baroque", "piano"],
-        photos: &[
-                "8/8c/Pianoforte_Daniel_Villalba.jpg",
+        keywords: &[
+            "classical",
+            "orchestra",
+            "symphony",
+            "opera",
+            "baroque",
+            "piano",
         ],
+        photos: &["8/8c/Pianoforte_Daniel_Villalba.jpg"],
     },
     ArtScene {
-        keywords: &["latin", "salsa", "reggaeton", "cumbia", "bachata", "merengue"],
-        photos: &[
-                "3/31/Pair_of_congas.jpg",
+        keywords: &[
+            "latin",
+            "salsa",
+            "reggaeton",
+            "cumbia",
+            "bachata",
+            "merengue",
         ],
+        photos: &["3/31/Pair_of_congas.jpg"],
     },
     ArtScene {
-        keywords: &["world", "ethnic", "african", "arabic", "indian", "bollywood", "turkish", "celtic", "asian", "sitar"],
+        keywords: &[
+            "world",
+            "ethnic",
+            "african",
+            "arabic",
+            "indian",
+            "bollywood",
+            "turkish",
+            "celtic",
+            "asian",
+            "sitar",
+        ],
         photos: &[
-                "0/09/Sitar_jawari.jpg",
-                "d/dd/Several_instruments_of_India,_drawn_by_Walt_Crowley.jpg",
+            "0/09/Sitar_jawari.jpg",
+            "d/dd/Several_instruments_of_India,_drawn_by_Walt_Crowley.jpg",
         ],
     },
     ArtScene {
         keywords: &["news", "talk", "spoken", "podcast", "sports"],
         photos: &[
-                "5/57/\"Bernhardt_of_Russia\",_driven_out_by_Boshevists,_now_in_New_York_-_a_radio_fan_LCCN2002705887.jpg",
-                "2/21/Radiotentoonstelling_Firato_in_Bellevue,_Bestanddeelnr_904-2311.jpg",
+            "5/57/\"Bernhardt_of_Russia\",_driven_out_by_Boshevists,_now_in_New_York_-_a_radio_fan_LCCN2002705887.jpg",
+            "2/21/Radiotentoonstelling_Firato_in_Bellevue,_Bestanddeelnr_904-2311.jpg",
         ],
     },
     ArtScene {
-        keywords: &["oldies", "oldie", "retro", "80s", "90s", "70s", "60s", "50s", "disco", "vintage", "nostalgia"],
+        keywords: &[
+            "oldies",
+            "oldie",
+            "retro",
+            "80s",
+            "90s",
+            "70s",
+            "60s",
+            "50s",
+            "disco",
+            "vintage",
+            "nostalgia",
+        ],
         photos: &[
-                "b/b0/Cardboard_sleeve_for_45_RPM_Record,_“I_Don’t_Care”_by_Maurice_Patton_and_The_Melodians_(cropped).jpg",
+            "b/b0/Cardboard_sleeve_for_45_RPM_Record,_“I_Don’t_Care”_by_Maurice_Patton_and_The_Melodians_(cropped).jpg",
         ],
     },
     ArtScene {
         keywords: &[],
         photos: &[
-                "8/87/Yleisradio's_hardware_2.jpg",
-                "a/aa/Yleisradio's_hardware_3.jpg",
+            "8/87/Yleisradio's_hardware_2.jpg",
+            "a/aa/Yleisradio's_hardware_3.jpg",
         ],
     },
 ];
@@ -642,35 +706,37 @@ pub fn parse_cliamp(data: &Value) -> Page {
         .filter_map(|s| {
             let url = s.get("stream")?.as_str()?;
             http_url(url).ok()?;
-            Some(art.apply(
-                Media {
-                    id: s.get("id").and_then(Value::as_str).unwrap_or(url).into(),
-                    title: s
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Station")
-                        .into(),
-                    creator: s
-                        .get("genre")
-                        .and_then(Value::as_str)
-                        .unwrap_or("cliamp radio")
-                        .into(),
-                    url: url.into(),
-                    kind: MediaKind::Station,
-                    live: true,
-                    tracks_url: s
-                        .get("tracks_url")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    description: s
-                        .get("description")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                    ..Default::default()
-                },
-                s,
-            ))
+            Some(
+                art.apply(
+                    Media {
+                        id: s.get("id").and_then(Value::as_str).unwrap_or(url).into(),
+                        title: s
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Station")
+                            .into(),
+                        creator: s
+                            .get("genre")
+                            .and_then(Value::as_str)
+                            .unwrap_or("cliamp radio")
+                            .into(),
+                        url: url.into(),
+                        kind: MediaKind::Station,
+                        live: true,
+                        tracks_url: s
+                            .get("tracks_url")
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
+                        description: s
+                            .get("description")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        ..Default::default()
+                    },
+                    s,
+                ),
+            )
         })
         .collect();
     Page {
@@ -729,40 +795,42 @@ pub fn parse_radio_browser(data: &Value) -> Page {
                 .filter(|s| !s.is_empty())
                 .or_else(|| s.get("url").and_then(Value::as_str))?;
             http_url(url).ok()?;
-            Some(art.apply(
-                Media {
-                    id: s
-                        .get("stationuuid")
-                        .and_then(Value::as_str)
-                        .unwrap_or(url)
-                        .into(),
-                    title: s
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Station")
-                        .into(),
-                    creator: s
-                        .get("country")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                    description: s
-                        .get("tags")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                    url: url.into(),
-                    thumbnail: s
-                        .get("favicon")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .into(),
-                    kind: MediaKind::Station,
-                    live: true,
-                    ..Default::default()
-                },
-                s,
-            ))
+            Some(
+                art.apply(
+                    Media {
+                        id: s
+                            .get("stationuuid")
+                            .and_then(Value::as_str)
+                            .unwrap_or(url)
+                            .into(),
+                        title: s
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Station")
+                            .into(),
+                        creator: s
+                            .get("country")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        description: s
+                            .get("tags")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        url: url.into(),
+                        thumbnail: s
+                            .get("favicon")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        kind: MediaKind::Station,
+                        live: true,
+                        ..Default::default()
+                    },
+                    s,
+                ),
+            )
         })
         .collect();
     Page {
@@ -821,7 +889,11 @@ mod tests {
             .map(|item| item.thumbnail.as_str())
             .collect::<std::collections::HashSet<_>>();
         assert_eq!(page.items.len(), 15);
-        assert_eq!(distinct.len(), 15, "each catalog station needs its own picture");
+        assert_eq!(
+            distinct.len(),
+            15,
+            "each catalog station needs its own picture"
+        );
     }
     #[test]
     fn genre_matching_uses_whole_words() {
@@ -840,8 +912,14 @@ mod tests {
                 let parts = photo.split('/').collect::<Vec<_>>();
                 assert_eq!(parts.len(), 3, "{photo}");
                 assert_eq!(parts[0].len(), 1, "{photo}");
-                assert!(parts[1].len() == 2 && parts[1].starts_with(parts[0]), "{photo}");
-                assert!(parts[2].ends_with(".jpg") || parts[2].ends_with(".jpeg"), "{photo}");
+                assert!(
+                    parts[1].len() == 2 && parts[1].starts_with(parts[0]),
+                    "{photo}"
+                );
+                assert!(
+                    parts[2].ends_with(".jpg") || parts[2].ends_with(".jpeg"),
+                    "{photo}"
+                );
             }
         }
     }
