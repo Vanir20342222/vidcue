@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Shader
 import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -149,7 +150,11 @@ class CatalogUiTest {
         try {
             compose.waitUntil(15_000) {
                 compose
-                    .onAllNodesWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+                    .onAllNodes(
+                        hasTestTag("artwork-${cards.first().key}") and
+                            hasAnyAncestor(hasTestTag("media-card-${cards.first().key}")),
+                        useUnmergedTree = true,
+                    )
                     .fetchSemanticsNodes()
                     .isNotEmpty()
             }
@@ -169,7 +174,11 @@ class CatalogUiTest {
         compose.waitUntil(10_000) {
             val bitmap =
                 compose
-                    .onNodeWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+                    .onNode(
+                        hasTestTag("artwork-${cards.first().key}") and
+                            hasAnyAncestor(hasTestTag("media-card-${cards.first().key}")),
+                        useUnmergedTree = true,
+                    )
                     .captureToImage()
             val color = bitmap.toPixelMap()[bitmap.width / 2, bitmap.height / 4]
             color.red > color.green * 1.15f
@@ -318,8 +327,22 @@ class CatalogUiTest {
         compose.onNodeWithText(title).performClick()
         compose.onNodeWithTag("offline-playlist-edit-name").performTextReplacement("$title renamed")
         compose.onNodeWithTag("offline-playlist-edit-name").assertTextContains("$title renamed")
-        // Modal sheets move as the IME opens. Tap the settled real button;
-        // semantics becoming available does not imply its window position is final.
+        // Complete editing before tapping a moving modal. UIA idleness alone
+        // does not establish that its IME-driven window relocation has finished.
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        if (
+            automation.windows.any {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            }
+        ) {
+            UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
+            compose.waitUntil(10_000) {
+                automation.windows.none {
+                    it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                }
+            }
+        }
+        compose.onNodeWithTag("offline-playlist-edit-name").assertIsDisplayed()
         settleUi()
         compose.onNodeWithText("Rename").assertIsDisplayed().performClick()
         try {
@@ -377,6 +400,7 @@ class CatalogUiTest {
             MediaRuntimeTest.await("Mini-player pause must reach Media3") {
                 MediaRuntimeTest.status().optBoolean("paused")
             }
+            captureSettled("restyle-mini-player.png")
             compose.onNodeWithTag("mini-player").performClick()
             try {
                 // Await the measured player layout and decoded artwork.
@@ -404,6 +428,25 @@ class CatalogUiTest {
             }
             compose.waitUntil(10_000) { loadedCoverVisible() }
             captureSettled("native-player.png")
+            compose.waitUntil(10_000) { MediaRuntimeTest.status().optBoolean("repeat_one") }
+            compose.onNodeWithTag("player-repeat").assertIsSelected().performClick()
+            MediaRuntimeTest.await("Repeat UI must reflect the existing Media3 command") {
+                !MediaRuntimeTest.status().optBoolean("repeat_one")
+            }
+            compose.onNodeWithTag("player-repeat").assertIsNotSelected().performClick()
+            MediaRuntimeTest.await("Repeat may be restored through the real UI") {
+                MediaRuntimeTest.status().optBoolean("repeat_one")
+            }
+            compose.onNodeWithTag("player-shuffle").assertIsNotSelected().performClick()
+            MediaRuntimeTest.await("Shuffle UI must reflect the existing Media3 command") {
+                MediaRuntimeTest.status().optBoolean("shuffle")
+            }
+            compose.onNodeWithTag("player-shuffle").assertIsSelected()
+            captureSettled("restyle-player-active-modes.png")
+            compose.onNodeWithTag("player-shuffle").performClick()
+            MediaRuntimeTest.await("Restore the original shuffle mode") {
+                !MediaRuntimeTest.status().optBoolean("shuffle")
+            }
             compose.onNodeWithTag("seek-slider").performTouchInput {
                 swipe(
                     androidx.compose.ui.geometry.Offset(width * 0.2f, height / 2f),
@@ -463,8 +506,10 @@ class CatalogUiTest {
             }
             compose.onNodeWithTag("player-options").performClick()
             compose.onNodeWithTag("volume-slider").performScrollTo().assertIsDisplayed()
+            captureSettled("restyle-player-options.png")
             compose.onNodeWithText("Audio & subtitles").performScrollTo().performClick()
             compose.onNodeWithText("Toggle captions").performScrollTo().assertIsDisplayed()
+            captureSettled("restyle-player-options-tracks.png")
             compose.onNodeWithContentDescription("Close").performClick()
             scenario.onActivity {
                 ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile("gestures", false)
@@ -604,6 +649,7 @@ class CatalogUiTest {
             }
             val cards = populate(1)
             captureSettled("restyle-large-text-feed.png")
+            assertNavigationLabelsFit()
             compose
                 .onNodeWithTag("search-field")
                 .assertIsDisplayed()
@@ -624,6 +670,32 @@ class CatalogUiTest {
             captureSettled("restyle-large-text-theme-dialog.png")
             compose.onNodeWithText("CANCEL").performClick()
             captureSettled("restyle-large-text-settings.png")
+            compose.onNodeWithContentDescription("Close").performClick()
+            scenario.close()
+            device.executeShellCommand("wm size 2560x1600")
+            device.executeShellCommand("wm density 320")
+            scenario = RuntimeTest.launchOffline()
+            compose.waitUntil(10_000) {
+                compose
+                    .onAllNodes(
+                        hasTestTag("app-background") and
+                            SemanticsMatcher.expectValue(
+                                SemanticsProperties.StateDescription,
+                                "Ready",
+                            )
+                    )
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }
+            val tabletCards = populate(1)
+            captureSettled("restyle-fidelity-large-text-tablet-feed.png")
+            assertNavigationLabelsFit()
+            compose.onNodeWithTag("navigation-rail").assertIsDisplayed()
+            awaitDecodedCovers(tabletCards)
+            captureSettled("restyle-fidelity-large-text-tablet-feed.png")
+            compose.onNodeWithTag("settings-button").performClick()
+            compose.onNodeWithTag("settings-Appearance").performClick()
+            captureSettled("restyle-fidelity-large-text-tablet-settings.png")
         } finally {
             device.executeShellCommand("settings put system font_scale 1.0")
         }
@@ -652,6 +724,9 @@ class CatalogUiTest {
                 vm.feeds[1].value.copy(request = json("Search" to "synthetic"), generation = 200)
         }
         compose.waitForIdle()
+        compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+        compose.onNodeWithTag("search-field").assertTextContains("synthetic")
+        compose.onNodeWithContentDescription("Leave search").assertIsDisplayed()
         val first =
             compose.onNodeWithTag("media-card-${cards[0].key}").fetchSemanticsNode().boundsInRoot
         val second =
@@ -674,58 +749,787 @@ class CatalogUiTest {
         InstrumentationRegistry.getInstrumentation().uiAutomation.waitForIdle(300, 3000)
         awaitDecodedCovers(cards)
         captureSettled("restyle-tablet-search.png")
+        val badge =
+            compose
+                .onNodeWithTag("duration-${cards[0].key}")
+                .assertIsDisplayed()
+                .fetchSemanticsNode()
+                .boundsInRoot
+        Assert.assertTrue(
+            "Wide search retains its duration within the thumbnail",
+            badge.left >= cover.left &&
+                badge.right <= cover.right &&
+                badge.top >= cover.top &&
+                badge.bottom <= cover.bottom,
+        )
         compose.onNodeWithTag("media-menu-${cards[0].key}").performClick()
         compose.onNodeWithText("Preview").assertIsDisplayed()
     }
 
+    @Test
+    fun supplementalSheetsKeepRealQueueCommandsAndFitTheirContent() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        fun queueNow() = PlaybackService.rpcArray(json("op" to "queue")).objects()
+        fun clearQueue() {
+            val items = queueNow()
+            items.indices.reversed().forEach { index ->
+                PlaybackService.rpc(
+                    json(
+                        "op" to "queue_remove",
+                        "index" to index,
+                        "url" to items[index].optString("url"),
+                    )
+                )
+            }
+        }
+        val saved = queueNow()
+        try {
+            for (wide in listOf(false, true)) {
+                if (wide) {
+                    scenario.close()
+                    device.executeShellCommand("wm size 2560x1600")
+                    device.executeShellCommand("wm density 320")
+                    scenario = RuntimeTest.launchOffline()
+                    compose.waitUntil(10_000) {
+                        compose
+                            .onAllNodes(
+                                hasTestTag("app-background") and
+                                    SemanticsMatcher.expectValue(
+                                        SemanticsProperties.StateDescription,
+                                        "Ready",
+                                    )
+                            )
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                }
+                val profile = if (wide) "tablet" else "phone"
+                val cards = populate(1).take(3)
+                clearQueue()
+                for (card in cards) {
+                    PlaybackService.rpc(json("op" to "enqueue", "media" to card.value))
+                    // Synthetic records in the explicitly disposable test app only.
+                    PlaybackService.rpc(json("op" to "history_record", "media" to card.value))
+                }
+                compose.onNodeWithTag("menu-button").performClick()
+                compose.onNodeWithText("Playback queue").performClick()
+                compose.waitUntil(10_000) {
+                    compose
+                        .onAllNodesWithTag("queue-item-${cards[2].key}")
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                }
+                compose.onNodeWithTag("queue-menu-${cards[0].key}").performClick()
+                compose.onNodeWithTag("queue-up-${cards[0].key}").assertIsNotEnabled()
+                device.pressBack()
+                compose.onNodeWithTag("queue-menu-${cards[2].key}").performClick()
+                compose.onNodeWithTag("queue-down-${cards[2].key}").assertIsNotEnabled()
+                device.pressBack()
+                for (card in cards) {
+                    compose.waitUntil(10_000) {
+                        compose
+                            .onAllNodes(
+                                hasTestTag("artwork-${card.key}") and
+                                    hasAnyAncestor(hasTestTag("queue-list")),
+                                useUnmergedTree = true,
+                            )
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                }
+                captureSettled("restyle-fidelity-$profile-queue-populated.png")
+                compose.onNodeWithTag("queue-menu-${cards[1].key}").performClick()
+                captureSettled("restyle-fidelity-$profile-queue-actions.png")
+                compose.onNodeWithTag("queue-up-${cards[1].key}").performClick()
+                compose.waitUntil(10_000) {
+                    queueNow().firstOrNull()?.optString("url") == cards[1].url
+                }
+                compose.onNodeWithTag("queue-menu-${cards[2].key}").performClick()
+                compose.onNodeWithTag("queue-remove-${cards[2].key}").performClick()
+                compose.waitUntil(10_000) { queueNow().size == 2 }
+                captureSettled("restyle-fidelity-$profile-queue-edited.png")
+                compose.onNodeWithContentDescription("Close").performClick()
+                compose.onNodeWithTag("menu-button").performClick()
+                compose.onNodeWithText("Recently played").performClick()
+                compose.onNodeWithTag("history-list").assertIsDisplayed()
+                compose.onNodeWithText("Clear history and resume positions").assertIsDisplayed()
+                compose.waitUntil(10_000) {
+                    compose
+                        .onAllNodes(
+                            hasTestTag("artwork-${cards.last().key}") and
+                                hasAnyAncestor(hasTestTag("history-list")),
+                            useUnmergedTree = true,
+                        )
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                }
+                captureSettled("restyle-fidelity-$profile-history.png")
+                compose.onNodeWithContentDescription("Close").performClick()
+                compose.onNodeWithTag("menu-button").performClick()
+                compose.onNodeWithText("Sleep timer").performClick()
+                compose.onNodeWithText("15 minutes").assertIsDisplayed()
+                compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+                captureSettled("restyle-fidelity-$profile-sleep.png")
+                compose.onNodeWithContentDescription("Close").performClick()
+                compose.onNodeWithTag("menu-button").performClick()
+                compose.onNodeWithTag("feeds-button").performClick()
+                compose.onNodeWithText("Feeds and library").assertIsDisplayed()
+                captureSettled("restyle-fidelity-$profile-feeds.png")
+                compose.onNodeWithContentDescription("Close").performClick()
+                clearQueue()
+                compose.onNodeWithTag("menu-button").performClick()
+                compose.onNodeWithText("Playback queue").performClick()
+                compose.waitUntil(10_000) {
+                    compose.onAllNodesWithTag("queue-empty").fetchSemanticsNodes().isNotEmpty()
+                }
+                val sheet = compose.onNodeWithTag("panel-body").fetchSemanticsNode().boundsInRoot
+                Assert.assertTrue(
+                    "An empty queue must fit content instead of reserving a full list",
+                    sheet.height < device.displayHeight * 0.65f,
+                )
+                compose.onAllNodesWithTag("queue-list").assertCountEquals(0)
+                captureSettled("restyle-fidelity-$profile-queue-empty.png")
+                compose.onNodeWithContentDescription("Close").performClick()
+            }
+        } finally {
+            clearQueue()
+            for (item in saved) PlaybackService.rpc(json("op" to "enqueue", "media" to item))
+        }
+    }
+
+    @Test
+    fun tabletPlayerKeepsSideAndFocusedControlsReachable() {
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        scenario.close()
+        device.executeShellCommand("wm size 2560x1600")
+        device.executeShellCommand("wm density 320")
+        scenario = RuntimeTest.launchOffline()
+        compose.waitUntil(10_000) {
+            compose
+                .onAllNodes(
+                    hasTestTag("app-background") and
+                        SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Ready")
+                )
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        val cards = populate(2)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val fixture = File(instrumentation.targetContext.cacheDir, "tablet-ui-fixture.m4a")
+        instrumentation.context.assets.open("fixture-audio.m4a").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        try {
+            MediaBridge.execute(
+                json(
+                        "op" to "play",
+                        "request" to
+                            json(
+                                "media" to cards[0].value,
+                                "audio" to true,
+                                "stream" to
+                                    json("url" to android.net.Uri.fromFile(fixture).toString()),
+                            ),
+                    )
+                    .toString()
+            )
+            MediaRuntimeTest.await("Tablet fixture must play") {
+                MediaRuntimeTest.status().optBoolean("playing")
+            }
+            MediaRuntimeTest.command("pause")
+            MediaRuntimeTest.await("Tablet fixture must pause") {
+                MediaRuntimeTest.status().optBoolean("paused")
+            }
+            compose.onNodeWithTag("tablet-player-panel").assertIsDisplayed()
+            scenario.onActivity {
+                PlaybackService.current!!.player.shuffleModeEnabled = false
+                PlaybackService.current!!.player.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_OFF
+            }
+            MediaRuntimeTest.await("Tablet test starts with known modes") {
+                !MediaRuntimeTest.status().optBoolean("shuffle") &&
+                    !MediaRuntimeTest.status().optBoolean("repeat_one")
+            }
+            compose
+                .onNodeWithTag("pane-shuffle")
+                .performScrollTo()
+                .assertIsNotSelected()
+                .performClick()
+            MediaRuntimeTest.await("Sidebar shuffle uses the real mode") {
+                MediaRuntimeTest.status().optBoolean("shuffle")
+            }
+            compose.onNodeWithTag("pane-repeat").assertIsNotSelected().performClick()
+            MediaRuntimeTest.await("Sidebar repeat uses the real mode") {
+                MediaRuntimeTest.status().optBoolean("repeat_one")
+            }
+            compose.onNodeWithTag("pane-shuffle").assertIsSelected()
+            compose.onNodeWithTag("pane-repeat").assertIsSelected()
+            captureSettled("restyle-fidelity-tablet-side-player.png")
+            compose.onNodeWithText("Open full player").performScrollTo().performClick()
+            compose.onNodeWithTag("focused-player").assertIsDisplayed()
+            compose.onNodeWithTag("player-pause").assertIsDisplayed()
+            compose.onNodeWithTag("player-shuffle").assertIsSelected()
+            compose.onNodeWithTag("player-repeat").assertIsSelected()
+            captureSettled("restyle-fidelity-tablet-focused-player.png")
+            compose.onNodeWithContentDescription("Minimize player").performClick()
+            compose.onNodeWithTag("tablet-player-panel").assertIsDisplayed()
+            Assert.assertTrue(
+                "Minimizing must retain paused decoder state",
+                MediaRuntimeTest.status().optBoolean("paused"),
+            )
+        } finally {
+            MediaBridge.main.post {
+                PlaybackService.current?.player?.shuffleModeEnabled = false
+                PlaybackService.current?.player?.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_OFF
+            }
+            MediaBridge.execute(json("op" to "stop").toString())
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun videoWatchDetailsFollowTheFrameAndCollapseKeepsPlayback() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val cards = populate(1)
+        val fixture = File(instrumentation.targetContext.cacheDir, "watch-layout-fixture.mp4")
+        instrumentation.context.assets.open("fixture.mp4").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        var generation = 0L
+        val initialFrames = MediaBridge.videoFrames.get()
+        try {
+            MediaBridge.execute(
+                json(
+                        "op" to "play",
+                        "request" to
+                            json(
+                                "media" to cards[0].value,
+                                "audio" to false,
+                                "stream" to
+                                    json("url" to android.net.Uri.fromFile(fixture).toString()),
+                            ),
+                    )
+                    .toString()
+            )
+            MediaBridge.event("show_player", "")
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("native-video-surface").fetchSemanticsNodes().isNotEmpty()
+            }
+            MediaRuntimeTest.await("Watch fixture must play real decoded video") {
+                MediaRuntimeTest.status().optBoolean("playing") &&
+                    MediaBridge.videoFrames.get() > initialFrames
+            }
+            scenario.onActivity {
+                PlaybackService.current!!.player.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_ONE
+                generation = PlaybackService.current!!.generation
+                ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile("gestures", true)
+            }
+            for ((index, profile) in
+                listOf("phone", "tablet", "phone-large", "tablet-large").withIndex()) {
+                val wide = profile.startsWith("tablet")
+                if (index > 0) {
+                    scenario.close()
+                    device.executeShellCommand(
+                        "settings put system font_scale ${if (profile.endsWith("large")) "2.0" else "1.0"}"
+                    )
+                    device.executeShellCommand(
+                        if (wide) "wm size 2560x1600" else "wm size 1080x2400"
+                    )
+                    device.executeShellCommand(if (wide) "wm density 320" else "wm density 420")
+                    scenario = RuntimeTest.launchOffline()
+                }
+                MediaBridge.event("show_player", "")
+                compose.waitUntil(10_000) {
+                    compose
+                        .onAllNodesWithTag("native-video-surface")
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                }
+                compose.waitForIdle()
+                val density = instrumentation.targetContext.resources.displayMetrics.density
+                val video =
+                    compose.onNodeWithTag("native-video-surface").fetchSemanticsNode().boundsInRoot
+                val title =
+                    compose
+                        .onNodeWithTag("panel-header")
+                        .assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f))
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                val body = compose.onNodeWithTag("panel-body").fetchSemanticsNode().boundsInRoot
+                Assert.assertEquals(
+                    "Watch video must retain 16:9",
+                    16f / 9f,
+                    video.width / video.height,
+                    0.03f,
+                )
+                Assert.assertEquals("No generic toolbar above watch video", body.top, video.top, 1f)
+                if (wide) {
+                    Assert.assertTrue(
+                        "Wide details belong beside the video",
+                        title.left >= video.right,
+                    )
+                    Assert.assertTrue(
+                        "Wide video uses the larger pane",
+                        video.width / body.width in 0.45f..0.70f,
+                    )
+                } else {
+                    Assert.assertEquals(
+                        "Portrait watch video is full bleed",
+                        body.width,
+                        video.width,
+                        1f,
+                    )
+                    Assert.assertTrue(
+                        "Title must immediately follow video, not a weighted blank gap",
+                        title.top - video.bottom in 0f..(16f * density + 1f),
+                    )
+                }
+                compose.onNodeWithText("Now playing").assertDoesNotExist()
+                settleUi()
+                MediaRuntimeTest.await("The watch capture must contain actual decoded RGB video") {
+                    MediaRuntimeTest.videoVisible(
+                        "restyle-fidelity-$profile-watch-details.png",
+                        wide,
+                        true,
+                    )
+                }
+                compose.onNodeWithTag("player-options").performScrollTo()
+                val queueAction =
+                    compose
+                        .onNodeWithContentDescription("Playback queue")
+                        .assertIsDisplayed()
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                val moreAction =
+                    compose
+                        .onNodeWithTag("player-options")
+                        .assertIsDisplayed()
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                Assert.assertEquals(
+                    "Actions must span the details viewport",
+                    title.left,
+                    queueAction.left,
+                    1f,
+                )
+                Assert.assertEquals(
+                    "More stays at the trailing edge",
+                    title.right,
+                    moreAction.right,
+                    1f,
+                )
+                Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                if (index == 0) {
+                    // Exercise the actual View control, not a Compose compatibility proxy.
+                    scenario.onActivity {
+                        val collapse = it.findViewById<android.view.View>(R.id.ytui_collapse)
+                        val playerView =
+                            generateSequence(collapse) { view -> view.parent as? android.view.View }
+                                .filterIsInstance<androidx.media3.ui.PlayerView>()
+                                .first()
+                        playerView.showController()
+                    }
+                    // Measure after the controller's next layout pass, not in the
+                    // same main-thread task that made it visible.
+                    instrumentation.waitForIdleSync()
+                    compose.waitForIdle()
+                    scenario.onActivity {
+                        val collapse = it.findViewById<android.view.View>(R.id.ytui_collapse)
+                        Assert.assertEquals("panel-close", collapse.tag)
+                        Assert.assertEquals(
+                            "Minimize player",
+                            collapse.contentDescription.toString(),
+                        )
+                        Assert.assertTrue(
+                            collapse.width >= 48f * density - 1f &&
+                                collapse.height >= 48f * density - 1f
+                        )
+                    }
+                    // Keep the auto-hiding controller visible for the UiAutomator
+                    // lookup (restored below); match the id like MediaRuntimeTest.
+                    fun watchPlayer(activity: android.app.Activity) =
+                        generateSequence(
+                                activity.findViewById<android.view.View>(R.id.ytui_collapse)
+                            ) { view ->
+                                view.parent as? android.view.View
+                            }
+                            .filterIsInstance<androidx.media3.ui.PlayerView>()
+                            .first()
+                    var hideAfter = 0
+                    scenario.onActivity {
+                        val view = watchPlayer(it)
+                        hideAfter = view.controllerShowTimeoutMs
+                        view.controllerShowTimeoutMs = 0
+                        view.showController()
+                    }
+                    val collapse =
+                        device.wait(
+                            androidx.test.uiautomator.Until.findObject(
+                                androidx.test.uiautomator.By.res(
+                                    java.util.regex.Pattern.compile(".*:id/ytui_collapse")
+                                )
+                            ),
+                            5000,
+                        )
+                    if (collapse == null)
+                        device.dumpWindowHierarchy(
+                            File(
+                                instrumentation.targetContext.getExternalFilesDir(null),
+                                "watch-collapse-missing.xml",
+                            )
+                        )
+                    Assert.assertNotNull("Native collapse control must be accessible", collapse)
+                    collapse.click()
+                    // Restore the hide timer after the click; changing it first re-lays
+                    // out the controller and makes the found UiObject2 stale.
+                    scenario.onActivity {
+                        it.findViewById<android.view.View>(R.id.ytui_collapse)?.let { view ->
+                            generateSequence(view) { v -> v.parent as? android.view.View }
+                                .filterIsInstance<androidx.media3.ui.PlayerView>()
+                                .firstOrNull()
+                                ?.controllerShowTimeoutMs = hideAfter
+                        }
+                    }
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                    Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                    compose.onNodeWithTag("mini-player").performClick()
+                    compose.onNodeWithTag("panel-header").performScrollTo()
+                    compose.onNodeWithTag("panel-header").performTouchInput {
+                        swipe(
+                            center,
+                            center + androidx.compose.ui.geometry.Offset(0f, height * 3f),
+                            300,
+                        )
+                    }
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    compose.onNodeWithTag("mini-player").performClick()
+                    scenario.onActivity {
+                        ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile(
+                            "gestures",
+                            false,
+                        )
+                    }
+                    compose.waitUntil(10_000) {
+                        var disabled = false
+                        scenario.onActivity {
+                            disabled =
+                                !ViewModelProvider(it)[YtuiViewModel::class.java]
+                                    .mobile
+                                    .value
+                                    .optBoolean("gestures")
+                        }
+                        disabled
+                    }
+                    compose.onNodeWithTag("panel-header").performTouchInput {
+                        swipe(
+                            center,
+                            center + androidx.compose.ui.geometry.Offset(0f, height * 3f),
+                            300,
+                        )
+                    }
+                    compose.onNodeWithTag("focused-player").assertIsDisplayed()
+                    device.pressBack()
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                    Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                    compose.onNodeWithTag("mini-player").performClick()
+                }
+            }
+        } finally {
+            MediaBridge.main.post {
+                PlaybackService.current?.player?.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_OFF
+            }
+            MediaBridge.execute(json("op" to "stop").toString())
+            fixture.delete()
+        }
+    }
+
+    @Test
+    fun musicTransitionsKeepTheDecoderAndProduceMotionEvidence() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val scales =
+            listOf(
+                    "window_animation_scale",
+                    "transition_animation_scale",
+                    "animator_duration_scale",
+                )
+                .associateWith { device.executeShellCommand("settings get global $it").trim() }
+        val cards = populate(2)
+        val fixture = File(instrumentation.targetContext.cacheDir, "motion-ui-fixture.m4a")
+        instrumentation.context.assets.open("fixture-audio.m4a").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        val output =
+            File(
+                instrumentation.targetContext.getExternalFilesDir(null),
+                "restyle-fidelity-motion.mp4",
+            )
+        if (output.isFile) Assert.assertTrue(output.delete())
+        val recordingPath = "/data/local/tmp/ytui-fidelity-${android.os.Process.myPid()}.mp4"
+        var recording: android.os.ParcelFileDescriptor? = null
+        val previousClock = compose.mainClock.autoAdvance
+        try {
+            for (key in scales.keys) device.executeShellCommand("settings put global $key 1")
+            scenario.onActivity {
+                val vm = ViewModelProvider(it)[YtuiViewModel::class.java]
+                vm.updateMobile("gestures", true)
+                vm.updateConfig(false) { config -> config.put("reduced_motion", false) }
+            }
+            compose.waitUntil(10_000) {
+                var animated = false
+                scenario.onActivity {
+                    val vm = ViewModelProvider(it)[YtuiViewModel::class.java]
+                    animated =
+                        !vm.config.value.optBoolean("reduced_motion", true) &&
+                            vm.mobile.value.optBoolean("gestures")
+                }
+                animated
+            }
+            MediaBridge.execute(
+                json(
+                        "op" to "play",
+                        "request" to
+                            json(
+                                "media" to cards[0].value,
+                                "audio" to true,
+                                "stream" to
+                                    json("url" to android.net.Uri.fromFile(fixture).toString()),
+                            ),
+                    )
+                    .toString()
+            )
+            MediaRuntimeTest.await("Motion fixture must start its real decoder") {
+                MediaRuntimeTest.status().optBoolean("playing")
+            }
+            var generation = 0L
+            scenario.onActivity {
+                PlaybackService.current!!.player.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_ONE
+                generation = PlaybackService.current!!.generation
+            }
+            compose.onNodeWithTag("mini-player").assertIsDisplayed()
+            recording =
+                instrumentation.uiAutomation.executeShellCommand(
+                    "screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 30 $recordingPath"
+                )
+            // Drive the Compose animation clock in real-time while recording;
+            // test auto-advancement would otherwise skip visible intermediate frames.
+            compose.mainClock.autoAdvance = false
+            fun frames(milliseconds: Int) {
+                repeat((milliseconds + 15) / 16) {
+                    compose.mainClock.advanceTimeByFrame()
+                    android.os.SystemClock.sleep(16)
+                }
+            }
+            val started = android.os.SystemClock.elapsedRealtime()
+            val stages = mutableListOf<JSONObject>()
+            fun mark(name: String) {
+                stages +=
+                    json(
+                        "action" to name,
+                        "elapsed_ms" to android.os.SystemClock.elapsedRealtime() - started,
+                    )
+            }
+            frames(400)
+            mark("expand player")
+            compose.onNodeWithTag("mini-player").performClick()
+            frames(400)
+            compose.onNodeWithTag("focused-player").assertIsDisplayed()
+            mark("swipe to minimize")
+            compose.onNodeWithTag("panel-header").performTouchInput {
+                swipe(center, center + androidx.compose.ui.geometry.Offset(0f, height * 3f), 300)
+            }
+            frames(400)
+            compose.onNodeWithTag("mini-player").assertIsDisplayed()
+            mark("expand player again")
+            compose.onNodeWithTag("mini-player").performClick()
+            frames(400)
+            mark("minimize by chevron")
+            compose.onNodeWithContentDescription("Minimize player").performClick()
+            frames(400)
+            mark("open timer sheet")
+            compose.onNodeWithTag("menu-button").performClick()
+            frames(240)
+            compose.onNodeWithText("Sleep timer").performClick()
+            frames(600)
+            compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+            mark("close timer sheet")
+            compose.onNodeWithContentDescription("Close").performClick()
+            frames(600)
+            compose.onNodeWithText("Cancel timer").assertDoesNotExist()
+            mark("timer dismissed")
+            Assert.assertTrue(
+                "Recording must still cover the final closed sheet state",
+                device.executeShellCommand("pidof screenrecord").trim().isNotEmpty(),
+            )
+            frames(400)
+            scenario.onActivity {
+                Assert.assertEquals(
+                    "UI transitions must retain the actual decoder",
+                    generation,
+                    PlaybackService.current!!.generation,
+                )
+            }
+            Assert.assertTrue(
+                "Playback must continue through collapse and sheets",
+                MediaRuntimeTest.status().optBoolean("playing"),
+            )
+            compose.mainClock.autoAdvance = previousClock
+            compose.waitUntil(35_000) {
+                device.executeShellCommand("pidof screenrecord").trim().isEmpty()
+            }
+            // shell owns the recording. Transfer bytes through UiAutomation so
+            // the retained copy belongs to the app and is readable under FUSE.
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    instrumentation.uiAutomation.executeShellCommand("cat $recordingPath")
+                )
+                .use { input -> output.outputStream().use { input.copyTo(it) } }
+            Assert.assertTrue(
+                "Native screen recording must be retained",
+                output.isFile && output.length() > 10_000,
+            )
+            val retriever = android.media.MediaMetadataRetriever()
+            val duration =
+                try {
+                    // The media service cannot reopen app-scoped storage by path.
+                    java.io.FileInputStream(output).use { retriever.setDataSource(it.fd) }
+                    retriever
+                        .extractMetadata(
+                            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
+                        )!!
+                        .toLong()
+                } finally {
+                    retriever.release()
+                }
+            Assert.assertTrue(
+                "Motion evidence must contain a real multi-second clip",
+                duration >= 5000,
+            )
+            File(output.parentFile, "restyle-fidelity-motion.json")
+                .writeText(
+                    json(
+                            "source" to BuildConfig.SOURCE_REVISION,
+                            "fixture" to "generated local audio/artwork",
+                            "video_width" to 720,
+                            "video_height" to 1600,
+                            "duration_ms" to duration,
+                            "animations" to "enabled; Compose clock advanced alongside wall time",
+                            "actions" to org.json.JSONArray(stages),
+                        )
+                        .toString(2)
+                )
+            MediaRuntimeTest.capture("restyle-fidelity-motion-end.png")
+        } finally {
+            compose.mainClock.autoAdvance = previousClock
+            recording?.close()
+            device.executeShellCommand("rm -f $recordingPath")
+            for ((key, value) in scales) {
+                if (value.matches(Regex("[0-9]+(?:\\.[0-9]+)?")))
+                    device.executeShellCommand("settings put global $key $value")
+                else device.executeShellCommand("settings delete global $key")
+            }
+            MediaBridge.main.post {
+                PlaybackService.current?.player?.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_OFF
+            }
+            MediaBridge.execute(json("op" to "stop").toString())
+            fixture.delete()
+        }
+    }
+
+    private fun assertNavigationLabelsFit() {
+        for (index in 0..3) {
+            compose
+                .onNodeWithTag("tab-$index")
+                .assertIsDisplayed()
+                .assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f))
+                .assert(
+                    SemanticsMatcher.expectValue(
+                        SemanticsProperties.Role,
+                        androidx.compose.ui.semantics.Role.Tab,
+                    )
+                )
+            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            compose
+                .onNodeWithTag("navigation-label-$index", useUnmergedTree = true)
+                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            Assert.assertEquals(
+                "A full scaled navigation word must fit on one line",
+                1,
+                layouts.single().lineCount,
+            )
+            Assert.assertFalse(
+                "Navigation $index must not clip or ellipsize: " +
+                    "text=${layouts.single().layoutInput.text}, size=${layouts.single().size}, " +
+                    "constraints=${layouts.single().layoutInput.constraints}, " +
+                    "paragraphWidth=${layouts.single().multiParagraph.width}, " +
+                    "intrinsicWidth=${layouts.single().multiParagraph.maxIntrinsicWidth}, " +
+                    "lineRight=${layouts.single().getLineRight(0)}, " +
+                    "widthOverflow=${layouts.single().didOverflowWidth}, " +
+                    "heightOverflow=${layouts.single().didOverflowHeight}",
+                layouts.single().hasVisualOverflow,
+            )
+        }
+        compose.onNodeWithTag("tab-1").assertIsSelected()
+    }
+
     private fun awaitDecodedCovers(cards: List<MediaCard>) {
+        var diagnostics = emptyList<String>()
         try {
             compose.waitUntil(15_000) {
-                // Virtualized rows beyond the viewport are intentionally not loaded.
-                val visible =
-                    cards.filter { compose.onNodeWithTag("media-card-${it.key}").isDisplayed() }
-                visible.isNotEmpty() &&
-                    visible.all { media ->
-                        runCatching {
-                                val node =
-                                    compose.onNodeWithTag(
-                                        "artwork-${media.key}",
-                                        useUnmergedTree = true,
-                                    )
-                                val frame = node.captureToImage()
-                                // All original fixture covers have saturated warm/cool artwork;
-                                // a neutral placeholder cannot satisfy this actual-pixel check.
-                                val c = frame.toPixelMap()[frame.width / 2, frame.height / 4]
-                                maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue) >
-                                    0.12f
-                            }
-                            .getOrDefault(false)
-                    }
-            }
-        } catch (timeout: Exception) {
-            val details =
-                cards.mapIndexed { index, media ->
+                val viewport = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                var inspected = 0
+                var decoded = true
+                val checks = mutableListOf<String>()
+                for (media in cards) {
+                    if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed()) continue
                     runCatching {
-                            val shown =
-                                compose.onNodeWithTag("media-card-${media.key}").isDisplayed()
                             val node =
-                                compose.onNodeWithTag(
-                                    "artwork-${media.key}",
+                                compose.onNode(
+                                    hasTestTag("artwork-${media.key}") and
+                                        hasAnyAncestor(hasTestTag("media-card-${media.key}")),
                                     useUnmergedTree = true,
                                 )
-                            val bounds = node.fetchSemanticsNode().boundsInRoot
-                            val bitmap = node.captureToImage()
-                            val pixel = bitmap.toPixelMap()[bitmap.width / 2, bitmap.height / 4]
-                            "index=$index shown=$shown bounds=$bounds sample=$pixel"
+                            val bounds = node.getUnclippedBoundsInRoot()
+                            // A partially visible virtualized row is not a full cover.
+                            // captureToImage clips it, changing the sample's coordinates.
+                            if (
+                                bounds.left < viewport.left ||
+                                    bounds.right > viewport.right ||
+                                    bounds.top < viewport.top ||
+                                    bounds.bottom > viewport.bottom
+                            ) {
+                                checks += "partial cover bounds=$bounds viewport=$viewport"
+                                return@runCatching
+                            }
+                            inspected++
+                            val frame = node.captureToImage()
+                            val color = frame.toPixelMap()[frame.width / 2, frame.height / 4]
+                            val saturated =
+                                maxOf(color.red, color.green, color.blue) -
+                                    minOf(color.red, color.green, color.blue) > 0.12f
+                            decoded = decoded && saturated
+                            checks += "cover ${frame.width}x${frame.height} saturated=$saturated"
                         }
-                        .getOrElse { "index=$index observer_error=${it.javaClass.simpleName}" }
+                        .onFailure {
+                            decoded = false
+                            checks += "capture=${it.javaClass.simpleName}"
+                        }
                 }
-            android.util.Log.e(
-                "CatalogEvidence",
-                "Cover timeout requests=${covers.requests.get()} details=$details",
-            )
-            runCatching { captureSettled("native-catalog-error.png") }
-            throw timeout
+                diagnostics = checks
+                inspected > 0 && decoded
+            }
+        } catch (error: Throwable) {
+            captureSettled("restyle-fidelity-cover-failed.png")
+            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            throw error
         }
     }
 

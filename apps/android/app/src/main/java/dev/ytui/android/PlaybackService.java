@@ -1654,6 +1654,9 @@ public final class PlaybackService extends MediaSessionService {
                       : "")
               .put("startup_token", startupToken)
               .put("playing", player.isPlaying())
+              // Presentation snapshot only; commands and queue policy are unchanged.
+              .put("shuffle", player.getShuffleModeEnabled())
+              .put("repeat_one", player.getRepeatMode() == Player.REPEAT_MODE_ONE)
               .put("playback_state", player.getPlaybackState())
               .put("play_when_ready", player.getPlayWhenReady())
               .put("suppression", player.getPlaybackSuppressionReason())

@@ -6,9 +6,11 @@ account/proxy/data-usage preferences. Cached and unprepared starts must be
 reported separately. This is a performance candidate, not a universal latency
 promise: live-service and physical-device measurements remain necessary.
 
-Base: released main `2baa9b6`; separate from the unmerged UI candidates in PR31
-and `claude/app-ui-ux-redesign-739q3a`. Owner's instruction remains PR only,
-**do not merge**. Desktop and durable offline state must stay compatible.
+Initial base: released main `2baa9b6`. The accepted UI overhaul reached main
+as `b6a76a2` through PR33 during this work; it is now integrated into the
+performance feature branch, including its sharded native CI. PR32 itself must
+remain unmerged, per the owner. Desktop and durable offline state must stay
+compatible. Earlier validation below refers to the explicitly recorded old bases.
 
 ## Evidence and likely costs
 
@@ -293,3 +295,17 @@ panel covers it, retaining composition/scroll/artwork state while skipping
 covered drawing. The full player remains a separate sibling layer. Music
 transition behavior is unchanged; native/fullscreen/window-pixel regression
 qualification must confirm the layer boundary.
+
+
+## Integration with accepted UI main
+
+Main advanced to `b6a76a2` (PR33) while this feature was running. Integration is
+on the performance branch only; PR32 remains draft/unmerged. It preserves the
+accepted watch-page layout, native collapse controls, expanded UI/contrast tests,
+JSON snapshot deduplication and four-shard exact-APK device workflow. Pending
+video intent is combined with deduplication atomically. A visible white minimize
+action and title drag area remain available over the loading cover because the
+accepted watch page puts its normal minimize control inside the native view.
+Both direct and sharded public runners retain explicit Best/1000 ms arguments
+and all timing/failure artifacts. New qualification is required against this
+integrated source; previous main/branch results cannot qualify the merge.

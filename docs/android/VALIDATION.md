@@ -762,3 +762,7 @@ native run passed 43 tests, failed the new window-readback deadline (1020 ms),
 and explicitly skipped one optional public-YouTube case. Actual usable startup
 was 734 ms for that prepared fixture; this is not a physical/live qualification.
 The observer scheduling and cache-eviction follow-up require a fresh native run.
+
+## CI layout change, 2026-11-02 (M9)
+
+The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.

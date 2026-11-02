@@ -1,6 +1,5 @@
 package dev.ytui.android
 
-import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -9,11 +8,15 @@ import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -24,12 +27,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -39,7 +44,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -57,17 +61,21 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -93,6 +101,9 @@ object ComposeHost {
     fun fullscreenChanged(value: Boolean) {
         fullscreen.value = value
     }
+
+    /** Last applied app palette, so the sign-in activity matches the chosen theme. */
+    internal var colorScheme: ColorScheme? = null
 
     private val authWorking = MutableStateFlow(false)
     private val authStatus = MutableStateFlow("")
@@ -121,39 +132,55 @@ object ComposeHost {
             val busy by authWorking.collectAsState()
             val message by authStatus.collectAsState()
             BackHandler { if (!busy) activity.cancelSession() }
-            MaterialTheme {
-                Column(
-                    Modifier.fillMaxSize()
-                        .safeDrawingPadding()
-                        .imePadding()
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    Text(
-                        "YouTube sign-in",
-                        Modifier.padding(12.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                    )
-                    Text(
-                        "Use this session only after completing sign-in. If Google rejects this embedded page, cancel and import a cookie document/header from Account.",
-                        Modifier.padding(horizontal = 12.dp),
-                    )
-                    Row(
-                        Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+            val dark = isSystemInDarkTheme()
+            val scheme = colorScheme ?: if (dark) darkColorScheme() else lightColorScheme()
+            MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
+                CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
+                    Column(
+                        Modifier.fillMaxSize()
+                            .background(scheme.background)
+                            .safeDrawingPadding()
+                            .imePadding()
                     ) {
-                        Action("Cancel", "sign-in-cancel", !busy) { activity.cancelSession() }
-                        Action("Use this session", "sign-in-complete", !busy) {
-                            activity.useSession()
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            MediaIconButton(Glyph.Close, "Cancel sign-in", "sign-in-cancel") {
+                                if (!busy) activity.cancelSession()
+                            }
+                            Text(
+                                "Sign in to YouTube",
+                                Modifier.weight(1f).padding(horizontal = 8.dp),
+                                style = MaterialTheme.typography.titleLarge,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Action("Use this session", "sign-in-complete", !busy) {
+                                activity.useSession()
+                            }
+                            Spacer(Modifier.width(8.dp))
                         }
-                    }
-                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    if (message.isNotBlank())
                         Text(
-                            message,
-                            Modifier.padding(12.dp),
-                            color = MaterialTheme.colorScheme.error,
+                            "Tap Use this session after you finish signing in. If Google rejects this embedded page, cancel and import a cookie file or header from Account.",
+                            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    AndroidView(factory = { web }, modifier = Modifier.weight(1f).fillMaxWidth())
+                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if (message.isNotBlank())
+                            Text(
+                                message,
+                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        AndroidView(
+                            factory = { web },
+                            modifier = Modifier.padding(top = 8.dp).weight(1f).fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
@@ -206,7 +233,47 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val ready by vm.ready.collectAsState()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    var searchFocused by remember(tab) { mutableStateOf(false) }
+    // Leaving search moves input focus to this non-text sink. Clearing focus
+    // instead lets Android hand focus back to the Compose root view, which then
+    // re-enters the first focusable node (the search field) and reopens the IME.
+    var scrollToTop by remember { mutableIntStateOf(0) }
+    fun selectTab(index: Int) {
+        if (index == tab) scrollToTop++
+        vm.chooseTab(index)
+    }
+    val focusSink = remember { FocusRequester() }
+    // Leaving search lands on the results grid (PR #31's destination); the sink
+    // remains the fallback when no grid is composed (e.g. during a tab change).
+    val browseFocus = remember(tab) { FocusRequester() }
+    fun releaseSearchFocus() {
+        if (
+            runCatching { browseFocus.requestFocus() }.isFailure &&
+                runCatching { focusSink.requestFocus() }.isFailure
+        )
+            focusManager.clearFocus(force = true)
+        keyboard?.hide()
+        searchFocused = false
+    }
+    val searchRequestState =
+        remember(vm, tab) {
+            val feed = vm.feeds[tab]
+            val initial =
+                (feed.value.request as? JSONObject)?.has(
+                    if (tab == 3) "RadioSearch" else "Search"
+                ) == true
+            feed
+                .map {
+                    (it.request as? JSONObject)?.has(if (tab == 3) "RadioSearch" else "Search") ==
+                        true
+                }
+                .distinctUntilChanged() to initial
+        }
+    val searchResults =
+        key(tab) { searchRequestState.first.collectAsState(searchRequestState.second).value }
+    val searchMode = searchFocused || searchResults
     var dialog by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
     // Imported documents can legitimately reuse a built-in name. Their paint
@@ -239,6 +306,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             outline = lerp(background, foreground, 0.35f),
             outlineVariant = lerp(background, foreground, 0.12f),
         )
+    SideEffect { ComposeHost.colorScheme = colors }
     LaunchedEffect(Unit) { vm.initialize(dark) }
     LaunchedEffect(dark) { vm.systemTheme(dark) }
     LaunchedEffect(lifecycle) {
@@ -263,10 +331,18 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         }
     }
     BackHandler {
-        if (imeVisible) keyboard?.hide()
+        // Read platform visibility at dispatch time: the first Back dismisses
+        // the IME, while the next leaves the search session without losing text.
+        val keyboardShowing =
+            ViewCompat.getRootWindowInsets(activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (keyboardShowing) keyboard?.hide()
         else if (dialog.isNotBlank()) dialog = ""
         else if (playerOpen) vm.playerOpen.value = false
-        else if (!vm.back()) activity.moveTaskToBack(true)
+        else if (searchMode) {
+            releaseSearchFocus()
+            if (searchResults) vm.back()
+        } else if (!vm.back()) activity.moveTaskToBack(true)
     }
     MaterialTheme(
         colorScheme = colors,
@@ -283,7 +359,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             LocalReducedMotion provides config.optBoolean("reduced_motion"),
         ) {
             Box(Modifier.fillMaxSize()) {
-                Box(
+                BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .background(background)
                         // The video panel is opaque. Keep browse state/artwork
@@ -295,87 +371,121 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .safeDrawingPadding()
                         .imePadding()
                 ) {
+                    val tabletLayout = maxWidth >= 840.dp
                     Column(Modifier.fillMaxSize()) {
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .heightIn(min = 56.dp)
-                                .padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        // First in traversal order, so a root re-entry also lands here.
+                        Spacer(Modifier.size(0.dp).focusRequester(focusSink).focusable())
+                        AnimatedVisibility(
+                            visible = !searchMode,
+                            enter =
+                                if (config.optBoolean("reduced_motion")) EnterTransition.None
+                                else
+                                    fadeIn(tween(120)) +
+                                        expandVertically(tween(160), expandFrom = Alignment.Top),
+                            exit =
+                                if (config.optBoolean("reduced_motion")) ExitTransition.None
+                                else
+                                    fadeOut(tween(100)) +
+                                        shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
                         ) {
-                            Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
-                                MediaIcon(Glyph.Play, Modifier.size(26.dp), mediaBrand(background))
-                            }
-                            Text(
-                                "ytui",
-                                Modifier.padding(start = 4.dp).weight(1f).testTag("feed-heading"),
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = (-1).sp,
-                            )
-                            if (tab > 0)
-                                MediaIconButton(
-                                    if (tab == 3) Glyph.Radio else Glyph.Queue,
-                                    "Browse",
-                                    "feeds-button",
-                                ) {
-                                    dialog = "feeds"
-                                }
-                            MediaIconButton(
-                                Glyph.Account,
-                                if (account.optBoolean("connected")) "Your account" else "Sign in",
-                                "account-button",
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .testTag("app-toolbar")
+                                    .heightIn(min = 56.dp)
+                                    .padding(horizontal = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                dialog = "account"
-                            }
-                            MediaIconButton(Glyph.Settings, "Settings", "settings-button") {
-                                dialog = "settings"
-                            }
-                            Box {
-                                MediaIconButton(Glyph.More, "More options", "menu-button") {
-                                    menu = true
+                                Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                                    MediaIcon(
+                                        Glyph.Play,
+                                        Modifier.size(26.dp),
+                                        mediaBrand(background),
+                                    )
                                 }
-                                DropdownMenu(menu, { menu = false }) {
-                                    for ((label, name, icon) in
-                                        listOf(
-                                            Triple("Playback queue", "queue", Glyph.Queue),
-                                            Triple("Recently played", "history", Glyph.History),
-                                            Triple("Lyrics", "lyrics", Glyph.Lyrics),
-                                            Triple("Sleep timer", "sleep", Glyph.Sleep),
-                                            Triple("About", "about", Glyph.Info),
-                                        )) {
-                                        DropdownMenuItem(
-                                            text = { Text(label) },
-                                            leadingIcon = { MediaIcon(icon) },
-                                            onClick = {
-                                                menu = false
-                                                dialog = name
-                                                if (name == "queue") vm.loadQueue()
-                                                if (name == "history") vm.loadHistory()
-                                                if (name == "lyrics")
-                                                    vm.player.value.media?.let(vm::lyricLoad)
-                                            },
-                                        )
+                                Text(
+                                    "ytui",
+                                    Modifier.padding(start = 4.dp)
+                                        .weight(1f)
+                                        .testTag("feed-heading"),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = (-1).sp,
+                                )
+                                MediaIconButton(
+                                    Glyph.Account,
+                                    if (account.optBoolean("connected")) "Your account"
+                                    else "Sign in",
+                                    "account-button",
+                                ) {
+                                    dialog = "account"
+                                }
+                                MediaIconButton(Glyph.Settings, "Settings", "settings-button") {
+                                    dialog = "settings"
+                                }
+                                Box {
+                                    MediaIconButton(Glyph.More, "More options", "menu-button") {
+                                        menu = true
                                     }
-                                    if (tab > 0)
-                                        DropdownMenuItem(
-                                            text = { Text("Refresh feed") },
-                                            onClick = {
-                                                menu = false
-                                                vm.navigate(
-                                                    request = vm.feeds[tab].value.request,
-                                                    remember = false,
-                                                )
-                                            },
-                                        )
+                                    DropdownMenu(menu, { menu = false }) {
+                                        if (tab > 0)
+                                            DropdownMenuItem(
+                                                text = { Text("Browse") },
+                                                leadingIcon = {
+                                                    MediaIcon(
+                                                        if (tab == 3) Glyph.Radio else Glyph.Queue
+                                                    )
+                                                },
+                                                modifier =
+                                                    Modifier.testTag("feeds-button").semantics {
+                                                        contentDescription = "Browse"
+                                                    },
+                                                onClick = {
+                                                    menu = false
+                                                    dialog = "feeds"
+                                                },
+                                            )
+                                        for ((label, name, icon) in
+                                            listOf(
+                                                Triple("Playback queue", "queue", Glyph.Queue),
+                                                Triple("Recently played", "history", Glyph.History),
+                                                Triple("Lyrics", "lyrics", Glyph.Lyrics),
+                                                Triple("Sleep timer", "sleep", Glyph.Sleep),
+                                                Triple("About", "about", Glyph.Info),
+                                            )) {
+                                            DropdownMenuItem(
+                                                text = { Text(label) },
+                                                leadingIcon = { MediaIcon(icon) },
+                                                onClick = {
+                                                    menu = false
+                                                    dialog = name
+                                                    if (name == "queue") vm.loadQueue()
+                                                    if (name == "history") vm.loadHistory()
+                                                    if (name == "lyrics")
+                                                        vm.player.value.media?.let(vm::lyricLoad)
+                                                },
+                                            )
+                                        }
+                                        if (tab > 0)
+                                            DropdownMenuItem(
+                                                text = { Text("Refresh feed") },
+                                                onClick = {
+                                                    menu = false
+                                                    vm.navigate(
+                                                        request = vm.feeds[tab].value.request,
+                                                        remember = false,
+                                                    )
+                                                },
+                                            )
+                                    }
                                 }
                             }
                         }
-                        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                            val tablet = maxWidth >= 840.dp
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            val tablet = tabletLayout
                             Row(Modifier.fillMaxSize()) {
-                                if (tablet) AppNavigation(tab, vm::chooseTab, vertical = true)
+                                if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
                                 Box(Modifier.weight(1f).fillMaxHeight()) {
                                     if (tab == 0) OfflineLibrary(vm)
                                     else
@@ -385,6 +495,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 tab,
                                                 onAccount = { dialog = "account" },
                                                 onFeeds = { dialog = "feeds" },
+                                                searchActive = searchFocused,
+                                                onSearchFocus = { searchFocused = it },
+                                                releaseSearchFocus = ::releaseSearchFocus,
+                                                browseFocus = browseFocus,
+                                                scrollToTop = scrollToTop,
                                             )
                                         }
                                 }
@@ -392,20 +507,21 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     Surface(
                                         Modifier.width(336.dp)
                                             .fillMaxHeight()
+                                            .testTag("tablet-player-panel")
                                             .padding(start = 8.dp, end = 20.dp, bottom = 20.dp),
-                                        shape = RoundedCornerShape(24.dp),
+                                        shape = RoundedCornerShape(16.dp),
                                         color = colors.surfaceContainerLow,
                                     ) {
                                         Column(
                                             Modifier.verticalScroll(rememberScrollState())
-                                                .padding(20.dp),
-                                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                                                .padding(16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(12.dp),
                                         ) {
                                             Text(
-                                                "NOW PLAYING",
-                                                style = MaterialTheme.typography.labelMedium,
+                                                "Now playing",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
                                                 color = colors.onSurfaceVariant,
-                                                letterSpacing = 1.8.sp,
                                             )
                                             PlayerPane(
                                                 vm,
@@ -421,10 +537,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 }
                             }
                         }
-                        if (LocalConfiguration.current.screenWidthDp < 840) {
+                        if (!tabletLayout) {
                             if (!imeVisible) {
                                 PlayerDock(vm)
-                                AppNavigation(tab, vm::chooseTab)
+                                AppNavigation(tab, ::selectTab)
                             }
                         }
                     }
@@ -436,6 +552,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             "Now playing",
                             { vm.playerOpen.value = false },
                             full = true,
+                            showHeader = !videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.optBoolean("gestures", true),
                         ) {
@@ -448,6 +565,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     vm.loadQueue()
                                 },
                                 onMore = { dialog = "player-options" },
+                                onLyrics = {
+                                    dialog = "lyrics"
+                                    vm.player.value.media?.let(vm::lyricLoad)
+                                },
+                                onSleep = { dialog = "sleep" },
                             )
                         }
                     }
@@ -483,6 +605,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     dialog = "queue"
                                     vm.loadQueue()
                                 },
+                                onSleep = { dialog = "sleep" },
+                                onDone = { dialog = "" },
                             )
                         }
                     "settings" ->
@@ -498,14 +622,24 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     "sleep" ->
                         Panel("Sleep timer", { dialog = "" }) {
-                            for (minutes in listOf(15, 30, 60, 120)) Action("$minutes minutes") {
-                                vm.command("sleep", "seconds" to minutes * 60)
-                                dialog = ""
+                            for (minutes in listOf(15, 30, 60, 120)) {
+                                SheetAction(
+                                    text = { Text("$minutes minutes") },
+                                    leadingIcon = { MediaIcon(Glyph.Sleep) },
+                                    onClick = {
+                                        vm.command("sleep", "seconds" to minutes * 60)
+                                        dialog = ""
+                                    },
+                                )
                             }
-                            Action("Cancel timer") {
-                                vm.command("sleep_cancel")
-                                dialog = ""
-                            }
+                            SheetAction(
+                                text = { Text("Cancel timer") },
+                                leadingIcon = { MediaIcon(Glyph.Close) },
+                                onClick = {
+                                    vm.command("sleep_cancel")
+                                    dialog = ""
+                                },
+                            )
                         }
                     "about" ->
                         Panel("About ytui", { dialog = "" }) {
@@ -515,17 +649,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             Text(
                                 "All provider, extraction, account and library operations use the shared Rust engine. Android supplies touch, keyboard, video and background media. Development preview. Device playback, network and update checks are tracked in the validation report."
                             )
-                            // Keep the actions clear of the scroll fold on short (landscape)
-                            // windows.
-                            Spacer(Modifier.height(24.dp))
-                            Action("Radio artwork credits") {
+                            ValueRow("Radio artwork credits", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
                                     "url" to
                                         "https://github.com/Vanir20342222/ytui/blob/main/docs/android/RADIO_ARTWORK.md",
                                 )
                             }
-                            Action("Mobile documentation") {
+                            ValueRow("Mobile documentation", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
                                     "url" to
@@ -584,69 +715,169 @@ internal fun Action(label: String, tag: String = "", enabled: Boolean = true, ac
 private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = false) {
     val tabs =
         listOf(
-            Triple(1, "YouTube", Glyph.Home),
+            Triple(1, "Home", Glyph.Home),
             Triple(2, "Music", Glyph.Music),
             Triple(3, "Radio", Glyph.Radio),
             Triple(0, "Downloads", Glyph.Download),
         )
-    if (vertical)
-        NavigationRail(
-            Modifier.fillMaxHeight()
-                .width(if (LocalDensity.current.fontScale > 1.4f) 128.dp else 88.dp)
-                .verticalScroll(rememberScrollState())
-                .testTag("navigation-rail"),
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            Spacer(Modifier.height(12.dp))
-            tabs.forEach { (index, title, icon) ->
-                NavigationRailItem(
-                    tab == index,
-                    { choose(index) },
-                    icon = { MediaIcon(icon, filled = tab == index) },
-                    label = {
-                        Text(
-                            title,
-                            fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
+    val density = LocalDensity.current
+    // Text merges unspecified fields (for example letter spacing) with the
+    // ambient style. Measure that same resolved style at the user's font scale.
+    val labelStyle = LocalTextStyle.current.merge(MaterialTheme.typography.labelMedium)
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val labelMeasurements =
+        remember(measurer, labelStyle, density) {
+            tabs.associate { (index, title, _) ->
+                index to
+                    measurer
+                        .measure(
+                            androidx.compose.ui.text.AnnotatedString(title),
+                            style = labelStyle.copy(fontWeight = FontWeight.Bold),
+                            softWrap = false,
                         )
-                    },
-                    colors =
-                        NavigationRailItemDefaults.colors(
-                            indicatorColor = MediaTokens.transparent,
-                            selectedIconColor = MaterialTheme.colorScheme.onBackground,
-                            selectedTextColor = MaterialTheme.colorScheme.onBackground,
-                        ),
-                    modifier = Modifier.padding(vertical = 8.dp).testTag("tab-$index"),
-                )
+                        .size
+            }
+        }
+    val widest = with(density) { labelMeasurements.values.maxOf { it.width }.toDp() + 2.dp }
+    val labelHeight = with(density) { labelMeasurements.values.maxOf { it.height }.toDp() + 2.dp }
+    @Composable
+    fun Label(index: Int, title: String, alignStart: Boolean = false) {
+        Text(
+            title,
+            style = labelStyle,
+            maxLines = 1,
+            softWrap = false,
+            textAlign = if (alignStart) TextAlign.Start else TextAlign.Center,
+            fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
+            color =
+                if (tab == index) MaterialTheme.colorScheme.onBackground
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier =
+                Modifier.widthIn(
+                        min =
+                            with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
+                    )
+                    .fillMaxWidth()
+                    .testTag("navigation-label-$index"),
+        )
+    }
+    if (vertical)
+        BoxWithConstraints(Modifier.fillMaxHeight()) {
+            // Short windows (phone landscape) must still show all four labelled
+            // destinations: share the height evenly before falling back to scrolling.
+            val natural = maxOf(80.dp, labelHeight + 48.dp)
+            val fit = (maxHeight - 12.dp) / tabs.size
+            val compact = fit < natural + 16.dp
+            val itemHeight = if (compact) maxOf(fit, labelHeight + 40.dp) else natural
+            NavigationRail(
+                Modifier.fillMaxHeight()
+                    .width(maxOf(88.dp, widest + 24.dp))
+                    .verticalScroll(rememberScrollState())
+                    .testTag("navigation-rail"),
+                containerColor = MaterialTheme.colorScheme.background,
+                windowInsets = WindowInsets(0, 0, 0, 0),
+            ) {
+                Spacer(Modifier.height(if (compact) 4.dp else 12.dp))
+                tabs.forEach { (index, title, icon) ->
+                    NavigationRailItem(
+                        tab == index,
+                        { choose(index) },
+                        icon = { MediaIcon(icon, filled = tab == index) },
+                        label = { Label(index, title) },
+                        colors =
+                            NavigationRailItemDefaults.colors(
+                                indicatorColor = MediaTokens.transparent,
+                                selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                                selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                            ),
+                        modifier =
+                            Modifier.fillMaxWidth()
+                                .heightIn(min = itemHeight)
+                                .padding(vertical = if (compact) 0.dp else 8.dp)
+                                .testTag("tab-$index"),
+                    )
+                }
             }
         }
     else
-        NavigationBar(
-            Modifier.heightIn(min = if (LocalDensity.current.fontScale > 1.4f) 128.dp else 80.dp)
-                .testTag("bottom-navigation"),
-            containerColor = MaterialTheme.colorScheme.background,
-            tonalElevation = 0.dp,
-            windowInsets = WindowInsets(0, 0, 0, 0),
-        ) {
-            tabs.forEach { (index, title, icon) ->
-                NavigationBarItem(
-                    tab == index,
-                    { choose(index) },
-                    icon = { MediaIcon(icon, filled = tab == index) },
-                    label = {
-                        Text(
-                            title,
-                            fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Adapt to measured full-size words, not a font-scale guess or a font cap.
+            val twoRows = maxWidth < (widest + 24.dp) * 4
+            val horizontalCells = maxWidth / 2 >= widest + 48.dp
+            if (twoRows) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.background)
+                        .selectableGroup()
+                        .testTag("bottom-navigation")
+                ) {
+                    tabs.chunked(2).forEach { row ->
+                        Row(Modifier.fillMaxWidth()) {
+                            row.forEach { (index, title, icon) ->
+                                Box(
+                                    Modifier.weight(1f)
+                                        .heightIn(
+                                            min =
+                                                if (horizontalCells)
+                                                    maxOf(64.dp, labelHeight + 16.dp)
+                                                else maxOf(80.dp, labelHeight + 44.dp)
+                                        )
+                                        .selectable(
+                                            tab == index,
+                                            role = Role.Tab,
+                                            onClick = { choose(index) },
+                                        )
+                                        .testTag("tab-$index")
+                                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    val tint =
+                                        if (tab == index) MaterialTheme.colorScheme.onBackground
+                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                    if (horizontalCells)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
+                                            MediaIcon(icon, tint = tint, filled = tab == index)
+                                            Label(index, title, alignStart = true)
+                                        }
+                                    else
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            MediaIcon(icon, tint = tint, filled = tab == index)
+                                            Label(index, title)
+                                        }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else
+                NavigationBar(
+                    Modifier.heightIn(min = 80.dp).testTag("bottom-navigation"),
+                    containerColor = MaterialTheme.colorScheme.background,
+                    tonalElevation = 0.dp,
+                    windowInsets = WindowInsets(0, 0, 0, 0),
+                ) {
+                    tabs.forEach { (index, title, icon) ->
+                        NavigationBarItem(
+                            tab == index,
+                            { choose(index) },
+                            icon = { MediaIcon(icon, filled = tab == index) },
+                            label = { Label(index, title) },
+                            colors =
+                                NavigationBarItemDefaults.colors(
+                                    indicatorColor = MediaTokens.transparent,
+                                    selectedIconColor = MaterialTheme.colorScheme.onBackground,
+                                    selectedTextColor = MaterialTheme.colorScheme.onBackground,
+                                ),
+                            modifier = Modifier.testTag("tab-$index"),
                         )
-                    },
-                    colors =
-                        NavigationBarItemDefaults.colors(
-                            indicatorColor = MediaTokens.transparent,
-                            selectedIconColor = MaterialTheme.colorScheme.onBackground,
-                            selectedTextColor = MaterialTheme.colorScheme.onBackground,
-                        ),
-                    modifier = Modifier.testTag("tab-$index"),
-                )
-            }
+                    }
+                }
         }
 }
 
@@ -659,54 +890,59 @@ internal fun Panel(
     scroll: Boolean = true,
     swipeToClose: Boolean = true,
     page: Boolean = false,
+    headerBack: (() -> Unit)? = null,
+    headerBackTag: String = "",
+    showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     @Composable
-    fun Body(modifier: Modifier = Modifier) {
-        Column(modifier) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .padding(horizontal = 8.dp)
-                    .testTag("panel-header")
-                    .pointerInput(full, swipeToClose) {
-                        if (full && swipeToClose) {
-                            var distance = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { distance = 0f },
-                                onVerticalDrag = { change, amount ->
-                                    distance += amount
-                                    change.consume()
-                                },
-                                onDragEnd = { if (distance > 48.dp.toPx()) close() },
-                            )
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (full || page)
-                    MediaIconButton(
-                        if (full) Glyph.Down else Glyph.Back,
-                        if (full) "Minimize player" else "Close",
-                        "panel-close",
-                        action = close,
+    fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
+        Column(modifier.testTag("panel-body")) {
+            if (showHeader)
+                Row(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 8.dp)
+                        .testTag("panel-header")
+                        .pointerInput(full, swipeToClose) {
+                            if (full && swipeToClose) {
+                                var distance = 0f
+                                detectVerticalDragGestures(
+                                    onDragStart = { distance = 0f },
+                                    onVerticalDrag = { change, amount ->
+                                        distance += amount
+                                        change.consume()
+                                    },
+                                    onDragEnd = { if (distance > 48.dp.toPx()) close() },
+                                )
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (full || page)
+                        MediaIconButton(
+                            if (full) Glyph.Down else Glyph.Back,
+                            if (full) "Minimize player"
+                            else if (headerBack != null) "All settings" else "Close",
+                            if (headerBack != null) headerBackTag else "panel-close",
+                            action = headerBack ?: dismiss,
+                        )
+                    Text(
+                        title,
+                        Modifier.weight(1f).padding(horizontal = 8.dp),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
                     )
-                Text(
-                    title,
-                    Modifier.weight(1f).padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                if (!full && !page)
-                    MediaIconButton(Glyph.Close, "Close", "panel-close", action = close)
-            }
+                    if (!full && (!page || headerBack != null))
+                        MediaIconButton(Glyph.Close, "Close", "panel-close", action = dismiss)
+                }
             Column(
                 Modifier.weight(1f, fill = full || page)
                     .fillMaxWidth()
                     .then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .padding(
                         horizontal = if (full) 0.dp else MediaTokens.textInset,
-                        vertical = 8.dp,
+                        vertical = if (full && !showHeader) 0.dp else 8.dp,
                     ),
                 verticalArrangement =
                     Arrangement.spacedBy(
@@ -751,26 +987,51 @@ internal fun Panel(
             },
         )
     } else {
+        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val scope = rememberCoroutineScope()
+        val reduced = LocalReducedMotion.current
         ModalBottomSheet(
             onDismissRequest = close,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = state,
             shape = MediaTokens.sheet,
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ) {
             Body(
                 Modifier.fillMaxWidth()
                     .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.9f)
-                    .imePadding()
+                    .imePadding(),
+                dismiss = {
+                    if (reduced) close()
+                    else
+                        scope.launch {
+                            state.hide()
+                            close()
+                        }
+                },
             )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFeeds: () -> Unit) {
+private fun BrowsePane(
+    vm: YtuiViewModel,
+    tab: Int,
+    onAccount: () -> Unit,
+    onFeeds: () -> Unit,
+    searchActive: Boolean,
+    onSearchFocus: (Boolean) -> Unit,
+    releaseSearchFocus: () -> Unit,
+    browseFocus: FocusRequester,
+    scrollToTop: Int = 0,
+) {
     val feed by vm.feeds[tab].collectAsState()
     val shared by vm.sharedQuery.collectAsState()
     val mobile by vm.mobile.collectAsState()
+    val config by vm.config.collectAsState()
+    // Collected once per pane, not once per card.
+    val thumbnails = config.optBoolean("thumbnails", true)
     val reduced = LocalReducedMotion.current
     val wideSearch =
         tab == 1 &&
@@ -814,10 +1075,25 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
         }
     var query by rememberSaveable(tab) { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
-    var searchActive by remember { mutableStateOf(false) }
+    val searchKey = if (tab == 3) "RadioSearch" else "Search"
+    val searchResults = (feed.request as? JSONObject)?.has(searchKey) == true
+    val searchMode = searchActive || searchResults
+    LaunchedEffect(feed.request) {
+        (feed.request as? JSONObject)
+            ?.optString(searchKey)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { query = it }
+    }
     val focus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = feed.scrollIndex)
+    // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
+    // its restored position.
+    val initialScrollToTop = remember { scrollToTop }
+    LaunchedEffect(scrollToTop) {
+        if (scrollToTop != initialScrollToTop) {
+            if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
+        }
+    }
     LaunchedEffect(grid) {
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
@@ -872,11 +1148,10 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
                 .fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (searchActive)
+            if (searchMode)
                 MediaIconButton(Glyph.Back, "Leave search") {
-                    keyboard?.hide()
-                    focusManager.clearFocus()
-                    searchActive = false
+                    releaseSearchFocus()
+                    if (searchResults) vm.back()
                 }
             TextField(
                 query,
@@ -885,7 +1160,7 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
                 // cap it and center it when the pane is wider than the cap.
                 Modifier.weight(1f)
                     .focusRequester(focus)
-                    .onFocusChanged { searchActive = it.isFocused }
+                    .onFocusChanged { onSearchFocus(it.isFocused) }
                     .testTag("search-field"),
                 placeholder = {
                     Text(
@@ -897,8 +1172,12 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
                 leadingIcon = { MediaIcon(Glyph.Search) },
                 trailingIcon = {
                     Row {
-                        if (searchActive && query.isNotEmpty())
-                            MediaIconButton(Glyph.Close, "Clear search") { query = "" }
+                        if (searchMode && query.isNotEmpty())
+                            MediaIconButton(Glyph.Close, "Clear search") {
+                                query = ""
+                                focus.requestFocus()
+                                keyboard?.show()
+                            }
                         MediaIconButton(Glyph.ArrowRight, "Search", "search-button") {
                             keyboard?.hide()
                             vm.search(query)
@@ -933,10 +1212,14 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
             ) {
                 if (tab in 1..2)
                     items(
-                        listOf(
+                        // Library feeds the Browse sheet already offers, surfaced
+                        // where people look for them (Home only for video feeds).
+                        listOfNotNull(
                             "For you" to "Home",
                             "My playlists" to "Playlists",
                             "Liked" to "Liked",
+                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
+                            if (tab == 1) "Watch later" to "WatchLater" else null,
                         )
                     ) { (label, request) ->
                         MediaChip(
@@ -952,85 +1235,111 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
                         category.optString("title"),
                         modifier = Modifier.testTag("category-${category.optString("title")}"),
                         selected =
-                            feed.request !in listOf("Home", "Playlists", "Liked") &&
-                                category.opt("request")?.toString() == feed.request.toString(),
+                            feed.request !in
+                                listOf(
+                                    "Home",
+                                    "Subscriptions",
+                                    "WatchLater",
+                                    "Playlists",
+                                    "Liked",
+                                ) && category.opt("request")?.toString() == feed.request.toString(),
                     ) {
                         vm.navigate(request = category.get("request"))
                     }
                 }
             }
-        LazyVerticalGrid(
-            columns =
-                if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600) GridCells.Fixed(2)
-                else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
+        // Pull to refresh reuses the overflow menu's "Refresh feed" request.
+        var refreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
+        PullToRefreshBox(
+            refreshing && feed.loading,
+            onRefresh = {
+                refreshing = true
+                vm.navigate(request = feed.request, remember = false)
+            },
             modifier =
-                Modifier.weight(1f)
-                    .fillMaxWidth()
-                    .then(swipe)
-                    .graphicsLayer {
-                        alpha = entry.value
-                        translationY = (1f - entry.value) * 32.dp.toPx()
-                    }
-                    .testTag("feed-list"),
-            state = grid,
-            contentPadding =
-                PaddingValues(
-                    start = if (tab in 2..3) 16.dp else 0.dp,
-                    end = if (tab in 2..3) 16.dp else 0.dp,
-                    bottom = 24.dp,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                Modifier.weight(1f).fillMaxWidth().pointerInput(searchActive) {
+                    // Touching content ends an unsubmitted search session, as tapping
+                    // outside a field does elsewhere. The touch itself is not consumed.
+                    if (searchActive)
+                        awaitEachGesture {
+                            awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
+                            )
+                            releaseSearchFocus()
+                        }
+                },
         ) {
-            if (feed.request != "Home" && feed.request != "Cliamp")
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    TextButton({ vm.back() }, Modifier.heightIn(min = 48.dp)) {
-                        MediaIcon(Glyph.Back)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Back to previous feed")
-                    }
-                }
-            if (feed.notice != null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        feed.notice!!,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            if (feed.error != null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        shape = RoundedCornerShape(24.dp),
-                    ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(24.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
+            LazyVerticalGrid(
+                columns =
+                    if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600)
+                        GridCells.Fixed(2)
+                    else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
+                modifier =
+                    Modifier.fillMaxSize()
+                        .then(swipe)
+                        .graphicsLayer {
+                            alpha = entry.value
+                            translationY = (1f - entry.value) * 32.dp.toPx()
+                        }
+                        .testTag("feed-list")
+                        .focusRequester(browseFocus)
+                        .focusable(),
+                state = grid,
+                contentPadding =
+                    PaddingValues(
+                        start = if (tab in 2..3) 16.dp else 0.dp,
+                        end = if (tab in 2..3) 16.dp else 0.dp,
+                        bottom = 24.dp,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                if (feed.request != "Home" && feed.request != "Cliamp" && !searchResults)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        TextButton(
+                            { vm.back() },
+                            Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp),
+                            colors =
+                                ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
                         ) {
-                            MediaIcon(
-                                if (feed.errorCode in listOf("auth_required", "consent_required"))
-                                    Glyph.Account
-                                else Glyph.Radio,
-                                Modifier.size(32.dp),
-                                MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                if (feed.errorCode in listOf("auth_required", "consent_required"))
-                                    "Account needed"
-                                else "This feed is unavailable",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(feed.error!!, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (feed.errorCode in listOf("auth_required", "consent_required"))
+                            MediaIcon(Glyph.Back)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Back to previous feed")
+                        }
+                    }
+                if (feed.notice != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            feed.notice!!,
+                            Modifier.padding(horizontal = MediaTokens.textInset),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                if (feed.error != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        val needsAccount =
+                            feed.errorCode in listOf("auth_required", "consent_required")
+                        EmptyMediaState(
+                            if (needsAccount) Glyph.Account else Glyph.Info,
+                            if (needsAccount) "Account needed" else "This feed is unavailable",
+                            feed.error!!,
+                        ) {
+                            FlowRow(
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (needsAccount) {
                                     Action("Sign in / import cookies", "feed-account-action") {
                                         onAccount()
                                     }
-                                TextButton({ vm.retryFeed() }, Modifier.heightIn(min = 48.dp)) {
-                                    Text("Try again")
-                                }
+                                    QuietAction("Try again") { vm.retryFeed() }
+                                } else Action("Try again") { vm.retryFeed() }
                             }
                             Text(
                                 "You can still search or open a video link.",
@@ -1039,44 +1348,50 @@ private fun BrowsePane(vm: YtuiViewModel, tab: Int, onAccount: () -> Unit, onFee
                             )
                         }
                     }
+                items(
+                    feed.cards,
+                    key = { it.key },
+                    span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
+                    contentType = { "media-card" },
+                ) { media ->
+                    if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
+                    else MediaRow(vm, media, tab, thumbnails, mobile)
                 }
-            items(
-                feed.cards,
-                key = { it.key },
-                span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
-                contentType = { "media-card" },
-            ) { media ->
-                if (wideSearch) WideMediaRow(vm, media) else MediaRow(vm, media, tab)
+                if (feed.loading)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                            Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        EmptyMediaState(
+                            if (tab == 2) Glyph.Music
+                            else if (tab == 3) Glyph.Radio else Glyph.Search,
+                            if (tab == 2) "No music loaded"
+                            else if (tab == 3) "No stations loaded" else "No videos loaded",
+                            if (tab == 3)
+                                "Search a station, explore a genre or browse cliamp channels."
+                            else
+                                "Search above or connect your YouTube account for a feed made for you.",
+                        ) {
+                            Action(if (tab == 3) "Browse stations" else "Explore feeds") {
+                                onFeeds()
+                            }
+                        }
+                    }
+                if (feed.continuation != null && !feed.loading && feed.error == null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            SecondaryAction("Load more") { vm.more() }
+                        }
+                    }
             }
-            if (feed.loading)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
-                        Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    EmptyMediaState(
-                        if (tab == 2) Glyph.Music else if (tab == 3) Glyph.Radio else Glyph.Search,
-                        if (tab == 2) "No music loaded"
-                        else if (tab == 3) "No stations loaded" else "No videos loaded",
-                        if (tab == 3) "Search a station, explore a genre or browse cliamp channels."
-                        else "Search above or connect your YouTube account for a feed made for you.",
-                    ) {
-                        Action(if (tab == 3) "Browse stations" else "Explore feeds") { onFeeds() }
-                    }
-                }
-            if (feed.continuation != null && !feed.loading && feed.error == null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Action("Load more") { vm.more() }
-                    }
-                }
         }
     }
 }
@@ -1088,14 +1403,20 @@ internal fun Artwork(
     enabled: Boolean = true,
     shape: androidx.compose.ui.graphics.Shape = MediaTokens.small,
 ) {
+    // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
+    // and a reused node of unchanged size never reports its size again.
     BoxWithConstraints(
         modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
         val pixels = with(LocalDensity.current) { maxWidth.roundToPx().coerceIn(32, 768) }
-        val source =
-            "${media.value.optString("thumbnail")}:${media.value.optJSONArray("thumbnails")}"
-        var bitmap by remember(media.key, source, pixels, enabled) { mutableStateOf<Bitmap?>(null) }
+        val source = media.artworkSource
+        // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
+        var bitmap by
+            remember(media.key, source, pixels, enabled) {
+                mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
+            }
         LaunchedEffect(media.key, source, pixels, enabled) {
+            if (bitmap != null) return@LaunchedEffect
             bitmap =
                 if (enabled) runCatching { ArtworkCache.load(media, pixels) }.getOrNull() else null
         }
@@ -1114,15 +1435,7 @@ internal fun Artwork(
             )
         else
             Box(
-                Modifier.fillMaxSize()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.surfaceContainerHigh,
-                            )
-                        )
-                    ),
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 MediaIcon(
@@ -1135,9 +1448,13 @@ internal fun Artwork(
 }
 
 @Composable
-private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
-    val config by vm.config.collectAsState()
-    val mobile by vm.mobile.collectAsState()
+private fun MediaRow(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    tab: Int,
+    thumbnails: Boolean,
+    mobile: JSONObject,
+) {
     val square = tab in 2..3 || media.kind in setOf("album", "song", "station")
     Column(Modifier.fillMaxWidth().testTag("media-card-${media.key}")) {
         Box(
@@ -1150,28 +1467,11 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                 Modifier.fillMaxSize()
                     .clickable { vm.play(media) }
                     .semantics { contentDescription = "Play ${media.title}" },
-                config.optBoolean("thumbnails", true),
+                thumbnails,
                 shape = if (square) MediaTokens.small else RoundedCornerShape(0.dp),
             )
-            if (
-                media.live ||
-                    (!square &&
-                        !media.value.isNull("duration") &&
-                        mobile.optBoolean("show_duration", true))
-            )
-                Surface(
-                    Modifier.align(if (media.live) Alignment.TopStart else Alignment.BottomEnd)
-                        .padding(4.dp),
-                    color = MediaTokens.videoScrim,
-                    shape = MediaTokens.small,
-                ) {
-                    Text(
-                        if (media.live) "LIVE" else time(media.value.optLong("duration").toFloat()),
-                        Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                        color = MediaTokens.videoInk,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
+            if (media.live || !square)
+                MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
         }
         Row(
             Modifier.fillMaxWidth()
@@ -1203,6 +1503,7 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val information = if (tab == 1) mediaInformation(media.value, mobile) else ""
                 val metadata =
                     listOfNotNull(
                             if (mobile.optBoolean("show_channel", true))
@@ -1212,16 +1513,14 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                                     else if (tab == 3) "Radio station" else "YouTube"
                                 }
                             else null,
-                            if (tab == 1) mediaInformation(media.value, mobile).ifBlank { null }
-                            else null,
+                            information.ifBlank { null },
                         )
                         .joinToString(" · ")
                 if (metadata.isNotBlank())
                     Text(
                         metadata,
                         Modifier.then(
-                            if (tab == 1 && mediaInformation(media.value, mobile).isNotBlank())
-                                Modifier.testTag("video-information")
+                            if (information.isNotBlank()) Modifier.testTag("video-information")
                             else Modifier
                         ),
                         maxLines = 1,
@@ -1242,14 +1541,18 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                         )
                     }
             }
-            MediaCardActions(vm, media, square)
+            MediaCardActions(vm, media, thumbnails, square)
         }
     }
 }
 
 @Composable
-private fun MediaCardActions(vm: YtuiViewModel, media: MediaCard, square: Boolean = false) {
-    val config by vm.config.collectAsState()
+private fun MediaCardActions(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    thumbnails: Boolean,
+    square: Boolean = false,
+) {
     var menu by remember(media.key) { mutableStateOf(false) }
     Box {
         MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}") {
@@ -1257,30 +1560,7 @@ private fun MediaCardActions(vm: YtuiViewModel, media: MediaCard, square: Boolea
         }
         if (menu)
             Panel("", { menu = false }) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Artwork(
-                        media,
-                        Modifier.width(88.dp).aspectRatio(if (square) 1f else 16f / 9f),
-                        config.optBoolean("thumbnails", true),
-                    )
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            media.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            media.creator,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
+                ActionSheetHeader(media, thumbnails, square)
                 fun execute(action: () -> Unit) {
                     menu = false
                     action()
@@ -1328,10 +1608,47 @@ private fun MediaCardActions(vm: YtuiViewModel, media: MediaCard, square: Boolea
     }
 }
 
+/** Bottom-sheet header naming the item an action sheet acts on. */
 @Composable
-private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
-    val config by vm.config.collectAsState()
-    val mobile by vm.mobile.collectAsState()
+internal fun ActionSheetHeader(media: MediaCard, thumbnails: Boolean, square: Boolean = false) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Artwork(
+            media,
+            Modifier.width(if (square) 56.dp else 88.dp).aspectRatio(if (square) 1f else 16f / 9f),
+            thumbnails,
+        )
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                media.title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (media.creator.isNotBlank())
+                Text(
+                    media.creator,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+        }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+}
+
+@Composable
+private fun WideMediaRow(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    thumbnails: Boolean,
+    mobile: JSONObject,
+) {
     Row(
         Modifier.fillMaxWidth()
             .testTag("media-card-${media.key}")
@@ -1339,11 +1656,10 @@ private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Artwork(
-            media,
-            Modifier.fillMaxWidth(0.25f).aspectRatio(16f / 9f).clickable { vm.play(media) },
-            config.optBoolean("thumbnails", true),
-        )
+        Box(Modifier.fillMaxWidth(0.25f).aspectRatio(16f / 9f)) {
+            Artwork(media, Modifier.fillMaxSize().clickable { vm.play(media) }, thumbnails)
+            MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
+        }
         Column(
             Modifier.weight(1f).clickable { vm.play(media) },
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1370,7 +1686,27 @@ private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
                     )
                 }
         }
-        MediaCardActions(vm, media)
+        MediaCardActions(vm, media, thumbnails)
+    }
+}
+
+@Composable
+private fun MediaDurationBadge(media: MediaCard, mobile: JSONObject, modifier: Modifier) {
+    if (
+        media.live || (!media.value.isNull("duration") && mobile.optBoolean("show_duration", true))
+    ) {
+        Surface(
+            modifier.padding(4.dp).testTag("duration-${media.key}"),
+            color = MediaTokens.videoScrim,
+            shape = MediaTokens.small,
+        ) {
+            Text(
+                if (media.live) "LIVE" else time(media.value.optLong("duration").toFloat()),
+                Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                color = MediaTokens.videoInk,
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
@@ -1423,6 +1759,11 @@ private fun PlayerDock(vm: YtuiViewModel) {
                     vm.command("pause")
                 }
                 MediaIconButton(Glyph.Next, "Next track", "dock-next") { vm.command("next") }
+                // The mini player can be dismissed, as on YouTube; this is the
+                // existing stop command, not a new playback mode.
+                MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
+                    vm.command("stop")
+                }
             }
             val progress = mediaProgress(player.position, player.duration)
             if (player.duration > 0)
@@ -1442,17 +1783,19 @@ private fun PlayerPane(
     expanded: Boolean,
     showSurface: Boolean = true,
     onQueue: () -> Unit,
+    onSleep: () -> Unit = {},
+    onDone: () -> Unit = {},
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     val tab by vm.tab.collectAsState()
-    var tracks by remember { mutableStateOf(false) }
-    var speedMenu by remember { mutableStateOf(false) }
+    // In-sheet sub-pages (YouTube's quality/speed menus) keep one sheet and one Close.
+    var page by remember { mutableStateOf("") }
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = if (player.video) 840.dp else 480.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(if (expanded) 0.dp else 12.dp),
         ) {
             val preparing = player.preparing
             if (preparing != null) {
@@ -1468,121 +1811,340 @@ private fun PlayerPane(
                 )
                 return@Column
             }
-            if (player.video && showSurface && player.media != null) {
-                VideoSurface(
-                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp))
-                )
-            } else if (showSurface && tab in 2..3 && player.media != null)
-                Visualizer(player, config)
-            else if (showSurface && player.media != null)
-                Artwork(
-                    MediaCard(player.media!!),
-                    Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-                    config.optBoolean("thumbnails", true),
-                )
-            Text(
-                player.title,
-                style =
-                    if (expanded) MaterialTheme.typography.headlineSmall
-                    else MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-            )
-            player.media
-                ?.optString("creator")
-                ?.takeIf { it.isNotBlank() }
-                ?.let {
-                    Text(
-                        it,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+            if (!expanded) {
+                // Compact side panel (tablet): surface, title, seek and transport.
+                if (player.video && showSurface) {
+                    VideoSurface(
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium)
                     )
-                }
-            if (player.video)
-                player.media?.let { media ->
-                    MediaInformation(media, mobile)
-                    if (mobile.optBoolean("show_description"))
-                        media
-                            .optString("description")
-                            .takeUnless { it.isBlank() || it == "null" }
-                            ?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-                }
-            player.value
-                .optString("station")
-                .takeIf { it.isNotBlank() }
-                ?.let {
-                    Text(
-                        "Live · $it",
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelLarge,
+                } else if (showSurface && tab in 2..3) Visualizer(player, config)
+                else if (showSurface)
+                    Artwork(
+                        MediaCard(player.media!!),
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                        config.optBoolean("thumbnails", true),
                     )
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        player.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    (player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        })
+                        .takeIf { it.isNotBlank() }
+                        ?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                 }
-            player.value
-                .optString("error")
-                .takeUnless { it.isBlank() || it == "null" }
-                ?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                player.value
+                    .optString("error")
+                    .takeUnless { it.isBlank() || it == "null" }
+                    ?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
             if (player.preview) {
-                Text("Muted preview")
-                FlowRow {
-                    Action("End preview") { vm.command("preview_end") }
+                Text(
+                    "Muted preview",
+                    Modifier.padding(vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Action("Play full") { vm.promotePreview() }
+                    SecondaryAction("End preview") { vm.command("preview_end") }
                 }
                 return@Column
             }
-            if (player.duration > 0 && player.media?.optBoolean("live") != true) {
-                var seek by
-                    remember(player.media?.optString("url")) { mutableStateOf<Float?>(null) }
-                MediaSeekSlider(
-                    (seek ?: player.position).coerceIn(0f, player.duration),
-                    { seek = it },
-                    valueRange = 0f..player.duration,
-                    onValueChangeFinished = {
-                        seek?.let { vm.command("seek", "seconds" to it) }
-                        seek = null
-                    },
-                    modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
-                )
-                Row(Modifier.fillMaxWidth()) {
-                    Text(
-                        time(player.position),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        time(player.duration),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                val segments = player.value.optJSONArray("segments")?.objects() ?: emptyList()
-                if (segments.isNotEmpty()) {
-                    val accent = MaterialTheme.colorScheme.primary
-                    val muted = MaterialTheme.colorScheme.outline
-                    Canvas(Modifier.fillMaxWidth().height(8.dp).testTag("sponsor-marks")) {
-                        drawRect(muted.copy(alpha = 0.25f))
-                        segments.forEach { mark ->
-                            val start =
-                                mark.optDouble("start").toFloat().coerceIn(0f, player.duration)
-                            val end =
-                                mark.optDouble("end").toFloat().coerceIn(start, player.duration)
-                            drawRect(
-                                accent,
-                                Offset(start / player.duration * size.width, 0f),
-                                androidx.compose.ui.geometry.Size(
-                                    (end - start) / player.duration * size.width,
-                                    size.height,
-                                ),
+            if (!expanded) {
+                if (player.duration > 0 && player.media?.optBoolean("live") != true) {
+                    var seek by
+                        remember(player.media?.optString("url")) { mutableStateOf<Float?>(null) }
+                    Column {
+                        MediaSeekSlider(
+                            (seek ?: player.position).coerceIn(0f, player.duration),
+                            { seek = it },
+                            valueRange = 0f..player.duration,
+                            onValueChangeFinished = {
+                                seek?.let { vm.command("seek", "seconds" to it) }
+                                seek = null
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+                        )
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(
+                                time(seek ?: player.position),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text(
+                                time(player.duration),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    Text(
-                        "Marked segments · tap to watch without skipping",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(segments) { mark ->
-                            Action(
-                                "${mark.optString("category")} ${time(mark.optDouble("start").toFloat())}"
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    MediaIconButton(Glyph.Previous, "Previous track") { vm.command("previous") }
+                    val seekSeconds = mobile.optInt("seek_seconds", 10)
+                    TextButton(
+                        { vm.command("back") },
+                        Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics {
+                            contentDescription = "Back $seekSeconds seconds"
+                        },
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                    ) {
+                        Text("−$seekSeconds", fontWeight = FontWeight.SemiBold)
+                    }
+                    FilledIconButton(
+                        { vm.command("pause") },
+                        Modifier.size(64.dp).testTag("player-pause").semantics {
+                            contentDescription = if (player.playing) "Pause" else "Play"
+                        },
+                        colors =
+                            IconButtonDefaults.filledIconButtonColors(
+                                containerColor = MaterialTheme.colorScheme.onBackground,
+                                contentColor = MaterialTheme.colorScheme.background,
+                            ),
+                    ) {
+                        MediaIcon(
+                            if (player.playing) Glyph.Pause else Glyph.Play,
+                            Modifier.size(28.dp),
+                        )
+                    }
+                    TextButton(
+                        { vm.command("forward") },
+                        Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).semantics {
+                            contentDescription = "Forward $seekSeconds seconds"
+                        },
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                    ) {
+                        Text("+$seekSeconds", fontWeight = FontWeight.SemiBold)
+                    }
+                    MediaIconButton(Glyph.Next, "Next track") { vm.command("next") }
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    MediaModeButton(
+                        Glyph.Shuffle,
+                        "Shuffle queue",
+                        "pane-shuffle",
+                        player.value.optBoolean("shuffle"),
+                    ) {
+                        vm.command("shuffle")
+                    }
+                    MediaModeButton(
+                        Glyph.Repeat,
+                        "Repeat mode",
+                        "pane-repeat",
+                        player.value.optBoolean("repeat_one"),
+                    ) {
+                        vm.command("repeat")
+                    }
+                    MediaIconButton(Glyph.Queue, "Playback queue") { onQueue() }
+                    MediaIconButton(Glyph.Stop, "Stop playback") { vm.command("stop") }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    SecondaryAction("Open full player", glyph = Glyph.Expand) {
+                        vm.playerOpen.value = true
+                    }
+                }
+                return@Column
+            }
+            @Composable
+            fun SubPage(title: String, content: @Composable () -> Unit) {
+                SheetAction(
+                    text = { Text(title, fontWeight = FontWeight.SemiBold) },
+                    leadingIcon = { MediaIcon(Glyph.Back) },
+                    onClick = { page = "" },
+                    modifier =
+                        Modifier.semantics { contentDescription = "Back to playback options" },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                content()
+            }
+            @Composable
+            fun Option(label: String, chosen: Boolean, choose: () -> Unit) {
+                SheetAction(
+                    text = { Text(label) },
+                    leadingIcon = {
+                        if (chosen) MediaIcon(Glyph.Check) else Spacer(Modifier.size(24.dp))
+                    },
+                    onClick = choose,
+                    modifier = Modifier.semantics { selected = chosen },
+                )
+            }
+            val speed = player.value.optDouble("speed", 1.0)
+            fun speedLabel(value: Double) =
+                if (value == 1.0) "Normal"
+                else "${if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()}×"
+            val quality = player.value.optString("quality", "1080")
+            fun qualityLabel(value: String) = if (value == "best") "Best" else "${value}p"
+            val qualityAvailable =
+                player.video &&
+                    !player.value.optBoolean("offline") &&
+                    player.media?.optBoolean("live") != true
+            when (page) {
+                "speed" ->
+                    SubPage("Playback speed") {
+                        for (value in listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) Option(
+                            speedLabel(value),
+                            value == speed,
+                        ) {
+                            vm.command("speed", "value" to value)
+                            page = ""
+                        }
+                    }
+                "quality" ->
+                    SubPage("Video quality") {
+                        for (value in listOf("best", "1080", "720", "480", "360")) Option(
+                            qualityLabel(value),
+                            value == quality,
+                        ) {
+                            vm.command("quality", "value" to value)
+                            page = ""
+                        }
+                    }
+                "tracks" ->
+                    SubPage("Audio & subtitles") {
+                        SheetAction(
+                            text = { Text("Toggle captions") },
+                            leadingIcon = { MediaIcon(Glyph.Captions) },
+                            onClick = { vm.command("captions_toggle") },
+                        )
+                        val tracks = player.value.optJSONArray("tracks")?.objects() ?: emptyList()
+                        if (tracks.isEmpty())
+                            Text(
+                                "No alternative tracks for this media.",
+                                Modifier.padding(8.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        tracks.forEach { track ->
+                            SheetAction(
+                                text = {
+                                    Text(
+                                        track.optString("label").trim().replace(Regex("\\s+"), " ")
+                                    )
+                                },
+                                leadingIcon = {
+                                    MediaIcon(
+                                        if (track.optString("label").startsWith("Caption"))
+                                            Glyph.Captions
+                                        else if (track.optString("label").startsWith("Audio"))
+                                            Glyph.Volume
+                                        else Glyph.Preview,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                onClick = {
+                                    vm.command(
+                                        "track",
+                                        "group" to track.optInt("group"),
+                                        "index" to track.optInt("index"),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                else -> {
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        MediaIcon(Glyph.Volume, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val volume =
+                            player.value.optDouble("volume", 0.7).toFloat().coerceIn(0f, 1f)
+                        // Same slim line and round dot as the seek bar.
+                        MediaSeekSlider(
+                            volume,
+                            { vm.command("volume", "value" to it) },
+                            valueRange = 0f..1f,
+                            onValueChangeFinished = {},
+                            modifier =
+                                Modifier.weight(1f).testTag("volume-slider").semantics {
+                                    contentDescription = "Volume"
+                                },
+                        )
+                        Text(
+                            "${(volume * 100).roundToInt()}%",
+                            Modifier.widthIn(min = 40.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    ValueRow("Playback speed", value = speedLabel(speed), glyph = Glyph.Speed) {
+                        page = "speed"
+                    }
+                    if (qualityAvailable)
+                        ValueRow(
+                            "Video quality",
+                            value = qualityLabel(quality),
+                            glyph = Glyph.Settings,
+                        ) {
+                            page = "quality"
+                        }
+                    ValueRow("Audio & subtitles", glyph = Glyph.Captions) { page = "tracks" }
+                    ValueRow("Playback queue", glyph = Glyph.Queue) { onQueue() }
+                    ValueRow("Sleep timer", glyph = Glyph.Sleep) { onSleep() }
+                    val segments = player.value.optJSONArray("segments")?.objects() ?: emptyList()
+                    if (segments.isNotEmpty() && player.duration > 0) {
+                        SectionHeader("Marked segments")
+                        val accent = MaterialTheme.colorScheme.primary
+                        val muted = MaterialTheme.colorScheme.outlineVariant
+                        Canvas(
+                            Modifier.fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .height(6.dp)
+                                .clip(MediaTokens.pill)
+                                .testTag("sponsor-marks")
+                        ) {
+                            drawRect(muted)
+                            segments.forEach { mark ->
+                                val start =
+                                    mark.optDouble("start").toFloat().coerceIn(0f, player.duration)
+                                val end =
+                                    mark.optDouble("end").toFloat().coerceIn(start, player.duration)
+                                drawRect(
+                                    accent,
+                                    Offset(start / player.duration * size.width, 0f),
+                                    androidx.compose.ui.geometry.Size(
+                                        (end - start) / player.duration * size.width,
+                                        size.height,
+                                    ),
+                                )
+                            }
+                        }
+                        segments.forEach { mark ->
+                            ValueRow(
+                                mark.optString("category").replaceFirstChar(Char::titlecase),
+                                value = time(mark.optDouble("start").toFloat()),
+                                glyph = Glyph.Play,
+                                subtitle = "Watch without skipping",
+                                chevron = false,
                             ) {
                                 vm.command(
                                     "sponsor_watch",
@@ -1591,125 +2153,20 @@ private fun PlayerPane(
                                 )
                             }
                         }
-                    }
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                MediaIconButton(Glyph.Previous, "Previous track") { vm.command("previous") }
-                TextButton(
-                    { vm.command("back") },
-                    Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                ) {
-                    Text("−${mobile.optInt("seek_seconds", 10)}", fontWeight = FontWeight.SemiBold)
-                }
-                FilledIconButton(
-                    { vm.command("pause") },
-                    Modifier.size(72.dp).testTag("player-pause").semantics {
-                        contentDescription = if (player.playing) "Pause" else "Play"
-                    },
-                    colors =
-                        IconButtonDefaults.filledIconButtonColors(
-                            containerColor = MaterialTheme.colorScheme.onBackground,
-                            contentColor = MaterialTheme.colorScheme.background,
-                        ),
-                ) {
-                    MediaIcon(if (player.playing) Glyph.Pause else Glyph.Play, Modifier.size(32.dp))
-                }
-                TextButton(
-                    { vm.command("forward") },
-                    Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
-                ) {
-                    Text("+${mobile.optInt("seek_seconds", 10)}", fontWeight = FontWeight.SemiBold)
-                }
-                MediaIconButton(Glyph.Next, "Next track") { vm.command("next") }
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceEvenly,
-            ) {
-                MediaIconButton(Glyph.Shuffle, "Shuffle queue") { vm.command("shuffle") }
-                MediaIconButton(Glyph.Repeat, "Repeat mode") { vm.command("repeat") }
-                MediaIconButton(Glyph.Queue, "Playback queue") { onQueue() }
-                MediaIconButton(Glyph.Stop, "Stop playback") { vm.command("stop") }
-            }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainer,
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        MediaIcon(Glyph.Volume, Modifier.size(20.dp))
-                        Text(
-                            "Volume",
-                            Modifier.padding(start = 10.dp).weight(1f),
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                        Text(
-                            "${(player.value.optDouble("volume", 0.7) * 100).roundToInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                        )
-                    }
-                    Slider(
-                        player.value.optDouble("volume", 0.7).toFloat().coerceIn(0f, 1f),
-                        { vm.command("volume", "value" to it) },
-                        modifier = Modifier.fillMaxWidth().testTag("volume-slider"),
-                    )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box {
-                            Action("${player.value.optDouble("speed", 1.0)}× speed") {
-                                speedMenu = true
-                            }
-                            if (speedMenu)
-                                Panel("Playback speed", { speedMenu = false }) {
-                                    for (speed in
-                                        listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) SheetAction(
-                                        text = { Text("$speed×") },
-                                        onClick = {
-                                            speedMenu = false
-                                            vm.command("speed", "value" to speed)
-                                        },
-                                    )
-                                }
+                        ValueRow("Replay skipped segment", glyph = Glyph.Repeat, chevron = false) {
+                            vm.command("sponsor_replay")
                         }
-                        Action("Audio & subtitles") { tracks = !tracks }
+                    }
+                    HorizontalDivider(
+                        Modifier.padding(vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                    ValueRow("Stop playback", glyph = Glyph.Stop, chevron = false) {
+                        vm.command("stop")
+                        onDone()
                     }
                 }
             }
-            if (
-                player.video &&
-                    !player.value.optBoolean("offline") &&
-                    player.media?.optBoolean("live") != true
-            ) {
-                Choice(
-                    "Video quality",
-                    player.value.optString("quality", "1080"),
-                    listOf("360", "480", "720", "1080", "best"),
-                ) {
-                    vm.command("quality", "value" to it)
-                }
-            }
-            if (tracks) {
-                Action("Toggle captions") { vm.command("captions_toggle") }
-                player.value.optJSONArray("tracks")?.objects()?.forEach { track ->
-                    Action(track.optString("label")) {
-                        vm.command(
-                            "track",
-                            "group" to track.optInt("group"),
-                            "index" to track.optInt("index"),
-                        )
-                    }
-                }
-            }
-            if (player.value.optJSONArray("segments")?.length()?.let { it > 0 } == true)
-                TextButton({ vm.command("sponsor_replay") }, Modifier.heightIn(min = 48.dp)) {
-                    Text("Replay skipped segment")
-                }
-            if (!expanded) Action("Open full player") { vm.playerOpen.value = true }
         }
     }
 }
@@ -1883,57 +2340,44 @@ private fun SettingsPanel(
         remember(config.optString("proxy")) {
             mutableStateOf(config.optString("proxy").takeUnless { it == "null" } ?: "")
         }
-    Panel(category.ifBlank { "Settings" }, close, page = true) {
+    Panel(
+        category.ifBlank { "Settings" },
+        close,
+        page = true,
+        headerBack = if (category.isNotBlank()) ({ category = "" }) else null,
+        headerBackTag = "settings-back",
+    ) {
         BackHandler(category.isNotBlank()) { category = "" }
         if (category.isBlank()) {
-            for ((label, icon) in
+            for ((label, icon, detail) in
                 listOf(
-                    "Appearance" to Glyph.Palette,
-                    "Playback" to Glyph.Play,
-                    "Offline & storage" to Glyph.Download,
-                    "Video information" to Glyph.Info,
-                    "Network" to Glyph.Link,
-                    "Performance" to Glyph.Info,
-                    "Privacy" to Glyph.History,
-                    "Account" to Glyph.Account,
+                    Triple("Appearance", Glyph.Palette, "Theme, artwork, music player, gestures"),
+                    Triple("Playback", Glyph.Play, "Quality, SponsorBlock, preloading, seeking"),
+                    Triple("Offline & storage", Glyph.Download, "Audio-only saves and folders"),
+                    Triple("Video information", Glyph.Info, "Choose what cards show"),
+                    Triple("Network", Glyph.Link, "Proxy"),
+                    Triple("Performance", Glyph.Speed, "Startup timing report"),
+                    Triple("Privacy", Glyph.History, "History and resume"),
+                    Triple("Account", Glyph.Account, "Sign in or import a session"),
                 )) {
-                Surface(
-                    onClick = { if (label == "Account") onAccount() else category = label },
-                    modifier = Modifier.fillMaxWidth().testTag("settings-$label"),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MediaTokens.transparent,
+                ValueRow(
+                    label,
+                    glyph = icon,
+                    subtitle = detail,
+                    modifier = Modifier.testTag("settings-$label"),
                 ) {
-                    Row(
-                        Modifier.heightIn(min = 64.dp).padding(vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        MediaIcon(icon, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text(
-                            label,
-                            Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        MediaIcon(Glyph.ArrowRight)
-                    }
+                    if (label == "Account") onAccount() else category = label
                 }
             }
-            Text(BuildConfig.VERSION_NAME, style = MaterialTheme.typography.labelSmall)
-        } else
-            TextButton(
-                { category = "" },
-                Modifier.heightIn(min = 48.dp).testTag("settings-back"),
-                colors =
-                    ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ),
-            ) {
-                MediaIcon(Glyph.Back)
-                Spacer(Modifier.width(8.dp))
-                Text("All settings")
-            }
+            Text(
+                "ytui ${BuildConfig.VERSION_NAME}",
+                Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (category == "Appearance")
-            SettingGroup("Appearance", "Colour, artwork and motion") {
+            SettingGroup("Appearance", "Colour, artwork and motion", showTitle = false) {
                 Box {
                     Surface(
                         onClick = { themeMenu = true },
@@ -2034,7 +2478,8 @@ private fun SettingsPanel(
                 }
             }
         if (category == "Playback")
-            SettingGroup("Playback") {
+            SettingGroup("Playback", showTitle = false) {
+                // One setting backs both playback and offline saves.
                 Choice(
                     "Maximum video quality",
                     config.optJSONObject("download")?.optString("quality", "1080") ?: "1080",
@@ -2042,13 +2487,11 @@ private fun SettingsPanel(
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("quality", value) }
                 }
-                SettingToggle(
-                    "Audio-only downloads",
-                    config.optJSONObject("download")?.optBoolean("audio") == true,
-                    "Save music without the video",
-                ) { value ->
-                    vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
-                }
+                Text(
+                    "Also limits videos you save offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Choice(
                     "SponsorBlock",
                     config.optString("playback_sponsorblock", "skip"),
@@ -2058,7 +2501,7 @@ private fun SettingsPanel(
                 }
             }
         if (category == "Privacy")
-            SettingGroup("Privacy") {
+            SettingGroup("Privacy", showTitle = false) {
                 SettingToggle(
                     "History & resume",
                     config.optBoolean("playback_history", true),
@@ -2080,25 +2523,20 @@ private fun SettingsPanel(
                     Modifier.testTag("startup-timings"),
                     style = MaterialTheme.typography.bodySmall,
                 )
-                TextButton(
-                    {
-                        val clipboard =
-                            context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                as android.content.ClipboardManager
-                        clipboard.setPrimaryClip(
-                            android.content.ClipData.newPlainText(
-                                "ytui startup timings",
-                                BuildConfig.VERSION_NAME +
-                                    "\n" +
-                                    BuildConfig.SOURCE_REVISION +
-                                    "\n" +
-                                    report,
-                            )
+                SecondaryAction("Copy timing report", Modifier.testTag("copy-startup-timings")) {
+                    val clipboard =
+                        context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as android.content.ClipboardManager
+                    clipboard.setPrimaryClip(
+                        android.content.ClipData.newPlainText(
+                            "ytui startup timings",
+                            BuildConfig.VERSION_NAME +
+                                "\n" +
+                                BuildConfig.SOURCE_REVISION +
+                                "\n" +
+                                report,
                         )
-                    },
-                    Modifier.testTag("copy-startup-timings"),
-                ) {
-                    Text("Copy timing report")
+                    )
                 }
             }
         }
@@ -2106,17 +2544,19 @@ private fun SettingsPanel(
             SettingGroup(
                 "Network",
                 "Your Android VPN works normally. Changes apply to new connections.",
+                showTitle = false,
             ) {
-                OutlinedTextField(
+                MediaTextField(
                     proxy,
                     { proxy = it },
-                    Modifier.fillMaxWidth().testTag("proxy-field"),
-                    label = { Text("HTTP proxy (optional)") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    "HTTP proxy (optional)",
+                    Modifier.testTag("proxy-field"),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                 )
-                Action("Apply network settings") {
-                    vm.updateConfig(dark) { it.put("proxy", proxy.trim().ifBlank { null }) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Action("Apply network settings") {
+                        vm.updateConfig(dark) { it.put("proxy", proxy.trim().ifBlank { null }) }
+                    }
                 }
             }
         if (category == "Appearance")
@@ -2159,41 +2599,23 @@ private fun SettingsPanel(
                 Text(
                     "Cache size applies after restarting the app. Streaming cache is separate from your offline library.",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         if (category == "Offline & storage")
-            SettingGroup("Offline media") {
-                Choice(
-                    "Video quality limit",
-                    config.optJSONObject("download")?.optString("quality", "1080") ?: "1080",
-                    listOf("360", "480", "720", "1080", "best"),
-                ) { value ->
-                    vm.updateConfig(dark) { it.getJSONObject("download").put("quality", value) }
-                }
+            SettingGroup("Offline media", showTitle = false) {
                 SettingToggle(
                     "Audio-only saves",
                     config.optJSONObject("download")?.optBoolean("audio") == true,
+                    "Save music without the video",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
                 }
                 Text(
-                    "The quality limit also applies to new video playback.",
+                    "Video quality for saves follows Playback › Maximum video quality.",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-
-                for ((label, audio, key) in
-                    listOf(
-                        Triple("Music folder", true, "music_folder"),
-                        Triple("Video folder", false, "video_folder"),
-                    )) {
-                    Text(
-                        "$label: ${mobile.optString(key,"App storage")}",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Action("Choose $label") { vm.effect("folder_pick", "audio" to audio) }
-                }
-                Action("Retry folder saves") { vm.effect("folder_retry") }
-
                 Choice(
                     "Simultaneous downloads",
                     mobile.optInt("download_parallel", 3).toString(),
@@ -2201,11 +2623,28 @@ private fun SettingsPanel(
                 ) {
                     vm.updateMobile("download_parallel", it.toInt())
                 }
+                SectionHeader("Folders")
                 SettingToggle(
                     "Save completed media to selected folders",
                     mobile.optBoolean("auto_save_folders", true),
                 ) {
                     vm.updateMobile("auto_save_folders", it)
+                }
+                for ((label, audio, key) in
+                    listOf(
+                        Triple("Music folder", true, "music_folder"),
+                        Triple("Video folder", false, "video_folder"),
+                    )) {
+                    ValueRow(
+                        label,
+                        glyph = if (audio) Glyph.Music else Glyph.Preview,
+                        subtitle = mobile.optString(key, "App storage").ifBlank { "App storage" },
+                    ) {
+                        vm.effect("folder_pick", "audio" to audio)
+                    }
+                }
+                ValueRow("Retry folder saves", glyph = Glyph.Repeat, chevron = false) {
+                    vm.effect("folder_retry")
                 }
             }
         if (category == "Video information")
@@ -2315,93 +2754,109 @@ private fun AccountPanel(vm: YtuiViewModel, close: () -> Unit) {
     val account by vm.account.collectAsState()
     var header by remember { mutableStateOf("") }
     val status by vm.status.collectAsState()
+    val connected = account.optBoolean("connected")
     Panel("Your account", close) {
-        Surface(shape = RoundedCornerShape(24.dp), color = MediaTokens.transparent) {
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Box(
+                Modifier.size(48.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
                 MediaIcon(
-                    Glyph.Account,
-                    Modifier.size(40.dp),
-                    MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (connected) Glyph.Check else Glyph.Account,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    if (connected) "Signed in to YouTube" else "Not signed in",
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    if (account.optBoolean("connected")) "You're connected"
-                    else "A feed that feels like you",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    if (account.optBoolean("connected"))
-                        "Your session is stored privately on this device."
-                    else "Bring your subscriptions, favourites and music into one place."
-                )
-                Button(
-                    { vm.effect("login") },
-                    Modifier.heightIn(min = 48.dp).testTag("account-sign-in"),
-                    shape = MediaTokens.pill,
-                    colors =
-                        ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.onBackground,
-                            contentColor = MaterialTheme.colorScheme.background,
-                        ),
-                ) {
-                    Text("Sign in to YouTube")
-                }
-                Text(
-                    "Google may reject embedded sign-in. You can also import your session below.",
-                    style = MaterialTheme.typography.bodySmall,
+                    if (connected) "Your session is stored privately on this device."
+                    else "Sign in for your subscriptions, playlists and music.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        SettingGroup(
-            "Import a session",
-            "Android cannot read another browser's private data. Import only a session you own.",
-        ) {
-            OutlinedButton(
-                onClick = { vm.effect("pick", "kind" to "cookies") },
-                modifier = Modifier.heightIn(min = 48.dp).testTag("account-import"),
-                shape = MediaTokens.pill,
+        if (connected)
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Choose cookie file")
+                SecondaryAction("Reload session") { vm.changeAccount("reload_account") }
+                SecondaryAction("Sign in again", Modifier.testTag("account-sign-in")) {
+                    vm.effect("login")
+                }
+                QuietAction("Disconnect", destructive = true) { vm.changeAccount("disconnect") }
+            }
+        else {
+            Button(
+                { vm.effect("login") },
+                Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("account-sign-in"),
+                shape = MediaTokens.pill,
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onBackground,
+                        contentColor = MaterialTheme.colorScheme.background,
+                    ),
+            ) {
+                Text("Sign in to YouTube", style = MaterialTheme.typography.labelLarge)
             }
             Text(
-                "Netscape cookie format",
+                "Google may reject embedded sign-in. You can also import your session below.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextField(
-                header,
-                { header = it },
-                Modifier.fillMaxWidth().testTag("cookie-header-field"),
-                label = { Text("Cookie header (optional)") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                minLines = 2,
-                shape = MediaTokens.pill,
-                colors =
-                    TextFieldDefaults.colors(
-                        focusedIndicatorColor = MediaTokens.transparent,
-                        unfocusedIndicatorColor = MediaTokens.transparent,
-                    ),
-            )
-            Action("Import header", enabled = header.isNotBlank()) {
+        }
+        HorizontalDivider(
+            Modifier.padding(top = 8.dp),
+            thickness = 4.dp,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+        )
+        SectionHeader("Import a session")
+        Text(
+            "Android cannot read another browser's private data. Import only a session you own.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        ValueRow(
+            "Choose cookie file",
+            glyph = Glyph.Link,
+            subtitle = "Netscape cookie format",
+            modifier = Modifier.testTag("account-import"),
+        ) {
+            vm.effect("pick", "kind" to "cookies")
+        }
+        MediaTextField(
+            header,
+            { header = it },
+            "Cookie header (optional)",
+            Modifier.testTag("cookie-header-field"),
+            singleLine = false,
+            minLines = 2,
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            SecondaryAction("Import header", enabled = header.isNotBlank()) {
                 vm.changeAccount("import_cookies", "header" to header)
                 header = ""
             }
         }
-        SettingGroup("Session & privacy") {
-            Text(
-                "Encrypted with Android Keystore. Keep session files and headers private.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Action("Reload session") { vm.changeAccount("reload_account") }
-                TextButton({ vm.changeAccount("disconnect") }, Modifier.heightIn(min = 48.dp)) {
-                    Text("Disconnect", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
+        HorizontalDivider(thickness = 4.dp, color = MaterialTheme.colorScheme.surfaceContainer)
+        SectionHeader("Session & privacy")
+        Text(
+            "Encrypted with Android Keystore. Keep session files and headers private.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (!connected) QuietAction("Reload saved session") { vm.changeAccount("reload_account") }
         if (status != "Ready")
             Text(
                 status,
@@ -2429,57 +2884,56 @@ private fun FeedPanel(vm: YtuiViewModel, close: () -> Unit) {
                     "Library" to "Library",
                     "Saved locally" to "Favorites",
                 )
-        for ((title, request) in choices) Action(title) {
-            vm.navigate(request = request)
-            close()
+        for ((title, request) in choices) {
+            SheetAction(
+                text = { Text(title) },
+                leadingIcon = {
+                    MediaIcon(
+                        when (request) {
+                            "Home" -> Glyph.Home
+                            "Subscriptions" -> Glyph.Account
+                            "WatchLater" -> Glyph.History
+                            "Favorites",
+                            "Liked" -> Glyph.Save
+                            "Cliamp" -> Glyph.Radio
+                            else -> Glyph.Queue
+                        }
+                    )
+                },
+                onClick = {
+                    vm.navigate(request = request)
+                    close()
+                },
+            )
         }
         if (tab == 3) {
-            OutlinedTextField(
-                country,
-                { country = it },
-                Modifier.fillMaxWidth(),
-                label = { Text("Country name or two-letter code") },
-            )
-            Action("Browse country", enabled = country.isNotBlank()) {
-                vm.navigate(request = json("RadioCountry" to country.trim()))
-                close()
-            }
-            OutlinedTextField(
-                tag,
-                { tag = it },
-                Modifier.fillMaxWidth(),
-                label = { Text("Radio genre / tag") },
-            )
-            Action("Browse genre", enabled = tag.isNotBlank()) {
-                vm.navigate(request = json("RadioTag" to tag.trim()))
-                close()
-            }
-        }
-    }
-}
-
-@Composable
-private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
-    val queue by vm.queue.collectAsState()
-    Panel("Playback queue", close, scroll = false) {
-        if (queue.isEmpty()) Text("Queue is empty")
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            itemsIndexed(queue) { index, media ->
-                Column {
-                    Text(media.title)
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Action("Play") {
-                            vm.play(media, queued = true)
+            SectionHeader("Browse by country or genre")
+            for ((value, label, button, key) in
+                listOf(
+                    listOf(
+                        country,
+                        "Country name or two-letter code",
+                        "Browse country",
+                        "RadioCountry",
+                    ),
+                    listOf(tag, "Radio genre / tag", "Browse genre", "RadioTag"),
+                )) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MediaTextField(
+                        value,
+                        { if (key == "RadioCountry") country = it else tag = it },
+                        label,
+                        Modifier.weight(1f),
+                    )
+                    MediaIconButton(Glyph.ArrowRight, button) {
+                        if (value.isNotBlank()) {
+                            vm.navigate(request = json(key to value.trim()))
                             close()
                         }
-                        Action("↑", enabled = index > 0) { vm.moveQueue(index, index - 1, media) }
-                        Action("↓", enabled = index + 1 < queue.size) {
-                            vm.moveQueue(index, index + 1, media)
-                        }
-                        Action("Remove") { vm.removeQueue(index, media) }
                     }
                 }
             }
@@ -2488,18 +2942,173 @@ private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
 }
 
 @Composable
-private fun HistoryPanel(vm: YtuiViewModel, close: () -> Unit) {
-    val history by vm.recent.collectAsState()
-    Panel("Recently played", close, scroll = false) {
-        Action("Clear history and resume positions") { vm.command("history_clear") }
-        if (history.isEmpty()) Text("Local history is empty")
-        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-            items(history) { media ->
-                Action(media.title) {
-                    vm.play(media, resume = true)
-                    close()
+private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
+    val queue by vm.queue.collectAsState()
+    val config by vm.config.collectAsState()
+    val mobile by vm.mobile.collectAsState()
+    Panel("Playback queue", close, scroll = false) {
+        if (queue.isEmpty())
+            EmptyMediaState(
+                Glyph.Queue,
+                "Queue is empty",
+                "Add a video or song to play it next.",
+                Modifier.testTag("queue-empty"),
+            )
+        else
+            LazyColumn(
+                Modifier.weight(1f, fill = false).fillMaxWidth().testTag("queue-list"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                itemsIndexed(queue) { index, media ->
+                    var actions by remember(media.key) { mutableStateOf(false) }
+                    Row(
+                        Modifier.fillMaxWidth().testTag("queue-item-${media.key}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.weight(1f)) {
+                            LibraryMediaRow(
+                                media,
+                                config.optBoolean("thumbnails", true),
+                                mobile.optBoolean("show_channel", true),
+                            ) {
+                                vm.play(media, queued = true)
+                                close()
+                            }
+                        }
+                        Box {
+                            MediaIconButton(
+                                Glyph.More,
+                                "Queue actions",
+                                "queue-menu-${media.key}",
+                            ) {
+                                actions = true
+                            }
+                            DropdownMenu(actions, { actions = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Play") },
+                                    leadingIcon = { MediaIcon(Glyph.Play) },
+                                    onClick = {
+                                        actions = false
+                                        vm.play(media, queued = true)
+                                        close()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move up") },
+                                    leadingIcon = { MediaIcon(Glyph.Up) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-up-${media.key}")
+                                            .semantics { contentDescription = "Move up" },
+                                    enabled = index > 0,
+                                    onClick = {
+                                        actions = false
+                                        vm.moveQueue(index, index - 1, media)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move down") },
+                                    leadingIcon = { MediaIcon(Glyph.Down) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-down-${media.key}")
+                                            .semantics { contentDescription = "Move down" },
+                                    enabled = index + 1 < queue.size,
+                                    onClick = {
+                                        actions = false
+                                        vm.moveQueue(index, index + 1, media)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Remove") },
+                                    leadingIcon = { MediaIcon(Glyph.Close) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-remove-${media.key}")
+                                            .semantics { contentDescription = "Remove" },
+                                    onClick = {
+                                        actions = false
+                                        vm.removeQueue(index, media)
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
+    }
+}
+
+@Composable
+private fun HistoryPanel(vm: YtuiViewModel, close: () -> Unit) {
+    val history by vm.recent.collectAsState()
+    val config by vm.config.collectAsState()
+    val mobile by vm.mobile.collectAsState()
+    Panel("Recently played", close, scroll = false) {
+        TextButton(
+            { vm.command("history_clear") },
+            Modifier.heightIn(min = 48.dp),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+        ) {
+            Text("Clear history and resume positions")
+        }
+        if (history.isEmpty())
+            EmptyMediaState(
+                Glyph.History,
+                "No history yet",
+                "Videos and songs you play appear here.",
+            )
+        else
+            LazyColumn(
+                Modifier.weight(1f, fill = false).fillMaxWidth().testTag("history-list"),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                items(history) { media ->
+                    LibraryMediaRow(
+                        media,
+                        config.optBoolean("thumbnails", true),
+                        mobile.optBoolean("show_channel", true),
+                    ) {
+                        vm.play(media, resume = true)
+                        close()
+                    }
+                }
+            }
+    }
+}
+
+/** Shared quiet list presentation; caller retains its original play/resume action. */
+@Composable
+private fun LibraryMediaRow(
+    media: MediaCard,
+    thumbnails: Boolean,
+    showCreator: Boolean,
+    play: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clickable(onClick = play)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Artwork(media, Modifier.width(80.dp).aspectRatio(16f / 9f), thumbnails)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                media.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (showCreator && media.creator.isNotBlank())
+                Text(
+                    media.creator,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
         }
     }
 }
@@ -2547,95 +3156,147 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             vm.importedLyrics.value = null
         }
     }
+    var editing by remember { mutableStateOf(false) }
+    val showEditor = editing || lines.isEmpty()
     Panel("Lyrics", close, scroll = false) {
-        SettingToggle("Follow playing line", follow) { follow = it }
-        if (!matching) Text("Timing paused: a different song is playing.")
+        if (media.length() > 0)
+            Column(Modifier.padding(horizontal = 8.dp)) {
+                Text(
+                    media.optString("title"),
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (matching) media.optString("creator")
+                    else "Timing paused: a different song is playing.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
+        if (lines.isNotEmpty()) SettingToggle("Follow playing line", follow) { follow = it }
         LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
+            Modifier.weight(1f, fill = false).fillMaxWidth(),
             state = list,
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (media.length() == 0) Text("Play a song first")
-                    OutlinedTextField(
-                        title,
-                        { title = it },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Song title") },
+                if (lines.isNotEmpty())
+                    SheetAction(
+                        text = { Text(if (editing) "Hide editor" else "Edit or find lyrics") },
+                        leadingIcon = {
+                            MediaIcon(
+                                if (editing) Glyph.Up else Glyph.Edit,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = { editing = !editing },
                     )
-                    OutlinedTextField(
-                        artist,
-                        { artist = it },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Artist") },
-                    )
-                    Text(
-                        "Only the reviewed title and artist are sent to LRCLIB when you choose Find."
-                    )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Action("Find lyrics", enabled = title.isNotBlank() && artist.isNotBlank()) {
-                            vm.lyricLookup(media, title, artist)
-                        }
-                        Action("Import LRC / text") { vm.lyricImport() }
-                    }
-                    versions.forEachIndexed { index, track ->
-                        Action(
-                            "${index + 1}. ${track.optString("artist")} · ${track.optString("album")}"
+                if (showEditor)
+                    Column(
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        MediaTextField(title, { title = it }, "Song title")
+                        MediaTextField(artist, { artist = it }, "Artist")
+                        Text(
+                            "Only the reviewed title and artist are sent to LRCLIB when you choose Find.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            selected = index
-                            vm.lyricData.value = JSONObject()
-                            text =
-                                track.optJSONArray("lines")?.objects()?.joinToString("\n") { line ->
-                                    if (line.isNull("at_ms")) line.optString("text")
-                                    else
-                                        "[%02d:%02d.%03d]%s"
-                                            .format(
-                                                line.optLong("at_ms") / 60000,
-                                                line.optLong("at_ms") / 1000 % 60,
-                                                line.optLong("at_ms") % 1000,
-                                                line.optString("text"),
-                                            )
-                                } ?: ""
+                            Action(
+                                "Find lyrics",
+                                enabled = title.isNotBlank() && artist.isNotBlank(),
+                            ) {
+                                vm.lyricLookup(media, title, artist)
+                            }
+                            SecondaryAction("Import LRC / text") { vm.lyricImport() }
                         }
-                    }
-                    OutlinedTextField(
-                        text,
-                        { if (it.toByteArray().size <= 512 * 1024) text = it },
-                        Modifier.fillMaxWidth().height(220.dp),
-                        label = { Text("LRC or plain lyrics") },
-                    )
-                    OutlinedTextField(
-                        offset,
-                        { offset = it },
-                        label = { Text("Delay in milliseconds (positive = later)") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Action("Save locally", enabled = media.length() > 0 && text.isNotBlank()) {
-                            vm.lyricSave(
-                                media,
-                                json(
-                                    "title" to title,
-                                    "artist" to artist,
-                                    "text" to text,
-                                    "offset_ms" to (offset.toLongOrNull() ?: 0),
-                                ),
+                        if (versions.isNotEmpty()) SectionHeader("Matches")
+                        versions.forEachIndexed { index, track ->
+                            SheetAction(
+                                text = {
+                                    Text(
+                                        "${track.optString("artist")} · ${track.optString("album")}",
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                leadingIcon = {
+                                    if (index == selected) MediaIcon(Glyph.Check)
+                                    else Spacer(Modifier.size(24.dp))
+                                },
+                                onClick = {
+                                    selected = index
+                                    vm.lyricData.value = JSONObject()
+                                    text =
+                                        track.optJSONArray("lines")?.objects()?.joinToString(
+                                            "\n"
+                                        ) { line ->
+                                            if (line.isNull("at_ms")) line.optString("text")
+                                            else
+                                                "[%02d:%02d.%03d]%s"
+                                                    .format(
+                                                        line.optLong("at_ms") / 60000,
+                                                        line.optLong("at_ms") / 1000 % 60,
+                                                        line.optLong("at_ms") % 1000,
+                                                        line.optString("text"),
+                                                    )
+                                        } ?: ""
+                                },
                             )
                         }
-                        Action("Remove saved lyrics") { vm.lyricRemove(media) }
+                        OutlinedTextField(
+                            text,
+                            { if (it.toByteArray().size <= 512 * 1024) text = it },
+                            Modifier.fillMaxWidth().height(200.dp),
+                            label = { Text("LRC or plain lyrics") },
+                            shape = MediaTokens.fieldShape,
+                        )
+                        MediaTextField(
+                            offset,
+                            { offset = it },
+                            "Delay in ms (positive = later)",
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            SecondaryAction(
+                                "Save locally",
+                                enabled = media.length() > 0 && text.isNotBlank(),
+                            ) {
+                                vm.lyricSave(
+                                    media,
+                                    json(
+                                        "title" to title,
+                                        "artist" to artist,
+                                        "text" to text,
+                                        "offset_ms" to (offset.toLongOrNull() ?: 0),
+                                    ),
+                                )
+                                editing = false
+                            }
+                            QuietAction("Remove saved lyrics", destructive = true) {
+                                vm.lyricRemove(media)
+                            }
+                        }
                     }
-                }
             }
             itemsIndexed(lines) { index, line ->
+                val current = index == active
                 Text(
-                    line.optString("text"),
+                    line.optString("text").ifBlank { "♪" },
                     Modifier.fillMaxWidth()
-                        .background(
-                            if (index == active)
-                                MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                            else Color.Transparent
-                        )
+                        .clip(MediaTokens.medium)
                         .clickable(enabled = matching && !line.isNull("at_ms")) {
                             vm.command(
                                 "seek",
@@ -2644,7 +3305,12 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                                         .coerceAtLeast(0) / 1000.0),
                             )
                         }
-                        .padding(10.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = if (current) FontWeight.Bold else FontWeight.Medium,
+                    color =
+                        if (current || active < 0) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }

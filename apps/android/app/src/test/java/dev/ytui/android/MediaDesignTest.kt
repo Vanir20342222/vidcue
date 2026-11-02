@@ -1,12 +1,33 @@
 package dev.ytui.android
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class MediaDesignTest {
+    @Test
+    fun nativeTransportInkHasIconContrastEvenOnWhiteVideo() {
+        assertTrue(
+            mediaContrast(MediaTokens.videoInk, MediaTokens.videoDisc.compositeOver(Color.White)) >=
+                3f
+        )
+        for (accent in
+            listOf(
+                MediaTokens.brandOnDark,
+                Color(0xff9d0006),
+                Color(0xff006f62),
+                Color(0xff8839ef),
+            )) {
+            assertTrue(
+                "Dark accents in light/imported palettes also need a readable video timeline",
+                mediaContrast(accent, mediaOnAccent(accent)) >= 4.5f,
+            )
+        }
+    }
+
     @Test
     fun secondaryInkStaysReadableOnRaisedImportedSurfaces() {
         for (surface in (0..255 step 8).map { Color(it, it, it) }) {
