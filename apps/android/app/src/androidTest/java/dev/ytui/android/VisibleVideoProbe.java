@@ -72,17 +72,25 @@ final class VisibleVideoProbe {
 
   static final class Observer {
     private final RustActivity activity;
+    int requests;
+    long observationMs;
 
     private Observer(RustActivity activity) {
       this.activity = activity;
     }
 
     Result capture(long timing, String filename, long budgetMs) throws Exception {
-      return VisibleVideoProbe.capture(
-          action -> MediaBridge.main.post(() -> action.accept(activity)),
-          timing,
-          filename,
-          budgetMs);
+      requests++;
+      long started = SystemClock.elapsedRealtime();
+      try {
+        return VisibleVideoProbe.capture(
+            action -> MediaBridge.main.post(() -> action.accept(activity)),
+            timing,
+            filename,
+            budgetMs);
+      } finally {
+        observationMs += SystemClock.elapsedRealtime() - started;
+      }
     }
   }
 

@@ -194,3 +194,36 @@ exactly one request. The candidate enables connection recovery and adds both
 a JVM test against the production client builder and an Android Media3-adapter
 case. This prevents passing stale-socket failures to Media3's slower load-retry
 backoff; it does not retry HTTP429 or change extraction cooldowns.
+
+
+## Revision 4 and indexed observer cost
+
+Source `df39cbc`, PR merge `c31c62d`: run
+[41473132687](https://github.com/Vanir20342222/ytui/actions/runs/41473132687)
+has **46 pass/one fail/one optional public skip** out of 48 cases. Socket recovery,
+HTTP429 single-request behavior, idle-player lifecycle and original regression
+cases pass. Strict progressive card taps pass: cold usable696/window924 ms;
+prefetched usable664/window884 ms. The sole failure is prepared indexed
+usable823 ms but window confirmation did not complete by 1000 ms. This remains a
+valid failure. Artifact `13157722013` retains all evidence; Rust checks and secret
+scans pass. APK artifact `13156646982` has SHA256
+`8cd3865a918bc004b08a6b514ab8abe8f8ab7e4f42df647eddfa62baaa94fbd5`
+and passed signature, both-ABI, 16 KiB alignment and notices checks.
+
+The indexed test previously requested Window PixelCopy/PNG reads throughout
+decoder startup, including black frames. The follow-up waits for the existing
+real output+playing signal before GPU readback and records request count/observer
+time. It still requires actual RGB Window pixels, including overlays, before
+1000 ms from the same original tap. It does not reset clocks, count decoder-only
+frames or change quality. A late output signal still fails, and failure screenshots
+are retained. This is a benchmark-observer correction, not a production speed
+change; the cold/prepared progressive stress checks remain unchanged. A fresh
+native run must qualify it. The physical Tab S9 request uses the same production
+code from `df39cbc`; its live acceptance remains pending.
+
+[Media3 surface guidance](https://developer.android.com/media/media3/ui/surface)
+recommends SurfaceView for frame timing/power, describes Android14 attachment
+lifecycle behavior and a Compose SDK34 synchronization workaround. No surface
+switch is included here. Such a candidate would also require compositor-level
+pixel verification because Window PixelCopy alone does not include a separate
+SurfaceView layer, plus fullscreen/controls/gesture regression qualification.

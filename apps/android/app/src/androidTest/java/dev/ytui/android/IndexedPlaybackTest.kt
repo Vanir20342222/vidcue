@@ -313,7 +313,17 @@ class IndexedPlaybackTest {
                     var frame: VisibleVideoProbe.Result
                     do {
                         compose.mainClock.advanceTimeByFrame()
-                        frame = observer.capture(token, "startup-indexed-prefetched.png", 1000)
+                        // Wait for actual output/playing before reading the GPU.
+                        // Repeated black-frame copies during decoder startup perturb
+                        // rendering; the original tap clock/deadline still applies.
+                        frame =
+                            if (StartupTimings.usable(token) > 0)
+                                observer.capture(token, "startup-indexed-prefetched.png", 1000)
+                            else
+                                VisibleVideoProbe.Result(
+                                    false,
+                                    android.os.SystemClock.elapsedRealtime(),
+                                )
                         if (frame.rgb && StartupTimings.usable(token) > 0) break
                         Thread.sleep(8)
                     } while (
@@ -324,7 +334,11 @@ class IndexedPlaybackTest {
                     val usable = StartupTimings.usable(token)
                     evidence
                         .append(StartupTimings.report())
-                        .append("indexed_prefetched_window_ms=$visible usable_ms=$usable\n")
+                        .append(
+                            "indexed_prefetched_window_ms=$visible usable_ms=$usable observer_requests=${observer.requests} observer_ms=${observer.observationMs}\n"
+                        )
+                    if (!frame.rgb || visible !in 1..999 || usable !in 1..999)
+                        MediaRuntimeTest.capture("startup-indexed-prefetched-failed.png")
                     Assert.assertTrue(
                         "Paired indexed output must be actually visible and playing under1000ms: pixels=$visible usable=$usable\n${StartupTimings.report()}",
                         frame.rgb && visible in 1..999 && usable in 1..999,
