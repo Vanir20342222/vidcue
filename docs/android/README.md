@@ -110,6 +110,13 @@ phone ABI for development; the distributed universal APK needs both ABIs for the
 inspection gate. `YTUI_ANDROID_RUST_ONLY=1` builds native libraries without Gradle.
 Output: `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
 Native libraries go to ignored `target/android-jni`, with 16 KiB ELF segments.
+Android uses the size-optimized `android-release` Cargo profile (including for
+Preview APKs), with thin LTO and unwinding retained for JNI error handling.
+Normal APKs exclude the retained egui/GLES prototype and GameActivity dependency;
+host Rust unit tests still exercise the old UI fixtures. Explicit prototype work
+can opt into Cargo's `legacy-ui` feature, outside the supported Compose packaging
+path. Release APKs additionally use R8 code/resource shrinking with JNI keep rules.
+See [APK size changes and pending validation](APK_SIZE.md).
 The script includes application and Rust dependency license inventories. Android
 libraries carry their original notices; review the complete dependency inventory
 before a stable distribution.
@@ -144,14 +151,14 @@ the desktop installer/tests remain unchanged in behavior.
 ## Repository structure
 
 - `apps/desktop`: Rust terminal app, still `ytui` and `ytui-rs`.
-- `apps/android`: packaging and Android platform adapters, no application UI.
+- `apps/android`: native Compose UI, packaging and Android platform adapters.
 - `crates/ytui-core`: shared models, configuration, themes and policy.
 - `crates/ytui-providers`: shared networking, YouTube/Music/radio, sessions,
   bounded caches, images, lyrics and SponsorBlock.
 - `crates/ytui-services`: desktop process, browser/keyring, mpv and OS adapters;
   re-exports shared providers for compatibility.
-- `crates/ytui-mobile`: Rust Android engine, adaptive touch UI, GLES video,
-  JNI boundary and PCM visualizer metering.
+- `crates/ytui-mobile`: Rust Android engine, JNI boundary and PCM visualizer
+  metering; the legacy touch UI/GLES prototype is an optional `legacy-ui` feature.
 - `vendor/winit`: pinned 0.30.13 with a documented Android destruction/recreation
   adapter; other platforms retain upstream behavior.
 - `vendor/eframe`: pinned 0.33.3 with documented Android suspended-window and EGL

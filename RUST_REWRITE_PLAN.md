@@ -1,5 +1,11 @@
 # ytui Rust rewrite plan
 
+M9 APK size follow-up: [source-only reduction](docs/android/APK_SIZE.md) excludes
+the legacy renderer from normal Compose APKs, adds Android-specific Rust size
+optimization and enables release code/resource shrinking with JNI keep rules.
+The owner requested no builds; static/offline checks do not establish a measured
+size reduction or release/runtime qualification. M9 remains open.
+
 M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
 restyle brief to the remaining Downloads, player, options, account, lyrics and
 settings surfaces, and fixes search focus re-entry. Local build, JVM and lint

@@ -3,6 +3,16 @@ members = ["crates/ytui-core", "crates/ytui-services", "crates/ytui-providers", 
 resolver = "2"
 exclude = ["vendor/yt-dlp-rs", "vendor/winit", "vendor/eframe"]
 
+# Android packaging opts into this profile; desktop release settings stay separate.
+# Preserve unwinding: the JNI boundary catches native failures.
+[profile.android-release]
+inherits = "release"
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+debug = 0
+strip = "debuginfo"
+
 [workspace.package]
 version = "0.2.0-alpha.12"
 edition = "2024"

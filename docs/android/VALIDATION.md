@@ -1,5 +1,13 @@
 # Android validation record (M9)
 
+## APK size source changes (2026-11-02; no build)
+
+[Size reduction scope and pending checks](APK_SIZE.md): normal APKs exclude the
+legacy Rust renderer/GameActivity, use an Android size profile and enable release
+R8/resource shrinking with JNI keep rules. Only source/static and offline Python
+checks were run. No APK size saving, compile success or runtime qualification is
+claimed; the owner explicitly requested no builds. M9 remains open.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version

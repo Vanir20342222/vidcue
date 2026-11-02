@@ -1812,4 +1812,5 @@ mod android {
 pub mod meter;
 #[cfg(target_os = "android")]
 mod platform;
+#[cfg(any(test, feature = "legacy-ui"))]
 pub mod ui;

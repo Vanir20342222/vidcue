@@ -63,7 +63,9 @@ android {
         release {
             applicationIdSuffix '.stable'
             debuggable false
-            minifyEnabled false
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (signingReady) signingConfig signingConfigs.release
         }
     }
@@ -71,7 +73,6 @@ android {
 }
 dependencies {
     implementation 'androidx.annotation:annotation-experimental:1.4.1'
-    implementation 'androidx.games:games-activity:4.4.0'
     implementation 'androidx.appcompat:appcompat:1.7.1'
     implementation platform('androidx.compose:compose-bom:2025.05.01')
     implementation 'androidx.activity:activity-compose:1.10.1'

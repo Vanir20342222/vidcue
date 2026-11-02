@@ -34,9 +34,9 @@ for abi in $abis; do
     cc_key="CC_${target//-/_}"; ar_key="AR_${target//-/_}"; cxx_key="CXX_${target//-/_}"
     env "$linker_key=$bin/${prefix}26-clang" "$cc_key=$bin/${prefix}26-clang" "$ar_key=$bin/llvm-ar" "$cxx_key=$bin/${prefix}26-clang++" \
         "$flags_key=-C link-arg=-Wl,-z,max-page-size=16384" \
-        cargo build -p ytui-mobile --target "$target" --release --locked -j "${YTUI_BUILD_JOBS:-2}"
+        cargo build -p ytui-mobile --target "$target" --profile android-release --locked -j "${YTUI_BUILD_JOBS:-2}"
     mkdir -p "$root/target/android-jni/$abi"
-    "$bin/llvm-strip" --strip-unneeded "$root/target/$target/release/libytui_mobile.so" -o "$root/target/android-jni/$abi/libytui_mobile.so"
+    "$bin/llvm-strip" --strip-unneeded "$root/target/$target/android-release/libytui_mobile.so" -o "$root/target/android-jni/$abi/libytui_mobile.so"
 done
 [[ "${YTUI_ANDROID_RUST_ONLY:-0}" != 1 ]] || exit 0
 cargo metadata --locked --format-version 1 > "$root/target/android-dependencies.json"

@@ -22,8 +22,10 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as t
         if not loads or any(int(line.split()[-1],16)<16384 for line in loads):
             raise SystemExit(f'{name}: requires 16 KiB ELF alignment')
         symbols=subprocess.check_output([sys.argv[2],'-Ws',str(target)],text=True)
-        for symbol in ['Java_dev_ytui_android_NativeBridge_request','Java_dev_ytui_android_NativeBridge_thumbnail','Java_dev_ytui_android_NativeBridge_beginAccountChange','Java_dev_ytui_android_NativeBridge_accountIntent','Java_dev_ytui_android_NativeBridge_meter','Java_dev_ytui_android_NativeBridge_activateContext']:
+        for symbol in ['Java_dev_ytui_android_NativeBridge_init','Java_dev_ytui_android_NativeBridge_request','Java_dev_ytui_android_NativeBridge_thumbnail','Java_dev_ytui_android_NativeBridge_beginAccountChange','Java_dev_ytui_android_NativeBridge_accountIntent','Java_dev_ytui_android_NativeBridge_meter','Java_dev_ytui_android_NativeBridge_activateContext','Java_dev_ytui_android_NativeBridge_cancel']:
             if symbol not in symbols: raise SystemExit(f'Missing {abi} symbol: {symbol}')
+        if any(line.split()[-1:] == ['android_main'] for line in symbols.splitlines()):
+            raise SystemExit(f'{name}: legacy Rust UI must not be bundled in Compose APKs')
     if 'assets/ytui-LICENSE' not in archive.namelist():raise SystemExit('Missing application license')
     if 'assets/notices/inventory.json' not in archive.namelist():raise SystemExit('Missing Rust dependency notices')
 print('Verified signatures, ZIP alignment, both Rust ABIs, 16 KiB ELF segments and notices.')

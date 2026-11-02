@@ -1430,9 +1430,9 @@ impl MobileApp {
                 16.0 / 9.0
             };
             let (rect, _) = ui.allocate_exact_size(Vec2::new(w, w / aspect), egui::Sense::click());
-            #[cfg(target_os = "android")]
+            #[cfg(all(target_os = "android", feature = "legacy-ui"))]
             crate::platform::paint_video(ui, rect);
-            #[cfg(not(target_os = "android"))]
+            #[cfg(not(all(target_os = "android", feature = "legacy-ui")))]
             ui.painter().rect_filled(rect, 0.0, Color32::BLACK);
             if let Some(text) = self.player["captions"].as_str().filter(|s| !s.is_empty()) {
                 ui.painter().text(
