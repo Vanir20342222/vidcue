@@ -12,6 +12,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -22,7 +24,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -77,6 +81,20 @@ internal object FullscreenOptions {
     }
 }
 
+/** Blur (radius in px) the video layer under the options panel; no-op before Android 12. */
+private fun blurVideo(content: View?, radius: Float) {
+    if (content == null || android.os.Build.VERSION.SDK_INT < 31) return
+    content.setRenderEffect(
+        if (radius < 0.5f) null
+        else
+            android.graphics.RenderEffect.createBlurEffect(
+                radius,
+                radius,
+                android.graphics.Shader.TileMode.CLAMP,
+            )
+    )
+}
+
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: () -> Unit) {
@@ -121,6 +139,20 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
         page = ""
     }
     BackHandler(visible) { if (page.isNotEmpty()) page = "" else close() }
+    // Frosted glass: blur the video picture itself behind the translucent panel.
+    // RenderEffect blurs the TextureView's layer on the GPU (Android 12+); older
+    // versions keep the darker scrim and a more opaque panel.
+    val blurSupported = android.os.Build.VERSION.SDK_INT >= 31
+    val blurTarget = with(LocalDensity.current) { if (visible) 28.dp.toPx() else 0f }
+    val blur by
+        animateFloatAsState(
+            blurTarget,
+            if (reduced) androidx.compose.animation.core.snap() else tween(220),
+            label = "video-blur",
+        )
+    val content = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+    SideEffect { blurVideo(content, blur) }
+    DisposableEffect(content) { onDispose { blurVideo(content, 0f) } }
     MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
@@ -137,7 +169,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                     // Tapping the dimmed video closes the panel; it never reaches the player.
                     Box(
                         Modifier.fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.45f))
+                            .background(Color.Black.copy(alpha = if (blurSupported) 0.28f else 0.5f))
                             .testTag("fullscreen-options-scrim")
                             .pointerInput(Unit) { detectTapGestures { close() } }
                     )
@@ -157,12 +189,18 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                             .fillMaxHeight()
                             .testTag("fullscreen-options")
                             .semantics { paneTitle = "Playback options" },
-                        shape = RoundedCornerShape(topStart = 24.dp, bottomStart = 24.dp),
-                        color = scheme.surfaceContainerLow,
-                        tonalElevation = 2.dp,
+                        shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                        color = scheme.surfaceContainerLow.copy(alpha = if (blurSupported) 0.72f else 0.92f),
+                        border = BorderStroke(1.dp, MediaTokens.videoGlassEdge.copy(alpha = 0.18f)),
                     ) {
                         Column(
                             Modifier.fillMaxSize()
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(MediaTokens.videoGlassSheen, Color.Transparent),
+                                        endY = 360f,
+                                    )
+                                )
                                 .windowInsetsPadding(
                                     WindowInsets.displayCutout.only(
                                         WindowInsetsSides.End + WindowInsetsSides.Vertical
