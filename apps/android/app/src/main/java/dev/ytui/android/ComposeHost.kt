@@ -528,6 +528,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                     dialog = "queue"
                                                     vm.loadQueue()
                                                 },
+                                                onSleep = { dialog = "sleep" },
+                                                onSettings = { dialog = "player-options" },
                                             )
                                         }
                                     }
@@ -618,26 +620,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             dialog = ""
                         }
                     "sleep" ->
-                        Panel("Sleep timer", { dialog = "" }) {
-                            for (minutes in listOf(15, 30, 60, 120)) {
-                                SheetAction(
-                                    text = { Text("$minutes minutes") },
-                                    leadingIcon = { MediaIcon(Glyph.Sleep) },
-                                    onClick = {
-                                        vm.command("sleep", "seconds" to minutes * 60)
-                                        dialog = ""
-                                    },
-                                )
-                            }
-                            SheetAction(
-                                text = { Text("Cancel timer") },
-                                leadingIcon = { MediaIcon(Glyph.Close) },
-                                onClick = {
-                                    vm.command("sleep_cancel")
-                                    dialog = ""
-                                },
-                            )
-                        }
+                        Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
                     "about" ->
                         Panel("About ytui", { dialog = "" }) {
                             Text(
@@ -1774,14 +1757,42 @@ private fun PlayerDock(vm: YtuiViewModel) {
     }
 }
 
+/** Sleep timer choices shared by the main sheet and the fullscreen options panel. */
 @Composable
-private fun PlayerPane(
+internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
+    for (minutes in listOf(15, 30, 60, 120)) {
+        SheetAction(
+            text = { Text("$minutes minutes") },
+            leadingIcon = { MediaIcon(Glyph.Sleep) },
+            onClick = {
+                vm.command("sleep", "seconds" to minutes * 60)
+                done()
+            },
+        )
+    }
+    SheetAction(
+        text = { Text("Cancel timer") },
+        leadingIcon = { MediaIcon(Glyph.Close) },
+        onClick = {
+            vm.command("sleep_cancel")
+            done()
+        },
+    )
+}
+
+/**
+ * Playback options. `expanded` is the full options list (main sheet and fullscreen panel);
+ * otherwise this is the tablet side pane's compact transport.
+ */
+@Composable
+internal fun PlayerPane(
     vm: YtuiViewModel,
     expanded: Boolean,
     showSurface: Boolean = true,
     onQueue: () -> Unit,
     onSleep: () -> Unit = {},
     onDone: () -> Unit = {},
+    onSettings: (() -> Unit)? = null,
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -1806,7 +1817,8 @@ private fun PlayerPane(
                 // Compact side panel (tablet): surface, title, seek and transport.
                 if (player.video && showSurface) {
                     VideoSurface(
-                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium)
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium),
+                        onSettings = onSettings,
                     )
                 } else if (showSurface && tab in 2..3) Visualizer(player, config)
                 else if (showSurface)

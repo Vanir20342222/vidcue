@@ -26,13 +26,19 @@
       android:background="@android:color/transparent"/>
 
 
-  <View android:id="@+id/ytui_top_scrim" android:layout_width="match_parent" android:layout_height="96dp" android:layout_gravity="top" />
-  <View android:id="@+id/ytui_bottom_scrim" android:layout_width="match_parent" android:layout_height="96dp" android:layout_gravity="bottom" />
-  <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:layout_gravity="top" android:gravity="center_vertical" android:paddingHorizontal="4dp">
+  <!-- Scrims fade the frame behind the chrome only; the picture centre stays clear. -->
+  <View android:id="@+id/ytui_top_scrim" android:layout_width="match_parent" android:layout_height="112dp" android:layout_gravity="top" />
+  <View android:id="@+id/ytui_bottom_scrim" android:layout_width="match_parent" android:layout_height="128dp" android:layout_gravity="bottom" />
+
+  <!-- Top bar: leave, what is playing (fullscreen only), captions and the app's playback options. -->
+  <LinearLayout android:id="@+id/ytui_top_bar" android:layout_width="match_parent" android:layout_height="56dp" android:layout_gravity="top" android:gravity="center_vertical" android:paddingHorizontal="4dp" android:layoutDirection="ltr">
     <ImageButton android:id="@+id/ytui_collapse" android:layout_width="48dp" android:layout_height="48dp" android:background="@android:color/transparent" android:src="@drawable/ytui_collapse" android:contentDescription="@string/ytui_player_collapse" />
-    <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+    <LinearLayout android:id="@+id/ytui_heading" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginHorizontal="8dp" android:orientation="vertical" android:visibility="invisible">
+      <TextView android:id="@+id/ytui_title" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="@android:color/white" android:textSize="16sp" android:fontFamily="sans-serif-medium" android:shadowColor="#99000000" android:shadowRadius="4" />
+      <TextView android:id="@+id/ytui_subtitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:maxLines="1" android:ellipsize="end" android:textColor="#D9FFFFFF" android:textSize="13sp" android:shadowColor="#99000000" android:shadowRadius="4" />
+    </LinearLayout>
     <ImageButton android:id="@id/exo_subtitle" style="@style/ExoStyledControls.Button.Bottom.CC" android:layout_width="48dp" android:layout_height="48dp" />
-    <ImageButton android:id="@id/exo_settings" style="@style/ExoStyledControls.Button.Bottom.Settings" android:layout_width="48dp" android:layout_height="48dp" />
+    <ImageButton android:id="@+id/ytui_settings" android:layout_width="48dp" android:layout_height="48dp" android:padding="12dp" android:scaleType="fitCenter" android:background="?android:attr/selectableItemBackgroundBorderless" android:src="@drawable/ytui_settings" android:contentDescription="@string/ytui_player_options" android:visibility="gone" />
   </LinearLayout>
   <FrameLayout android:id="@id/exo_bottom_bar"
       android:layout_width="match_parent"
@@ -73,7 +79,7 @@
           style="@style/ExoStyledControls.Button.Bottom.VR"/>
 
       <ImageButton android:id="@id/exo_shuffle"
-          style="@style/ExoStyledControls.Button.Bottom.Shuffle"/>
+          style="@style/ExoStyledControls.Button.Bottom.Shuffle" android:visibility="gone"/>
 
       <ImageButton android:id="@id/exo_repeat_toggle"
           style="@style/ExoStyledControls.Button.Bottom.RepeatToggle"/>
@@ -113,7 +119,7 @@
   <androidx.media3.ui.DefaultTimeBar android:id="@id/exo_progress"
       android:layout_width="match_parent" android:layout_height="48dp"
       android:layout_gravity="bottom" android:layout_marginBottom="40dp"
-      app:bar_height="3dp" app:scrubber_enabled_size="12dp" app:scrubber_disabled_size="12dp" app:scrubber_dragged_size="16dp" />
+      app:bar_height="4dp" app:scrubber_enabled_size="14dp" app:scrubber_disabled_size="12dp" app:scrubber_dragged_size="20dp" app:touch_target_height="48dp" />
 
   <LinearLayout android:id="@id/exo_minimal_controls"
       android:layout_width="wrap_content"
@@ -135,23 +141,29 @@
       android:layout_height="wrap_content"
       android:layout_gravity="center"
       android:background="@android:color/transparent"
-      android:gravity="center"
+      android:gravity="center_vertical"
       android:padding="@dimen/exo_styled_controls_padding"
       android:clipToPadding="false"
       android:layoutDirection="ltr">
 
     <ImageButton android:id="@id/exo_prev"
-        style="@style/ExoStyledControls.Button.Center.Previous"/>
+        style="@style/ExoStyledControls.Button.Center.Previous"
+        android:layout_width="48dp" android:layout_height="48dp" android:padding="10dp"
+        android:layout_marginEnd="12dp" android:scaleType="fitCenter"/>
 
     <include layout="@layout/exo_player_control_rewind_button" />
 
     <ImageButton android:id="@id/exo_play_pause"
-        style="@style/ExoStyledControls.Button.Center.PlayPause"/>
+        style="@style/ExoStyledControls.Button.Center.PlayPause"
+        android:layout_width="72dp" android:layout_height="72dp" android:padding="18dp"
+        android:layout_marginHorizontal="20dp" android:scaleType="fitCenter"/>
 
     <include layout="@layout/exo_player_control_ffwd_button" />
 
     <ImageButton android:id="@id/exo_next"
-        style="@style/ExoStyledControls.Button.Center.Next"/>
+        style="@style/ExoStyledControls.Button.Center.Next"
+        android:layout_width="48dp" android:layout_height="48dp" android:padding="10dp"
+        android:layout_marginStart="12dp" android:scaleType="fitCenter"/>
 
   </LinearLayout>
 
