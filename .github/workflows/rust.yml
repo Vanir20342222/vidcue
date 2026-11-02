@@ -11,7 +11,9 @@ concurrency:
 env:
   CARGO_INCREMENTAL: '0'
   CARGO_TERM_COLOR: never
-  RUSTFLAGS: -C debuginfo=0
+  # Debug info is never inspected in CI; dropping it shrinks builds and caches.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
 jobs:
   lint:
     runs-on: ubuntu-24.04

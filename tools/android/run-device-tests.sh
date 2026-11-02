@@ -47,11 +47,38 @@ collect_evidence() {
     adb pull "/sdcard/Android/data/$test_package/files/native-video-controls.xml" "$evidence/native-ui/native-video-controls.xml" > /dev/null 2>&1 || true
 }
 trap collect_evidence EXIT
-arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
-if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
-    arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
+if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
+    # CI shards: install the exact APKs built (and uploaded) by the apk job
+    # instead of rebuilding them, then run one AndroidJUnitRunner shard.
+    num_shards="${YTUI_ANDROID_NUM_SHARDS:-1}"
+    shard_index="${YTUI_ANDROID_SHARD_INDEX:-0}"
+    [[ "$num_shards" =~ ^[1-9][0-9]?$ && "$shard_index" =~ ^[0-9]+$ ]] && (( shard_index < num_shards )) ||
+        { echo 'Invalid YTUI_ANDROID_NUM_SHARDS/YTUI_ANDROID_SHARD_INDEX.' >&2; exit 1; }
+    adb install -r -t "$YTUI_ANDROID_TEST_APKS/app-debug.apk"
+    adb install -r -t "$YTUI_ANDROID_TEST_APKS/app-debug-androidTest.apk"
+    runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
+    [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
+    instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
+    if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
+        # adb joins arguments into one device shell command; single-quote the URL.
+        [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
+        instrument+=(-e youtubeUrl "'$YTUI_ANDROID_PUBLIC_URL'")
+    fi
+    "${instrument[@]}" "$runner" | tee "$evidence/instrumentation-shard-$shard_index.txt"
+    # Raw output ends with "OK (N tests)" only when every test in the shard passed;
+    # failures print "FAILURES!!!" and crashes print neither.
+    if rg -q 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$evidence/instrumentation-shard-$shard_index.txt" ||
+        ! rg -q '^OK \([0-9]+ tests?\)' "$evidence/instrumentation-shard-$shard_index.txt"; then
+        echo "Instrumentation shard $shard_index/$num_shards failed; inspect device evidence." >&2
+        exit 1
+    fi
+else
+    arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
+    if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
+        arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
+    fi
+    apps/android/gradlew -p apps/android --no-daemon "${arguments[@]}" :app:connectedDebugAndroidTest
 fi
-apps/android/gradlew -p apps/android --no-daemon "${arguments[@]}" :app:connectedDebugAndroidTest
 adb logcat -d -s RustPanic:E RustStdoutStderr:I > "$evidence/rust-runtime.txt"
 if rg -q 'RustPanic|panicked at' "$evidence/rust-runtime.txt"; then
     echo 'Rust panic detected despite passing instrumentation; inspect device evidence.' >&2
