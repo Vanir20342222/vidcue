@@ -150,3 +150,34 @@ or stream URLs. It also checks three seconds of continued decode. This check
 uses real service traffic but callback-based view evidence; the loopback RGB
 tests and physical acceptance remain distinct. Raw instrumentation without the
 new arguments retains the original 720p/2000 ms regression mode.
+
+
+## Revision 2 retained results and foreground preparation
+
+Source `6bbdb8e`, PR merge `78ef261`: run
+[41467639893](https://github.com/Vanir20342222/ytui/actions/runs/41467639893)
+failed three cases (41 pass, three fail, one public skip). Indexed cold usable
+startup was 4013 ms; strict cold card usable973/window1002 ms missed the actual
+pixel deadline; HLS usable1885/window2005 ms missed its original 2000 ms window
+deadline. All failures remain valid; no timeout/clock/quality waiver is applied.
+Artifact `13155320671` retains JUnit, timing files, pixels and logs. Logs contain
+substantial frame stalls; these results are not a universal speed qualification.
+
+The separate same-source public run
+[41467956874](https://github.com/Vanir20342222/ytui/actions/runs/41467956874)
+had 43 passes/two failures. Strict loopback cold usable573/window915 ms and
+prefetched usable433/window524 ms passed. Live extraction failed DNS lookup,
+and a catalog thumbnail-pixel wait timed out. Artifact `13155110536` retains
+these failures; passing synthetic timings cannot replace the blocked live result.
+Rust checks passed in run `41467640173`.
+
+The next candidate initializes the idle Media3 service while the activity is
+foreground. No media is prepared, played or added to history/queue, and the warm
+command does not register a session/notification. The ticker starts only with
+actual playback. Leaving the foreground releases an empty service using the
+start-ID guard, preserving an actual later play command and active media.
+`player_at_tap` records initialized/cold infrastructure separately from resolution
+and byte-cache readiness. The strict cold-card test still forces a fresh service;
+it is not changed into a prewarmed-service test. A separate lifecycle test checks
+idle preparation, absent playback/notification and release on activity close.
+This requires new native qualification and a physical Best-quality report.

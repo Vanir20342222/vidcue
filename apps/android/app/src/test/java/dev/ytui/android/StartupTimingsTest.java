@@ -10,6 +10,7 @@ public final class StartupTimingsTest {
     long token = StartupTimings.begin(1000, true);
     StartupTimings.resolved(token, 1002, true);
     StartupTimings.byteCache(token, false);
+    StartupTimings.playerCache(token, true);
     StartupTimings.handoff(token, 1010);
     StartupTimings.output(token, 1300, true);
     StartupTimings.started(token, 2000);
@@ -17,6 +18,7 @@ public final class StartupTimingsTest {
     String report = StartupTimings.report();
     assertTrue(report.contains("< 1000 ms"));
     assertTrue(report.contains("warmup_bytes_at_tap=not_ready"));
+    assertTrue(report.contains("player_at_tap=ready"));
     assertTrue(report.contains("USABLE OVER TARGET"));
   }
 

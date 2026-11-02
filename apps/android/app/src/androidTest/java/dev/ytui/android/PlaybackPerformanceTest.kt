@@ -34,6 +34,9 @@ class PlaybackPerformanceTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             PlaybackService.current?.stopAndClear()
         }
+        MediaRuntimeTest.await("Previous test service must be closed") {
+            PlaybackService.current == null
+        }
         PlaybackCache.cancel()
         MobileSettings.save(json("preload_next" to true, "preload_mobile" to true))
         NetworkSettings.apply(json("proxy" to ""))
@@ -60,6 +63,32 @@ class PlaybackPerformanceTest {
             return out.toByteArray()
         } finally {
             source.close()
+        }
+    }
+
+    @Test
+    fun foregroundPreparesAnIdlePlayerAndReleasesItWithoutPlayback() {
+        RuntimeTest.launchOffline().use { scene ->
+            MediaRuntimeTest.await("Visible app should prepare player infrastructure") {
+                PlaybackService.warmReady()
+            }
+            scene.onActivity {
+                val service = PlaybackService.current!!
+                Assert.assertNull(service.currentRequest.optJSONObject("media"))
+                Assert.assertFalse(service.player.isPlaying)
+                Assert.assertTrue(
+                    "Idle preparation must not register a media session",
+                    service.sessions.isEmpty(),
+                )
+                val manager = it.getSystemService(android.app.NotificationManager::class.java)
+                Assert.assertTrue(
+                    "Idle preparation must not create a playback notification",
+                    manager.activeNotifications.none { n -> n.id == NotificationIds.PLAYBACK },
+                )
+            }
+        }
+        MediaRuntimeTest.await("Leaving an idle app must release player infrastructure") {
+            PlaybackService.current == null
         }
     }
 

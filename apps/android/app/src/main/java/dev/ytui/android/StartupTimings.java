@@ -38,7 +38,7 @@ final class StartupTimings {
     String route = "unknown", cache = "unknown", disposition = "pending/cancelled";
     String quality = "unknown", transport = "unknown";
     long ended = -1;
-    int byteCache = -1;
+    int byteCache = -1, playerCache = -1;
     long[] stages = new long[PHASES.length];
 
     Sample(long id, long tap, boolean video) {
@@ -115,6 +115,11 @@ final class StartupTimings {
     sample.cache = source;
     // Joining a still-running preload is not a stream prepared before the tap.
     sample.prepared = "ready".equals(source);
+  }
+
+  static synchronized void playerCache(long id, boolean ready) {
+    Sample sample = find(id);
+    if (sample != null && sample.playerCache < 0) sample.playerCache = ready ? 1 : 0;
   }
 
   static synchronized void byteCache(long id, boolean ready) {
@@ -217,6 +222,8 @@ final class StartupTimings {
           .append(sample.quality)
           .append(" transport=")
           .append(sample.transport);
+      if (sample.playerCache >= 0)
+        text.append(" player_at_tap=").append(sample.playerCache == 1 ? "ready" : "cold");
       if (sample.byteCache >= 0)
         text.append(" warmup_bytes_at_tap=").append(sample.byteCache == 1 ? "ready" : "not_ready");
       text.append(" started=")

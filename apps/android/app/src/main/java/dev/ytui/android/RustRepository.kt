@@ -647,6 +647,7 @@ internal class YtuiViewModel : ViewModel() {
             if (!download && !preview)
                 StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), !audio)
             else 0L
+        if (timing != 0L) StartupTimings.playerCache(timing, PlaybackService.warmReady())
         if (timing != 0L)
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context = if (!preview && !download && !queued) context(media) else null

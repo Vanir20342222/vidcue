@@ -49,6 +49,7 @@ public final class PublicYoutubeTest {
               .put("title", "Public YouTube acceptance")
               .put("kind", "video");
       long timing = StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true);
+      StartupTimings.playerCache(timing, PlaybackService.warmReady());
       StartupTimings.byteCache(timing, false);
       boolean passed = false;
       try {

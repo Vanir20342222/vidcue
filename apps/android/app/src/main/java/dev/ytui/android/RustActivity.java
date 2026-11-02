@@ -71,6 +71,7 @@ public final class RustActivity extends ComponentActivity {
   protected void onResume() {
     super.onResume();
     MediaBridge.uiVisible = true;
+    PlaybackService.warmForeground();
     MediaBridge.notifyUi();
   }
 
@@ -78,8 +79,10 @@ public final class RustActivity extends ComponentActivity {
   protected void onStop() {
     if (!FullscreenActivity.visible) {
       MediaBridge.uiVisible = false;
-      if (!isChangingConfigurations() && PlaybackService.current != null)
+      if (!isChangingConfigurations() && PlaybackService.current != null) {
         PlaybackService.current.pauseForBackground();
+        PlaybackService.current.releaseIdle();
+      }
     }
     super.onStop();
   }

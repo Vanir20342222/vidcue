@@ -679,26 +679,53 @@ class CatalogUiTest {
     }
 
     private fun awaitDecodedCovers(cards: List<MediaCard>) {
-        compose.waitUntil(15_000) {
-            // Virtualized rows beyond the viewport are intentionally not loaded.
-            val visible =
-                cards.filter { compose.onNodeWithTag("media-card-${it.key}").isDisplayed() }
-            visible.isNotEmpty() &&
-                visible.all { media ->
+        try {
+            compose.waitUntil(15_000) {
+                // Virtualized rows beyond the viewport are intentionally not loaded.
+                val visible =
+                    cards.filter { compose.onNodeWithTag("media-card-${it.key}").isDisplayed() }
+                visible.isNotEmpty() &&
+                    visible.all { media ->
+                        runCatching {
+                                val node =
+                                    compose.onNodeWithTag(
+                                        "artwork-${media.key}",
+                                        useUnmergedTree = true,
+                                    )
+                                val frame = node.captureToImage()
+                                // All original fixture covers have saturated warm/cool artwork;
+                                // a neutral placeholder cannot satisfy this actual-pixel check.
+                                val c = frame.toPixelMap()[frame.width / 2, frame.height / 4]
+                                maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue) >
+                                    0.12f
+                            }
+                            .getOrDefault(false)
+                    }
+            }
+        } catch (timeout: Exception) {
+            val details =
+                cards.mapIndexed { index, media ->
                     runCatching {
+                            val shown =
+                                compose.onNodeWithTag("media-card-${media.key}").isDisplayed()
                             val node =
                                 compose.onNodeWithTag(
                                     "artwork-${media.key}",
                                     useUnmergedTree = true,
                                 )
-                            val frame = node.captureToImage()
-                            // All original fixture covers have saturated warm/cool artwork;
-                            // a neutral placeholder cannot satisfy this actual-pixel check.
-                            val c = frame.toPixelMap()[frame.width / 2, frame.height / 4]
-                            maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue) > 0.12f
+                            val bounds = node.fetchSemanticsNode().boundsInRoot
+                            val bitmap = node.captureToImage()
+                            val pixel = bitmap.toPixelMap()[bitmap.width / 2, bitmap.height / 4]
+                            "index=$index shown=$shown bounds=$bounds sample=$pixel"
                         }
-                        .getOrDefault(false)
+                        .getOrElse { "index=$index observer_error=${it.javaClass.simpleName}" }
                 }
+            android.util.Log.e(
+                "CatalogEvidence",
+                "Cover timeout requests=${covers.requests.get()} details=$details",
+            )
+            runCatching { captureSettled("native-catalog-error.png") }
+            throw timeout
         }
     }
 

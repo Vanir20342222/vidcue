@@ -138,6 +138,10 @@ class IndexedPlaybackTest {
                 .replace("http://127.0.0.1:1", base)
 
         override fun close() {
+            android.util.Log.i(
+                "IndexedFixture",
+                "requests=" + synchronized(requests) { requests.toList() },
+            )
             socket.close()
             thread.join(1000)
             workers.shutdownNow()

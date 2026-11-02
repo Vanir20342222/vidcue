@@ -24,6 +24,30 @@ public final class PlaybackService extends MediaSessionService {
 
   static volatile PlaybackService current;
   ExoPlayer player;
+  private volatile boolean initialized;
+  private int lastStartId;
+
+  static boolean warmReady() {
+    PlaybackService service = current;
+    return service != null && service.initialized;
+  }
+
+  static void warmForeground() {
+    if (!MediaBridge.uiVisible || current != null) return;
+    try {
+      MediaBridge.context.startService(
+          new Intent(MediaBridge.context, PlaybackService.class).setAction("warm"));
+    } catch (IllegalStateException unavailable) {
+      // Optional foreground infrastructure preparation; an actual play request
+      // retains the normal foreground-service path if the OS denies this start.
+    }
+  }
+
+  void releaseIdle() {
+    if (currentRequest.optJSONObject("media") == null && lastStartId != 0)
+      stopSelfResult(lastStartId);
+  }
+
   Player controlsPlayer;
   MediaSession session;
   LiveMetadataPlayer sessionPlayer;
@@ -424,7 +448,7 @@ public final class PlaybackService extends MediaSessionService {
           } catch (Exception ignored) {
           }
         });
-    handler.post(ticker);
+    initialized = true;
   }
 
   private void setLiveTitle(CharSequence raw) {
@@ -542,6 +566,14 @@ public final class PlaybackService extends MediaSessionService {
   public int onStartCommand(Intent intent, int flags, int id) {
     if (intent == null) {
       stopSelf(id);
+      return START_NOT_STICKY;
+    }
+    lastStartId = id;
+    if ("warm".equals(intent.getAction())) {
+      if (currentRequest.optJSONObject("media") == null) {
+        if (!MediaBridge.uiVisible) releaseIdle();
+      }
+      // Do not register a session/notification or start a ticker for idle prep.
       return START_NOT_STICKY;
     }
     boolean startsPlayback = "play".equals(intent.getAction());
@@ -764,6 +796,8 @@ public final class PlaybackService extends MediaSessionService {
                       .build()));
     player.setMediaSource(source);
     player.prepare();
+    handler.removeCallbacks(ticker);
+    handler.post(ticker);
     if (pausedByUser) player.pause();
     else player.play();
     if (request.optBoolean("preview")) {
@@ -1363,6 +1397,7 @@ public final class PlaybackService extends MediaSessionService {
   void navigate(boolean previous) {
     long timing =
         StartupTimings.begin(SystemClock.elapsedRealtime(), !currentRequest.optBoolean("audio"));
+    StartupTimings.playerCache(timing, warmReady());
     boolean shuffle = player.getShuffleModeEnabled();
     String contextId = contextId(), quality = playbackQuality;
     long version = ++generation;
@@ -1686,6 +1721,7 @@ public final class PlaybackService extends MediaSessionService {
 
   @Override
   public void onDestroy() {
+    initialized = false;
     NativeBridge.activateContext("");
     cancelContextJobs();
     PlaybackCache.cancel();
