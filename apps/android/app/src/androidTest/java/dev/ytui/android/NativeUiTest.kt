@@ -406,11 +406,18 @@ class NativeUiTest {
             compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
             captureSettled("restyle-fidelity-focused-search.png")
             val keyboardShowing = AtomicBoolean()
-            scenario.onActivity {
-                keyboardShowing.set(
-                    ViewCompat.getRootWindowInsets(it.window.decorView)
-                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-                )
+            // A fresh emulator can show the IME a moment after focus despite the
+            // hardware-keyboard setting; let it settle so Back is counted right.
+            runCatching {
+                compose.waitUntil(3_000) {
+                    scenario.onActivity {
+                        keyboardShowing.set(
+                            ViewCompat.getRootWindowInsets(it.window.decorView)
+                                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                        )
+                    }
+                    keyboardShowing.get()
+                }
             }
             device.pressBack()
             if (keyboardShowing.get()) {

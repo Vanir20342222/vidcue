@@ -75,10 +75,11 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
         instrument+=(-e youtubeUrl "'$YTUI_ANDROID_PUBLIC_URL'")
     fi
     "${instrument[@]}" "$runner" | tee "$evidence/instrumentation-shard-$shard_index.txt"
+    # grep, not rg: emulator shard runners do not ship ripgrep.
     # Raw output ends with "OK (N tests)" only when every test in the shard passed;
     # failures print "FAILURES!!!" and crashes print neither.
-    if rg -q 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$evidence/instrumentation-shard-$shard_index.txt" ||
-        ! rg -q '^OK \([0-9]+ tests?\)' "$evidence/instrumentation-shard-$shard_index.txt"; then
+    if grep -Eq 'FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed' "$evidence/instrumentation-shard-$shard_index.txt" ||
+        ! grep -Eq '^OK \([0-9]+ tests?\)' "$evidence/instrumentation-shard-$shard_index.txt"; then
         echo "Instrumentation shard $shard_index/$num_shards failed; inspect device evidence." >&2
         exit 1
     fi
@@ -90,11 +91,11 @@ else
     apps/android/gradlew -p apps/android --no-daemon "${arguments[@]}" :app:connectedDebugAndroidTest
 fi
 adb logcat -d -s RustPanic:E RustStdoutStderr:I > "$evidence/rust-runtime.txt"
-if rg -q 'RustPanic|panicked at' "$evidence/rust-runtime.txt"; then
+if grep -Eq 'RustPanic|panicked at' "$evidence/rust-runtime.txt"; then
     echo 'Rust panic detected despite passing instrumentation; inspect device evidence.' >&2
     exit 1
 fi
-if rg -Fq "ANR in $test_package" "$evidence/live-logcat.txt"; then
+if grep -Fq "ANR in $test_package" "$evidence/live-logcat.txt"; then
     echo 'Application ANR detected despite passing instrumentation; inspect device evidence.' >&2
     exit 1
 fi

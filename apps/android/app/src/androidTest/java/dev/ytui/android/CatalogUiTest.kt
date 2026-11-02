@@ -1182,9 +1182,18 @@ class CatalogUiTest {
                                 "watch-collapse-missing.xml",
                             )
                         )
-                    scenario.onActivity { watchPlayer(it).controllerShowTimeoutMs = hideAfter }
                     Assert.assertNotNull("Native collapse control must be accessible", collapse)
                     collapse.click()
+                    // Restore the hide timer after the click; changing it first re-lays
+                    // out the controller and makes the found UiObject2 stale.
+                    scenario.onActivity {
+                        it.findViewById<android.view.View>(R.id.ytui_collapse)?.let { view ->
+                            generateSequence(view) { v -> v.parent as? android.view.View }
+                                .filterIsInstance<androidx.media3.ui.PlayerView>()
+                                .firstOrNull()
+                                ?.controllerShowTimeoutMs = hideAfter
+                        }
+                    }
                     compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
                     Assert.assertEquals(generation, PlaybackService.current!!.generation)
                     Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
