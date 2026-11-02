@@ -1,5 +1,39 @@
 # Android validation record (M9)
 
+## Sign-in card and first-run setup (2026-11-02, M9)
+
+Added in commit `7f566e5` and these test files:
+
+- A native sign-in card (`AuthScreen.kt`, `AuthActivity.java`): a two-column account
+  card inside in-app-browser chrome, with a close button, a live address pill with
+  lock and load progress, and a "you'll come back here" strip. A detected signed-in
+  cookie name highlights "Use this session", but import still needs an explicit tap.
+  Help, Privacy and Terms open in the external browser.
+- A five-step skippable first-run setup (`Onboarding.kt`) with Skip, Back, swipe and
+  reduced-motion handling. Completion is stored in app-private preferences, and
+  Settings > Setup guide replays it. Instrumented offline launches show it only with
+  the `ytui.onboarding` extra.
+- `src/test/.../AuthUiTest.kt` (JVM, pure logic only; `AuthUi.host` is excluded because
+  it needs `android.net.Uri`) and `src/androidTest/.../OnboardingUiTest.kt`
+  (instrumentation: Skip, Next to finish, Back).
+
+Checks actually run on 2026-11-02 (`apps/android`, debug variant):
+
+- `:app:testDebugUnitTest --tests 'dev.ytui.android.AuthUiTest'`: passed, 11 tests,
+  0 failures: `missingOrEmptyCookieHeadersDoNotLookSignedIn`,
+  `unrelatedCookiesDoNotLookSignedIn`, `signedInCookieNamesAreDetectedWhereverTheyAppear`,
+  `namesThatMerelyContainASignedInNameAreNotDetected`, `onlyCookieNamesAreInspectedNotValues`,
+  `secureMeansAnHttpsAddress`, `resetRestoresTheIntroductionState`,
+  `resetCanOpenTheWebStageDirectly`, `showWebTogglesOnlyTheStage`,
+  `progressIsClampedToAPercentage`, `pageAcceptsANullAddressAsEmpty`.
+- `:app:compileDebugAndroidTestKotlin`: passed. This compiles `OnboardingUiTest`
+  but does not run it.
+
+Not run and not claimed: no emulator or instrumentation run (including
+`OnboardingUiTest` and the existing `NativeUiTest`), no physical Galaxy Tab S9 run,
+no TalkBack check, and no live Google sign-in. The JVM result is logic-only and does
+not establish sign-in success, cookie capture, or any accessibility behaviour.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version
