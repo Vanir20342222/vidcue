@@ -1520,7 +1520,8 @@ class CatalogUiTest {
                         }
                         .onFailure {
                             decoded = false
-                            checks += "capture=${it.javaClass.simpleName}"
+                            val reason = it.message?.lineSequence()?.firstOrNull()?.take(200)
+                            checks += "capture=${it.javaClass.simpleName}: $reason"
                         }
                 }
                 diagnostics = checks
