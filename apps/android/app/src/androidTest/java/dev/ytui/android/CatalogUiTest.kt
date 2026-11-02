@@ -1132,6 +1132,13 @@ class CatalogUiTest {
                                 .filterIsInstance<androidx.media3.ui.PlayerView>()
                                 .first()
                         playerView.showController()
+                    }
+                    // Measure after the controller's next layout pass, not in the
+                    // same main-thread task that made it visible.
+                    instrumentation.waitForIdleSync()
+                    compose.waitForIdle()
+                    scenario.onActivity {
+                        val collapse = it.findViewById<android.view.View>(R.id.ytui_collapse)
                         Assert.assertEquals("panel-close", collapse.tag)
                         Assert.assertEquals(
                             "Minimize player",

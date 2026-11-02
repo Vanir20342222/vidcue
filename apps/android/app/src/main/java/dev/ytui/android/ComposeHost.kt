@@ -245,8 +245,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         vm.chooseTab(index)
     }
     val focusSink = remember { FocusRequester() }
+    // Leaving search lands on the results grid (PR #31's destination); the sink
+    // remains the fallback when no grid is composed (e.g. during a tab change).
+    val browseFocus = remember(tab) { FocusRequester() }
     fun releaseSearchFocus() {
-        if (runCatching { focusSink.requestFocus() }.isFailure)
+        if (
+            runCatching { browseFocus.requestFocus() }.isFailure &&
+                runCatching { focusSink.requestFocus() }.isFailure
+        )
             focusManager.clearFocus(force = true)
         keyboard?.hide()
         searchFocused = false
@@ -489,6 +495,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 searchActive = searchFocused,
                                                 onSearchFocus = { searchFocused = it },
                                                 releaseSearchFocus = ::releaseSearchFocus,
+                                                browseFocus = browseFocus,
                                                 scrollToTop = scrollToTop,
                                             )
                                         }
@@ -1013,6 +1020,7 @@ private fun BrowsePane(
     searchActive: Boolean,
     onSearchFocus: (Boolean) -> Unit,
     releaseSearchFocus: () -> Unit,
+    browseFocus: FocusRequester,
     scrollToTop: Int = 0,
 ) {
     val feed by vm.feeds[tab].collectAsState()
@@ -1272,7 +1280,9 @@ private fun BrowsePane(
                             alpha = entry.value
                             translationY = (1f - entry.value) * 32.dp.toPx()
                         }
-                        .testTag("feed-list"),
+                        .testTag("feed-list")
+                        .focusRequester(browseFocus)
+                        .focusable(),
                 state = grid,
                 contentPadding =
                     PaddingValues(
