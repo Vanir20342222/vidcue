@@ -1701,24 +1701,29 @@ private fun PlayerDock(vm: YtuiViewModel) {
             Modifier.fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
                 .testTag("mini-player"),
-        shape = MediaTokens.pill,
+        shape = MediaTokens.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp,
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth().padding(8.dp),
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Artwork(media, Modifier.size(48.dp), config.optBoolean("thumbnails", true))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Artwork(
+                    media,
+                    Modifier.size(44.dp).clip(MediaTokens.small),
+                    config.optBoolean("thumbnails", true),
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         player.title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
                     Text(
                         media.creator.ifBlank {
@@ -1738,9 +1743,9 @@ private fun PlayerDock(vm: YtuiViewModel) {
                 ) {
                     vm.command("pause")
                 }
-                MediaIconButton(Glyph.Next, "Next track", "dock-next") { vm.command("next") }
                 // The mini player can be dismissed, as on YouTube; this is the
-                // existing stop command, not a new playback mode.
+                // existing stop command, not a new playback mode. Next stays
+                // available from the expanded player to keep the dock uncluttered.
                 MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
                     vm.command("stop")
                 }
@@ -1752,6 +1757,7 @@ private fun PlayerDock(vm: YtuiViewModel) {
                     modifier = Modifier.fillMaxWidth().height(2.dp),
                     gapSize = 0.dp,
                     drawStopIndicator = {},
+                    trackColor = Color.Transparent,
                 )
         }
     }
