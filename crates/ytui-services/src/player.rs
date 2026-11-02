@@ -104,6 +104,8 @@ pub struct Player {
 struct Active {
     progress_at: tokio::time::Instant,
     meter_enabled: Option<bool>,
+    /// SponsorBlock marks last published to this mpv window's timeline.
+    marks: Option<Vec<crate::sponsorblock::Segment>>,
     last_position: Option<f64>,
     cancel: CancellationToken,
     task: JoinHandle<Result<ProcessResult>>,
@@ -519,6 +521,7 @@ async fn start(
     Ok(Active {
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
+        marks: None,
         last_position: None,
         cancel,
         task,
@@ -1320,6 +1323,17 @@ impl Actor {
             } else {
                 None
             };
+            if p.marks.as_ref() != Some(&self.state.segments)
+                && p.command(json!([
+                    "set_property",
+                    "user-data/ytui/segments",
+                    self.state.segments
+                ]))
+                .await
+                .is_ok()
+            {
+                p.marks = Some(self.state.segments.clone());
+            }
             if let Some(action) = v["user-data/ytui/action"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -1718,6 +1732,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         let full = Active {
             progress_at: tokio::time::Instant::now(),
             meter_enabled: None,
+            marks: None,
             last_position: None,
             cancel: token,
             task: tokio::spawn(async move {
@@ -2143,6 +2158,7 @@ sleep 30
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now(),
                     meter_enabled: None,
+                    marks: None,
                     last_position: None,
                     cancel: CancellationToken::new(),
                     task,
@@ -2288,6 +2304,7 @@ mod responsiveness_tests {
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now() - Duration::from_secs(91),
                     meter_enabled: None,
+                    marks: None,
                     last_position: position,
                     cancel,
                     task,
@@ -2367,6 +2384,7 @@ mod responsiveness_tests {
             actor.full = Some(Active {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
+                marks: None,
                 last_position: None,
                 cancel: CancellationToken::new(),
                 task: tokio::spawn(async {
@@ -2462,6 +2480,7 @@ mod responsiveness_tests {
             preview: Some(Active {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
+                marks: None,
                 last_position: None,
                 cancel,
                 task: tokio::spawn(async move {

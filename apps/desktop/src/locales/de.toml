@@ -51,6 +51,7 @@
 "Retry count" = "Wiederholungen"
 "Retry delay seconds" = "Wartezeit in Sekunden"
 "Save local playback positions" = "Positionen lokal speichern"
+"Resume videos where you left off" = "Videos an der letzten Stelle fortsetzen"
 "FFprobe executable" = "FFprobe-Programm"
 "SponsorBlock API" = "SponsorBlock-API"
 "Audio quality / bitrate" = "Audioqualität / Bitrate"
@@ -481,3 +482,4 @@
 "Music player style" = "Musikplayer-Ansicht"
 "Cycle music player style (Music / Radio)" = "Musikplayer-Ansicht wechseln (Musik / Radio)"
 "Cycle music player: classic / vinyl / VU / orbit" = "Musikplayer wechseln: klassisch / Vinyl / VU / Orbit"
+"Playing a partly watched video continues from its locally saved position. Music, stations and finished videos start at the beginning. Use :player-seek 0 to start over. Requires saved playback positions." = "Ein teilweise angesehenes Video wird an der lokal gespeicherten Position fortgesetzt. Musik, Sender und beendete Videos starten von vorn. Mit :player-seek 0 von vorn beginnen. Erfordert lokal gespeicherte Positionen."

@@ -42,7 +42,9 @@ and check `~/.local/bin/ytui --version`. `install-rust.sh` is a compatibility al
   anonymous Home may have no recommendations.
 - `F2 → Player`: actual formats, audio/subtitle choices, SponsorBlock status; `F2 → Settings`: setup, thumbnail cache and safe support export.
 - `F2 → Downloads`: full-collection individual jobs, per-entry retry/files and recent destinations.
-- `u`: explicit local playback resume; `p`: playback queue.
+- Videos continue where you left off: playing a partly watched video starts at its
+  locally saved position (toggle in `F2 → Settings → General`; `:player-seek 0` starts over).
+  Music and stations start from the top. `u`: resume list/selected; `p`: playback queue.
 - `S`: save/remove a video or song locally; **Library → Saved locally** opens the shelf and `/` searches it.
 - **o → Set sleep timer** stops playback after e.g. `30m` while keeping the queue; cancel it from the same menu.
 - `ytui --demo`: fictional catalog for UI review; `ytui --offline`: local library.

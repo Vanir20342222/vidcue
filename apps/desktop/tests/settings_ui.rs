@@ -76,6 +76,7 @@ fn settings_sections_cover_every_field_and_new_defaults_roundtrip() {
         (47, "my-nmcli"),
         (48, "de,us"),
         (49, "https://radio.test"),
+        (56, "no"),
     ] {
         form.fields[index].value = Editor::new(value);
     }
@@ -89,6 +90,7 @@ fn settings_sections_cover_every_field_and_new_defaults_roundtrip() {
     assert_eq!(saved.radio_pinned_countries, ["DE", "US"]);
     assert_eq!(saved.cliamp, "my-cliamp");
     assert_eq!(saved.nmcli, "my-nmcli");
+    assert!(config.resume_on_play && !saved.resume_on_play);
     form.fields[49].value = Editor::new("file:///invalid");
     assert!(form.config_values().is_err());
 }

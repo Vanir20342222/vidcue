@@ -26,6 +26,8 @@ pub struct Config {
     pub music_player_style: String,
     pub reduced_motion: bool,
     pub playback_history: bool,
+    /// Start normal playback of a partly watched video from its saved local position.
+    pub resume_on_play: bool,
     pub show_hints: bool,
     pub playback_sponsorblock: String,
     pub playback_sponsor_categories: Vec<String>,
@@ -69,6 +71,7 @@ impl Default for Config {
             music_player_style: "classic".into(),
             reduced_motion: false,
             playback_history: true,
+            resume_on_play: true,
             show_hints: true,
             playback_sponsorblock: "skip".into(),
             playback_sponsor_categories: vec!["sponsor".into()],
