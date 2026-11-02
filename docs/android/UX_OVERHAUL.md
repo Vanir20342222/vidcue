@@ -103,6 +103,45 @@ Each screen now has at most one primary (inverted) pill.
 - **Other.** About links are rows; Radio country and genre browsing uses fields
   with a go icon; "Load more" is secondary.
 
+## Follow-up (owner request, 2026-11-02)
+
+The owner approved renaming the first tab and asked for a general review of
+UI/UX, bug fixes and performance work.
+
+- **Tab label.** The first destination is now **Home** (open question 1).
+- **Discoverability.** Subscriptions and Watch later are Home filter chips.
+  Before, they were only under More › Browse.
+- **Pull to refresh.** Feeds refresh with a pull gesture, which reuses the
+  existing Refresh feed request. Re-selecting the current tab scrolls its feed
+  to the top. A pane that has just been shown keeps its restored position.
+- **History** has a neutral empty state, and artwork placeholders are flat
+  instead of a tinted gradient.
+- **Performance.**
+  - The status poll runs once a second. It now publishes player and download
+    state only when it changed. Before, it replaced both every second, and
+    because the states compare by identity, every screen reading them
+    recomposed even when idle. Optimistic seek, pause and volume still
+    reconcile with the next real snapshot.
+  - `MediaCard` and `PlayerState` are `@Immutable`, and each card's artwork
+    identity string is computed once.
+  - Feed cards no longer collect the settings flows four times per item.
+  - Artwork measures its size instead of using `BoxWithConstraints`, which ran
+    a subcomposition per list item. Memory-cache hits paint in the first frame,
+    so there is no placeholder flash when scrolling back.
+
+### Further improvement opportunities (not done in this pass)
+
+| Area | Opportunity | Why it was not done here |
+| --- | --- | --- |
+| Feed | Hide the app bar and chips on scroll down and show them on scroll up, to give content more room | Changes the layout that many native geometry tests assert. Worth its own tested change |
+| Search | Recent searches and suggestion rows with a fill-in arrow | Needs a local search-history store, which is a new feature and new data |
+| Cards | Real channel avatars, plus view count and age on every card | The data model has no avatar URL. Counts and age depend on what the provider returns and on the Video information settings |
+| Queue | Drag handles to reorder, instead of the Move up/down menu | Needs gesture and test work. Current menu actions are reliable and accessible |
+| Destructive actions | Undo after Remove, Disconnect or Clear history | Snackbars were removed on purpose (`aaf12c5`). Undo needs an agreed in-place pattern |
+| Player | Swipe up from the mini player to open; double-tap seek feedback on the music art | Motion and gesture work that needs on-device tuning |
+| Video overlay | A decision on the −5/+15 asymmetry | Owner decision (open question 3) |
+| Large text | PR #31's navigation measurement failure at 2× | Owned by the PR #31 revision series |
+
 ## Decisions where the brief left room or was wrong
 
 - **Snackbars are not reintroduced.** `aaf12c5` removed confirmations on
@@ -118,8 +157,7 @@ Each screen now has at most one primary (inverted) pill.
   YouTube's mini player does. No playback mode was added.
 - **Seek amounts and their configuration are unchanged.** The native overlay's
   −5/+15 asymmetry is still flagged for a human decision, as in earlier reports.
-- **The "YouTube" tab label is unchanged.** Renaming it to "Home" still needs
-  owner approval.
+- **The first tab is now "Home"**, approved by the owner on 2026-11-02.
 
 ## Preserved contracts
 
@@ -145,7 +183,26 @@ Local (Linux, no KVM), on the final source:
 - Lint has 0 errors and 39 warnings (baseline 40, none suppressed).
 - ktfmt (kotlinlang style) is clean.
 
-**Pending:** a native Android CI run and screenshot review of this revision. The
+Native, revision `1988e72`
+([Android 41450852851](https://github.com/Vanir20342222/ytui/actions/runs/41450852851)):
+
+- **41 passes, 1 failure and 1 explicit public-YouTube skip** (43 tests). PR #31
+  rev. 3 had five failures.
+- Both search-exit tests now pass (`realKeyboardAndSettingsTextFieldsAcceptInput`
+  and `focusedSearchBackRestoresHeaderWithoutLeavingTheActivity`), which
+  confirms the focus-sink diagnosis. Offline playlist rename and the strict HLS
+  start also pass in this run.
+- The remaining failure is the PR #31 2× navigation measurement:
+  "Downloads", 349 px node, `didOverflowWidth`. The follow-up gives labels an
+  exact measured width, so the paragraph and the node agree. A rerun is pending.
+- I reviewed the captures for the video watch page, the options menu and its
+  tracks page, account, Downloads, phone-landscape rail, lyrics, history,
+  tablet side player, mini player and search return. The only change they
+  prompted: the volume slider now uses the same slim line and round dot as the
+  seek bar.
+
+**Earlier text, kept for history:** a native Android CI run and screenshot
+review of this revision were pending. The
 session could not push (GitHub returned 403), so no native, contrast, motion or
 theme-matrix result exists for this change yet. This document does not claim
 visual acceptance. The rev. 3 failures in large-text navigation measurement,

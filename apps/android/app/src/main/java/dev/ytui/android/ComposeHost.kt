@@ -738,10 +738,14 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
             color =
                 if (tab == index) MaterialTheme.colorScheme.onBackground
                 else MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            // An exact width (measured bold word plus rounding room) keeps the
+            // paragraph and the node the same width. A min-width alone let the
+            // paragraph lay out against the full incoming maximum and report a
+            // width overflow for a word that visibly fits.
             modifier =
-                Modifier.widthIn(
-                        min =
-                            with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
+                Modifier.width(
+                        with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
                     )
                     .testTag("navigation-label-$index"),
         )
@@ -2043,9 +2047,12 @@ private fun PlayerPane(
                         MediaIcon(Glyph.Volume, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         val volume =
                             player.value.optDouble("volume", 0.7).toFloat().coerceIn(0f, 1f)
-                        Slider(
+                        // Same slim line and round dot as the seek bar.
+                        MediaSeekSlider(
                             volume,
                             { vm.command("volume", "value" to it) },
+                            valueRange = 0f..1f,
+                            onValueChangeFinished = {},
                             modifier =
                                 Modifier.weight(1f).testTag("volume-slider").semantics {
                                     contentDescription = "Volume"
