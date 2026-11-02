@@ -376,6 +376,11 @@ YTUI_TEST_MPV=/usr/bin/mpv cargo test -p ytui-services --locked real_mpv_ -- --i
 ```
 
 Reproduce the Lua check with `lua5.4 crates/ytui-services/tests/player_menu.lua`.
+On 2026-11-02 it also covered SponsorBlock seekbar marks (segment start/end merged
+into `chapter-list`, original chapters restored when segments clear), run through
+Lua 5.4 via `lupa`; `sponsor_segments_are_published_once_to_the_mpv_timeline`
+covers the IPC push on a loopback socket. Neither is a real mpv OSC render check,
+and the Android seek-slider marks were not compiled or device-checked here.
 Locally it was executed through installed liblua5.4 with the same synthetic API;
 no production Python dependency was added. Re-run failed live checks explicitly:
 `cargo test -p ytui --test live_youtube --locked -- --ignored --nocapture`.

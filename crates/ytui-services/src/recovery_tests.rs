@@ -67,6 +67,7 @@ async fn finished(actor: &mut Actor, success: bool, message: &str) {
     actor.full = Some(Active {
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
+        marks: None,
         last_position: None,
         cancel: CancellationToken::new(),
         task,
@@ -383,4 +384,77 @@ async fn real_mpv_stream_reconnect_retains_controls_and_never_emits_queue_comple
     player.close().await;
     server.abort();
     result.expect("Live reconnect fixture timed out").unwrap();
+}
+#[tokio::test]
+async fn sponsor_segments_are_published_once_to_the_mpv_timeline() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut actor = actor(temp.path(), false);
+    let socket = temp.path().join("ipc");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let pushed = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let record = pushed.clone();
+    let server = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let record = record.clone();
+            tokio::spawn(async move {
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let request: Value = serde_json::from_str(&line).unwrap();
+                    let command = &request["command"];
+                    if command[0] == "set_property" && command[1] == "user-data/ytui/segments" {
+                        record.lock().unwrap().push(command[2].clone());
+                    }
+                    let data = if command[1] == "time-pos" {
+                        json!(10.0)
+                    } else {
+                        Value::Null
+                    };
+                    let reply =
+                        json!({"request_id":request["request_id"],"error":"success","data":data});
+                    if write
+                        .write_all(format!("{reply}\n").as_bytes())
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+    actor.full = Some(Active {
+        progress_at: tokio::time::Instant::now(),
+        meter_enabled: None,
+        marks: None,
+        last_position: None,
+        cancel: CancellationToken::new(),
+        task: tokio::spawn(std::future::pending()),
+        socket,
+        backend: watch::channel("native Rust".into()).1,
+        catalog: watch::channel(Default::default()).1,
+        _dir: tempfile::tempdir().unwrap(),
+        _cookies: None,
+    });
+    actor.state.segments = vec![crate::sponsorblock::Segment {
+        start: 30.0,
+        end: 45.0,
+        category: "sponsor".into(),
+    }];
+    actor.tick().await;
+    actor.tick().await;
+    assert_eq!(
+        *pushed.lock().unwrap(),
+        vec![json!([{"start":30.0,"end":45.0,"category":"sponsor"}])],
+        "segments reach mpv's timeline once per change"
+    );
+    actor.state.segments.clear();
+    actor.tick().await;
+    assert_eq!(pushed.lock().unwrap().last(), Some(&json!([])));
+    if let Some(active) = actor.full.take() {
+        active.task.abort();
+    }
+    server.abort();
+    let _ = server.await;
 }
