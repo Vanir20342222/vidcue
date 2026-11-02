@@ -1,5 +1,12 @@
 # ytui Rust rewrite plan
 
+M9 category loading (2026-11-02): Android prepares nearby video/Music category
+pages and the other media tab's Home in the background, reuses in-flight work,
+and retains first pages for one minute within bounded memory. Existing preload
+and metered-data preferences apply. Nine focused offline Kotlin cache tests pass;
+Android build/device latency remains unqualified in this SDK-less workspace.
+See [validation](docs/android/VALIDATION.md#category-preloading-2026-11-02).
+
 M9 release: [published mobile.10](docs/android/MOBILE10_RELEASE.md) packages the
 merged content-first Android restyle from source `686e379` as release code 10.
 Exact-main Android/Rust/secret checks pass: 37 native passes, one public skip,
