@@ -86,11 +86,17 @@ internal fun FocusedPlayer(
     minimize: () -> Unit,
     onQueue: () -> Unit,
     onMore: () -> Unit,
+    onLyrics: () -> Unit = {},
+    onSleep: () -> Unit = {},
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
+    val queue by vm.queue.collectAsState()
     val context = LocalContext.current
+    val mediaUrl = player.media?.optString("url")
+    // Keep the inline Up next list current as playback advances.
+    LaunchedEffect(mediaUrl) { vm.loadQueue() }
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val dismiss =
         Modifier.pointerInput(mobile.optBoolean("gestures", true)) {
@@ -145,8 +151,25 @@ internal fun FocusedPlayer(
                     .optString("error")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                // One row of existing actions under the title (YouTube watch-page
+                // pattern). Every entry maps to an action the app already performs.
+                Row(
+                    Modifier.fillMaxWidth().testTag("player-actions"),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
+                    if (!player.video) MediaIconButton(Glyph.Lyrics, "Lyrics", action = onLyrics)
+                    MediaIconButton(Glyph.Sleep, "Sleep timer", action = onSleep)
+                    val media = player.media
+                    if (
+                        media != null &&
+                            !player.value.optBoolean("offline") &&
+                            !media.optBoolean("live") &&
+                            !player.preview
+                    )
+                        MediaIconButton(Glyph.Download, "Save offline", "player-download") {
+                            vm.play(MediaCard(media), download = true)
+                        }
                     if (player.video)
                         MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
                             context.startActivity(
@@ -211,7 +234,9 @@ internal fun FocusedPlayer(
         fun Art(modifier: Modifier) {
             BoxWithConstraints(
                 modifier.then(if (player.video) Modifier else dismiss),
-                contentAlignment = Alignment.TopCenter,
+                // Music art shares spare height above and below instead of
+                // leaving one gap between the cover and its title.
+                contentAlignment = if (player.video) Alignment.TopCenter else Alignment.Center,
             ) {
                 if (player.video && allowVideoSurface)
                     VideoSurface(
@@ -240,10 +265,92 @@ internal fun FocusedPlayer(
                 Art(Modifier.weight(1f).fillMaxHeight())
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
             }
+        else if (player.video)
+        // Watch page: edge-to-edge 16:9 video, details directly beneath, then
+        // the real queue. No dead space between the video and its title.
+        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Art(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+                Controls(Modifier.fillMaxWidth())
+                UpNext(
+                    queue,
+                    mediaUrl,
+                    config.optBoolean("thumbnails", true),
+                    mobile.optBoolean("show_channel", true),
+                    Modifier.weight(1f),
+                    onQueue,
+                ) {
+                    vm.play(it, queued = true)
+                }
+            }
         else
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Art(Modifier.weight(1f).fillMaxWidth())
-                Controls(Modifier.fillMaxWidth())
+                Controls(Modifier.fillMaxWidth().padding(bottom = 8.dp))
+            }
+    }
+}
+
+/** Inline queue under the video; full management stays in the queue sheet. */
+@Composable
+private fun UpNext(
+    queue: List<MediaCard>,
+    playingUrl: String?,
+    thumbnails: Boolean,
+    showCreator: Boolean,
+    modifier: Modifier,
+    onManage: () -> Unit,
+    play: (MediaCard) -> Unit,
+) {
+    Column(modifier.fillMaxWidth().testTag("up-next")) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Row(
+            Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Up next",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+            if (queue.isNotEmpty())
+                TextButton(
+                    onManage,
+                    Modifier.heightIn(min = 48.dp),
+                    colors =
+                        ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                ) {
+                    Text("Edit queue")
+                }
+        }
+        if (queue.isEmpty())
+            Text(
+                "Nothing queued. Add videos with Add to queue in any ⋮ menu.",
+                Modifier.padding(horizontal = MediaTokens.textInset, vertical = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        else
+            androidx.compose.foundation.lazy.LazyColumn(
+                Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                items(queue.size, key = { "${queue[it].key}#$it" }) { index ->
+                    val media = queue[index]
+                    val current = media.url.isNotBlank() && media.url == playingUrl
+                    MediaListRow(
+                        media.title,
+                        if (current) "Now playing" else if (showCreator) media.creator else "",
+                        Modifier.padding(horizontal = 8.dp),
+                        artwork = { Artwork(media, it, thumbnails) },
+                        square = media.audio,
+                        highlighted = current,
+                        onClick = { play(media) },
+                    )
+                }
             }
     }
 }

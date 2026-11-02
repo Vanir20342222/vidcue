@@ -492,8 +492,10 @@ class CatalogUiTest {
             }
             compose.onNodeWithTag("player-options").performClick()
             compose.onNodeWithTag("volume-slider").performScrollTo().assertIsDisplayed()
+            captureSettled("restyle-player-options.png")
             compose.onNodeWithText("Audio & subtitles").performScrollTo().performClick()
             compose.onNodeWithText("Toggle captions").performScrollTo().assertIsDisplayed()
+            captureSettled("restyle-player-options-tracks.png")
             compose.onNodeWithContentDescription("Close").performClick()
             scenario.onActivity {
                 ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile("gestures", false)
