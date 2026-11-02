@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -63,6 +64,7 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
             view.findViewById<android.view.View>(R.id.ytui_collapse)?.apply {
+                tag = "panel-close" // Native View tag; Compose tag remains on music/modal chrome.
                 visibility =
                     if (collapse == null) android.view.View.GONE else android.view.View.VISIBLE
                 setOnClickListener { collapse?.invoke() }
@@ -114,38 +116,50 @@ internal fun FocusedPlayer(
         }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("focused-player")) {
         val landscape = maxWidth > maxHeight * 1.25f
+        val portraitVideoHeight =
+            minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
         @Composable
         fun Controls(modifier: Modifier) {
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
                     .then(
-                        if (LocalDensity.current.fontScale > 1.3f)
+                        if (player.video || LocalDensity.current.fontScale > 1.3f)
                             Modifier.verticalScroll(rememberScrollState())
                         else Modifier
                     ),
                 verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
             ) {
-                Text(
-                    player.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (
-                    mobile.optBoolean("show_channel", true) ||
-                        player.media?.optBoolean("live") == true
-                )
+                Column(
+                    Modifier.fillMaxWidth()
+                        .then(
+                            if (player.video)
+                                Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss)
+                            else Modifier
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
+                ) {
                     Text(
-                        player.value.optString("station").ifBlank {
-                            player.media?.optString("creator") ?: ""
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
+                        player.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (
+                        mobile.optBoolean("show_channel", true) ||
+                            player.media?.optBoolean("live") == true
+                    )
+                        Text(
+                            player.value.optString("station").ifBlank {
+                                player.media?.optString("creator") ?: ""
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
                 if (player.video) player.media?.let { MediaInformation(it, mobile) }
                 player.value
                     .optString("error")
@@ -153,36 +167,53 @@ internal fun FocusedPlayer(
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 // One row of existing actions under the title (YouTube watch-page
                 // pattern). Every entry maps to an action the app already performs.
-                Row(
-                    Modifier.fillMaxWidth().testTag("player-actions"),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
-                    if (!player.video) MediaIconButton(Glyph.Lyrics, "Lyrics", action = onLyrics)
-                    MediaIconButton(Glyph.Sleep, "Sleep timer", action = onSleep)
-                    val media = player.media
-                    if (
-                        media != null &&
-                            !player.value.optBoolean("offline") &&
-                            !media.optBoolean("live") &&
-                            !player.preview
-                    )
-                        MediaIconButton(Glyph.Download, "Save offline", "player-download") {
-                            vm.play(MediaCard(media), download = true)
-                        }
-                    if (player.video)
-                        MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
-                            context.startActivity(
-                                Intent(context, FullscreenActivity::class.java)
-                                    .putExtra("reduced_motion", config.optBoolean("reduced_motion"))
-                            )
-                        }
-                    MediaIconButton(
-                        Glyph.More,
-                        "Playback options",
-                        "player-options",
-                        action = onMore,
-                    )
+                // Narrow columns (landscape watch split) scroll instead of overlapping.
+                val media = player.media
+                val canSave =
+                    media != null &&
+                        !player.value.optBoolean("offline") &&
+                        !media.optBoolean("live") &&
+                        !player.preview
+                val actionCount =
+                    3 +
+                        (if (!player.video) 1 else 0) +
+                        (if (canSave) 1 else 0) +
+                        (if (player.video) 1 else 0)
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val minimum = 48.dp * actionCount
+                    Row(
+                        (if (maxWidth < minimum)
+                                Modifier.horizontalScroll(rememberScrollState())
+                                    .widthIn(min = minimum)
+                            else Modifier.fillMaxWidth())
+                            .testTag("player-actions"),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
+                        if (!player.video)
+                            MediaIconButton(Glyph.Lyrics, "Lyrics", action = onLyrics)
+                        MediaIconButton(Glyph.Sleep, "Sleep timer", action = onSleep)
+                        if (canSave && media != null)
+                            MediaIconButton(Glyph.Download, "Save offline", "player-download") {
+                                vm.play(MediaCard(media), download = true)
+                            }
+                        if (player.video)
+                            MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
+                                context.startActivity(
+                                    Intent(context, FullscreenActivity::class.java)
+                                        .putExtra(
+                                            "reduced_motion",
+                                            config.optBoolean("reduced_motion"),
+                                        )
+                                )
+                            }
+                        MediaIconButton(
+                            Glyph.More,
+                            "Playback options",
+                            "player-options",
+                            action = onMore,
+                        )
+                    }
                 }
                 if (!player.video) PlayerSeek(vm, player)
                 if (!player.video)
@@ -260,27 +291,34 @@ internal fun FocusedPlayer(
                 }
             }
         }
-        if (landscape)
+        if (player.video) {
+            // Watch page: edge-to-edge 16:9 video (capped so details stay usable in
+            // short windows), details directly beneath, then the real queue.
+            if (landscape) {
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Art(Modifier.weight(2f).fillMaxHeight())
+                    Controls(Modifier.weight(1f).fillMaxHeight())
+                }
+            } else {
+                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Art(Modifier.fillMaxWidth().height(portraitVideoHeight))
+                    Controls(Modifier.fillMaxWidth())
+                    UpNext(
+                        queue,
+                        mediaUrl,
+                        config.optBoolean("thumbnails", true),
+                        mobile.optBoolean("show_channel", true),
+                        Modifier.weight(1f),
+                        onQueue,
+                    ) {
+                        vm.play(it, queued = true)
+                    }
+                }
+            }
+        } else if (landscape)
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Art(Modifier.weight(1f).fillMaxHeight())
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
-            }
-        else if (player.video)
-        // Watch page: edge-to-edge 16:9 video, details directly beneath, then
-        // the real queue. No dead space between the video and its title.
-        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Art(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                Controls(Modifier.fillMaxWidth())
-                UpNext(
-                    queue,
-                    mediaUrl,
-                    config.optBoolean("thumbnails", true),
-                    mobile.optBoolean("show_channel", true),
-                    Modifier.weight(1f),
-                    onQueue,
-                ) {
-                    vm.play(it, queued = true)
-                }
             }
         else
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -343,7 +381,7 @@ private fun UpNext(
                     val current = media.url.isNotBlank() && media.url == playingUrl
                     MediaListRow(
                         media.title,
-                        if (current) "Now playing" else if (showCreator) media.creator else "",
+                        if (current) "Playing" else if (showCreator) media.creator else "",
                         Modifier.padding(horizontal = 8.dp),
                         artwork = { Artwork(media, it, thumbnails) },
                         square = media.audio,

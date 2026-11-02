@@ -327,8 +327,22 @@ class CatalogUiTest {
         compose.onNodeWithText(title).performClick()
         compose.onNodeWithTag("offline-playlist-edit-name").performTextReplacement("$title renamed")
         compose.onNodeWithTag("offline-playlist-edit-name").assertTextContains("$title renamed")
-        // Modal sheets move as the IME opens. Tap the settled real button;
-        // semantics becoming available does not imply its window position is final.
+        // Complete editing before tapping a moving modal. UIA idleness alone
+        // does not establish that its IME-driven window relocation has finished.
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        if (
+            automation.windows.any {
+                it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+            }
+        ) {
+            UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
+            compose.waitUntil(10_000) {
+                automation.windows.none {
+                    it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                }
+            }
+        }
+        compose.onNodeWithTag("offline-playlist-edit-name").assertIsDisplayed()
         settleUi()
         compose.onNodeWithText("Rename").assertIsDisplayed().performClick()
         try {
@@ -975,6 +989,228 @@ class CatalogUiTest {
     }
 
     @Test
+    fun videoWatchDetailsFollowTheFrameAndCollapseKeepsPlayback() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = UiDevice.getInstance(instrumentation)
+        val cards = populate(1)
+        val fixture = File(instrumentation.targetContext.cacheDir, "watch-layout-fixture.mp4")
+        instrumentation.context.assets.open("fixture.mp4").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        var generation = 0L
+        val initialFrames = MediaBridge.videoFrames.get()
+        try {
+            MediaBridge.execute(
+                json(
+                        "op" to "play",
+                        "request" to
+                            json(
+                                "media" to cards[0].value,
+                                "audio" to false,
+                                "stream" to
+                                    json("url" to android.net.Uri.fromFile(fixture).toString()),
+                            ),
+                    )
+                    .toString()
+            )
+            MediaBridge.event("show_player", "")
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("native-video-surface").fetchSemanticsNodes().isNotEmpty()
+            }
+            MediaRuntimeTest.await("Watch fixture must play real decoded video") {
+                MediaRuntimeTest.status().optBoolean("playing") &&
+                    MediaBridge.videoFrames.get() > initialFrames
+            }
+            scenario.onActivity {
+                PlaybackService.current!!.player.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_ONE
+                generation = PlaybackService.current!!.generation
+                ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile("gestures", true)
+            }
+            for ((index, profile) in
+                listOf("phone", "tablet", "phone-large", "tablet-large").withIndex()) {
+                val wide = profile.startsWith("tablet")
+                if (index > 0) {
+                    scenario.close()
+                    device.executeShellCommand(
+                        "settings put system font_scale ${if (profile.endsWith("large")) "2.0" else "1.0"}"
+                    )
+                    device.executeShellCommand(
+                        if (wide) "wm size 2560x1600" else "wm size 1080x2400"
+                    )
+                    device.executeShellCommand(if (wide) "wm density 320" else "wm density 420")
+                    scenario = RuntimeTest.launchOffline()
+                }
+                MediaBridge.event("show_player", "")
+                compose.waitUntil(10_000) {
+                    compose
+                        .onAllNodesWithTag("native-video-surface")
+                        .fetchSemanticsNodes()
+                        .isNotEmpty()
+                }
+                compose.waitForIdle()
+                val density = instrumentation.targetContext.resources.displayMetrics.density
+                val video =
+                    compose.onNodeWithTag("native-video-surface").fetchSemanticsNode().boundsInRoot
+                val title =
+                    compose
+                        .onNodeWithTag("panel-header")
+                        .assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f))
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                val body = compose.onNodeWithTag("panel-body").fetchSemanticsNode().boundsInRoot
+                Assert.assertEquals(
+                    "Watch video must retain 16:9",
+                    16f / 9f,
+                    video.width / video.height,
+                    0.03f,
+                )
+                Assert.assertEquals("No generic toolbar above watch video", body.top, video.top, 1f)
+                if (wide) {
+                    Assert.assertTrue(
+                        "Wide details belong beside the video",
+                        title.left >= video.right,
+                    )
+                    Assert.assertTrue(
+                        "Wide video uses the larger pane",
+                        video.width / body.width in 0.45f..0.70f,
+                    )
+                } else {
+                    Assert.assertEquals(
+                        "Portrait watch video is full bleed",
+                        body.width,
+                        video.width,
+                        1f,
+                    )
+                    Assert.assertTrue(
+                        "Title must immediately follow video, not a weighted blank gap",
+                        title.top - video.bottom in 0f..(16f * density + 1f),
+                    )
+                }
+                compose.onNodeWithText("Now playing").assertDoesNotExist()
+                settleUi()
+                MediaRuntimeTest.await("The watch capture must contain actual decoded RGB video") {
+                    MediaRuntimeTest.videoVisible(
+                        "restyle-fidelity-$profile-watch-details.png",
+                        wide,
+                        true,
+                    )
+                }
+                compose.onNodeWithTag("player-options").performScrollTo()
+                val queueAction =
+                    compose
+                        .onNodeWithContentDescription("Playback queue")
+                        .assertIsDisplayed()
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                val moreAction =
+                    compose
+                        .onNodeWithTag("player-options")
+                        .assertIsDisplayed()
+                        .fetchSemanticsNode()
+                        .boundsInRoot
+                Assert.assertEquals(
+                    "Actions must span the details viewport",
+                    title.left,
+                    queueAction.left,
+                    1f,
+                )
+                Assert.assertEquals(
+                    "More stays at the trailing edge",
+                    title.right,
+                    moreAction.right,
+                    1f,
+                )
+                Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                if (index == 0) {
+                    // Exercise the actual View control, not a Compose compatibility proxy.
+                    scenario.onActivity {
+                        val collapse = it.findViewById<android.view.View>(R.id.ytui_collapse)
+                        val playerView =
+                            generateSequence(collapse) { view -> view.parent as? android.view.View }
+                                .filterIsInstance<androidx.media3.ui.PlayerView>()
+                                .first()
+                        playerView.showController()
+                        Assert.assertEquals("panel-close", collapse.tag)
+                        Assert.assertEquals(
+                            "Minimize player",
+                            collapse.contentDescription.toString(),
+                        )
+                        Assert.assertTrue(
+                            collapse.width >= 48f * density - 1f &&
+                                collapse.height >= 48f * density - 1f
+                        )
+                    }
+                    val collapse =
+                        device.wait(
+                            androidx.test.uiautomator.Until.findObject(
+                                androidx.test.uiautomator.By.res(
+                                    instrumentation.targetContext.packageName,
+                                    "ytui_collapse",
+                                )
+                            ),
+                            3000,
+                        )
+                    Assert.assertNotNull("Native collapse control must be accessible", collapse)
+                    collapse.click()
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                    Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                    compose.onNodeWithTag("mini-player").performClick()
+                    compose.onNodeWithTag("panel-header").performScrollTo()
+                    compose.onNodeWithTag("panel-header").performTouchInput {
+                        swipe(
+                            center,
+                            center + androidx.compose.ui.geometry.Offset(0f, height * 3f),
+                            300,
+                        )
+                    }
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    compose.onNodeWithTag("mini-player").performClick()
+                    scenario.onActivity {
+                        ViewModelProvider(it)[YtuiViewModel::class.java].updateMobile(
+                            "gestures",
+                            false,
+                        )
+                    }
+                    compose.waitUntil(10_000) {
+                        var disabled = false
+                        scenario.onActivity {
+                            disabled =
+                                !ViewModelProvider(it)[YtuiViewModel::class.java]
+                                    .mobile
+                                    .value
+                                    .optBoolean("gestures")
+                        }
+                        disabled
+                    }
+                    compose.onNodeWithTag("panel-header").performTouchInput {
+                        swipe(
+                            center,
+                            center + androidx.compose.ui.geometry.Offset(0f, height * 3f),
+                            300,
+                        )
+                    }
+                    compose.onNodeWithTag("focused-player").assertIsDisplayed()
+                    device.pressBack()
+                    compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
+                    Assert.assertEquals(generation, PlaybackService.current!!.generation)
+                    Assert.assertTrue(MediaRuntimeTest.status().optBoolean("playing"))
+                    compose.onNodeWithTag("mini-player").performClick()
+                }
+            }
+        } finally {
+            MediaBridge.main.post {
+                PlaybackService.current?.player?.repeatMode =
+                    androidx.media3.common.Player.REPEAT_MODE_OFF
+            }
+            MediaBridge.execute(json("op" to "stop").toString())
+            fixture.delete()
+        }
+    }
+
+    @Test
     fun musicTransitionsKeepTheDecoderAndProduceMotionEvidence() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val device = UiDevice.getInstance(instrumentation)
@@ -1193,6 +1429,9 @@ class CatalogUiTest {
                 "Navigation $index must not clip or ellipsize: " +
                     "text=${layouts.single().layoutInput.text}, size=${layouts.single().size}, " +
                     "constraints=${layouts.single().layoutInput.constraints}, " +
+                    "paragraphWidth=${layouts.single().multiParagraph.width}, " +
+                    "intrinsicWidth=${layouts.single().multiParagraph.maxIntrinsicWidth}, " +
+                    "lineRight=${layouts.single().getLineRight(0)}, " +
                     "widthOverflow=${layouts.single().didOverflowWidth}, " +
                     "heightOverflow=${layouts.single().didOverflowHeight}",
                 layouts.single().hasVisualOverflow,

@@ -68,6 +68,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -541,6 +542,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             "Now playing",
                             { vm.playerOpen.value = false },
                             full = true,
+                            showHeader = !videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.optBoolean("gestures", true),
                         ) {
@@ -729,25 +731,23 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
     val widest = with(density) { labelMeasurements.values.maxOf { it.width }.toDp() + 2.dp }
     val labelHeight = with(density) { labelMeasurements.values.maxOf { it.height }.toDp() + 2.dp }
     @Composable
-    fun Label(index: Int, title: String) {
+    fun Label(index: Int, title: String, alignStart: Boolean = false) {
         Text(
             title,
             style = labelStyle,
             maxLines = 1,
             softWrap = false,
+            textAlign = if (alignStart) TextAlign.Start else TextAlign.Center,
             fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
             color =
                 if (tab == index) MaterialTheme.colorScheme.onBackground
                 else MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-            // An exact width (measured bold word plus rounding room) keeps the
-            // paragraph and the node the same width. A min-width alone let the
-            // paragraph lay out against the full incoming maximum and report a
-            // width overflow for a word that visibly fits.
             modifier =
-                Modifier.width(
-                        with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
+                Modifier.widthIn(
+                        min =
+                            with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
                     )
+                    .fillMaxWidth()
                     .testTag("navigation-label-$index"),
         )
     }
@@ -830,7 +830,7 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
                                             MediaIcon(icon, tint = tint, filled = tab == index)
-                                            Label(index, title)
+                                            Label(index, title, alignStart = true)
                                         }
                                     else
                                         Column(
@@ -882,55 +882,57 @@ internal fun Panel(
     page: Boolean = false,
     headerBack: (() -> Unit)? = null,
     headerBackTag: String = "",
+    showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     @Composable
     fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
         Column(modifier.testTag("panel-body")) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .padding(horizontal = 8.dp)
-                    .testTag("panel-header")
-                    .pointerInput(full, swipeToClose) {
-                        if (full && swipeToClose) {
-                            var distance = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { distance = 0f },
-                                onVerticalDrag = { change, amount ->
-                                    distance += amount
-                                    change.consume()
-                                },
-                                onDragEnd = { if (distance > 48.dp.toPx()) close() },
-                            )
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (full || page)
-                    MediaIconButton(
-                        if (full) Glyph.Down else Glyph.Back,
-                        if (full) "Minimize player"
-                        else if (headerBack != null) "All settings" else "Close",
-                        if (headerBack != null) headerBackTag else "panel-close",
-                        action = headerBack ?: dismiss,
+            if (showHeader)
+                Row(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 8.dp)
+                        .testTag("panel-header")
+                        .pointerInput(full, swipeToClose) {
+                            if (full && swipeToClose) {
+                                var distance = 0f
+                                detectVerticalDragGestures(
+                                    onDragStart = { distance = 0f },
+                                    onVerticalDrag = { change, amount ->
+                                        distance += amount
+                                        change.consume()
+                                    },
+                                    onDragEnd = { if (distance > 48.dp.toPx()) close() },
+                                )
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (full || page)
+                        MediaIconButton(
+                            if (full) Glyph.Down else Glyph.Back,
+                            if (full) "Minimize player"
+                            else if (headerBack != null) "All settings" else "Close",
+                            if (headerBack != null) headerBackTag else "panel-close",
+                            action = headerBack ?: dismiss,
+                        )
+                    Text(
+                        title,
+                        Modifier.weight(1f).padding(horizontal = 8.dp),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
                     )
-                Text(
-                    title,
-                    Modifier.weight(1f).padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                if (!full && (!page || headerBack != null))
-                    MediaIconButton(Glyph.Close, "Close", "panel-close", action = dismiss)
-            }
+                    if (!full && (!page || headerBack != null))
+                        MediaIconButton(Glyph.Close, "Close", "panel-close", action = dismiss)
+                }
             Column(
                 Modifier.weight(1f, fill = full || page)
                     .fillMaxWidth()
                     .then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .padding(
                         horizontal = if (full) 0.dp else MediaTokens.textInset,
-                        vertical = 8.dp,
+                        vertical = if (full && !showHeader) 0.dp else 8.dp,
                     ),
                 verticalArrangement =
                     Arrangement.spacedBy(
