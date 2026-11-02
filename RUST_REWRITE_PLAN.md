@@ -2,8 +2,13 @@
 
 M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
 restyle brief to the remaining Downloads, player, options, account, lyrics and
-settings surfaces, and fixes search focus re-entry. Local build, JVM and lint
-checks pass. Native CI and screenshot acceptance of that revision are pending.
+settings surfaces, and fixes search focus re-entry. It is merged on main
+(`b6a76a2`, PR #33). The [Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249)
+(APK job plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222)
+runs for that exact commit succeeded. Screenshot review and physical-device
+acceptance of this UI remain pending; see
+[the 2026-11-02 local re-verification](docs/android/VALIDATION.md#local-re-verification-of-main-b6a76a2-2026-11-02-m9).
 
 M9 UI fidelity follow-up: the owner requested iterative comparison with an
 independent judge at every revision. [Findings, evidence boundary and rubric](docs/android/UI_FIDELITY_REVIEW.md)
