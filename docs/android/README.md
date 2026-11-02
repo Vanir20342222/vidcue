@@ -40,7 +40,7 @@ Notification/media-session controls use those same actions. History is local and
 can be disabled or cleared with resume positions. A stopped/killed process does
 not retain derived collection context; select the collection again to rebuild it.
 
-Outside a collection, **Related media** prepares the next item by default; disable it under Playback. Prefetch respects the mobile-data setting. For Music/Radio, tap the mini-player for the non-scrolling classic/Vinyl/VU/Orbit screen; use its down icon or enabled swipe gesture to minimize. Advanced options open separately. Video has native controls and a landscape fullscreen icon; quality remains available from Playback options.
+Outside a collection, **Related media** prepares the next item by default; disable it under Playback. Prefetch respects the mobile-data setting. For Music/Radio, tap the mini-player for the non-scrolling classic/Vinyl/VU/Orbit screen; use its down icon or enabled swipe gesture to minimize. Advanced options open separately. Video has native controls and a landscape fullscreen icon. The sliders icon in the top bar of the video opens Playback options (volume, speed, quality, audio and subtitles, queue, sleep timer, marked segments and stop). In fullscreen it opens the same options in a side panel without leaving fullscreen.
 
 Downloads has **Offline**, **Playlists** and **Transfers** sections. Create and edit local offline playlists there. Settings → Offline & storage chooses separate Music and Video folders through Android's folder picker; compatible completed media can save there automatically. Private streaming cache stays separate and unavailable grants retain cached media. **My playlists** chips in YouTube/Music open the account's own collections.
 

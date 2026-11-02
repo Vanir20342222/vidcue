@@ -107,7 +107,14 @@ internal object RustRpc {
         call(json("op" to op, *fields)) as? JSONArray ?: JSONArray()
 }
 
+/** Treated as immutable: media JSON is copied (`copyJson`) before any change. */
+@androidx.compose.runtime.Immutable
 internal data class MediaCard(val value: JSONObject) {
+    /** Thumbnail identity, computed once instead of re-serialising arrays per frame. */
+    val artworkSource: String by lazy {
+        "${value.optString("thumbnail")}:${value.optJSONArray("thumbnails")}"
+    }
+
     val title: String
         get() = value.optString("title")
 
@@ -161,6 +168,7 @@ internal data class FeedState(
     val failedAppend: Boolean = false,
 )
 
+@androidx.compose.runtime.Immutable
 internal data class PlayerState(val value: JSONObject = JSONObject()) {
     val title: String
         get() = value.optString("title")
@@ -195,6 +203,10 @@ internal object ArtworkCache {
             override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
         }
 
+    /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
+    fun cached(media: MediaCard, pixels: Int): Bitmap? =
+        memory.get("${media.key}:${media.artworkSource}:${pixels.coerceIn(32, 768)}")
+
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
         if (
             media.value.optString("thumbnail").isBlank() &&
@@ -202,8 +214,7 @@ internal object ArtworkCache {
         )
             return null
         val size = pixels.coerceIn(32, 768)
-        val key =
-            "${media.key}:${media.value.optString("thumbnail")}:${media.value.optJSONArray("thumbnails")}:$size"
+        val key = "${media.key}:${media.artworkSource}:$size"
         memory.get(key)?.let {
             return it
         }
@@ -268,6 +279,8 @@ internal class YtuiViewModel : ViewModel() {
     private var accountEpoch = 0L
     private val settingsLock = Mutex()
     private val snapshotLock = Mutex()
+    private var lastPlayer = ""
+    private var lastDownloads = ""
     val mobile = MutableStateFlow(JSONObject())
     val config = MutableStateFlow(JSONObject())
     val palette = MutableStateFlow(JSONObject())
@@ -334,9 +347,21 @@ internal class YtuiViewModel : ViewModel() {
                             seekTarget = null
                         else it.put("position", pending.second)
                     }
-                    player.value = PlayerState(it)
+                    // The poll runs every second: publish only actual changes so idle
+                    // screens are not recomposed (JSON-backed states compare by identity).
+                    val raw = it.toString()
+                    if (raw != lastPlayer) {
+                        lastPlayer = raw
+                        player.value = PlayerState(it)
+                    }
                 }
-                value.optJSONArray("downloads")?.let { downloads.value = it.objects() }
+                value.optJSONArray("downloads")?.let {
+                    val raw = it.toString()
+                    if (raw != lastDownloads) {
+                        lastDownloads = raw
+                        downloads.value = it.objects()
+                    }
+                }
                 value.optJSONArray("events")?.objects()?.forEach { event ->
                     val text = event.optString("text")
                     when (event.optString("kind")) {
@@ -843,6 +868,9 @@ internal class YtuiViewModel : ViewModel() {
     }
 
     fun command(op: String, vararg fields: Pair<String, Any?>) {
+        // Optimistic local state below must be reconciled by the next real snapshot,
+        // even if the bridge reports the same state as before.
+        lastPlayer = ""
         if (op == "seek") {
             val seconds =
                 (fields.firstOrNull { it.first == "seconds" }?.second as? Number)?.toFloat()
