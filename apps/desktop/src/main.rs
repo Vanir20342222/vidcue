@@ -894,6 +894,57 @@ mod tests {
         a.shutdown().await;
     }
     #[tokio::test]
+    async fn playing_a_partly_watched_video_resumes_from_its_saved_position() {
+        use ytui_core::{Media, MediaKind};
+        let (mut a, mut rx, _temp) = fixture().await;
+        a.demo = false;
+        let video = Media {
+            id: "abcdefghijk".into(),
+            title: "Saved video".into(),
+            url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+            kind: MediaKind::Video,
+            ..Default::default()
+        };
+        let song = Media {
+            id: "song".into(),
+            url: "https://music.youtube.com/watch?v=lmnopqrstuv".into(),
+            kind: MediaKind::Song,
+            ..Default::default()
+        };
+        a.snapshot
+            .positions
+            .record(&video, 125.0, Some(600.0), false);
+        a.snapshot.positions.record(&song, 60.0, Some(200.0), false);
+        assert!(a.play_existing(video.clone()));
+        assert!(
+            matches!(rx.recv().await.unwrap(), PlayerCommand::PlayAt { seconds, audio: false, .. } if seconds == 125.0)
+        );
+        assert!(a.status.contains("2:05"), "{}", a.status);
+        // Music keeps starting from the top even with a saved position.
+        assert!(a.play_existing(song));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            PlayerCommand::Play { .. }
+        ));
+        // The option can be turned off, and finished videos restart.
+        a.config.resume_on_play = false;
+        assert!(a.play_existing(video.clone()));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            PlayerCommand::Play { .. }
+        ));
+        a.config.resume_on_play = true;
+        a.snapshot
+            .positions
+            .record(&video, 600.0, Some(600.0), true);
+        assert!(a.play_existing(video));
+        assert!(matches!(
+            rx.recv().await.unwrap(),
+            PlayerCommand::Play { .. }
+        ));
+        a.shutdown().await;
+    }
+    #[tokio::test]
     async fn paused_watch_rejects_old_results_and_baseline_never_enqueues() {
         use ytui_core::{BrowseRequest, Media, watch::CollectionWatch};
         let (mut a, _rx, _temp) = fixture().await;

@@ -557,6 +557,10 @@ See [the usage guide](docs/RUST.md) and [remaining parity](docs/PARITY.md).
 - Explicit local resume on `u` / `:resume`, bounded private positions, offline
   catalog and startup mode, and early-window-close handling. The user selected
   local resume actions, no automatic playback or YouTube history write-back.
+  On 2026-11-02 the user requested instant continue: `resume_on_play`
+  (default on, Settings → General) makes normal video playback start at the
+  saved local position. It never starts playback by itself; music/stations and
+  finished videos start from the top. Android parity for this option is open.
 - Recurring collection watches with a complete initial baseline, duplicate checks,
   persistence, resource limits/backoff and account/generation invalidation.
 - State format 2 adds a SQLite version-1 backup before upgrade; stale owned
