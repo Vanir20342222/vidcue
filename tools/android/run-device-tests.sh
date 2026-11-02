@@ -48,6 +48,7 @@ collect_evidence() {
         adb pull "/sdcard/Android/data/$test_package/files/$screenshot" "$evidence/native-ui/$screenshot" > /dev/null 2>&1 || true
     done < <(adb shell "ls /sdcard/Android/data/$test_package/files/restyle-*.png" 2>/dev/null | sed 's|.*/||')
     adb pull "/sdcard/Android/data/$test_package/files/native-video-controls.xml" "$evidence/native-ui/native-video-controls.xml" > /dev/null 2>&1 || true
+    adb pull "/sdcard/Android/data/$test_package/files/watch-collapse-missing.xml" "$evidence/native-ui/watch-collapse-missing.xml" > /dev/null 2>&1 || true
 }
 trap collect_evidence EXIT
 arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)

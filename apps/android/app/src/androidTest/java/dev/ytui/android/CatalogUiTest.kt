@@ -1149,17 +1149,22 @@ class CatalogUiTest {
                                 collapse.height >= 48f * density - 1f
                         )
                     }
-                    // Re-show the auto-hiding controller immediately before the
-                    // UiAutomator lookup; match the id like MediaRuntimeTest does,
-                    // independent of the debug application id.
-                    scenario.onActivity {
-                        generateSequence(it.findViewById<android.view.View>(R.id.ytui_collapse)) {
-                                view ->
+                    // Keep the auto-hiding controller visible for the UiAutomator
+                    // lookup (restored below); match the id like MediaRuntimeTest.
+                    fun watchPlayer(activity: android.app.Activity) =
+                        generateSequence(
+                                activity.findViewById<android.view.View>(R.id.ytui_collapse)
+                            ) { view ->
                                 view.parent as? android.view.View
                             }
                             .filterIsInstance<androidx.media3.ui.PlayerView>()
                             .first()
-                            .showController()
+                    var hideAfter = 0
+                    scenario.onActivity {
+                        val view = watchPlayer(it)
+                        hideAfter = view.controllerShowTimeoutMs
+                        view.controllerShowTimeoutMs = 0
+                        view.showController()
                     }
                     val collapse =
                         device.wait(
@@ -1168,8 +1173,16 @@ class CatalogUiTest {
                                     java.util.regex.Pattern.compile(".*:id/ytui_collapse")
                                 )
                             ),
-                            3000,
+                            5000,
                         )
+                    if (collapse == null)
+                        device.dumpWindowHierarchy(
+                            File(
+                                instrumentation.targetContext.getExternalFilesDir(null),
+                                "watch-collapse-missing.xml",
+                            )
+                        )
+                    scenario.onActivity { watchPlayer(it).controllerShowTimeoutMs = hideAfter }
                     Assert.assertNotNull("Native collapse control must be accessible", collapse)
                     collapse.click()
                     compose.waitUntil(10_000) { compose.onNodeWithTag("mini-player").isDisplayed() }
