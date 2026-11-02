@@ -2962,6 +2962,7 @@ impl App {
                     self.dirty = true;
                 } else {
                     self.snapshot.playback = previous;
+                    self.status = "End of queue · e queues the selected item".into();
                 }
             }
             Action::PreviousTrack => {
@@ -3242,23 +3243,35 @@ impl App {
         if !self.play_existing(media.clone()) {
             return;
         }
-        // Opening a song starts the remaining songs from the current collection.
-        // Live stations keep their continuous stream and do not enqueue catalog tracks.
-        if media.kind == MediaKind::Song && self.tab > 0 {
+        // Opening a song or video queues the remaining playable entries of the
+        // current list so Next/auto-advance continue through it. Live stations
+        // keep their continuous stream and do not enqueue catalog entries.
+        if matches!(media.kind, MediaKind::Song | MediaKind::Video) && self.tab > 0 {
             let items = &self.tabs[self.tab].page.items;
             if let Some(index) = items.iter().position(|m| m.url == media.url) {
+                let following = items
+                    .iter()
+                    .skip(index + 1)
+                    .filter(|m| {
+                        matches!(m.kind, MediaKind::Song | MediaKind::Video)
+                            && m.browse_id.is_none()
+                            && !m.live
+                            && m.url != media.url
+                    })
+                    .cloned()
+                    .map(|mut m| {
+                        if m.kind == MediaKind::Video && self.selection_is_audio(&m) {
+                            m.kind = MediaKind::Song;
+                        }
+                        m
+                    })
+                    .collect::<Vec<_>>();
                 let queue = &mut self.snapshot.playback;
                 queue
                     .items
                     .truncate(queue.current.map(|i| i + 1).unwrap_or(queue.items.len()));
                 queue.play(media.clone());
-                for next in items
-                    .iter()
-                    .skip(index + 1)
-                    .filter(|m| m.kind == MediaKind::Song)
-                {
-                    queue.push(next.clone());
-                }
+                queue.items.extend(following);
             } else {
                 self.snapshot.playback.play(media.clone());
             }
