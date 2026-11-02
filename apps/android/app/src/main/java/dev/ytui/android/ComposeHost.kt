@@ -1,6 +1,5 @@
 package dev.ytui.android
 
-import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -33,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -42,7 +42,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -51,6 +50,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -237,6 +237,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     // Leaving search moves input focus to this non-text sink. Clearing focus
     // instead lets Android hand focus back to the Compose root view, which then
     // re-enters the first focusable node (the search field) and reopens the IME.
+    var scrollToTop by remember { mutableIntStateOf(0) }
+    fun selectTab(index: Int) {
+        if (index == tab) scrollToTop++
+        vm.chooseTab(index)
+    }
     val focusSink = remember { FocusRequester() }
     fun releaseSearchFocus() {
         if (runCatching { focusSink.requestFocus() }.isFailure)
@@ -469,7 +474,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             val tablet = tabletLayout
                             Row(Modifier.fillMaxSize()) {
-                                if (tablet) AppNavigation(tab, vm::chooseTab, vertical = true)
+                                if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
                                 Box(Modifier.weight(1f).fillMaxHeight()) {
                                     if (tab == 0) OfflineLibrary(vm)
                                     else
@@ -482,6 +487,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 searchActive = searchFocused,
                                                 onSearchFocus = { searchFocused = it },
                                                 releaseSearchFocus = ::releaseSearchFocus,
+                                                scrollToTop = scrollToTop,
                                             )
                                         }
                                 }
@@ -522,7 +528,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         if (!tabletLayout) {
                             if (!imeVisible) {
                                 PlayerDock(vm)
-                                AppNavigation(tab, vm::chooseTab)
+                                AppNavigation(tab, ::selectTab)
                             }
                         }
                     }
@@ -696,7 +702,7 @@ internal fun Action(label: String, tag: String = "", enabled: Boolean = true, ac
 private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = false) {
     val tabs =
         listOf(
-            Triple(1, "YouTube", Glyph.Home),
+            Triple(1, "Home", Glyph.Home),
             Triple(2, "Music", Glyph.Music),
             Triple(3, "Radio", Glyph.Radio),
             Triple(0, "Downloads", Glyph.Download),
@@ -990,6 +996,7 @@ internal fun Panel(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BrowsePane(
     vm: YtuiViewModel,
@@ -999,10 +1006,14 @@ private fun BrowsePane(
     searchActive: Boolean,
     onSearchFocus: (Boolean) -> Unit,
     releaseSearchFocus: () -> Unit,
+    scrollToTop: Int = 0,
 ) {
     val feed by vm.feeds[tab].collectAsState()
     val shared by vm.sharedQuery.collectAsState()
     val mobile by vm.mobile.collectAsState()
+    val config by vm.config.collectAsState()
+    // Collected once per pane, not once per card.
+    val thumbnails = config.optBoolean("thumbnails", true)
     val reduced = LocalReducedMotion.current
     val wideSearch =
         tab == 1 &&
@@ -1057,6 +1068,14 @@ private fun BrowsePane(
     }
     val focus = remember { FocusRequester() }
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = feed.scrollIndex)
+    // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
+    // its restored position.
+    val initialScrollToTop = remember { scrollToTop }
+    LaunchedEffect(scrollToTop) {
+        if (scrollToTop != initialScrollToTop) {
+            if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
+        }
+    }
     LaunchedEffect(grid) {
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
@@ -1201,117 +1220,136 @@ private fun BrowsePane(
                     }
                 }
             }
-        LazyVerticalGrid(
-            columns =
-                if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600) GridCells.Fixed(2)
-                else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
-            modifier =
-                Modifier.weight(1f)
-                    .fillMaxWidth()
-                    .then(swipe)
-                    .graphicsLayer {
-                        alpha = entry.value
-                        translationY = (1f - entry.value) * 32.dp.toPx()
-                    }
-                    .testTag("feed-list"),
-            state = grid,
-            contentPadding =
-                PaddingValues(
-                    start = if (tab in 2..3) 16.dp else 0.dp,
-                    end = if (tab in 2..3) 16.dp else 0.dp,
-                    bottom = 24.dp,
-                ),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+        // Pull to refresh reuses the overflow menu's "Refresh feed" request.
+        var refreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
+        PullToRefreshBox(
+            refreshing && feed.loading,
+            onRefresh = {
+                refreshing = true
+                vm.navigate(request = feed.request, remember = false)
+            },
+            modifier = Modifier.weight(1f).fillMaxWidth(),
         ) {
-            if (feed.request != "Home" && feed.request != "Cliamp" && !searchResults)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    TextButton(
-                        { vm.back() },
-                        Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp),
-                        colors =
-                            ButtonDefaults.textButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                    ) {
-                        MediaIcon(Glyph.Back)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Back to previous feed")
-                    }
-                }
-            if (feed.notice != null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Text(
-                        feed.notice!!,
-                        Modifier.padding(horizontal = MediaTokens.textInset),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            if (feed.error != null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    val needsAccount = feed.errorCode in listOf("auth_required", "consent_required")
-                    EmptyMediaState(
-                        if (needsAccount) Glyph.Account else Glyph.Info,
-                        if (needsAccount) "Account needed" else "This feed is unavailable",
-                        feed.error!!,
-                    ) {
-                        FlowRow(
-                            horizontalArrangement =
-                                Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            if (needsAccount) {
-                                Action("Sign in / import cookies", "feed-account-action") {
-                                    onAccount()
-                                }
-                                QuietAction("Try again") { vm.retryFeed() }
-                            } else Action("Try again") { vm.retryFeed() }
+            LazyVerticalGrid(
+                columns =
+                    if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600)
+                        GridCells.Fixed(2)
+                    else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
+                modifier =
+                    Modifier.fillMaxSize()
+                        .then(swipe)
+                        .graphicsLayer {
+                            alpha = entry.value
+                            translationY = (1f - entry.value) * 32.dp.toPx()
                         }
+                        .testTag("feed-list"),
+                state = grid,
+                contentPadding =
+                    PaddingValues(
+                        start = if (tab in 2..3) 16.dp else 0.dp,
+                        end = if (tab in 2..3) 16.dp else 0.dp,
+                        bottom = 24.dp,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                if (feed.request != "Home" && feed.request != "Cliamp" && !searchResults)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        TextButton(
+                            { vm.back() },
+                            Modifier.padding(horizontal = 8.dp).heightIn(min = 48.dp),
+                            colors =
+                                ButtonDefaults.textButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.onSurface
+                                ),
+                        ) {
+                            MediaIcon(Glyph.Back)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Back to previous feed")
+                        }
+                    }
+                if (feed.notice != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            "You can still search or open a video link.",
-                            style = MaterialTheme.typography.bodySmall,
+                            feed.notice!!,
+                            Modifier.padding(horizontal = MediaTokens.textInset),
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                if (feed.error != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        val needsAccount =
+                            feed.errorCode in listOf("auth_required", "consent_required")
+                        EmptyMediaState(
+                            if (needsAccount) Glyph.Account else Glyph.Info,
+                            if (needsAccount) "Account needed" else "This feed is unavailable",
+                            feed.error!!,
+                        ) {
+                            FlowRow(
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (needsAccount) {
+                                    Action("Sign in / import cookies", "feed-account-action") {
+                                        onAccount()
+                                    }
+                                    QuietAction("Try again") { vm.retryFeed() }
+                                } else Action("Try again") { vm.retryFeed() }
+                            }
+                            Text(
+                                "You can still search or open a video link.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                items(
+                    feed.cards,
+                    key = { it.key },
+                    span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
+                    contentType = { "media-card" },
+                ) { media ->
+                    if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
+                    else MediaRow(vm, media, tab, thumbnails, mobile)
                 }
-            items(
-                feed.cards,
-                key = { it.key },
-                span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
-                contentType = { "media-card" },
-            ) { media ->
-                if (wideSearch) WideMediaRow(vm, media) else MediaRow(vm, media, tab)
+                if (feed.loading)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                        ) {
+                            CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
+                            Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        EmptyMediaState(
+                            if (tab == 2) Glyph.Music
+                            else if (tab == 3) Glyph.Radio else Glyph.Search,
+                            if (tab == 2) "No music loaded"
+                            else if (tab == 3) "No stations loaded" else "No videos loaded",
+                            if (tab == 3)
+                                "Search a station, explore a genre or browse cliamp channels."
+                            else
+                                "Search above or connect your YouTube account for a feed made for you.",
+                        ) {
+                            Action(if (tab == 3) "Browse stations" else "Explore feeds") {
+                                onFeeds()
+                            }
+                        }
+                    }
+                if (feed.continuation != null && !feed.loading && feed.error == null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            SecondaryAction("Load more") { vm.more() }
+                        }
+                    }
             }
-            if (feed.loading)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Column(
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.dp)
-                        Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    EmptyMediaState(
-                        if (tab == 2) Glyph.Music else if (tab == 3) Glyph.Radio else Glyph.Search,
-                        if (tab == 2) "No music loaded"
-                        else if (tab == 3) "No stations loaded" else "No videos loaded",
-                        if (tab == 3) "Search a station, explore a genre or browse cliamp channels."
-                        else "Search above or connect your YouTube account for a feed made for you.",
-                    ) {
-                        Action(if (tab == 3) "Browse stations" else "Explore feeds") { onFeeds() }
-                    }
-                }
-            if (feed.continuation != null && !feed.loading && feed.error == null)
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        SecondaryAction("Load more") { vm.more() }
-                    }
-                }
         }
     }
 }
@@ -1323,14 +1361,23 @@ internal fun Artwork(
     enabled: Boolean = true,
     shape: androidx.compose.ui.graphics.Shape = MediaTokens.small,
 ) {
-    BoxWithConstraints(
-        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
+    // Measured size instead of BoxWithConstraints: no subcomposition per list item.
+    var pixels by remember { mutableIntStateOf(0) }
+    Box(
+        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer).onSizeChanged {
+            if (it.width > 0) pixels = it.width.coerceIn(32, 768)
+        }
     ) {
-        val pixels = with(LocalDensity.current) { maxWidth.roundToPx().coerceIn(32, 768) }
-        val source =
-            "${media.value.optString("thumbnail")}:${media.value.optJSONArray("thumbnails")}"
-        var bitmap by remember(media.key, source, pixels, enabled) { mutableStateOf<Bitmap?>(null) }
+        val source = media.artworkSource
+        // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
+        var bitmap by
+            remember(media.key, source, pixels, enabled) {
+                mutableStateOf(
+                    if (enabled && pixels > 0) ArtworkCache.cached(media, pixels) else null
+                )
+            }
         LaunchedEffect(media.key, source, pixels, enabled) {
+            if (pixels == 0 || bitmap != null) return@LaunchedEffect
             bitmap =
                 if (enabled) runCatching { ArtworkCache.load(media, pixels) }.getOrNull() else null
         }
@@ -1349,15 +1396,7 @@ internal fun Artwork(
             )
         else
             Box(
-                Modifier.fillMaxSize()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.surfaceContainerHigh,
-                            )
-                        )
-                    ),
+                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center,
             ) {
                 MediaIcon(
@@ -1370,9 +1409,13 @@ internal fun Artwork(
 }
 
 @Composable
-private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
-    val config by vm.config.collectAsState()
-    val mobile by vm.mobile.collectAsState()
+private fun MediaRow(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    tab: Int,
+    thumbnails: Boolean,
+    mobile: JSONObject,
+) {
     val square = tab in 2..3 || media.kind in setOf("album", "song", "station")
     Column(Modifier.fillMaxWidth().testTag("media-card-${media.key}")) {
         Box(
@@ -1385,7 +1428,7 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                 Modifier.fillMaxSize()
                     .clickable { vm.play(media) }
                     .semantics { contentDescription = "Play ${media.title}" },
-                config.optBoolean("thumbnails", true),
+                thumbnails,
                 shape = if (square) MediaTokens.small else RoundedCornerShape(0.dp),
             )
             if (media.live || !square)
@@ -1421,6 +1464,7 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                val information = if (tab == 1) mediaInformation(media.value, mobile) else ""
                 val metadata =
                     listOfNotNull(
                             if (mobile.optBoolean("show_channel", true))
@@ -1430,16 +1474,14 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                                     else if (tab == 3) "Radio station" else "YouTube"
                                 }
                             else null,
-                            if (tab == 1) mediaInformation(media.value, mobile).ifBlank { null }
-                            else null,
+                            information.ifBlank { null },
                         )
                         .joinToString(" · ")
                 if (metadata.isNotBlank())
                     Text(
                         metadata,
                         Modifier.then(
-                            if (tab == 1 && mediaInformation(media.value, mobile).isNotBlank())
-                                Modifier.testTag("video-information")
+                            if (information.isNotBlank()) Modifier.testTag("video-information")
                             else Modifier
                         ),
                         maxLines = 1,
@@ -1460,14 +1502,18 @@ private fun MediaRow(vm: YtuiViewModel, media: MediaCard, tab: Int) {
                         )
                     }
             }
-            MediaCardActions(vm, media, square)
+            MediaCardActions(vm, media, thumbnails, square)
         }
     }
 }
 
 @Composable
-private fun MediaCardActions(vm: YtuiViewModel, media: MediaCard, square: Boolean = false) {
-    val config by vm.config.collectAsState()
+private fun MediaCardActions(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    thumbnails: Boolean,
+    square: Boolean = false,
+) {
     var menu by remember(media.key) { mutableStateOf(false) }
     Box {
         MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}") {
@@ -1475,7 +1521,7 @@ private fun MediaCardActions(vm: YtuiViewModel, media: MediaCard, square: Boolea
         }
         if (menu)
             Panel("", { menu = false }) {
-                ActionSheetHeader(media, config.optBoolean("thumbnails", true), square)
+                ActionSheetHeader(media, thumbnails, square)
                 fun execute(action: () -> Unit) {
                     menu = false
                     action()
@@ -1558,9 +1604,12 @@ internal fun ActionSheetHeader(media: MediaCard, thumbnails: Boolean, square: Bo
 }
 
 @Composable
-private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
-    val config by vm.config.collectAsState()
-    val mobile by vm.mobile.collectAsState()
+private fun WideMediaRow(
+    vm: YtuiViewModel,
+    media: MediaCard,
+    thumbnails: Boolean,
+    mobile: JSONObject,
+) {
     Row(
         Modifier.fillMaxWidth()
             .testTag("media-card-${media.key}")
@@ -1569,11 +1618,7 @@ private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Box(Modifier.fillMaxWidth(0.25f).aspectRatio(16f / 9f)) {
-            Artwork(
-                media,
-                Modifier.fillMaxSize().clickable { vm.play(media) },
-                config.optBoolean("thumbnails", true),
-            )
+            Artwork(media, Modifier.fillMaxSize().clickable { vm.play(media) }, thumbnails)
             MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
         }
         Column(
@@ -1602,7 +1647,7 @@ private fun WideMediaRow(vm: YtuiViewModel, media: MediaCard) {
                     )
                 }
         }
-        MediaCardActions(vm, media)
+        MediaCardActions(vm, media, thumbnails)
     }
 }
 
@@ -2959,7 +3004,12 @@ private fun HistoryPanel(vm: YtuiViewModel, close: () -> Unit) {
         ) {
             Text("Clear history and resume positions")
         }
-        if (history.isEmpty()) Text("Local history is empty")
+        if (history.isEmpty())
+            EmptyMediaState(
+                Glyph.History,
+                "No history yet",
+                "Videos and songs you play appear here.",
+            )
         else
             LazyColumn(
                 Modifier.weight(1f, fill = false).fillMaxWidth().testTag("history-list"),
