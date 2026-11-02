@@ -253,6 +253,11 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                                         showHeader = false,
                                     ) {
                                         vm.play(it, queued = true)
+                                        // Music has no picture: return to the regular player.
+                                        if (it.audio) {
+                                            close()
+                                            exit()
+                                        }
                                     }
                                 "sleep" ->
                                     Column(Modifier.verticalScroll(rememberScrollState())) {
