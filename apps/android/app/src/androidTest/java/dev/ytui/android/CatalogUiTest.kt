@@ -1555,7 +1555,11 @@ class CatalogUiTest {
         private val worker =
             Thread {
                     while (!socket.isClosed) try {
-                        socket.accept().use { client ->
+                        val accepted = socket.accept()
+                        // Serve each connection on its own thread: one stalled read must not
+                        // queue every other parallel cover load behind it.
+                        Thread {
+                                accepted.use { client ->
                             client.soTimeout = 5000
                             val reader = client.getInputStream().bufferedReader()
                             val request = reader.readLine() ?: return@use
@@ -1589,7 +1593,9 @@ class CatalogUiTest {
                                 write(bytes)
                                 flush()
                             }
+                                }
                         }
+                        .apply { isDaemon = true; start() }
                     } catch (_: java.io.IOException) {
                         /* closed fixture client/server */
                     }
