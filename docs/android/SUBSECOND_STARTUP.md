@@ -346,3 +346,24 @@ use the rejected request's token rather than a previous source token. The native
 regression now exercises both bridge preflight and a direct malformed FGS intent,
 requires clean UI/service teardown and checks JNI remains available. Fresh native
 qualification is required; compilation alone does not qualify this fix.
+
+
+## Idle native-view preparation candidate
+
+The integrated failures also recorded 230–242 ms between resolution and media
+handoff. A further candidate prepares one native PlayerView on an idle UI turn
+after the first browsing frame. The browsing activity owns it; it remains
+detached and unbound, creating no decoder surface or media/session/history work.
+The first video view claims it once. Normal construction remains the fallback;
+fullscreen cannot borrow another activity's view. Background/teardown and
+configuration changes discard an unused view, preventing retained activity
+state or stale dimensions/fonts. This prepares widgets, not decoded media.
+
+The actual first view claim/construction duration is reported as
+`view_inflate_ms`; the original tap, first genuine frame, active playback and
+window-pixel deadlines are unchanged. Native lifecycle coverage requires no
+parent, bound player, attached window, available TextureView surface or playback
+notification while idle, followed by cleanup. The blocked-resolution UI test
+requires the first actual card tap to reuse the activity's prepared native view,
+then retains its existing rapid-selection/handoff checks. Local and fresh native
+qualification must establish this candidate; it is not yet a speed result.

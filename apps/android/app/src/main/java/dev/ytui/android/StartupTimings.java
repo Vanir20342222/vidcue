@@ -27,7 +27,8 @@ final class StartupTimings {
     "codec",
     "audio_codec",
     "codec_init",
-    "audio_codec_init"
+    "audio_codec_init",
+    "view_inflate"
   };
   private static final AtomicLong ids = new AtomicLong();
   private static final ArrayDeque<Sample> samples = new ArrayDeque<>();

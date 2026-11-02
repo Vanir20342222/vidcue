@@ -68,11 +68,21 @@ class PlaybackPerformanceTest {
 
     @Test
     fun foregroundPreparesAnIdlePlayerAndReleasesItWithoutPlayback() {
+        val owner = java.util.concurrent.atomic.AtomicReference<RustActivity>()
         RuntimeTest.launchOffline().use { scene ->
+            scene.onActivity { owner.set(it) }
             MediaRuntimeTest.await("Visible app should prepare player infrastructure") {
-                PlaybackService.warmReady()
+                PlaybackService.warmReady() && owner.get().videoViews.ready()
             }
             scene.onActivity {
+                val view = it.videoViews.peek()!!
+                Assert.assertNull("Idle view must have no parent", view.parent)
+                Assert.assertNull("Idle view must have no bound player", view.player)
+                Assert.assertFalse(view.isAttachedToWindow)
+                Assert.assertFalse(
+                    "Detached preparation must not create a decoder surface",
+                    (view.videoSurfaceView as android.view.TextureView).isAvailable,
+                )
                 val service = PlaybackService.current!!
                 Assert.assertNull(service.currentRequest.optJSONObject("media"))
                 Assert.assertFalse(service.player.isPlaying)
@@ -90,6 +100,10 @@ class PlaybackPerformanceTest {
         MediaRuntimeTest.await("Leaving an idle app must release player infrastructure") {
             PlaybackService.current == null
         }
+        Assert.assertFalse(
+            "The activity must discard its unused view",
+            owner.get().videoViews.ready(),
+        )
     }
 
     @Test

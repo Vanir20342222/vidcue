@@ -27,7 +27,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
-import androidx.media3.ui.PlayerView
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
@@ -36,15 +35,22 @@ internal fun VideoSurface(
     onCollapse: (() -> Unit)? = null,
     playbackPlayer: Player? = PlaybackService.current?.controlsPlayer,
     covered: Boolean = false,
+    timingToken: Long = PlaybackService.current?.startupToken ?: 0,
 ) {
     val collapse by rememberUpdatedState(onCollapse)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
     AndroidView(
         factory = { context ->
-            (android.view.LayoutInflater.from(context)
-                    .inflate(R.layout.ytui_player, android.widget.FrameLayout(context), false)
-                    as PlayerView)
+            val inflateAt = android.os.SystemClock.elapsedRealtime()
+            VideoViewPreparation.take(context)
+                .also {
+                    StartupTimings.stage(
+                        timingToken,
+                        "view_inflate",
+                        android.os.SystemClock.elapsedRealtime() - inflateAt,
+                    )
+                }
                 .apply {
                     useController = true
                     setControllerAnimationEnabled(
@@ -311,6 +317,8 @@ internal fun FocusedPlayer(
                             onCollapse = minimize,
                             playbackPlayer = PlaybackService.current?.controlsPlayer,
                             covered = player.preparing != null,
+                            timingToken =
+                                player.preparing?.token ?: player.value.optLong("startup_token"),
                         )
                         player.preparing?.let { preparing ->
                             Box(

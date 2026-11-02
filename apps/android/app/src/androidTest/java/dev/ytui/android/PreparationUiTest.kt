@@ -68,6 +68,9 @@ class PreparationUiTest {
                     ) {
                         PlaybackService.warmReady()
                     }
+                    compose.waitUntil(10000) { RustActivity.current()?.videoViews?.ready() == true }
+                    val idleView = AtomicReference<androidx.media3.ui.PlayerView>()
+                    scene.onActivity { idleView.set(it.videoViews.peek()) }
                     repeat(2) {
                         blockers +=
                             workers.submit {
@@ -107,6 +110,11 @@ class PreparationUiTest {
                         val view = VisibleVideoProbe.find(it.window.decorView)
                         Assert.assertNotNull(
                             "The video surface must exist before extraction completes",
+                            view,
+                        )
+                        Assert.assertSame(
+                            "The first selection must claim its activity's idle view",
+                            idleView.get(),
                             view,
                         )
                         Assert.assertSame(PlaybackService.current.controlsPlayer, view.player)
