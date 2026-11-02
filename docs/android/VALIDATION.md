@@ -752,3 +752,7 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 ## M9 startup latency work, 2026-10-29
 
 [Research and implementation](TWO_SECOND_STARTUP.md) and [mobile.5 qualification](STARTUP_VALIDATION_2026-10-29.md) distinguish the successful offline/native checks from the still-open physical Tab S9 / live YouTube two-second gate. Failed and infrastructure-contaminated attempts are preserved in those records.
+
+## CI layout change, 2026-11-02 (M9)
+
+The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
