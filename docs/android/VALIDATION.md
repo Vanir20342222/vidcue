@@ -1,5 +1,37 @@
 # Android validation record (M9)
 
+## Category preloading (2026-11-02)
+
+Android's native ViewModel now caches network first pages for 60 seconds, with
+12 entries and a 2 MiB serialized-text estimate. Video and Music use distinct
+keys, including network revision; account changes, account-index changes and
+proxy edits clear cached/private navigation state. Selecting the current source
+again refreshes its UI entry. Local saved items and pagination bypass this cache.
+
+After a 300 ms settling delay, browsing prepares up to three nearby server
+categories, Home for the other media tab, and signed-in playlist/liked sources
+(at most six targets per batch). Only one speculative browse runs at a time;
+tapping a pending target shares its fetch. Cancelled batches do not schedule
+more work. Existing preload/mobile-data preferences apply, active playback
+suppresses new speculative browsing, and errors stop a batch without retries or
+visible error overlays. Category chips remain available while changing filters.
+
+Focused verification: **9 JUnit tests passed**, compiled directly with Kotlin
+2.1.21, kotlinx-coroutines 1.10.2 and JUnit 4.13.2. They exercise reuse/expiry,
+joining a cancelled preload waiter, account clearing and late replies, failed
+fetch recovery, entry/byte eviction, oversize rejection, explicit refresh,
+tab isolation, and rapid navigation without cancelling the visible request.
+Kotlin formatting and `git diff --check` also pass.
+
+This workspace has no Android SDK or Gradle installation/cache. The new cache
+and its tests were compiled in isolation; the complete Android app build,
+instrumentation, physical category-switch latency and live-service behavior
+have **not** been qualified for this change. On an Android-equipped worker run
+`apps/android/gradlew -p apps/android :app:testDebugUnitTest :app:lintDebug`
+and exercise video/Music category switching, refresh, pagination, account
+switch/disconnect, and preload disabled/metered-network settings on a device.
+No APK was built or published; M9's existing physical/live gates remain open.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version
