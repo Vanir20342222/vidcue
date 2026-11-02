@@ -112,7 +112,7 @@ class IndexedPlaybackTest {
                                             else ""
                                         val out = it.getOutputStream()
                                         out.write(
-                                            "HTTP/1.1 $status\r\nContent-Type: video/mp4\r\nContent-Length: ${end-start+1}\r\n$range\r\n"
+                                            "HTTP/1.1 $status\r\nContent-Type: video/mp4\r\nContent-Length: ${end-start+1}\r\nConnection: close\r\n$range\r\n"
                                                 .toByteArray()
                                         )
                                         out.flush()
@@ -235,6 +235,121 @@ class IndexedPlaybackTest {
                     "startup-indexed-timings.txt",
                 )
                 .writeText(evidence.toString())
+            MobileSettings.save(original)
+        }
+    }
+
+    @Test
+    fun prefetchedPairedIndexedTracksReachVisiblePlayingOutputUnderOneSecond() {
+        val original = MobileSettings.snapshot()
+        val evidence = StringBuilder()
+        MobileSettings.save(
+            json("preload_next" to true, "preload_mobile" to true, "autoplay_related" to false)
+        )
+        try {
+            Cdn().use { cdn ->
+                RuntimeTest.launchOffline().use { scene ->
+                    compose.waitUntil(10000) {
+                        compose
+                            .onAllNodesWithTag("app-background")
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                    scene.onActivity {
+                        PlaybackService.current?.stopAndClear()
+                        ViewModelProvider(it)[YtuiViewModel::class.java].playerOpen.value = true
+                    }
+                    compose.waitForIdle()
+                    MediaRuntimeTest.await("Previous service must finish closing before prefetch") {
+                        PlaybackService.current == null
+                    }
+                    val observer = VisibleVideoProbe.observe(scene)
+                    val media =
+                        json(
+                            "url" to cdn.url(0),
+                            "kind" to "video",
+                            "title" to "Prefetched indexed fixture",
+                        )
+                    val stream =
+                        json(
+                            "url" to cdn.url(0),
+                            "audio_url" to cdn.url(1),
+                            "dash_manifest" to
+                                cdn.contract
+                                    .getString("dash_manifest")
+                                    .replace("http://127.0.0.1:1", cdn.base),
+                        )
+                    PlaybackCache.prefetchResolved(
+                        media,
+                        false,
+                        "best",
+                        stream,
+                        NativeBridge.accountIntent(),
+                        NetworkSettings.revision.get(),
+                    )
+                    MediaRuntimeTest.await(
+                        "Both selected indexed tracks must be ready before handoff"
+                    ) {
+                        PlaybackCache.readyFor(media, false, "best")
+                    }
+                    val before = synchronized(cdn.requests) { cdn.requests.toList() }
+                    Assert.assertTrue(before.isNotEmpty())
+                    val token = StartupTimings.begin(android.os.SystemClock.elapsedRealtime(), true)
+                    StartupTimings.byteCache(token, PlaybackCache.readyFor(media, false, "best"))
+                    StartupTimings.resolved(token, android.os.SystemClock.elapsedRealtime(), true)
+                    val request =
+                        json(
+                            "media" to media,
+                            "stream" to stream,
+                            "audio" to false,
+                            "quality" to "best",
+                            "startup_token" to token,
+                        )
+                    MediaBridge.execute(json("op" to "play", "request" to request).toString())
+                    var frame: VisibleVideoProbe.Result
+                    do {
+                        compose.mainClock.advanceTimeByFrame()
+                        frame = observer.capture(token, "startup-indexed-prefetched.png", 1000)
+                        if (frame.rgb && StartupTimings.usable(token) > 0) break
+                        Thread.sleep(8)
+                    } while (
+                        StartupTimings.elapsed(token, android.os.SystemClock.elapsedRealtime()) <
+                            1000
+                    )
+                    val visible = StartupTimings.elapsed(token, frame.capturedAt)
+                    val usable = StartupTimings.usable(token)
+                    evidence
+                        .append(StartupTimings.report())
+                        .append("indexed_prefetched_window_ms=$visible usable_ms=$usable\n")
+                    Assert.assertTrue(
+                        "Paired indexed output must be actually visible and playing under1000ms: pixels=$visible usable=$usable\n${StartupTimings.report()}",
+                        frame.rgb && visible in 1..999 && usable in 1..999,
+                    )
+                    Assert.assertEquals(
+                        "Initial playback must reuse the selected tracks' cached ranges",
+                        before,
+                        synchronized(cdn.requests) { cdn.requests.toList() },
+                    )
+                    MediaRuntimeTest.await("Fast indexed startup must keep playing") {
+                        MediaRuntimeTest.status().optBoolean("playing") &&
+                            MediaRuntimeTest.status().optDouble("position") >= 1.0
+                    }
+                    MediaBridge.execute(json("op" to "seek", "seconds" to 3).toString())
+                    compose.waitUntil(5000) {
+                        MediaRuntimeTest.status().optDouble("position") >= 2.8
+                    }
+                }
+            }
+        } finally {
+            if (evidence.isEmpty()) evidence.append(StartupTimings.report())
+            File(
+                    InstrumentationRegistry.getInstrumentation()
+                        .targetContext
+                        .getExternalFilesDir(null),
+                    "startup-indexed-prefetched-timings.txt",
+                )
+                .writeText(evidence.toString())
+            PlaybackCache.cancel()
             MobileSettings.save(original)
         }
     }

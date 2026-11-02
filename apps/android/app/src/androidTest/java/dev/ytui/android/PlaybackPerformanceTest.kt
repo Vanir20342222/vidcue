@@ -263,7 +263,7 @@ class PlaybackPerformanceTest {
     }
 
     @Test
-    fun aResolvedDescriptorFromAnOldAccountCannotStartNetworkWork() {
+    fun aResolvedDescriptorFromAnOldAccountOrNetworkCannotStartWork() {
         MockWebServer().use { server ->
             val media = json("url" to server.url("/watch").toString(), "kind" to "video")
             PlaybackCache.prefetchResolved(
@@ -273,6 +273,14 @@ class PlaybackPerformanceTest {
                 json("url" to server.url("/private").toString()),
                 NativeBridge.accountIntent() - 1,
                 NetworkSettings.revision.get(),
+            )
+            PlaybackCache.prefetchResolved(
+                media,
+                false,
+                "best",
+                json("url" to server.url("/old-route").toString()),
+                NativeBridge.accountIntent(),
+                NetworkSettings.revision.get() - 1,
             )
             Assert.assertFalse(PlaybackCache.readyFor(media, false, "best"))
             Assert.assertNull(server.takeRequest(200, TimeUnit.MILLISECONDS))

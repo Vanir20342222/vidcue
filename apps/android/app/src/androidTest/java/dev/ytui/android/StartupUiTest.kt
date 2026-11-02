@@ -65,6 +65,11 @@ class StartupUiTest {
                     val observer = VisibleVideoProbe.observe(scene)
                     for (prepared in listOf(false, true)) {
                         scene.onActivity { PlaybackService.current?.stopAndClear() }
+                        MediaRuntimeTest.await(
+                            "Previous service must finish closing before setup"
+                        ) {
+                            PlaybackService.current == null
+                        }
                         PlaybackCache.cancel()
                         NativeBridge.request(json("op" to "resolve_cache_clear").toString())
                         MobileSettings.save(json("preload_next" to prepared))

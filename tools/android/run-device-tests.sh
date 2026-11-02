@@ -32,8 +32,10 @@ collect_evidence() {
     adb pull /sdcard/Android/data/$test_package/files/startup-timings.txt "$evidence/startup-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-hls-timings.txt "$evidence/startup-hls-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-indexed-timings.txt "$evidence/startup-indexed-timings.txt" > /dev/null 2>&1 || true
+    adb pull /sdcard/Android/data/$test_package/files/public-startup-timings.txt "$evidence/public-startup-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-subsecond-timings.txt "$evidence/startup-subsecond-timings.txt" > /dev/null 2>&1 || true
-    for state in cold prepared missing-frame settings hls hls-prepared indexed subsecond subsecond-cold subsecond-failed; do
+    adb pull /sdcard/Android/data/$test_package/files/startup-indexed-prefetched-timings.txt "$evidence/startup-indexed-prefetched-timings.txt" > /dev/null 2>&1 || true
+    for state in cold prepared missing-frame settings hls hls-prepared indexed indexed-prefetched subsecond subsecond-cold subsecond-failed; do
         adb pull /sdcard/Android/data/$test_package/files/startup-$state.png "$evidence/startup-$state.png" > /dev/null 2>&1 || true
     done
     mkdir -p "$evidence/native-ui"
@@ -51,6 +53,8 @@ trap collect_evidence EXIT
 arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
 if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
     arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
+    arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=${YTUI_ANDROID_PUBLIC_QUALITY:-best}")
+    arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeTargetMs=${YTUI_ANDROID_PUBLIC_TARGET_MS:-1000}")
 fi
 apps/android/gradlew -p apps/android --no-daemon "${arguments[@]}" :app:connectedDebugAndroidTest
 adb logcat -d -s RustPanic:E RustStdoutStderr:I > "$evidence/rust-runtime.txt"

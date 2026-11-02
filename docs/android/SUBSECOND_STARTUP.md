@@ -122,3 +122,31 @@ pinned and only the first settled visible candidate receives byte warming.
 
 Follow-up local debug/instrumentation APKs, 21 JVM tests and lint pass. Fresh
 exact-source emulator qualification is pending.
+
+
+## Paired indexed and transport-control follow-up
+
+A separate strict one-second test warms both real indexed MP4 tracks, then checks
+active playback and actual window pixels from player handoff, verifies that no
+additional startup requests are made, and exercises continued playback/seek.
+This specifically qualifies prepared source handoff; the separate progressive
+card test includes the UI tap and Rust lookup. Neither replaces live acceptance.
+The loopback CDN now declares `Connection: close`, matching its actual one-request
+per-socket behavior rather than advertising an implicit persistent connection.
+
+Next/Previous selection now releases speculative byte sockets before offline
+lookup/extraction, as direct card taps already do. A shared in-flight Rust
+resolution remains joinable and completed cache spans remain available. Empty
+selection does not interrupt warming. Full native qualification follows.
+
+Resolved descriptors retain their producer account/network epochs through JSON
+copying and worker submission; a concurrent change cannot relabel stale work
+with the new scope. Native stale-descriptor coverage includes both epochs.
+
+The optional public workflow now accepts an explicit quality and 1000/2000 ms
+budget (defaults: Best and 1000 ms). Its cold native extraction and visible-view/
+active-playback timings are retained even on failure, without media identifiers
+or stream URLs. It also checks three seconds of continued decode. This check
+uses real service traffic but callback-based view evidence; the loopback RGB
+tests and physical acceptance remain distinct. Raw instrumentation without the
+new arguments retains the original 720p/2000 ms regression mode.

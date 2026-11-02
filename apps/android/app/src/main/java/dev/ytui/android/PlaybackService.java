@@ -1397,6 +1397,9 @@ public final class PlaybackService extends MediaSessionService {
                   });
               return;
             }
+            // Next/Previous are foreground intent too: release speculative byte
+            // sockets before resolving, while retaining a joinable Rust flight.
+            PlaybackCache.pauseBytes();
             boolean audio = PlaybackPolicy.audioOnly(media.optString("kind"));
             StartupTimings.mediaType(timing, !audio);
             StartupTimings.stage(

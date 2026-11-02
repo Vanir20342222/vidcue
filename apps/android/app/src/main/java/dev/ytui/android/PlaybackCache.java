@@ -133,7 +133,8 @@ final class PlaybackCache {
   }
 
   static synchronized void prefetch(JSONObject media, boolean audio, String quality) {
-    prefetchInternal(media, audio, quality, null);
+    prefetchInternal(
+        media, audio, quality, null, NativeBridge.accountIntent(), NetworkSettings.revision.get());
   }
 
   static synchronized void prefetchResolved(
@@ -146,27 +147,30 @@ final class PlaybackCache {
     if (account != NativeBridge.accountIntent() || network != NetworkSettings.revision.get())
       return;
     try {
-      prefetchInternal(media, audio, quality, new JSONObject(resolved.toString()));
+      prefetchInternal(
+          media, audio, quality, new JSONObject(resolved.toString()), account, network);
     } catch (JSONException invalid) {
       // No mutable descriptor or stale account work crosses into a preload.
     }
   }
 
   private static void prefetchInternal(
-      JSONObject media, boolean audio, String quality, JSONObject resolved) {
+      JSONObject media,
+      boolean audio,
+      String quality,
+      JSONObject resolved,
+      long account,
+      long network) {
+    // Keep the producer's epochs: a settings change during descriptor copying
+    // must never relabel an old descriptor with the new account or route.
+    if (account != NativeBridge.accountIntent() || network != NetworkSettings.revision.get())
+      return;
     if (!allowed(media)) {
       cancel();
       return;
     }
     String url = media.optString("url");
-    String scope =
-        audio
-            + ":"
-            + quality
-            + ":"
-            + NativeBridge.accountIntent()
-            + ":"
-            + NetworkSettings.revision.get();
+    String scope = audio + ":" + quality + ":" + account + ":" + network;
     if (url.equals(upcomingUrl)
         && scope.equals(upcomingScope)
         && current != null
@@ -174,8 +178,6 @@ final class PlaybackCache {
     cancel();
     bytesPaused = false;
     long token = intent.get();
-    long account = NativeBridge.accountIntent();
-    long network = NetworkSettings.revision.get();
     upcomingUrl = url;
     upcomingScope = scope;
     long requestId = requestIds.incrementAndGet();
