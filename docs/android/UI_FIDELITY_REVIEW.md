@@ -36,7 +36,7 @@ side/focused playback, compact empty queue, large-text navigation and transition
 
 ## Candidate revision 1
 
-Implementation awaits exact-source native qualification. The independent judge approved a two-by-two
+Native qualification failed; this candidate is not ready to release. The independent judge approved a two-by-two
 fully scaled phone navigation adaptation as an explicit accessibility exception,
 preserving complete words and all four visible targets. This is not presented as
 a literal match to unavailable YouTube screenshots.
@@ -64,8 +64,9 @@ thumbnails retain the same duration/live badge and visibility preference.
 
 The source judge also rejected the initial contrast probe: Media3's actual seek
 controls use `*_with_amount` IDs and their arrow graphics are Button backgrounds.
-The corrected candidate backs their wrapper views and explicitly tests those
-controls without erasing glyphs or changing seek amounts. A fixed dark timeline
+Revision 1 backed their apparent wrapper views and tested those controls; the
+actual-capture judge subsequently found an API-qualified layout regression,
+recorded below. Seek amounts remain unchanged. A fixed dark timeline
 backing also failed light palettes; the narrow keyline now chooses black/white
 from the real accent. The native test requires actual visible white video before
 measuring icon/track contrast in both built-in light/dark palettes. These are
@@ -103,3 +104,59 @@ perfect while reference, device or interaction evidence is missing.
   fullscreen/return remain qualified. Video evidence is required for motion.
 - No high/medium finding remains within the judged scope; missing original
   reference images and physical/live behavior stay explicitly unverified.
+
+## Revision 1 retained native result and revision 2 candidate
+
+Source `d70291c47512c03eb9ea919b27ffcf6068fb1c0c` (workflow merge
+`eee39677dd290ac062b0f7c8c47213e8ad02f593`) ran in
+[Android 41357033289](https://github.com/Vanir20342222/ytui/actions/runs/41357033289):
+**36 native passes, six failures, one explicit public-YouTube skip**. Its
+[device artifact](https://github.com/Vanir20342222/ytui/actions/runs/41357033289/artifacts/13104371956)
+retains 212 PNGs, including all 156 theme/system-mode/device/screen captures,
+and an actual interaction MP4. Rust/media checks pass (367 passes, 31 explicit
+ignores), as do secret scans. Progressive cold/prepared actual-window checks are
+998/992 ms, indexed 1342 ms, HLS cold/prepared 681/729 ms. Those fixture timings
+do not qualify public YouTube or visual perfection.
+
+The failures remain recorded rather than waived:
+
+- Large-text navigation reports overflow before the original capture point.
+  The next candidate measures the same ambient-merged label style that Text
+  draws, including inherited letter spacing, plus rounding space. It captures
+  the screen before asserting and reports text, constraints and overflow axis.
+- Both search Back checks time out waiting for the ordinary header. The next
+  candidate separates soft-keyboard dismissal from leaving search, reads actual
+  platform IME visibility at Back dispatch, and preserves the query. Drivers
+  exercise explicit exit and platform Back with/without a visible IME.
+- A feed artwork pixel check times out when the same media also appears in the
+  retained player dock. Its matcher is scoped to the feed card; decoded-pixel
+  requirements and the deadline remain unchanged.
+- The white-video probe waits before the Compose-hosted surface is driven.
+  The corrected driver uses Main effects and waits for that surface first,
+  retaining actual-white-pixel, native control and contrast assertions.
+- The motion recording exists and decodes externally, but Android's metadata
+  service cannot reopen its app-scoped path. The driver passes an open file
+  descriptor instead. The real interaction/decoder assertions had already
+  passed; the duration/sidecar assertions must pass in the next native run.
+
+These are revision 2 candidates pending local checks, full native rerun and
+independent visual review. No assertion, 2000 ms startup limit, lint rule or
+secret check is disabled to obtain a passing result.
+
+The independent revision 1 visual judge found a high-priority regression in
+`native-video-controls` and fullscreen: a dark ellipse covered the entire middle
+transport strip. The initial source audit had examined the legacy Media3 seek
+layout; API 23+ uses a merge layout with arrows in each Button's foreground.
+Backing the parent therefore painted the common controls container. Revision 2
+backs each actual Button, retaining its foreground/amount (or original layered
+background glyph), and explicitly rejects an oval on the common parent. Bright
+video measurements and full-strip captures must qualify the correction.
+
+The judge accepted the quieter history/timer/feed/account/settings/search
+hierarchy in the retained captures. It requested a denser queue: revision 2 uses
+one artwork/title row plus a trailing overflow containing the same Play, Move up,
+Move down and Remove commands. Existing action tags/descriptions and boundary
+states are retained. Drivers now open the intended menu before checking the
+same real Rust reorder/remove outcomes and capture its expanded state. This is
+a deliberate presentation change to the previous always-visible action strip,
+not a relaxed queue assertion.

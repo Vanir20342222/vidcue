@@ -70,7 +70,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -214,10 +216,6 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     var searchFocused by remember { mutableStateOf(false) }
     var dialog by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
-    LaunchedEffect(imeVisible) {
-        // Back dismisses the keyboard and returns to the normal browsing header.
-        if (!imeVisible && searchFocused) focusManager.clearFocus()
-    }
     LaunchedEffect(tab) { searchFocused = false }
     // Imported documents can legitimately reuse a built-in name. Their paint
     // roles must remain exactly the imported values rather than the default preset.
@@ -273,11 +271,16 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         }
     }
     BackHandler {
-        if (imeVisible) keyboard?.hide()
+        // Read platform visibility at dispatch time: the first Back dismisses
+        // the IME, while the next leaves the search session without losing text.
+        val keyboardShowing =
+            ViewCompat.getRootWindowInsets(activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        if (keyboardShowing) keyboard?.hide()
         else if (dialog.isNotBlank()) dialog = ""
         else if (playerOpen) vm.playerOpen.value = false
         else if (searchFocused) {
-            focusManager.clearFocus()
+            focusManager.clearFocus(force = true)
             if (
                 (vm.feeds[tab].value.request as? JSONObject)?.has(
                     if (tab == 3) "RadioSearch" else "Search"
@@ -649,7 +652,9 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
             Triple(0, "Downloads", Glyph.Download),
         )
     val density = LocalDensity.current
-    val labelStyle = MaterialTheme.typography.labelMedium
+    // Text merges unspecified fields (for example letter spacing) with the
+    // ambient style. Measure that same resolved style at the user's font scale.
+    val labelStyle = LocalTextStyle.current.merge(MaterialTheme.typography.labelMedium)
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val widest =
         remember(measurer, labelStyle, density) {
@@ -665,7 +670,7 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                             .size
                             .width
                     }
-                    .toDp()
+                    .toDp() + 2.dp
             }
         }
     @Composable
@@ -1040,7 +1045,7 @@ private fun BrowsePane(
             if (searchMode)
                 MediaIconButton(Glyph.Back, "Leave search") {
                     keyboard?.hide()
-                    focusManager.clearFocus()
+                    focusManager.clearFocus(force = true)
                     searchActive = false
                     if (searchResults) vm.back()
                 }
@@ -2663,51 +2668,77 @@ private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 itemsIndexed(queue) { index, media ->
-                    Column(Modifier.fillMaxWidth().testTag("queue-item-${media.key}")) {
-                        LibraryMediaRow(
-                            media,
-                            config.optBoolean("thumbnails", true),
-                            mobile.optBoolean("show_channel", true),
-                        ) {
-                            vm.play(media, queued = true)
-                            close()
+                    var actions by remember(media.key) { mutableStateOf(false) }
+                    Row(
+                        Modifier.fillMaxWidth().testTag("queue-item-${media.key}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.weight(1f)) {
+                            LibraryMediaRow(
+                                media,
+                                config.optBoolean("thumbnails", true),
+                                mobile.optBoolean("show_channel", true),
+                            ) {
+                                vm.play(media, queued = true)
+                                close()
+                            }
                         }
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(
-                                {
-                                    vm.play(media, queued = true)
-                                    close()
-                                },
-                                Modifier.heightIn(min = 48.dp),
+                        Box {
+                            MediaIconButton(
+                                Glyph.More,
+                                "Queue actions",
+                                "queue-menu-${media.key}",
                             ) {
-                                MediaIcon(Glyph.Play)
-                                Spacer(Modifier.width(8.dp))
-                                Text("Play")
+                                actions = true
                             }
-                            IconButton(
-                                { vm.moveQueue(index, index - 1, media) },
-                                Modifier.size(48.dp).testTag("queue-up-${media.key}").semantics {
-                                    contentDescription = "Move up"
-                                },
-                                enabled = index > 0,
-                            ) {
-                                MediaIcon(Glyph.Up)
-                            }
-                            IconButton(
-                                { vm.moveQueue(index, index + 1, media) },
-                                Modifier.size(48.dp).testTag("queue-down-${media.key}").semantics {
-                                    contentDescription = "Move down"
-                                },
-                                enabled = index + 1 < queue.size,
-                            ) {
-                                MediaIcon(Glyph.Down)
-                            }
-                            MediaIconButton(Glyph.Close, "Remove", "queue-remove-${media.key}") {
-                                vm.removeQueue(index, media)
+                            DropdownMenu(actions, { actions = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Play") },
+                                    leadingIcon = { MediaIcon(Glyph.Play) },
+                                    onClick = {
+                                        actions = false
+                                        vm.play(media, queued = true)
+                                        close()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move up") },
+                                    leadingIcon = { MediaIcon(Glyph.Up) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-up-${media.key}")
+                                            .semantics { contentDescription = "Move up" },
+                                    enabled = index > 0,
+                                    onClick = {
+                                        actions = false
+                                        vm.moveQueue(index, index - 1, media)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Move down") },
+                                    leadingIcon = { MediaIcon(Glyph.Down) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-down-${media.key}")
+                                            .semantics { contentDescription = "Move down" },
+                                    enabled = index + 1 < queue.size,
+                                    onClick = {
+                                        actions = false
+                                        vm.moveQueue(index, index + 1, media)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Remove") },
+                                    leadingIcon = { MediaIcon(Glyph.Close) },
+                                    modifier =
+                                        Modifier.heightIn(min = 48.dp)
+                                            .testTag("queue-remove-${media.key}")
+                                            .semantics { contentDescription = "Remove" },
+                                    onClick = {
+                                        actions = false
+                                        vm.removeQueue(index, media)
+                                    },
+                                )
                             }
                         }
                     }

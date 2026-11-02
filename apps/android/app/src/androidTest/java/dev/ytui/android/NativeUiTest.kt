@@ -84,6 +84,8 @@ class NativeUiTest {
         captureSettled("native-search.png")
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithTag("search-field").assertIsDisplayed()
+        compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Leave search").performClick()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
         }
@@ -401,7 +403,28 @@ class NativeUiTest {
             compose.onNodeWithTag("search-field").performClick().performTextInput("retained query")
             compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
             captureSettled("restyle-fidelity-focused-search.png")
+            val keyboardShowing = AtomicBoolean()
+            scenario.onActivity {
+                keyboardShowing.set(
+                    ViewCompat.getRootWindowInsets(it.window.decorView)
+                        ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                )
+            }
             device.pressBack()
+            if (keyboardShowing.get()) {
+                compose.waitUntil(10_000) {
+                    scenario.onActivity {
+                        keyboardShowing.set(
+                            ViewCompat.getRootWindowInsets(it.window.decorView)
+                                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                        )
+                    }
+                    !keyboardShowing.get()
+                }
+                compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
+                captureSettled("restyle-fidelity-search-ime-dismissed.png")
+                device.pressBack()
+            }
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
             }

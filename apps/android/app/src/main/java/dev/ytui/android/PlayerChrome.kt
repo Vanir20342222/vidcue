@@ -7,6 +7,7 @@ import android.view.View
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
+import androidx.core.view.ViewCompat
 import androidx.media3.ui.DefaultTimeBar
 import androidx.media3.ui.PlayerView
 
@@ -44,18 +45,28 @@ internal object PlayerChrome {
                     setColor(MediaTokens.videoDisc.toArgb())
                 }
         }
-        // These are text Buttons whose backgrounds ARE the curved-arrow glyphs.
-        // Put the disc on their wrappers so Media3's glyph and seek amount survive.
+        // API 23+ layouts merge these Buttons straight into the shared transport
+        // strip. Their arrows are foregrounds; painting their parent creates a
+        // huge oval behind all controls. Back each Button, retaining glyph/text.
         for (id in
             listOf(
                 androidx.media3.ui.R.id.exo_rew_with_amount,
                 androidx.media3.ui.R.id.exo_ffwd_with_amount,
             )) {
-            (view.findViewById<View>(id)?.parent as? View)?.background =
-                GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(MediaTokens.videoDisc.toArgb())
-                }
+            view.findViewById<View>(id)?.apply {
+                val disc =
+                    GradientDrawable().apply {
+                        shape = GradientDrawable.OVAL
+                        setColor(MediaTokens.videoDisc.toArgb())
+                    }
+                val glyph =
+                    (background as? LayerDrawable)?.findDrawableByLayerId(android.R.id.icon)
+                        ?: background
+                ViewCompat.setBackgroundTintList(this, null)
+                background =
+                    if (foreground != null || glyph == null) disc
+                    else LayerDrawable(arrayOf(disc, glyph)).apply { setId(1, android.R.id.icon) }
+            }
         }
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
             setPlayedColor(accent)

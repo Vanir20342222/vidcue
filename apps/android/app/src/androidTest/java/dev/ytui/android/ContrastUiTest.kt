@@ -17,9 +17,11 @@ import org.junit.runner.RunWith
 
 /** Actual decoded white pixels exercise the worst background for white transport glyphs. */
 @RunWith(AndroidJUnit4::class)
+@OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 class ContrastUiTest {
-    @get:Rule val compose = createEmptyComposeRule()
+    @get:Rule
+    val compose = createEmptyComposeRule(effectContext = kotlinx.coroutines.Dispatchers.Main)
     @get:Rule
     val notifications =
         androidx.test.rule.GrantPermissionRule.grant(
@@ -72,16 +74,17 @@ class ContrastUiTest {
                             .toString()
                     )
                     MediaBridge.event("show_player", "")
-                    MediaRuntimeTest.await("White fixture must submit a decoder frame") {
-                        MediaBridge.videoFrames.get() > initialFrames &&
-                            MediaRuntimeTest.status().optBoolean("playing") &&
-                            MediaRuntimeTest.status().optDouble("position") > 1.5
-                    }
                     compose.waitUntil(10_000) {
                         compose
                             .onAllNodesWithTag("native-video-surface")
                             .fetchSemanticsNodes()
                             .isNotEmpty()
+                    }
+                    compose.waitForIdle()
+                    MediaRuntimeTest.await("White fixture must submit a decoder frame") {
+                        MediaBridge.videoFrames.get() > initialFrames &&
+                            MediaRuntimeTest.status().optBoolean("playing") &&
+                            MediaRuntimeTest.status().optDouble("position") > 1.5
                     }
                     val videoBounds = Rect()
                     MediaRuntimeTest.await(
@@ -159,14 +162,21 @@ class ContrastUiTest {
                                     button.background,
                                 )
                                 if (name == "rewind" || name == "forward") {
+                                    val backgroundGlyph =
+                                        (button.background
+                                                as? android.graphics.drawable.LayerDrawable)
+                                            ?.findDrawableByLayerId(android.R.id.icon)
                                     assertTrue(
-                                        "$name glyph must not be replaced by its backing disc",
-                                        button.background
-                                            !is android.graphics.drawable.GradientDrawable,
+                                        "$name must retain its foreground or background arrow",
+                                        button.foreground != null || backgroundGlyph != null,
                                     )
-                                    assertNotNull(
-                                        "$name needs contrast on its wrapper",
-                                        (button.parent as View).background,
+                                    val parentBackground = (button.parent as View).background
+                                    assertFalse(
+                                        "A local seek disc must not paint the shared transport strip",
+                                        parentBackground is
+                                            android.graphics.drawable.GradientDrawable &&
+                                            parentBackground.shape ==
+                                                android.graphics.drawable.GradientDrawable.OVAL,
                                     )
                                 }
                                 assertFalse(

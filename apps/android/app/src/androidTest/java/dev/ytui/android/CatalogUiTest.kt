@@ -624,8 +624,8 @@ class CatalogUiTest {
                     .isNotEmpty()
             }
             val cards = populate(1)
-            assertNavigationLabelsFit()
             captureSettled("restyle-large-text-feed.png")
+            assertNavigationLabelsFit()
             compose
                 .onNodeWithTag("search-field")
                 .assertIsDisplayed()
@@ -664,6 +664,7 @@ class CatalogUiTest {
                     .isNotEmpty()
             }
             val tabletCards = populate(1)
+            captureSettled("restyle-fidelity-large-text-tablet-feed.png")
             assertNavigationLabelsFit()
             compose.onNodeWithTag("navigation-rail").assertIsDisplayed()
             awaitDecodedCovers(tabletCards)
@@ -794,8 +795,12 @@ class CatalogUiTest {
                         .fetchSemanticsNodes()
                         .isNotEmpty()
                 }
+                compose.onNodeWithTag("queue-menu-${cards[0].key}").performClick()
                 compose.onNodeWithTag("queue-up-${cards[0].key}").assertIsNotEnabled()
+                device.pressBack()
+                compose.onNodeWithTag("queue-menu-${cards[2].key}").performClick()
                 compose.onNodeWithTag("queue-down-${cards[2].key}").assertIsNotEnabled()
+                device.pressBack()
                 for (card in cards) {
                     compose.waitUntil(10_000) {
                         compose
@@ -809,10 +814,13 @@ class CatalogUiTest {
                     }
                 }
                 captureSettled("restyle-fidelity-$profile-queue-populated.png")
+                compose.onNodeWithTag("queue-menu-${cards[1].key}").performClick()
+                captureSettled("restyle-fidelity-$profile-queue-actions.png")
                 compose.onNodeWithTag("queue-up-${cards[1].key}").performClick()
                 compose.waitUntil(10_000) {
                     queueNow().firstOrNull()?.optString("url") == cards[1].url
                 }
+                compose.onNodeWithTag("queue-menu-${cards[2].key}").performClick()
                 compose.onNodeWithTag("queue-remove-${cards[2].key}").performClick()
                 compose.waitUntil(10_000) { queueNow().size == 2 }
                 captureSettled("restyle-fidelity-$profile-queue-edited.png")
@@ -1090,7 +1098,8 @@ class CatalogUiTest {
             val retriever = android.media.MediaMetadataRetriever()
             val duration =
                 try {
-                    retriever.setDataSource(output.absolutePath)
+                    // The media service cannot reopen app-scoped storage by path.
+                    java.io.FileInputStream(output).use { retriever.setDataSource(it.fd) }
                     retriever
                         .extractMetadata(
                             android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
@@ -1156,7 +1165,11 @@ class CatalogUiTest {
                 layouts.single().lineCount,
             )
             Assert.assertFalse(
-                "Navigation must not clip or ellipsize",
+                "Navigation $index must not clip or ellipsize: " +
+                    "text=${layouts.single().layoutInput.text}, size=${layouts.single().size}, " +
+                    "constraints=${layouts.single().layoutInput.constraints}, " +
+                    "widthOverflow=${layouts.single().didOverflowWidth}, " +
+                    "heightOverflow=${layouts.single().didOverflowHeight}",
                 layouts.single().hasVisualOverflow,
             )
         }
@@ -1172,8 +1185,9 @@ class CatalogUiTest {
                 visible.all { media ->
                     runCatching {
                             val node =
-                                compose.onNodeWithTag(
-                                    "artwork-${media.key}",
+                                compose.onNode(
+                                    hasTestTag("artwork-${media.key}") and
+                                        hasAnyAncestor(hasTestTag("media-card-${media.key}")),
                                     useUnmergedTree = true,
                                 )
                             val frame = node.captureToImage()
