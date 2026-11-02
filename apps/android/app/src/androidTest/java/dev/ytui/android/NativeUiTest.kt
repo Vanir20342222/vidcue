@@ -3,6 +3,7 @@ package dev.ytui.android
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.text.TextLayoutResult
@@ -86,9 +87,7 @@ class NativeUiTest {
         compose.onNodeWithTag("search-field").assertIsDisplayed()
         compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
         compose.onNodeWithContentDescription("Leave search").performClick()
-        compose.waitUntil(10_000) {
-            compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitBrowsingHeader("keyboard-exit")
         compose.onNodeWithTag("settings-button").performClick()
         compose.onNodeWithTag("settings-Network").performClick()
         compose
@@ -425,9 +424,7 @@ class NativeUiTest {
                 captureSettled("restyle-fidelity-search-ime-dismissed.png")
                 device.pressBack()
             }
-            compose.waitUntil(10_000) {
-                compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
-            }
+            awaitBrowsingHeader("hardware-back-exit")
             compose.onNodeWithTag("search-field").assertTextContains("retained query")
             Assert.assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             captureSettled("restyle-fidelity-search-return.png")
@@ -438,6 +435,34 @@ class NativeUiTest {
                 device.executeShellCommand(
                     "settings put secure show_ime_with_hard_keyboard $previous"
                 )
+        }
+    }
+
+    private fun awaitBrowsingHeader(stage: String) {
+        try {
+            compose.onNodeWithTag("search-field").assertIsNotFocused()
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
+            }
+        } catch (error: Throwable) {
+            captureSettled("restyle-fidelity-search-$stage-failed.png")
+            val focus =
+                compose
+                    .onNodeWithTag("search-field")
+                    .fetchSemanticsNode()
+                    .config
+                    .getOrNull(SemanticsProperties.Focused)
+            scenario.onActivity {
+                val vm = androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java]
+                val request = vm.feeds[vm.tab.value].value.request
+                android.util.Log.i(
+                    "SearchEvidence",
+                    "stage=$stage focused=$focus " +
+                        "requestKeys=${(request as? JSONObject)?.keys()?.asSequence()?.toList()} " +
+                        "stringRequest=${request is String}",
+                )
+            }
+            throw error
         }
     }
 

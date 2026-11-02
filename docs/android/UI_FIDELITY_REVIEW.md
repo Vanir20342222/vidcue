@@ -175,3 +175,64 @@ Local revision 2 application checks pass: debug APK, instrumentation APK,
 21 JVM tests, lint. The final recording-only change is undergoing the same local
 checks before its full native CI run. All-history redacted scanning finds no
 leaks in 162 commits; new commits also receive CI secret checks.
+
+## Revision 2 retained result and revision 3 candidate
+
+Source `59950b76a5e7700d712f8db92c4735acca829193` (merge marker
+`874f9e675093f2bb1a4d32e6530b64dff36fe47d`) ran in
+[Android 41416245957](https://github.com/Vanir20342222/ytui/actions/runs/41416245957):
+**37 passes, five failures, one explicit public-YouTube skip**. The
+[retained artifact](https://github.com/Vanir20342222/ytui/actions/runs/41416245957/artifacts/13128382425)
+contains 222 PNGs, all 156 matrix captures with correct dimensions, and the longer
+actual motion recording. Rust/media: 367 passes, 31 explicit ignores; secret
+checks pass. Actual-window fixture starts: progressive cold/prepared 736/780 ms,
+indexed 621 ms, HLS cold/prepared 714/421 ms. No app ANR/Rust-panic markers.
+
+Native bright-video contrast now passes in both built-in light and dark; the
+shared transport ellipse is gone and actual seek arrows/amounts remain. The
+mini/focused decoder test passes. Queue menus preserve real boundary states,
+reorder and remove outcomes. Independent actual-capture review remains separate
+from these automatic results.
+
+The remaining failures are retained and being corrected without waivers:
+
+- Search exit still fails after explicit Leave/second Back. Revision 3 hoists the
+  editing state into the owner that draws the header, removing the asynchronous
+  child-to-parent Boolean relay. Result-mode derives from the existing current
+  request via a distinct Boolean flow. Both header/input use the same editing
+  state; no provider or request behavior changes. The native checks now also
+  require the field to be unfocused and retain a failure capture plus synthetic
+  focus/request-type diagnostics, without query/cookie values.
+- The 2x phone capture now shows complete words. Downloads nevertheless reports
+  width overflow with a 346px layout box and 414px available constraint. Revision
+  3 reserves each label's measured width plus rounding space on the actual Text
+  modifier, retaining the strict overflow/one-line checks and font scale. No
+  claim of a diagnosed fractional cause is substituted for the next native result.
+- Recording metadata fails with EACCES: screenrecord's shell-created file is not
+  readable by the app under scoped-storage ownership. Revision 3 records to a
+  disposable shell temp file, pipes its bytes into an app-owned retained copy,
+  reads metadata through its descriptor, and removes the shell temp file.
+- Wide-search setup times out in the decoded-cover helper. A displayed card can
+  expose only a clipped sliver of its artwork; captureToImage then changes the
+  quarter-image sample's meaning. Revision 3 tests fully visible covers against
+  the actual feed viewport, requires at least one inspected cover, keeps the
+  same saturation/15-second assertion and captures diagnostic output on failure.
+  Initial cover matchers are also scoped to feed cards so a retained dock cannot
+  satisfy or ambiguate feed decode checks.
+
+Revision 3 is a candidate pending local build/lint, native rerun and another
+independent screenshot/motion verdict. Exact reference matching remains blocked
+by the absent original images; fixtures are not public YouTube acceptance.
+
+The independent revision 2 judge inspected all 12 theme matrix contact sheets,
+full-size light/dark bright controls, queue/overflow, mini player, 2x phone and
+121 sampled motion frames. It accepts the corrected local transport discs,
+compact queue and complete timer-close recording, with no new high/medium visual
+finding in successful captures. Verdict remains **changes required** for the
+five failures; the persistent search exit is the actual UX blocker. Source audit
+finds no concrete regression in the revision 3 state hoisting, but does not claim
+it establishes the previous failure's cause. Actual unfocused/header assertions
+remain decisive. Local compilation caught a missing test extension import and
+lint rejected a direct initial StateFlow read in composition; both were corrected
+using the import and a remembered initial snapshot plus observed distinct flow,
+with no rule suppression or baseline update.

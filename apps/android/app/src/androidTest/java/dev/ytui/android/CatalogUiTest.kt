@@ -150,7 +150,11 @@ class CatalogUiTest {
         try {
             compose.waitUntil(15_000) {
                 compose
-                    .onAllNodesWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+                    .onAllNodes(
+                        hasTestTag("artwork-${cards.first().key}") and
+                            hasAnyAncestor(hasTestTag("media-card-${cards.first().key}")),
+                        useUnmergedTree = true,
+                    )
                     .fetchSemanticsNodes()
                     .isNotEmpty()
             }
@@ -170,7 +174,11 @@ class CatalogUiTest {
         compose.waitUntil(10_000) {
             val bitmap =
                 compose
-                    .onNodeWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+                    .onNode(
+                        hasTestTag("artwork-${cards.first().key}") and
+                            hasAnyAncestor(hasTestTag("media-card-${cards.first().key}")),
+                        useUnmergedTree = true,
+                    )
                     .captureToImage()
             val color = bitmap.toPixelMap()[bitmap.width / 2, bitmap.height / 4]
             color.red > color.green * 1.15f
@@ -986,6 +994,7 @@ class CatalogUiTest {
                 "restyle-fidelity-motion.mp4",
             )
         if (output.isFile) Assert.assertTrue(output.delete())
+        val recordingPath = "/data/local/tmp/ytui-fidelity-${android.os.Process.myPid()}.mp4"
         var recording: android.os.ParcelFileDescriptor? = null
         val previousClock = compose.mainClock.autoAdvance
         try {
@@ -1030,7 +1039,7 @@ class CatalogUiTest {
             compose.onNodeWithTag("mini-player").assertIsDisplayed()
             recording =
                 instrumentation.uiAutomation.executeShellCommand(
-                    "screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 30 ${output.absolutePath}"
+                    "screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 30 $recordingPath"
                 )
             // Drive the Compose animation clock in real-time while recording;
             // test auto-advancement would otherwise skip visible intermediate frames.
@@ -1098,6 +1107,12 @@ class CatalogUiTest {
             compose.waitUntil(35_000) {
                 device.executeShellCommand("pidof screenrecord").trim().isEmpty()
             }
+            // shell owns the recording. Transfer bytes through UiAutomation so
+            // the retained copy belongs to the app and is readable under FUSE.
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                    instrumentation.uiAutomation.executeShellCommand("cat $recordingPath")
+                )
+                .use { input -> output.outputStream().use { input.copyTo(it) } }
             Assert.assertTrue(
                 "Native screen recording must be retained",
                 output.isFile && output.length() > 10_000,
@@ -1136,6 +1151,7 @@ class CatalogUiTest {
         } finally {
             compose.mainClock.autoAdvance = previousClock
             recording?.close()
+            device.executeShellCommand("rm -f $recordingPath")
             for ((key, value) in scales) {
                 if (value.matches(Regex("[0-9]+(?:\\.[0-9]+)?")))
                     device.executeShellCommand("settings put global $key $value")
@@ -1184,12 +1200,15 @@ class CatalogUiTest {
     }
 
     private fun awaitDecodedCovers(cards: List<MediaCard>) {
-        compose.waitUntil(15_000) {
-            // Virtualized rows beyond the viewport are intentionally not loaded.
-            val visible =
-                cards.filter { compose.onNodeWithTag("media-card-${it.key}").isDisplayed() }
-            visible.isNotEmpty() &&
-                visible.all { media ->
+        var diagnostics = emptyList<String>()
+        try {
+            compose.waitUntil(15_000) {
+                val viewport = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                var inspected = 0
+                var decoded = true
+                val checks = mutableListOf<String>()
+                for (media in cards) {
+                    if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed()) continue
                     runCatching {
                             val node =
                                 compose.onNode(
@@ -1197,14 +1216,39 @@ class CatalogUiTest {
                                         hasAnyAncestor(hasTestTag("media-card-${media.key}")),
                                     useUnmergedTree = true,
                                 )
+                            val bounds = node.getUnclippedBoundsInRoot()
+                            // A partially visible virtualized row is not a full cover.
+                            // captureToImage clips it, changing the sample's coordinates.
+                            if (
+                                bounds.left < viewport.left ||
+                                    bounds.right > viewport.right ||
+                                    bounds.top < viewport.top ||
+                                    bounds.bottom > viewport.bottom
+                            ) {
+                                checks += "partial cover bounds=$bounds viewport=$viewport"
+                                return@runCatching
+                            }
+                            inspected++
                             val frame = node.captureToImage()
-                            // All original fixture covers have saturated warm/cool artwork;
-                            // a neutral placeholder cannot satisfy this actual-pixel check.
-                            val c = frame.toPixelMap()[frame.width / 2, frame.height / 4]
-                            maxOf(c.red, c.green, c.blue) - minOf(c.red, c.green, c.blue) > 0.12f
+                            val color = frame.toPixelMap()[frame.width / 2, frame.height / 4]
+                            val saturated =
+                                maxOf(color.red, color.green, color.blue) -
+                                    minOf(color.red, color.green, color.blue) > 0.12f
+                            decoded = decoded && saturated
+                            checks += "cover ${frame.width}x${frame.height} saturated=$saturated"
                         }
-                        .getOrDefault(false)
+                        .onFailure {
+                            decoded = false
+                            checks += "capture=${it.javaClass.simpleName}"
+                        }
                 }
+                diagnostics = checks
+                inspected > 0 && decoded
+            }
+        } catch (error: Throwable) {
+            captureSettled("restyle-fidelity-cover-failed.png")
+            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            throw error
         }
     }
 

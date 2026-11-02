@@ -213,10 +213,26 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    var searchFocused by remember { mutableStateOf(false) }
+    var searchFocused by remember(tab) { mutableStateOf(false) }
+    val searchRequestState =
+        remember(vm, tab) {
+            val feed = vm.feeds[tab]
+            val initial =
+                (feed.value.request as? JSONObject)?.has(
+                    if (tab == 3) "RadioSearch" else "Search"
+                ) == true
+            feed
+                .map {
+                    (it.request as? JSONObject)?.has(if (tab == 3) "RadioSearch" else "Search") ==
+                        true
+                }
+                .distinctUntilChanged() to initial
+        }
+    val searchResults =
+        key(tab) { searchRequestState.first.collectAsState(searchRequestState.second).value }
+    val searchMode = searchFocused || searchResults
     var dialog by rememberSaveable { mutableStateOf("") }
     var menu by remember { mutableStateOf(false) }
-    LaunchedEffect(tab) { searchFocused = false }
     // Imported documents can legitimately reuse a built-in name. Their paint
     // roles must remain exactly the imported values rather than the default preset.
     val neutralPreset = config.optString("theme", "system") != "custom"
@@ -279,14 +295,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         if (keyboardShowing) keyboard?.hide()
         else if (dialog.isNotBlank()) dialog = ""
         else if (playerOpen) vm.playerOpen.value = false
-        else if (searchFocused) {
+        else if (searchMode) {
             focusManager.clearFocus(force = true)
-            if (
-                (vm.feeds[tab].value.request as? JSONObject)?.has(
-                    if (tab == 3) "RadioSearch" else "Search"
-                ) == true
-            )
-                vm.back()
+            searchFocused = false
+            if (searchResults) vm.back()
         } else if (!vm.back()) activity.moveTaskToBack(true)
     }
     MaterialTheme(
@@ -316,7 +328,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     val tabletLayout = maxWidth >= 840.dp
                     Column(Modifier.fillMaxSize()) {
                         AnimatedVisibility(
-                            visible = !searchFocused,
+                            visible = !searchMode,
                             enter =
                                 if (config.optBoolean("reduced_motion")) EnterTransition.None
                                 else
@@ -435,6 +447,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 tab,
                                                 onAccount = { dialog = "account" },
                                                 onFeeds = { dialog = "feeds" },
+                                                searchActive = searchFocused,
                                                 onSearchFocus = { searchFocused = it },
                                             )
                                         }
@@ -658,18 +671,19 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val labelMeasurements =
         remember(measurer, labelStyle, density) {
-            tabs.map { (_, title, _) ->
-                measurer
-                    .measure(
-                        androidx.compose.ui.text.AnnotatedString(title),
-                        style = labelStyle.copy(fontWeight = FontWeight.Bold),
-                        softWrap = false,
-                    )
-                    .size
+            tabs.associate { (index, title, _) ->
+                index to
+                    measurer
+                        .measure(
+                            androidx.compose.ui.text.AnnotatedString(title),
+                            style = labelStyle.copy(fontWeight = FontWeight.Bold),
+                            softWrap = false,
+                        )
+                        .size
             }
         }
-    val widest = with(density) { labelMeasurements.maxOf { it.width }.toDp() + 2.dp }
-    val labelHeight = with(density) { labelMeasurements.maxOf { it.height }.toDp() + 2.dp }
+    val widest = with(density) { labelMeasurements.values.maxOf { it.width }.toDp() + 2.dp }
+    val labelHeight = with(density) { labelMeasurements.values.maxOf { it.height }.toDp() + 2.dp }
     @Composable
     fun Label(index: Int, title: String) {
         Text(
@@ -681,7 +695,12 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
             color =
                 if (tab == index) MaterialTheme.colorScheme.onBackground
                 else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("navigation-label-$index"),
+            modifier =
+                Modifier.widthIn(
+                        min =
+                            with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
+                    )
+                    .testTag("navigation-label-$index"),
         )
     }
     if (vertical) {
@@ -931,6 +950,7 @@ private fun BrowsePane(
     tab: Int,
     onAccount: () -> Unit,
     onFeeds: () -> Unit,
+    searchActive: Boolean,
     onSearchFocus: (Boolean) -> Unit,
 ) {
     val feed by vm.feeds[tab].collectAsState()
@@ -979,11 +999,9 @@ private fun BrowsePane(
         }
     var query by rememberSaveable(tab) { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
-    var searchActive by remember { mutableStateOf(false) }
     val searchKey = if (tab == 3) "RadioSearch" else "Search"
     val searchResults = (feed.request as? JSONObject)?.has(searchKey) == true
     val searchMode = searchActive || searchResults
-    LaunchedEffect(searchMode) { onSearchFocus(searchMode) }
     LaunchedEffect(feed.request) {
         (feed.request as? JSONObject)
             ?.optString(searchKey)
@@ -1051,7 +1069,7 @@ private fun BrowsePane(
                 MediaIconButton(Glyph.Back, "Leave search") {
                     keyboard?.hide()
                     focusManager.clearFocus(force = true)
-                    searchActive = false
+                    onSearchFocus(false)
                     if (searchResults) vm.back()
                 }
             TextField(
@@ -1061,7 +1079,7 @@ private fun BrowsePane(
                 // cap it and center it when the pane is wider than the cap.
                 Modifier.weight(1f)
                     .focusRequester(focus)
-                    .onFocusChanged { searchActive = it.isFocused }
+                    .onFocusChanged { onSearchFocus(it.isFocused) }
                     .testTag("search-field"),
                 placeholder = {
                     Text(
