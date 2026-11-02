@@ -1002,3 +1002,60 @@ async fn background_watch_obeys_provider_retry_after() {
     );
     app.shutdown().await;
 }
+
+#[tokio::test]
+async fn playing_a_listed_video_or_music_entry_lets_next_continue_through_the_list() {
+    let (mut app, mut received, _temp) = fixture();
+    app.demo = false;
+    let entry = |id: &str, kind| Media {
+        id: id.into(),
+        url: format!("https://example.test/{id}"),
+        kind,
+        ..Default::default()
+    };
+    // Videos tab: Next previously did nothing because only the opened video was queued.
+    app.tab = 1;
+    app.tabs[1].page.items = vec![
+        entry("v1", MediaKind::Video),
+        entry("v2", MediaKind::Video),
+        entry("chan", MediaKind::Channel),
+        entry("v3", MediaKind::Video),
+    ];
+    app.play(app.tabs[1].page.items[0].clone());
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, audio: false }) if media.id == "v1")
+    );
+    app.action(Action::NextTrack);
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, .. }) if media.id == "v2")
+    );
+    app.action(Action::NextTrack);
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, .. }) if media.id == "v3"),
+        "collections are not queued as playable entries"
+    );
+    app.action(Action::NextTrack);
+    assert!(received.try_recv().is_err());
+    assert!(app.status.contains("End of queue"));
+
+    // Music tab: video-kind results play as audio and must also be queued.
+    app.tab = 2;
+    app.tabs[2].page.items = vec![
+        entry("s1", MediaKind::Song),
+        entry("mv", MediaKind::Video),
+        entry("s2", MediaKind::Song),
+    ];
+    app.play(app.tabs[2].page.items[0].clone());
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, .. }) if media.id == "s1")
+    );
+    app.action(Action::NextTrack);
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, audio: true }) if media.id == "mv")
+    );
+    app.action(Action::PreviousTrack);
+    assert!(
+        matches!(received.recv().await, Some(PlayerCommand::Play { media, .. }) if media.id == "s1")
+    );
+    app.shutdown().await;
+}
