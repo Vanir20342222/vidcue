@@ -30,8 +30,13 @@ import androidx.media3.ui.PlayerView
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
-internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit)? = null) {
+internal fun VideoSurface(
+    modifier: Modifier = Modifier,
+    onCollapse: (() -> Unit)? = null,
+    onSettings: (() -> Unit)? = null,
+) {
     val collapse by rememberUpdatedState(onCollapse)
+    val settings by rememberUpdatedState(onSettings)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
     AndroidView(
@@ -45,7 +50,8 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
                         !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
                     )
                     setShowSubtitleButton(true)
-                    setShowShuffleButton(true)
+                    // Queue modes stay in the app's transport; the video chrome is for watching.
+                    setShowShuffleButton(false)
                     setFullscreenButtonClickListener {
                         context.startActivity(
                             Intent(context, FullscreenActivity::class.java)
@@ -68,6 +74,16 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
                 visibility =
                     if (collapse == null) android.view.View.GONE else android.view.View.VISIBLE
                 setOnClickListener { collapse?.invoke() }
+            }
+            // The app's own options (quality, speed, volume, tracks, sleep, segments)
+            // replace Media3's reduced settings popup.
+            view.findViewById<android.view.View>(R.id.ytui_settings)?.apply {
+                visibility =
+                    if (settings == null) android.view.View.GONE else android.view.View.VISIBLE
+                setOnClickListener {
+                    view.hideController()
+                    settings?.invoke()
+                }
             }
             val actual = PlaybackService.current?.controlsPlayer
             (view.tag as VisibleFrameTracker).bind(actual)
@@ -274,6 +290,7 @@ internal fun FocusedPlayer(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
                             .aspectRatio(16f / 9f),
                         onCollapse = minimize,
+                        onSettings = onMore,
                     )
                 else if (player.video) {
                     // The root's distinct mode flow can lag the player snapshot
@@ -328,20 +345,24 @@ internal fun FocusedPlayer(
     }
 }
 
-/** Inline queue under the video; full management stays in the queue sheet. */
+/**
+ * Inline queue under the video and in the fullscreen options panel; full management stays in the
+ * queue sheet (`onManage == null` hides that entry).
+ */
 @Composable
-private fun UpNext(
+internal fun UpNext(
     queue: List<MediaCard>,
     playingUrl: String?,
     thumbnails: Boolean,
     showCreator: Boolean,
     modifier: Modifier,
-    onManage: () -> Unit,
+    onManage: (() -> Unit)?,
+    showHeader: Boolean = true,
     play: (MediaCard) -> Unit,
 ) {
     Column(modifier.fillMaxWidth().testTag("up-next")) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
+        if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        if (showHeader) Row(
             Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -351,7 +372,7 @@ private fun UpNext(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
             )
-            if (queue.isNotEmpty())
+            if (queue.isNotEmpty() && onManage != null)
                 TextButton(
                     onManage,
                     Modifier.heightIn(min = 48.dp),
