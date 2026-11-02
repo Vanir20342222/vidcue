@@ -181,3 +181,16 @@ and byte-cache readiness. The strict cold-card test still forces a fresh service
 it is not changed into a prewarmed-service test. A separate lifecycle test checks
 idle preparation, absent playback/notification and release on activity close.
 This requires new native qualification and a physical Best-quality report.
+
+
+## Reused-connection recovery
+
+A deterministic local socket probe reproduced a transport regression: with
+connection recovery disabled, a server closing the second request on a reused
+connection produced IOException after two requests; enabling OkHttp connection
+recovery completed the same GET on a fresh connection (three total requests,
+about 3 ms recovery in that host sample). HTTP429 with Retry-After still made
+exactly one request. The candidate enables connection recovery and adds both
+a JVM test against the production client builder and an Android Media3-adapter
+case. This prevents passing stale-socket failures to Media3's slower load-retry
+backoff; it does not retry HTTP429 or change extraction cooldowns.

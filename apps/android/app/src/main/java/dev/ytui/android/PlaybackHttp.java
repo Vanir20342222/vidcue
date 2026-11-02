@@ -38,7 +38,7 @@ final class PlaybackHttp {
             .readTimeout(12, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(false)
-            .retryOnConnectionFailure(false)
+            .retryOnConnectionFailure(true)
             .cookieJar(CookieJar.NO_COOKIES);
     if (proxy != null) builder.proxySelector(proxy);
     return builder;

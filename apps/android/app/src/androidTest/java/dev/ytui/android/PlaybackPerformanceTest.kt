@@ -131,6 +131,39 @@ class PlaybackPerformanceTest {
     }
 
     @Test
+    fun pooledSocketFailureRecoversThroughMedia3But429DoesNotRetry() {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("first"))
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+            server.enqueue(MockResponse().setBody("recovered"))
+            server.enqueue(MockResponse().setResponseCode(429).addHeader("Retry-After", "30"))
+            val factory = PlaybackHttp.factory(emptyMap())
+            fun fetch(path: String) =
+                read(factory.createDataSource(), DataSpec(Uri.parse(server.url(path).toString())))
+            Assert.assertEquals("first", String(fetch("/first")))
+            Assert.assertEquals("recovered", String(fetch("/next")))
+            Assert.assertEquals(3, server.requestCount)
+            Assert.assertEquals(0, server.takeRequest(2, TimeUnit.SECONDS)!!.sequenceNumber)
+            Assert.assertEquals(1, server.takeRequest(2, TimeUnit.SECONDS)!!.sequenceNumber)
+            Assert.assertEquals(0, server.takeRequest(2, TimeUnit.SECONDS)!!.sequenceNumber)
+            val error =
+                Assert.assertThrows(
+                    androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException::class
+                        .java
+                ) {
+                    fetch("/limited")
+                }
+            Assert.assertEquals(429, error.responseCode)
+            Assert.assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+            Assert.assertNull(
+                "Rate limits must not be retried",
+                server.takeRequest(200, TimeUnit.MILLISECONDS),
+            )
+            Assert.assertEquals(4, server.requestCount)
+        }
+    }
+
+    @Test
     fun aFactoryCreatedBeforeProxyChangeUsesTheNewRoute() {
         val factory = PlaybackHttp.factory(emptyMap())
         MockWebServer().use { proxy ->
