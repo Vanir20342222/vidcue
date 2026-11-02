@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -63,6 +64,7 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
             view.findViewById<android.view.View>(R.id.ytui_collapse)?.apply {
+                tag = "panel-close" // Native View tag; Compose tag remains on music/modal chrome.
                 visibility =
                     if (collapse == null) android.view.View.GONE else android.view.View.VISIBLE
                 setOnClickListener { collapse?.invoke() }
@@ -108,58 +110,80 @@ internal fun FocusedPlayer(
         }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("focused-player")) {
         val landscape = maxWidth > maxHeight * 1.25f
+        val portraitVideoHeight =
+            minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
         @Composable
         fun Controls(modifier: Modifier) {
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
                     .then(
-                        if (LocalDensity.current.fontScale > 1.3f)
+                        if (player.video || LocalDensity.current.fontScale > 1.3f)
                             Modifier.verticalScroll(rememberScrollState())
                         else Modifier
                     ),
                 verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
             ) {
-                Text(
-                    player.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (
-                    mobile.optBoolean("show_channel", true) ||
-                        player.media?.optBoolean("live") == true
-                )
+                Column(
+                    Modifier.fillMaxWidth()
+                        .then(
+                            if (player.video)
+                                Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss)
+                            else Modifier
+                        ),
+                    verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
+                ) {
                     Text(
-                        player.value.optString("station").ifBlank {
-                            player.media?.optString("creator") ?: ""
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
+                        player.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (
+                        mobile.optBoolean("show_channel", true) ||
+                            player.media?.optBoolean("live") == true
+                    )
+                        Text(
+                            player.value.optString("station").ifBlank {
+                                player.media?.optString("creator") ?: ""
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
                 if (player.video) player.media?.let { MediaInformation(it, mobile) }
                 player.value
                     .optString("error")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
-                    if (player.video)
-                        MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
-                            context.startActivity(
-                                Intent(context, FullscreenActivity::class.java)
-                                    .putExtra("reduced_motion", config.optBoolean("reduced_motion"))
-                            )
-                        }
-                    MediaIconButton(
-                        Glyph.More,
-                        "Playback options",
-                        "player-options",
-                        action = onMore,
-                    )
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    Row(
+                        if (player.video && maxWidth < 144.dp)
+                            Modifier.horizontalScroll(rememberScrollState()).widthIn(min = 144.dp)
+                        else Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
+                        if (player.video)
+                            MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
+                                context.startActivity(
+                                    Intent(context, FullscreenActivity::class.java)
+                                        .putExtra(
+                                            "reduced_motion",
+                                            config.optBoolean("reduced_motion"),
+                                        )
+                                )
+                            }
+                        MediaIconButton(
+                            Glyph.More,
+                            "Playback options",
+                            "player-options",
+                            action = onMore,
+                        )
+                    }
                 }
                 if (!player.video) PlayerSeek(vm, player)
                 if (!player.video)
@@ -235,7 +259,19 @@ internal fun FocusedPlayer(
                 }
             }
         }
-        if (landscape)
+        if (player.video) {
+            if (landscape)
+                Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Art(Modifier.weight(2f).fillMaxHeight())
+                    Controls(Modifier.weight(1f).fillMaxHeight())
+                }
+            else
+                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Reserve a usable details viewport even in a short window.
+                    Art(Modifier.fillMaxWidth().height(portraitVideoHeight))
+                    Controls(Modifier.fillMaxWidth().weight(1f))
+                }
+        } else if (landscape)
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                 Art(Modifier.weight(1f).fillMaxHeight())
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))

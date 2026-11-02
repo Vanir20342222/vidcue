@@ -441,6 +441,7 @@ class NativeUiTest {
     private fun awaitBrowsingHeader(stage: String) {
         try {
             compose.onNodeWithTag("search-field").assertIsNotFocused()
+            compose.onNodeWithTag("feed-list").assertIsFocused()
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
             }

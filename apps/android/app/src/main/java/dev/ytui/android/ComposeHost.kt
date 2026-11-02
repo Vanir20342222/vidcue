@@ -53,7 +53,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -66,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -211,7 +211,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val ready by vm.ready.collectAsState()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val keyboard = LocalSoftwareKeyboardController.current
-    val focusManager = LocalFocusManager.current
+    val browseFocus = remember(tab) { FocusRequester() }
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var searchFocused by remember(tab) { mutableStateOf(false) }
     val searchRequestState =
@@ -296,8 +296,9 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         else if (dialog.isNotBlank()) dialog = ""
         else if (playerOpen) vm.playerOpen.value = false
         else if (searchMode) {
-            focusManager.clearFocus(force = true)
+            browseFocus.requestFocus()
             searchFocused = false
+            keyboard?.hide()
             if (searchResults) vm.back()
         } else if (!vm.back()) activity.moveTaskToBack(true)
     }
@@ -448,6 +449,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 onAccount = { dialog = "account" },
                                                 onFeeds = { dialog = "feeds" },
                                                 searchActive = searchFocused,
+                                                browseFocus = browseFocus,
                                                 onSearchFocus = { searchFocused = it },
                                             )
                                         }
@@ -501,6 +503,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             "Now playing",
                             { vm.playerOpen.value = false },
                             full = true,
+                            showHeader = !videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.optBoolean("gestures", true),
                         ) {
@@ -685,12 +688,13 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
     val widest = with(density) { labelMeasurements.values.maxOf { it.width }.toDp() + 2.dp }
     val labelHeight = with(density) { labelMeasurements.values.maxOf { it.height }.toDp() + 2.dp }
     @Composable
-    fun Label(index: Int, title: String) {
+    fun Label(index: Int, title: String, alignStart: Boolean = false) {
         Text(
             title,
             style = labelStyle,
             maxLines = 1,
             softWrap = false,
+            textAlign = if (alignStart) TextAlign.Start else TextAlign.Center,
             fontWeight = if (tab == index) FontWeight.Bold else FontWeight.Normal,
             color =
                 if (tab == index) MaterialTheme.colorScheme.onBackground
@@ -700,6 +704,7 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                         min =
                             with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
                     )
+                    .fillMaxWidth()
                     .testTag("navigation-label-$index"),
         )
     }
@@ -773,7 +778,7 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                                         ) {
                                             MediaIcon(icon, tint = tint, filled = tab == index)
-                                            Label(index, title)
+                                            Label(index, title, alignStart = true)
                                         }
                                     else
                                         Column(
@@ -825,55 +830,57 @@ internal fun Panel(
     page: Boolean = false,
     headerBack: (() -> Unit)? = null,
     headerBackTag: String = "",
+    showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     @Composable
     fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
         Column(modifier.testTag("panel-body")) {
-            Row(
-                Modifier.fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .padding(horizontal = 8.dp)
-                    .testTag("panel-header")
-                    .pointerInput(full, swipeToClose) {
-                        if (full && swipeToClose) {
-                            var distance = 0f
-                            detectVerticalDragGestures(
-                                onDragStart = { distance = 0f },
-                                onVerticalDrag = { change, amount ->
-                                    distance += amount
-                                    change.consume()
-                                },
-                                onDragEnd = { if (distance > 48.dp.toPx()) close() },
-                            )
-                        }
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (full || page)
-                    MediaIconButton(
-                        if (full) Glyph.Down else Glyph.Back,
-                        if (full) "Minimize player"
-                        else if (headerBack != null) "All settings" else "Close",
-                        if (headerBack != null) headerBackTag else "panel-close",
-                        action = headerBack ?: dismiss,
+            if (showHeader)
+                Row(
+                    Modifier.fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .padding(horizontal = 8.dp)
+                        .testTag("panel-header")
+                        .pointerInput(full, swipeToClose) {
+                            if (full && swipeToClose) {
+                                var distance = 0f
+                                detectVerticalDragGestures(
+                                    onDragStart = { distance = 0f },
+                                    onVerticalDrag = { change, amount ->
+                                        distance += amount
+                                        change.consume()
+                                    },
+                                    onDragEnd = { if (distance > 48.dp.toPx()) close() },
+                                )
+                            }
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (full || page)
+                        MediaIconButton(
+                            if (full) Glyph.Down else Glyph.Back,
+                            if (full) "Minimize player"
+                            else if (headerBack != null) "All settings" else "Close",
+                            if (headerBack != null) headerBackTag else "panel-close",
+                            action = headerBack ?: dismiss,
+                        )
+                    Text(
+                        title,
+                        Modifier.weight(1f).padding(horizontal = 8.dp),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
                     )
-                Text(
-                    title,
-                    Modifier.weight(1f).padding(horizontal = 8.dp),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                if (!full && (!page || headerBack != null))
-                    MediaIconButton(Glyph.Close, "Close", "panel-close", action = dismiss)
-            }
+                    if (!full && (!page || headerBack != null))
+                        MediaIconButton(Glyph.Close, "Close", "panel-close", action = dismiss)
+                }
             Column(
                 Modifier.weight(1f, fill = full || page)
                     .fillMaxWidth()
                     .then(if (scroll) Modifier.verticalScroll(rememberScrollState()) else Modifier)
                     .padding(
                         horizontal = if (full) 0.dp else MediaTokens.textInset,
-                        vertical = 8.dp,
+                        vertical = if (full && !showHeader) 0.dp else 8.dp,
                     ),
                 verticalArrangement =
                     Arrangement.spacedBy(
@@ -951,6 +958,7 @@ private fun BrowsePane(
     onAccount: () -> Unit,
     onFeeds: () -> Unit,
     searchActive: Boolean,
+    browseFocus: FocusRequester,
     onSearchFocus: (Boolean) -> Unit,
 ) {
     val feed by vm.feeds[tab].collectAsState()
@@ -1009,7 +1017,6 @@ private fun BrowsePane(
             ?.let { query = it }
     }
     val focus = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = feed.scrollIndex)
     LaunchedEffect(grid) {
         snapshotFlow { grid.firstVisibleItemIndex }
@@ -1067,9 +1074,9 @@ private fun BrowsePane(
         ) {
             if (searchMode)
                 MediaIconButton(Glyph.Back, "Leave search") {
-                    keyboard?.hide()
-                    focusManager.clearFocus(force = true)
+                    browseFocus.requestFocus()
                     onSearchFocus(false)
+                    keyboard?.hide()
                     if (searchResults) vm.back()
                 }
             TextField(
@@ -1169,7 +1176,9 @@ private fun BrowsePane(
                         alpha = entry.value
                         translationY = (1f - entry.value) * 32.dp.toPx()
                     }
-                    .testTag("feed-list"),
+                    .testTag("feed-list")
+                    .focusRequester(browseFocus)
+                    .focusable(),
             state = grid,
             contentPadding =
                 PaddingValues(

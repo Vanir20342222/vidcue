@@ -236,3 +236,89 @@ remain decisive. Local compilation caught a missing test extension import and
 lint rejected a direct initial StateFlow read in composition; both were corrected
 using the import and a remembered initial snapshot plus observed distinct flow,
 with no rule suppression or baseline update.
+
+## Revision 4 watch-layout candidate
+
+The independent judge identified two additional medium presentation defects in
+actual revision 2 video captures: a generic 56dp Now playing header duplicated
+the native overlay's collapse control, and the weighted artwork container left
+an approximately 1200px portrait gap before the title. The written watch-page
+reference puts details directly after video. This is a concrete hierarchy/layout
+correction; it does not establish a literal match to the absent original images.
+
+The video-only candidate omits the outer header and extra top padding while
+keeping the same activity window and safe insets. Portrait video retains 16:9
+and full width when height permits, reserving a nonzero details viewport in short
+windows. Wide layouts allocate two-thirds to video and one-third to top-aligned
+scrollable details. Video is bounded by available height and keeps 16:9. The
+music branches, header, styles and spacing remain equivalent. Video action rows
+keep their normal edge-to-edge distribution; only panes narrower than three
+48dp buttons scroll horizontally.
+
+The watch title/creator block is the meaningful `panel-header` target, at least
+48dp high, and retains downward dismiss with the existing gesture preference.
+It does not intercept the native video's tap/seek controls. The actual native
+collapse button keeps resource ID `ytui_collapse`, its Minimize player spoken
+label and 48dp target. Its Android `View.tag` is `panel-close`; that is explicitly
+**not equivalent** to a Compose `Modifier.testTag`. Compose `panel-close` remains
+on music/modal controls. Video automation now targets the real native resource
+ID rather than adding a hidden compatibility element or duplicate action.
+
+New native checks cover phone/tablet at normal and 2x fonts: real decoded RGB
+pixels, 16:9 bounds, video beginning at the safe pane top, a small video-to-title
+gap, wide split and full-width action distribution. Actual native collapse,
+title swipe, gestures disabled and Android Back must retain decoder generation
+and ongoing playback. Existing native fullscreen/return tests also remain.
+These checks and new captures must pass before accepting this candidate. Local
+APK/JVM/lint checks pass before the final additional action-geometry assertions;
+that final instrumentation build is pending.
+
+## Comparative handover — owner requested PR only, no merge
+
+Further implementation and integration stop at the owner's 2026-11-02 request:
+push the current candidate so the other agent can decide which changes to keep.
+This branch/PR must remain unmerged. The parallel branch currently visible is
+`claude/app-ui-ux-redesign-739q3a`; compare overlapping UI changes rather than
+assuming this candidate replaces that work.
+
+Retained revision 3 source `e11dd04a40341a16b5232a057fb3fb6fc47e49e7`, merge
+`2fb361e9bda717ddb7c65bb1169e166feea283b2`,
+[Android 41419655053](https://github.com/Vanir20342222/ytui/actions/runs/41419655053):
+**37 native passes, five failures, one public-YouTube skip**. The
+[artifact](https://github.com/Vanir20342222/ytui/actions/runs/41419655053/artifacts/13129079828)
+retains actual screenshots, recording and logs. Recording ownership and wide-cover
+checks now pass. Remaining failures: offline playlist rename persistence timeout,
+strict Downloads layout overflow despite legible pixels, both search-exit focus
+assertions, and HLS actual-window confirmation at 2001 ms. Tracked HLS first frame
+was 1970 ms; the unchanged screenshot gate is 2000 ms, so this remains a failure.
+Rust/media: 367 passes, 31 explicit ignores; secret checks pass.
+
+The final unqualified candidate additionally:
+
+- Transfers search focus explicitly to the existing feed grid on Leave/Back and
+  asserts field unfocused, grid focused and toolbar restored. This addresses a
+  concrete focus-retention symptom; keyboard-mode auto-refocus is a hypothesis,
+  not an established diagnosis. It adds no dummy focus sink.
+- Allocates the whole navigation label cell, centering normal/rail/stacked labels
+  and left-aligning horizontal accessible rows. Strict overflow/one-line checks
+  remain; paragraph/intrinsic/line-right values are logged on failure.
+- Ends keyboard editing before the playlist test's actual Rename tap, retains the
+  real Rust persistence check and original deadline. The previous failure is
+  retained; direct tap while IME is relocating remains a separate interaction
+  concern to verify, not claimed fixed by this driver sequence.
+- Includes the video-only watch layout and native interaction checks above.
+  The action-row concern is addressed by scrolling only below three 48dp targets.
+
+Final local candidate checks pass: debug APK, instrumentation APK, **21 JVM tests**
+and lint; `git diff --check` passes. The final native rerun and independent actual
+capture review have **not** run. Do not treat source review, the earlier revision
+captures, or a locally built APK as acceptance of this final candidate. Original
+reference images remain missing, so no literal 1:1/perfection claim is made.
+
+Suggested separable review areas: neutral sheets/queue and settings hierarchy;
+measured accessible navigation; native local transport backing/contrast;
+search-focus ownership/destination; video watch geometry and native collapse;
+fixture/evidence collection. `ComposeHost.kt`, `FocusedPlayer.kt` and native tests
+are likely overlap points with the parallel branch. The two additive playback
+status booleans remain the only service-snapshot extension; Rust/provider/network/
+cache/extraction behavior is unchanged by this branch.
