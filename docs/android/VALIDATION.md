@@ -756,3 +756,33 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 ## CI layout change, 2026-11-02 (M9)
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
+
+## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
+
+Implemented (Android UI only; desktop and shared palettes unchanged):
+
+- Motion settings under Settings → Appearance → Motion: animation style
+  (smooth/snappy/bouncy/gentle), animation speed (50–200 %), animated cards and
+  haptic feedback. All Compose transitions read `Motion` (`Motion.kt`); the shared
+  "Reduced motion" setting still turns every animation into an instant change.
+- Smoother transitions: finger-following drag-to-minimize for the music player,
+  direction-aware feed slide when swiping tabs/categories, player open/close with
+  slide+scale, staggered card entry, press-in card feedback, artwork fade-in,
+  animated play/pause glyph and a mini-player progress bar that glides between
+  position snapshots (seeks and track changes still jump).
+- New gestures, each with its own toggle under Settings → Appearance → Gestures
+  (behind the existing "Swipe gestures" master switch): mini player swipe
+  (sideways next/previous, up to open, down to stop); swipe music artwork for
+  next/previous; double-tap music artwork to pause; video double-tap centre to
+  pause (left/right still seek); press-and-hold for temporary fast playback
+  (`speed_hold`, never saved as the user's speed; rate selectable 1.25–3×);
+  video vertical swipe for brightness (left) and media volume (right), restoring
+  system brightness when the video view leaves; pinch to zoom/fit video.
+- The native video surface is never moved by a Compose graphics layer; video
+  minimize recognises the swipe without following the finger.
+
+Checks: JVM unit tests `MotionTest` cover speed/style scaling, clamping and
+reduced-motion snapping. No Android SDK was available in the authoring
+container, so compilation and emulator/physical-device behaviour of the new
+gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
+Tab S9) are not yet qualified and must be checked before release.
