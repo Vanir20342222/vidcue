@@ -1030,7 +1030,7 @@ class CatalogUiTest {
             compose.onNodeWithTag("mini-player").assertIsDisplayed()
             recording =
                 instrumentation.uiAutomation.executeShellCommand(
-                    "screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 15 ${output.absolutePath}"
+                    "screenrecord --size 720x1600 --bit-rate 2000000 --time-limit 30 ${output.absolutePath}"
                 )
             // Drive the Compose animation clock in real-time while recording;
             // test auto-advancement would otherwise skip visible intermediate frames.
@@ -1076,6 +1076,13 @@ class CatalogUiTest {
             mark("close timer sheet")
             compose.onNodeWithContentDescription("Close").performClick()
             frames(600)
+            compose.onNodeWithText("Cancel timer").assertDoesNotExist()
+            mark("timer dismissed")
+            Assert.assertTrue(
+                "Recording must still cover the final closed sheet state",
+                device.executeShellCommand("pidof screenrecord").trim().isNotEmpty(),
+            )
+            frames(400)
             scenario.onActivity {
                 Assert.assertEquals(
                     "UI transitions must retain the actual decoder",
@@ -1088,7 +1095,7 @@ class CatalogUiTest {
                 MediaRuntimeTest.status().optBoolean("playing"),
             )
             compose.mainClock.autoAdvance = previousClock
-            compose.waitUntil(25_000) {
+            compose.waitUntil(35_000) {
                 device.executeShellCommand("pidof screenrecord").trim().isEmpty()
             }
             Assert.assertTrue(

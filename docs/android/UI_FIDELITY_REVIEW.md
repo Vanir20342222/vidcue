@@ -121,8 +121,9 @@ do not qualify public YouTube or visual perfection.
 The failures remain recorded rather than waived:
 
 - Large-text navigation reports overflow before the original capture point.
-  The next candidate measures the same ambient-merged label style that Text
-  draws, including inherited letter spacing, plus rounding space. It captures
+  The next candidate measures one explicitly resolved label style for measurement and drawing, including
+  letter spacing and rounding space. Cell minimum heights also derive from the
+  measured full-scale label height, preserving icon/gap/padding room. It captures
   the screen before asserting and reports text, constraints and overflow axis.
 - Both search Back checks time out waiting for the ordinary header. The next
   candidate separates soft-keyboard dismissal from leaving search, reads actual
@@ -160,3 +161,17 @@ states are retained. Drivers now open the intended menu before checking the
 same real Rust reorder/remove outcomes and capture its expanded state. This is
 a deliberate presentation change to the previous always-visible action strip,
 not a relaxed queue assertion.
+
+The motion judge sampled 50 frames from the actual 12.52-second revision 1 clip:
+player expansion, swipe/chevron minimization and timer opening showed no obvious
+blank frame/bounce, but the clip ended before dismissal. Revision 2 reserves a
+30-second recording budget, asserts the timer is absent while screenrecord is
+still running, retains a settled interval after that state, and writes action
+timestamps via the file-descriptor metadata path. The longer recording wait is
+an evidence-collection timeout; all media-start deadlines remain 2000 ms.
+The cloud recording's variable frame rate is not evidence of physical 60fps.
+
+Local revision 2 application checks pass: debug APK, instrumentation APK,
+21 JVM tests, lint. The final recording-only change is undergoing the same local
+checks before its full native CI run. All-history redacted scanning finds no
+leaks in 162 commits; new commits also receive CI secret checks.

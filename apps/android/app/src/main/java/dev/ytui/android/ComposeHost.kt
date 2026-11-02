@@ -656,23 +656,20 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
     // ambient style. Measure that same resolved style at the user's font scale.
     val labelStyle = LocalTextStyle.current.merge(MaterialTheme.typography.labelMedium)
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-    val widest =
+    val labelMeasurements =
         remember(measurer, labelStyle, density) {
-            with(density) {
-                tabs
-                    .maxOf { (_, title, _) ->
-                        measurer
-                            .measure(
-                                androidx.compose.ui.text.AnnotatedString(title),
-                                style = labelStyle.copy(fontWeight = FontWeight.Bold),
-                                softWrap = false,
-                            )
-                            .size
-                            .width
-                    }
-                    .toDp() + 2.dp
+            tabs.map { (_, title, _) ->
+                measurer
+                    .measure(
+                        androidx.compose.ui.text.AnnotatedString(title),
+                        style = labelStyle.copy(fontWeight = FontWeight.Bold),
+                        softWrap = false,
+                    )
+                    .size
             }
         }
+    val widest = with(density) { labelMeasurements.maxOf { it.width }.toDp() + 2.dp }
+    val labelHeight = with(density) { labelMeasurements.maxOf { it.height }.toDp() + 2.dp }
     @Composable
     fun Label(index: Int, title: String) {
         Text(
@@ -709,7 +706,10 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                             selectedTextColor = MaterialTheme.colorScheme.onBackground,
                         ),
                     modifier =
-                        Modifier.fillMaxWidth().padding(vertical = 8.dp).testTag("tab-$index"),
+                        Modifier.fillMaxWidth()
+                            .heightIn(min = maxOf(80.dp, labelHeight + 48.dp))
+                            .padding(vertical = 8.dp)
+                            .testTag("tab-$index"),
                 )
             }
         }
@@ -730,7 +730,12 @@ private fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = f
                             row.forEach { (index, title, icon) ->
                                 Box(
                                     Modifier.weight(1f)
-                                        .heightIn(min = if (horizontalCells) 64.dp else 80.dp)
+                                        .heightIn(
+                                            min =
+                                                if (horizontalCells)
+                                                    maxOf(64.dp, labelHeight + 16.dp)
+                                                else maxOf(80.dp, labelHeight + 44.dp)
+                                        )
                                         .selectable(
                                             tab == index,
                                             role = Role.Tab,
