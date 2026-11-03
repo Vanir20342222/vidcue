@@ -34,6 +34,21 @@ pub enum PlayerCommand {
         media: Media,
         audio: bool,
     },
+    /// Plays a saved local copy of `media` (Android: "Prefer saved offline media").
+    /// Status, history and queue identity keep the original media; mpv opens `path`.
+    PlayLocal {
+        media: Media,
+        audio: bool,
+        path: std::path::PathBuf,
+        seconds: Option<f64>,
+    },
+    /// Resolves `media` in the background so a later Play starts from the cached
+    /// streams (Android: "Preload the next item"). Memory-only; replaced by the next
+    /// Prepare and dropped on settings/account changes.
+    Prepare {
+        media: Media,
+        audio: bool,
+    },
     Configure(Box<Config>),
     Preview(Media),
     ClosePreview,
@@ -275,6 +290,40 @@ struct Launch<'a> {
     position: Option<f64>,
     preferences: &'a Preferences,
     streams: Arc<crate::cache::ResponseCache<crate::native::Resolved>>,
+    /// Local file to open instead of `media.url`.
+    source: Option<String>,
+}
+/// How long a resolved stream may be reused. Signed URLs live far longer; a short
+/// window keeps formats and account state fresh.
+const STREAM_TTL: Duration = Duration::from_secs(120);
+/// Native resolution options and the stream-cache key shared by Play and Prepare.
+fn native_request(
+    config: &Config,
+    media: &Media,
+    audio: bool,
+    preview: bool,
+) -> Result<(ytui_core::DownloadOptions, String)> {
+    let mut options = config.download.clone();
+    options.audio = audio;
+    if preview {
+        options.quality = "360".into();
+        options.format_selector = None;
+    }
+    let key = serde_json::to_string(&(
+        &media.url,
+        audio,
+        &options.quality,
+        &config.proxy,
+        &config.native_js_runtime,
+        &config.ffmpeg,
+        &options.format_selector,
+    ))?;
+    Ok((options, key))
+}
+fn socks_proxy(config: &Config) -> bool {
+    config.proxy.as_deref().is_some_and(|proxy| {
+        url::Url::parse(proxy).is_ok_and(|url| url.scheme().starts_with("socks"))
+    })
 }
 async fn start(
     config: &Config,
@@ -290,15 +339,12 @@ async fn start(
         position,
         preferences,
         streams,
+        source,
     } = launch;
-    let local = Path::new(&media.url).is_file();
+    let target = source.unwrap_or_else(|| media.url.clone());
+    let local = Path::new(&target).is_file();
     ensure!(
-        local
-            || !config
-                .proxy
-                .as_deref()
-                .is_some_and(|proxy| url::Url::parse(proxy)
-                    .is_ok_and(|url| url.scheme().starts_with("socks"))),
+        local || !socks_proxy(config),
         "mpv playback cannot use a SOCKS proxy directly. Use an HTTP(S) proxy or your VPN's system routing; SOCKS browsing/downloads remain supported. No direct connection was attempted"
     );
     let youtube = if local {
@@ -377,7 +423,7 @@ async fn start(
         args.push(format!("--http-proxy={proxy}"));
     }
     args.push("--".into());
-    args.push(media.url.clone());
+    args.push(target);
     let cancel = CancellationToken::new();
     let token = cancel.clone();
     let spec = ProcessSpec::new(&config.mpv, args, if preview { 45 } else { 24 * 60 * 60 });
@@ -390,23 +436,9 @@ async fn start(
     let task = tokio::spawn(async move {
         let fallback_spec = (youtube && config.playback_backend == "auto").then(|| spec.clone());
         let spec = if youtube && config.playback_backend != "yt-dlp" {
-            let mut options = config.download.clone();
-            options.audio = audio;
-            if preview {
-                options.quality = "360".into();
-                options.format_selector = None;
-            }
-            let cache_key = serde_json::to_string(&(
-                &media.url,
-                audio,
-                &options.quality,
-                &config.proxy,
-                &config.native_js_runtime,
-                &config.ffmpeg,
-                &options.format_selector,
-            ))?;
+            let (options, cache_key) = native_request(&config, &media, audio, preview)?;
             let resolved = streams
-                .load(cache_key.clone(), Duration::from_secs(120), || {
+                .load(cache_key.clone(), STREAM_TTL, || {
                     crate::native::resolve(
                         ytui_core::Job::new(media.clone(), options),
                         config.clone(),
@@ -630,6 +662,10 @@ struct Actor {
     sponsor_task: Option<JoinHandle<Result<Vec<crate::sponsorblock::Segment>>>>,
     ignore_segments_until: f64,
     streams: Arc<crate::cache::ResponseCache<crate::native::Resolved>>,
+    /// Local file opened instead of the playing media's URL (saved offline copy).
+    source: Option<String>,
+    /// Background resolution: media URL, cancellation and task.
+    prepare: Option<(String, CancellationToken, JoinHandle<()>)>,
 }
 fn native_stream_retryable(message: &str) -> bool {
     if crate::failure::rate_limited(message) {
@@ -726,7 +762,18 @@ impl Actor {
             ..Default::default()
         };
         self.ignore_segments_until = 0.0;
-        if self.config.playback_sponsorblock != "off"
+        // A different item supersedes background preparation; the same item reuses it.
+        if self
+            .prepare
+            .as_ref()
+            .is_some_and(|(url, _, _)| *url != media.url)
+        {
+            self.cancel_prepare();
+        }
+        // Saved copies may already have SponsorBlock segments removed (Android
+        // likewise skips segment lookup for offline playback).
+        if self.source.is_none()
+            && self.config.playback_sponsorblock != "off"
             && crate::sponsorblock::video_id(&media).is_some()
         {
             let config = self.config.clone();
@@ -751,6 +798,7 @@ impl Actor {
                 position,
                 preferences: &self.preferences(),
                 streams: self.streams.clone(),
+                source: self.source.clone(),
             },
         )
         .await
@@ -762,6 +810,62 @@ impl Actor {
                 self.state.buffering = false;
             }
         }
+    }
+    fn cancel_prepare(&mut self) {
+        if let Some((_, cancel, task)) = self.prepare.take() {
+            cancel.cancel();
+            task.abort();
+        }
+    }
+    /// Starts background resolution of `media` into the stream cache. Only native
+    /// YouTube playback is prepared; local, offline, yt-dlp and SOCKS cases are not.
+    fn prepare(&mut self, media: Media, audio: bool) {
+        self.cancel_prepare();
+        let youtube = ytui_core::http_url(&media.url)
+            .is_ok_and(|url| youtube_host(url.host_str().unwrap_or_default()));
+        if !youtube
+            || media.live
+            || self.config.offline
+            || self.config.playback_backend == "yt-dlp"
+            || socks_proxy(&self.config)
+        {
+            return;
+        }
+        let mut config = self.config.clone();
+        // Play resets per-item format overrides, so prepare with the defaults.
+        config.download.format_selector = None;
+        let Ok((options, key)) = native_request(&config, &media, audio, false) else {
+            return;
+        };
+        let native_dir = self.paths.state.join("auth/transient");
+        let Ok(cookies) = self
+            .session
+            .as_deref()
+            .map(|s| s.export(&native_dir))
+            .transpose()
+        else {
+            return;
+        };
+        let streams = self.streams.clone();
+        let cancel = CancellationToken::new();
+        let token = cancel.clone();
+        let url = media.url.clone();
+        let task = tokio::spawn(async move {
+            let cookie_path = cookies.as_ref().map(|f| f.path().to_owned());
+            let _ = streams
+                .load(key, STREAM_TTL, || {
+                    crate::native::resolve(
+                        ytui_core::Job::new(media, options),
+                        config,
+                        cookie_path,
+                        &native_dir,
+                        token,
+                    )
+                })
+                .await;
+            drop(cookies);
+        });
+        self.prepare = Some((url, cancel, task));
     }
     async fn close_preview(&mut self) {
         if let Some(p) = self.preview.take() {
@@ -804,6 +908,7 @@ impl Actor {
                 position: None,
                 preferences: &self.preferences(),
                 streams: self.streams.clone(),
+                source: None,
             },
         )
         .await
@@ -822,6 +927,7 @@ impl Actor {
         match command {
             PlayerCommand::Play { media, audio } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, false, None, false).await
             }
             PlayerCommand::PlayAt {
@@ -830,12 +936,25 @@ impl Actor {
                 seconds,
             } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, false, Some(seconds), false).await;
             }
             PlayerCommand::PlayFallback { media, audio } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, true, None, false).await
             }
+            PlayerCommand::PlayLocal {
+                media,
+                audio,
+                path,
+                seconds,
+            } => {
+                self.config.download.format_selector = None;
+                self.source = Some(path.to_string_lossy().into_owned());
+                self.play(media, audio, false, seconds, false).await
+            }
+            PlayerCommand::Prepare { media, audio } => self.prepare(media, audio),
             PlayerCommand::Quality(quality) => {
                 if quality == "best"
                     || quality
@@ -962,6 +1081,7 @@ impl Actor {
             PlayerCommand::Preview(media) => self.preview(media).await,
             PlayerCommand::ClosePreview => self.close_preview().await,
             PlayerCommand::Configure(config) => {
+                self.cancel_prepare();
                 self.streams = Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024));
                 let changed = self.config.playback_sponsorblock != config.playback_sponsorblock
                     || self.config.playback_sponsor_categories
@@ -979,6 +1099,7 @@ impl Actor {
                     if config.playback_sponsorblock == "off" {
                         self.state.segments.clear();
                     } else if let Some((media, _, _)) = &self.playing
+                        && self.source.is_none()
                         && crate::sponsorblock::video_id(media).is_some()
                     {
                         let config = (*config).clone();
@@ -995,6 +1116,7 @@ impl Actor {
                 if self.state.sponsor_enabled
                     && self.state.segments.is_empty()
                     && self.sponsor_task.is_none()
+                    && self.source.is_none()
                     && let Some((media, _, _)) = &self.playing
                     && crate::sponsorblock::video_id(media).is_some()
                 {
@@ -1018,10 +1140,14 @@ impl Actor {
             }
             PlayerCommand::Session(session) => {
                 self.stop().await;
+                self.cancel_prepare();
                 self.streams = Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024));
                 self.session = session;
             }
-            PlayerCommand::Stop => self.stop().await,
+            PlayerCommand::Stop => {
+                self.stop().await;
+                self.source = None;
+            }
             command => {
                 let previewing = self.preview.is_some();
                 let active = self.preview.as_ref().or(self.full.as_ref());
@@ -1254,6 +1380,7 @@ impl Actor {
                         position: (!media.live).then_some(self.state.position),
                         preferences: &self.preferences(),
                         streams: self.streams.clone(),
+                        source: self.source.clone(),
                     },
                 )
                 .await
@@ -1445,6 +1572,8 @@ impl Player {
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
+                prepare: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             };
             let mut tick = tokio::time::interval(Duration::from_millis(125));
@@ -1562,6 +1691,82 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         );
     }
     #[tokio::test]
+    async fn saved_copy_source_opens_the_local_file_without_resolving_the_youtube_url() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let mpv = temp.path().join("mpv");
+        let args = temp.path().join("args.txt");
+        std::fs::write(
+            &mpv,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nsleep 30\n",
+                args.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&mpv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let saved = temp.path().join("Saved video.mp4");
+        std::fs::write(&saved, b"synthetic").unwrap();
+        let config = Config {
+            mpv: mpv.display().to_string(),
+            // Resolution would fail loudly: a saved copy must never reach it.
+            native_js_runtime: Some("/must-not-run-a-runtime".into()),
+            ..Default::default()
+        };
+        let paths = Paths {
+            config_override: None,
+            xdg_state: temp.path().into(),
+            config: temp.path().into(),
+            state: temp.path().into(),
+            cache: temp.path().into(),
+            legacy_data: temp.path().into(),
+            home: temp.path().into(),
+        };
+        let media = Media {
+            url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+            title: "Saved video".into(),
+            ..Default::default()
+        };
+        let active = start(
+            &config,
+            &paths,
+            None,
+            &media,
+            Launch {
+                audio: false,
+                preview: false,
+                paused: false,
+                position: Some(42.0),
+                preferences: &Preferences::default(),
+                streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
+                source: Some(saved.display().to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let lines = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&args)
+                    && text.contains("--start=")
+                {
+                    return text;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        active.stop().await;
+        let lines = lines.lines().collect::<Vec<_>>();
+        assert_eq!(lines.last(), Some(&saved.to_str().unwrap()));
+        assert!(lines.contains(&"--start=42.000"));
+        assert!(!lines.iter().any(|l| l.contains("youtube.com")));
+        assert!(
+            !lines.iter().any(|l| l.starts_with("--user-agent")),
+            "local files get no YouTube network options"
+        );
+    }
+    #[tokio::test]
     async fn native_replay_uses_cached_streams_and_a_failed_open_invalidates_them() {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
@@ -1620,6 +1825,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: None,
                 preferences: &Preferences::default(),
                 streams: streams.clone(),
+                source: None,
             },
         )
         .await
@@ -1653,6 +1859,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: None,
                 preferences: &Preferences::default(),
                 streams: streams.clone(),
+                source: None,
             },
         )
         .await
@@ -1765,6 +1972,8 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         for command in [
@@ -1884,6 +2093,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: Some(42.25),
                 preferences: &Preferences::default(),
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
+                source: None,
             },
         )
         .await
@@ -1968,6 +2178,8 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         actor
@@ -2183,6 +2395,8 @@ sleep 30
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
+                prepare: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             };
             let event = actor.tick().await;
@@ -2253,6 +2467,8 @@ mod responsiveness_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         actor.handle(PlayerCommand::ToggleSponsorBlock).await;
@@ -2328,6 +2544,8 @@ mod responsiveness_tests {
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
+                prepare: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             };
             actor.tick().await;
@@ -2373,6 +2591,8 @@ mod responsiveness_tests {
             resume_after_preview: false,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         for (attempt, should_retry) in [(0, true), (1, false)] {
@@ -2511,6 +2731,8 @@ mod responsiveness_tests {
             resume_after_preview: false,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         for command in [
@@ -2623,6 +2845,8 @@ mod responsiveness_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         let media = Media {
@@ -3025,6 +3249,8 @@ mod real_mpv_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         actor
@@ -3390,6 +3616,8 @@ mod real_mpv_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
+            prepare: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         };
         let valid_metadata = std::fs::read(&metadata).unwrap();

@@ -2814,6 +2814,7 @@ private fun SettingsPanel(
                         "preload_next" to "Preload visible and next items",
                         "preload_mobile" to "Preload on mobile data",
                         "autoplay_related" to "Related media autoplay",
+                        "resume_on_play" to "Resume videos where you left off",
                         "prefer_offline" to "Prefer saved offline media",
                         "background_playback" to "Background playback",
                     )) {

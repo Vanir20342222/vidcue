@@ -843,6 +843,18 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
 
+## Resume where you left off (desktop parity), 2026-11-03 (M9)
+
+New `resume_on_play` mobile setting (default on). Ordinary video plays and
+service Next/auto-advance seek to the saved position (≥ 5 s); music, live,
+previews and downloads start at 0; History resume is unchanged. The authoring
+container had no Android SDK (its download was not permitted), so Kotlin
+compile, JVM tests, lint and emulator checks were **not run**. `javac` without
+the Android classpath reported no Java syntax errors. Existing instrumentation
+position assertions are lower bounds or relative checks, which a resume would not
+break. Requests sent straight to `PlaybackService` never set `auto_resume`. CI
+remains the check. See [../PR_PARITY_2026-11-03.md](../PR_PARITY_2026-11-03.md).
+
 ## Local re-verification of main b6a76a2, 2026-11-02 (M9)
 
 Environment: Linux container, 4 cores, no KVM, emulator or device. The workspace

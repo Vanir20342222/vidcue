@@ -161,6 +161,8 @@ pub enum Modal {
     Help(usize),
     Themes(usize),
     Form(Box<Form>),
+    /// Skippable first-run setup.
+    Setup(Box<crate::setup::Setup>),
     Queue(usize),
     Resume(usize),
     Watches(usize),
@@ -200,6 +202,11 @@ pub enum UiEvent {
         result: Result<Page>,
     },
     Prefetched,
+    /// Related videos for the item that ends the queue.
+    Related {
+        generation: u64,
+        result: Result<Page>,
+    },
     CardImage {
         generation: u64,
         key: String,
@@ -331,7 +338,16 @@ pub struct App {
     notification_pending: usize,
     notification_warned: bool,
     watch_pending: HashMap<uuid::Uuid, (u64, CancellationToken)>,
+    /// Recommendations after the queue (memory only; see `crate::related`).
+    pub related: Option<crate::related::RelatedNext>,
+    related_generation: u64,
+    related_cancel: CancellationToken,
+    /// (current URL, next URL) last sent to the player for background preparation.
+    prepared: Option<(String, String)>,
 }
+/// Seconds before the end of the current item at which the next one is prepared.
+/// Shorter than the player's stream-cache lifetime, so the result is still fresh.
+pub const PRELOAD_WINDOW: f64 = 90.0;
 impl App {
     fn pending_text(&mut self, title: &str) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
@@ -651,6 +667,10 @@ impl App {
             notification_pending: 0,
             notification_warned: false,
             watch_pending: HashMap::new(),
+            related: None,
+            related_generation: 0,
+            related_cancel: CancellationToken::new(),
+            prepared: None,
         };
         if demo {
             app.load_demo();
@@ -665,6 +685,11 @@ impl App {
             );
         } else {
             app.navigate(1, BrowseRequest::Home, false);
+            // First-run setup, once per version, like Android's onboarding. Demo and
+            // offline launches (screenshots, fixtures, travel) never show it.
+            if app.snapshot.setup_version < crate::setup::VERSION {
+                app.open_setup();
+            }
         }
         let cache = app.images.clone();
         app.tasks.spawn(async move {
@@ -905,6 +930,45 @@ impl App {
     }
     pub fn apply(&mut self, event: UiEvent) {
         match event {
+            UiEvent::Related { generation, result } => {
+                if generation != self.related_generation {
+                    return;
+                }
+                // A list resolves once; later results for it are ignored.
+                let Some(related) = self.related.as_mut().filter(|r| r.loading) else {
+                    return;
+                };
+                related.loading = false;
+                match result {
+                    Ok(page) => {
+                        related.items = crate::related::candidates(
+                            page.items,
+                            &related.source,
+                            &self.snapshot.playback.items,
+                        );
+                        related.error = related
+                            .items
+                            .is_empty()
+                            .then(|| "No related videos".to_string());
+                    }
+                    Err(e) => {
+                        related.items.clear();
+                        related.error = Some(format!("Recommendations unavailable: {e}"));
+                    }
+                }
+                if std::mem::take(&mut related.play_when_ready)
+                    && self.snapshot.playback.current.is_none()
+                {
+                    let source = related.source.clone();
+                    if let Some(media) = self.continue_with_related(&source)
+                        && !self.play_existing(media.clone())
+                    {
+                        self.pending_auto_play = Some(media);
+                    }
+                    self.dirty = true;
+                }
+                self.redraw = true;
+            }
             UiEvent::Lyrics { id, result } => {
                 if let Some(Modal::Lyrics(view)) = &mut self.modal
                     && view.id == id
@@ -1573,11 +1637,15 @@ impl App {
         let Some(mut modal) = self.modal.take() else {
             return;
         };
+        if let Modal::Setup(setup) = modal {
+            self.setup_key(setup, key);
+            return;
+        }
         if key.code == KeyCode::Esc {
             return;
         }
         match &mut modal {
-            Modal::PendingText { .. } => self.modal = Some(modal),
+            Modal::PendingText { .. } | Modal::Setup(_) => self.modal = Some(modal),
             Modal::Lyrics(view) => {
                 if !view.loading {
                     let limit = if view.opened {
@@ -2000,30 +2068,59 @@ impl App {
                 }
                 self.modal = Some(modal);
             }
-            Modal::Queue(index) => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    *index = index.saturating_sub(1);
-                    self.modal = Some(modal);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    *index = (*index + 1).min(self.snapshot.playback.items.len().saturating_sub(1));
-                    self.modal = Some(modal);
-                }
-                KeyCode::Delete => {
-                    self.snapshot.playback.remove(*index);
-                    self.dirty = true;
-                    self.modal = Some(modal);
-                }
-                KeyCode::Enter => {
-                    if let Some(m) = self.snapshot.playback.items.get(*index).cloned()
-                        && self.play_existing(m)
-                    {
-                        self.snapshot.playback.current = Some(*index);
-                        self.dirty = true;
+            Modal::Queue(index) => {
+                // Queue entries first, then the recommendations that follow them.
+                let queued = self.snapshot.playback.items.len();
+                let related = self.up_next_related().map_or(0, |r| r.items.len());
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        *index = index.saturating_sub(1);
+                        self.modal = Some(modal);
                     }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        *index = (*index + 1).min((queued + related).saturating_sub(1));
+                        self.modal = Some(modal);
+                    }
+                    KeyCode::Delete => {
+                        if *index < queued {
+                            self.snapshot.playback.remove(*index);
+                            self.dirty = true;
+                        } else if let Some(related) = self.related.as_mut()
+                            && *index - queued < related.items.len()
+                        {
+                            related.items.remove(*index - queued);
+                        }
+                        let total = self.snapshot.playback.items.len()
+                            + self.up_next_related().map_or(0, |r| r.items.len());
+                        *index = (*index).min(total.saturating_sub(1));
+                        self.modal = Some(modal);
+                    }
+                    KeyCode::Enter if *index < queued => {
+                        if let Some(m) = self.snapshot.playback.items.get(*index).cloned()
+                            && self.play_existing(m)
+                        {
+                            self.snapshot.playback.current = Some(*index);
+                            self.dirty = true;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        let offset = *index - queued;
+                        if let Some(m) = self
+                            .up_next_related()
+                            .and_then(|r| r.items.get(offset))
+                            .cloned()
+                            && self.play_existing(m.clone())
+                        {
+                            if let Some(related) = self.related.as_mut() {
+                                related.items.remove(offset);
+                            }
+                            self.snapshot.playback.play(m);
+                            self.dirty = true;
+                        }
+                    }
+                    _ => self.modal = Some(modal),
                 }
-                _ => self.modal = Some(modal),
-            },
+            }
             Modal::Form(form) => {
                 let settings = form.is_grouped();
                 if settings && key.code == KeyCode::F(6) {
@@ -2951,13 +3048,26 @@ impl App {
                 self.modal = Some(Modal::Form(Box::new(Form::settings(self.config.clone()))))
             }
             Action::PlaybackQueue => {
+                self.ensure_related(true);
                 self.modal = Some(Modal::Queue(self.snapshot.playback.current.unwrap_or(0)))
             }
             Action::NextTrack => {
                 let previous = self.snapshot.playback.clone();
-                if let Some(m) = self.snapshot.playback.advance(false) {
+                let related = self.related.clone();
+                let source = previous
+                    .current
+                    .and_then(|i| previous.items.get(i))
+                    .map(|m| m.url.clone())
+                    .unwrap_or_default();
+                if let Some(m) = self
+                    .snapshot
+                    .playback
+                    .advance(false)
+                    .or_else(|| self.continue_with_related(&source))
+                {
                     if !self.play_existing(m) {
                         self.snapshot.playback = previous;
+                        self.related = related;
                     }
                     self.dirty = true;
                 } else {
@@ -2975,10 +3085,12 @@ impl App {
                 }
             }
             Action::SeekForward => {
-                let _ = self.player.try_send(PlayerCommand::Seek(5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(step));
             }
             Action::SeekBack => {
-                let _ = self.player.try_send(PlayerCommand::Seek(-5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(-step));
             }
             Action::VolumeUp => {
                 let _ = self.player.try_send(PlayerCommand::Volume(5.0));
@@ -3285,7 +3397,11 @@ impl App {
             .positions
             .resumable()
             .into_iter()
-            .filter(|p| !self.offline || http_url(&p.media.url).is_err())
+            .filter(|p| {
+                !self.offline
+                    || http_url(&p.media.url).is_err()
+                    || self.offline_copy(&p.media).is_some()
+            })
             .collect()
     }
     pub fn resume_position(&mut self, position: ytui_core::playback_history::Position) {
@@ -3293,7 +3409,8 @@ impl App {
             self.status = "Updating player account · retry resume shortly".into();
             return;
         }
-        if self.offline && http_url(&position.media.url).is_ok() {
+        let saved = self.offline_copy(&position.media);
+        if self.offline && http_url(&position.media.url).is_ok() && saved.is_none() {
             self.status = "Resume this online video after restarting without --offline".into();
             return;
         }
@@ -3302,10 +3419,18 @@ impl App {
             return;
         }
         let audio = position.media.kind == MediaKind::Song;
-        let command = PlayerCommand::PlayAt {
-            media: position.media.clone(),
-            audio,
-            seconds: position.seconds,
+        let command = match saved {
+            Some(path) => PlayerCommand::PlayLocal {
+                media: position.media.clone(),
+                audio,
+                path,
+                seconds: Some(position.seconds),
+            },
+            None => PlayerCommand::PlayAt {
+                media: position.media.clone(),
+                audio,
+                seconds: position.seconds,
+            },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; try resume again".into();
@@ -3346,7 +3471,200 @@ impl App {
                     .record(media, status.position, status.duration, false);
         }
         self.player_status = status;
+        self.ensure_related(false);
+        self.prepare_next();
         self.redraw = true;
+    }
+    /// What automatic advance plays after the current item: the next queue entry,
+    /// the first entry again for repeat-all, or the first recommendation.
+    pub fn next_up(&self) -> Option<Media> {
+        let queue = &self.snapshot.playback;
+        let related = self.up_next_related();
+        let index = crate::related::plays_next(
+            queue,
+            related.map_or(0, |r| r.items.len()),
+            self.config.autoplay_related,
+        )?;
+        match queue.items.get(index) {
+            Some(media) => Some(media.clone()),
+            None => related?.items.get(index - queue.items.len()).cloned(),
+        }
+    }
+    /// Asks the player to resolve the next item in the background once the current
+    /// one is within [`PRELOAD_WINDOW`] of its end (Android: "Preload the next item").
+    fn prepare_next(&mut self) {
+        if !self.config.preload_next || self.offline || self.demo {
+            return;
+        }
+        let status = &self.player_status;
+        if !status.active || status.preview {
+            return;
+        }
+        let Some(duration) = status.duration.filter(|d| d.is_finite() && *d > 0.0) else {
+            return;
+        };
+        if duration - status.position > PRELOAD_WINDOW {
+            return;
+        }
+        let queue = &self.snapshot.playback;
+        let Some(current) = queue.current.and_then(|i| queue.items.get(i)) else {
+            return;
+        };
+        let Some(next) = self.next_up() else {
+            return;
+        };
+        let key = (current.url.clone(), next.url.clone());
+        if self.prepared.as_ref() == Some(&key) {
+            return;
+        }
+        self.prepared = Some(key);
+        // Saved copies, local files and live streams need no preparation.
+        if next.live
+            || next.kind == MediaKind::Station
+            || http_url(&next.url).is_err()
+            || self.offline_copy(&next).is_some()
+        {
+            return;
+        }
+        let audio = matches!(next.kind, MediaKind::Song | MediaKind::Station);
+        if self
+            .player
+            .try_send(PlayerCommand::Prepare { media: next, audio })
+            .is_err()
+        {
+            // Busy channel: try again on the next status update.
+            self.prepared = None;
+        }
+    }
+    /// Opens the first-run setup (also used to replay it from the action menu).
+    pub fn open_setup(&mut self) {
+        self.modal = Some(Modal::Setup(Box::new(crate::setup::Setup::new(
+            &self.config,
+        ))));
+    }
+    fn setup_key(&mut self, mut setup: Box<crate::setup::Setup>, key: KeyEvent) {
+        use crate::setup::ACCOUNT;
+        let connected = self.session.is_some();
+        let mut preview = false;
+        match key.code {
+            KeyCode::Esc => return self.finish_setup(setup, false),
+            KeyCode::Enter | KeyCode::Tab if setup.is_last() => {
+                return self.finish_setup(setup, false);
+            }
+            KeyCode::Enter | KeyCode::Tab => setup.next(),
+            KeyCode::Backspace | KeyCode::BackTab => {
+                setup.back();
+            }
+            KeyCode::Up | KeyCode::Char('k') => setup.move_row(-1, connected),
+            KeyCode::Down | KeyCode::Char('j') => setup.move_row(1, connected),
+            KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') if setup.step == ACCOUNT => {
+                return self.finish_setup(setup, true);
+            }
+            KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => preview = setup.change(1),
+            KeyCode::Left | KeyCode::Char('h') => preview = setup.change(-1),
+            _ => {}
+        }
+        if preview {
+            setup
+                .original_palette
+                .get_or_insert_with(|| self.palette.clone());
+            if let Ok(palette) = theme::builtin(&setup.draft.theme) {
+                self.palette = palette;
+            } else if let Some(original) = &setup.original_palette {
+                // "system" resolves through the theme provider once saved.
+                self.palette = original.clone();
+            }
+        }
+        self.modal = Some(Modal::Setup(setup));
+    }
+    /// Finishing and skipping both record completion and keep the choices made so
+    /// far, like Android's onboarding. `connect` continues to the account flow.
+    fn finish_setup(&mut self, setup: Box<crate::setup::Setup>, connect: bool) {
+        let setup = *setup;
+        self.snapshot.setup_version = crate::setup::VERSION;
+        self.dirty = true;
+        if setup.draft.theme == self.config.theme
+            && let Some(original) = setup.original_palette.clone()
+        {
+            self.palette = original;
+        }
+        self.status = "Setup saved · replay it any time from F2 actions".into();
+        if setup.changed(&self.config) {
+            self.save_config(setup.draft);
+        }
+        if connect && let Err(e) = self.command("auth") {
+            self.status = e.to_string();
+        }
+    }
+    /// Identifies the newest related-list request (deterministic UI fixtures).
+    pub fn related_generation(&self) -> u64 {
+        self.related_generation
+    }
+    /// The related list shown after the queue, when it belongs to the item that ends it.
+    pub fn up_next_related(&self) -> Option<&crate::related::RelatedNext> {
+        let queue = &self.snapshot.playback;
+        let current = queue.items.get(queue.current?)?;
+        self.related
+            .as_ref()
+            .filter(|r| r.source == current.url && crate::related::queue_ends_after_current(queue))
+    }
+    /// Fetches related videos for the current item when nothing follows it in the
+    /// queue. `display` fetches for the Queue popup even while autoplay is off.
+    pub fn ensure_related(&mut self, display: bool) {
+        if self.demo || self.offline || !(display || self.config.autoplay_related) {
+            return;
+        }
+        let queue = &self.snapshot.playback;
+        if !crate::related::queue_ends_after_current(queue) {
+            return;
+        }
+        let Some(current) = queue.current.and_then(|i| queue.items.get(i)) else {
+            return;
+        };
+        if self
+            .related
+            .as_ref()
+            .is_some_and(|r| r.source == current.url)
+        {
+            return;
+        }
+        let Some(id) = crate::related::video_id(current) else {
+            return;
+        };
+        let music = current.kind == MediaKind::Song;
+        self.related = Some(crate::related::RelatedNext {
+            source: current.url.clone(),
+            loading: true,
+            ..Default::default()
+        });
+        self.related_cancel.cancel();
+        self.related_cancel = CancellationToken::new();
+        self.related_generation = self.related_generation.wrapping_add(1);
+        let generation = self.related_generation;
+        let cancel = self.related_cancel.clone();
+        let browser = self.browser.clone();
+        self.tasks.spawn(async move {
+            let request = BrowseRequest::Related(id);
+            let result = tokio::select! {
+                _ = cancel.cancelled() => Err(anyhow::anyhow!("Request cancelled")),
+                page = browser.fetch(music, &request) => page,
+            };
+            UiEvent::Related { generation, result }
+        });
+    }
+    /// Moves the first recommendation for `source` into the queue as the current
+    /// item when related autoplay is on. The caller starts playback.
+    fn continue_with_related(&mut self, source: &str) -> Option<Media> {
+        if !self.config.autoplay_related || self.offline || self.demo {
+            return None;
+        }
+        let related = self.related.as_mut().filter(|r| r.source == source)?;
+        if related.items.is_empty() {
+            return None;
+        }
+        let media = related.items.remove(0);
+        self.snapshot.playback.play(media.clone());
+        Some(media)
     }
     pub fn playback_ended(&mut self, media: &Media) {
         if self.enforce_sleep_timer(Instant::now()) {
@@ -3371,7 +3689,23 @@ impl App {
                 true,
             );
         }
-        if let Some(media) = self.snapshot.playback.advance(true)
+        let next = match self.snapshot.playback.advance(true) {
+            Some(next) => Some(next),
+            None => {
+                let next = self.continue_with_related(&media.url);
+                if next.is_none()
+                    && self.config.autoplay_related
+                    && let Some(related) = self
+                        .related
+                        .as_mut()
+                        .filter(|r| r.source == media.url && r.loading)
+                {
+                    related.play_when_ready = true;
+                }
+                next
+            }
+        };
+        if let Some(media) = next
             && !self.play_existing(media.clone())
         {
             self.pending_auto_play = Some(media);
@@ -3396,7 +3730,8 @@ impl App {
             self.status = "Updating player account · retry playback shortly".into();
             return false;
         }
-        if self.offline && http_url(&media.url).is_ok() {
+        let saved = self.offline_copy(&media);
+        if self.offline && http_url(&media.url).is_ok() && saved.is_none() {
             self.status = "Queued online media waits for online mode".into();
             return false;
         }
@@ -3413,17 +3748,27 @@ impl App {
             && media.kind == MediaKind::Video)
             .then(|| self.snapshot.positions.for_media(&media).map(|p| p.seconds))
             .flatten();
-        let command = match resume_at {
-            Some(seconds) => PlayerCommand::PlayAt {
+        let command = match (saved.clone(), resume_at) {
+            // The queue, history and resume keep the original item; mpv opens the file.
+            (Some(path), seconds) => PlayerCommand::PlayLocal {
+                media,
+                audio,
+                path,
+                seconds,
+            },
+            (None, Some(seconds)) => PlayerCommand::PlayAt {
                 media,
                 audio,
                 seconds,
             },
-            None => PlayerCommand::Play { media, audio },
+            (None, None) => PlayerCommand::Play { media, audio },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; retry playback".into();
             return false;
+        }
+        if saved.is_some() && resume_at.is_none() {
+            self.status = "Playing your saved offline copy".into();
         }
         if let Some(seconds) = resume_at {
             let seconds = seconds as u64;
@@ -3434,6 +3779,33 @@ impl App {
             );
         }
         true
+    }
+    /// A completed single-file download of `media` in the same mode (audio or
+    /// video), used instead of streaming when `prefer_offline` is on. Copies with
+    /// removed segments or split chapters are skipped: their timeline differs.
+    pub fn offline_copy(&self, media: &Media) -> Option<PathBuf> {
+        if !self.config.prefer_offline || media.live || http_url(&media.url).is_err() {
+            return None;
+        }
+        let audio = matches!(media.kind, MediaKind::Song | MediaKind::Station);
+        let id = crate::related::video_id(media);
+        self.snapshot
+            .downloads
+            .jobs
+            .iter()
+            .rev()
+            .filter(|job| {
+                job.state == JobState::Done
+                    && job.options.audio == audio
+                    && job.outputs.len() == 1
+                    && !job.options.playlist
+                    && !job.options.sponsorblock_remove
+                    && !job.options.split_chapters
+                    && (job.media.url == media.url
+                        || id.is_some() && crate::related::video_id(&job.media) == id)
+            })
+            .find_map(|job| ytui_services::library::completed_file(job, &job.outputs[0]))
+            .map(|copy| PathBuf::from(copy.url))
     }
     pub fn sleep_label(&self) -> Option<String> {
         if self.sleep_timer.stopping() {
@@ -3491,7 +3863,8 @@ impl App {
                 .current
                 .and_then(|index| self.snapshot.playback.items.get(index))
                 .is_some_and(|current| current.url == media.url)
-            && (self.offline && http_url(&media.url).is_ok() || !self.play_existing(media.clone()))
+            && (self.offline && http_url(&media.url).is_ok() && self.offline_copy(&media).is_none()
+                || !self.play_existing(media.clone()))
         {
             self.pending_auto_play = Some(media);
         }
@@ -4562,6 +4935,7 @@ impl App {
             "settings" => {
                 self.modal = Some(Modal::Form(Box::new(Form::settings(self.config.clone()))))
             }
+            "setup" => self.open_setup(),
             "theme" => {
                 if value.is_empty() {
                     self.action(Action::Theme);
