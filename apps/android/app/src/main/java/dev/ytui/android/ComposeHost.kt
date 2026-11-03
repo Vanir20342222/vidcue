@@ -1453,7 +1453,10 @@ internal fun Artwork(
     // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
     // and a reused node of unchanged size never reports its size again.
     BoxWithConstraints(
-        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
+        modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .testTag("artwork-frame-${media.key}")
     ) {
         // A shared decode size: a one-pixel width difference between grid columns must not
         // restart the load or fetch and cache the same cover again.
