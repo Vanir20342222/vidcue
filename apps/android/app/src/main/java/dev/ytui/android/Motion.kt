@@ -185,9 +185,18 @@ internal fun Modifier.pressFeedback(): Modifier {
  * (reset when its content changes) so items scrolled back into view do not animate again.
  */
 @Composable
-internal fun Modifier.appearance(key: Any, index: Int, seen: MutableSet<Any>): Modifier {
+internal fun Modifier.appearance(
+    key: Any,
+    index: Int,
+    seen: MutableSet<Any>,
+    isScrolling: () -> Boolean = { false },
+): Modifier {
     val motion = LocalMotion.current
-    val first = remember(key) { motion.animate && motion.cards && seen.add(key) && index < 12 }
+    // Scrolled-in cards should be readable immediately, without a delayed entrance + art fade.
+    val first =
+        remember(key) {
+            motion.animate && motion.cards && seen.add(key) && index < 12 && !isScrolling()
+        }
     val progress = remember(key) { Animatable(if (first) 0f else 1f) }
     androidx.compose.runtime.LaunchedEffect(key) {
         if (progress.value < 1f) progress.animateTo(1f, motion.enter(300, delay = index * 22))

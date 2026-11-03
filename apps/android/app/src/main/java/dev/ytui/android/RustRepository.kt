@@ -16,9 +16,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -218,11 +216,16 @@ internal data class PlayerState(
 }
 
 internal object ArtworkCache {
-    private val slots = Semaphore(8)
     private val memory =
         object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
             override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
         }
+    private val loader =
+        ArtworkLoader<String, Bitmap>(
+            CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            memory::get,
+            { key, bitmap -> memory.put(key, bitmap) },
+        )
 
     private val decodeSizes = intArrayOf(96, 160, 240, 320, 480, 640, 768)
 
@@ -238,51 +241,37 @@ internal object ArtworkCache {
             (media.value.optJSONArray("thumbnails")?.length() ?: 0) > 0
 
     /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
-    fun cached(media: MediaCard, pixels: Int): Bitmap? =
-        memory.get("${media.key}:${media.artworkSource}:${decodeSize(pixels)}")
+    fun cached(media: MediaCard, pixels: Int): Bitmap? {
+        val size = decodeSize(pixels)
+        // Reuse larger art from a player/detail view instead of flashing a placeholder.
+        for (candidate in decodeSizes) {
+            if (candidate < size) continue
+            memory.get("${media.key}:${media.artworkSource}:$candidate")?.let {
+                return it
+            }
+        }
+        return null
+    }
 
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
         if (!hasArtwork(media)) return null
         val size = decodeSize(pixels)
         val key = "${media.key}:${media.artworkSource}:$size"
-        memory.get(key)?.let {
+        cached(media, size)?.let {
             return it
         }
-        return slots.withPermit {
-            for (attempt in 0..2) {
-                currentCoroutineContext().ensureActive()
-                memory.get(key)?.let {
-                    return@withPermit it
-                }
-                val decoded =
-                    withContext(Dispatchers.IO) {
-                        val data =
-                            NativeBridge.thumbnail(media.value.toString(), size)
-                                ?: return@withContext null
-                        currentCoroutineContext().ensureActive()
-                        if (
-                            data.size < 3 ||
-                                data[0] !in 1..768 ||
-                                data[1] !in 1..768 ||
-                                data.size != data[0] * data[1] + 2
-                        )
-                            return@withContext null
-                        Bitmap.createBitmap(
-                                data,
-                                2,
-                                data[0],
-                                data[0],
-                                data[1],
-                                Bitmap.Config.ARGB_8888,
-                            )
-                            .also { memory.put(key, it) }
-                    }
-                if (decoded != null) return@withPermit decoded
-                // A transient image failure must not leave a permanent placeholder.
-                // Bound retries and release the coroutine promptly when a card leaves.
-                if (attempt < 2) delay(200L shl attempt)
+        return loader.load(key) fetch@{
+            val data = NativeBridge.thumbnail(media.value.toString(), size) ?: return@fetch null
+            if (
+                data.size < 3 ||
+                    data[0] !in 1..768 ||
+                    data[1] !in 1..768 ||
+                    data.size != data[0] * data[1] + 2
+            )
+                return@fetch null
+            Bitmap.createBitmap(data, 2, data[0], data[0], data[1], Bitmap.Config.ARGB_8888).also {
+                it.prepareToDraw()
             }
-            null
         }
     }
 }
