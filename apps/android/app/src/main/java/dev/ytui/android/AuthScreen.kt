@@ -61,6 +61,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * in-app browser sign-in pattern: a close button and address pill on top, a
  * two-column account card (or the provider page) in the middle and a
  * "you'll come back here" strip at the bottom. Colours stay the user's ytui theme.
+ *
+ * The provider page opens straight on Google's sign-in form. Once a signed-in session
+ * cookie appears, a native card replaces the page (YouTube's mobile shell can stay blank)
+ * and the strip's confirm action unlocks.
  */
 internal object AuthUi {
     /** False: native introduction card. True: the provider's page in the WebView. */
@@ -181,7 +185,7 @@ internal fun AuthScreen(activity: AuthActivity, webView: android.webkit.WebView,
                 },
                 label = "sign-in-stage",
             ) { web ->
-                if (web) AuthWebPane(webView)
+                if (web) AuthWebPane(webView, found, busy, reduced) { activity.useSession() }
                 else
                     AuthIntro(
                         busy = busy,
@@ -265,20 +269,66 @@ private fun AuthTopBar(
 }
 
 @Composable
-private fun AuthWebPane(webView: android.webkit.WebView) {
+private fun AuthWebPane(
+    webView: android.webkit.WebView,
+    found: Boolean,
+    busy: Boolean,
+    reduced: Boolean,
+    use: () -> Unit,
+) {
     Surface(
         Modifier.fillMaxSize().padding(horizontal = 12.dp).testTag("sign-in-web"),
         shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
         color = MaterialTheme.colorScheme.surface,
     ) {
-        AndroidView(
-            factory = {
-                // The same WebView survives stage changes; detach it from an old host first.
-                (webView.parent as? ViewGroup)?.removeView(webView)
-                webView
-            },
-            modifier = Modifier.fillMaxSize(),
-        )
+        Box(Modifier.fillMaxSize()) {
+            AndroidView(
+                factory = {
+                    // The same WebView survives stage changes; detach it from an old host first.
+                    (webView.parent as? ViewGroup)?.removeView(webView)
+                    webView
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            // After sign-in YouTube's mobile page can stay blank while it "loads". Cover it
+            // with a native confirmation instead of leaving the user to guess what to do.
+            AnimatedVisibility(
+                found,
+                enter = if (reduced) EnterTransition.None else fadeIn(tween(240)),
+                exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
+            ) {
+                AuthSignedInCard(busy, use)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuthSignedInCard(busy: Boolean, use: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(Modifier.fillMaxSize().testTag("sign-in-detected"), color = scheme.surface) {
+        Column(
+            Modifier.fillMaxSize().padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        ) {
+            MediaIcon(Glyph.Account, Modifier.size(40.dp), scheme.primary)
+            Text(
+                "You're signed in",
+                Modifier.semantics {
+                    heading()
+                    liveRegion = LiveRegionMode.Polite
+                },
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text(
+                "ytui found your YouTube session. Save it to finish; it stays encrypted on this device.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Action(if (busy) "Saving…" else "Use this session", "sign-in-finish", !busy, use)
+        }
     }
 }
 
@@ -531,7 +581,7 @@ private fun AuthReturnStrip(
                         message.isNotBlank() -> message
                         busy -> "Saving your session…"
                         found && showWeb -> "Signed in. Tap Use this session to finish."
-                        showWeb -> "You'll come back here once you're signed in"
+                        showWeb -> "Sign in with Google. ytui detects it and returns you here."
                         else -> "You'll come back here once you're signed in"
                     }
                 AnimatedContent(
@@ -575,7 +625,8 @@ private fun AuthReturnStrip(
                                 stateDescription = if (found) "Signed-in session detected" else "Waiting for sign-in"
                             }
                     ) {
-                        Action("Use this session", "sign-in-complete", !busy, use)
+                        // Enabled only once a signed-in session exists, so it cannot be tapped too early.
+                        Action("Use this session", "sign-in-complete", found && !busy, use)
                     }
                 }
             }
