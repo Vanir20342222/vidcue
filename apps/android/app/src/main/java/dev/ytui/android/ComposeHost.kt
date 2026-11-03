@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -569,15 +570,13 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             // slight scale, so it reads as the dock expanding.
                             enter =
                                 if (motion.animate)
-                                    fadeIn(motion.fade(200)) +
-                                        slideInVertically(motion.enter(380)) { it / 3 } +
-                                        scaleIn(motion.enter(380), initialScale = 0.96f)
+                                    fadeIn(motion.fade(160)) +
+                                        slideInVertically(motion.enter(320)) { it / 3 }
                                 else EnterTransition.None,
                             exit =
                                 if (motion.animate)
-                                    fadeOut(motion.exit(220)) +
-                                        slideOutVertically(motion.exit(280)) { it / 3 } +
-                                        scaleOut(motion.exit(280), targetScale = 0.96f)
+                                    fadeOut(motion.exit(200)) +
+                                        slideOutVertically(motion.exit(240)) { it / 3 }
                                 else ExitTransition.None,
                         ) {
                             PlaybackPanel(allowVideoSurface = false)
@@ -956,14 +955,17 @@ internal fun Panel(
         // Keep native video in the activity window; no new dialog surface/decoder handoff.
         Surface(
             Modifier.fillMaxSize()
-                // Only header-bearing panels move: a native video surface (headerless player)
-                // must never sit under a transformed Compose layer.
+                // The headerless video panel follows a drag too (YouTube-style minimize); its
+                // video is a TextureView, which transforms with its layer.
                 .then(
-                    if (full && showHeader && motion.animate)
+                    if (full && motion.animate)
                         Modifier.graphicsLayer {
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
                             val pulled = drag.value.coerceAtLeast(0f)
                             translationY = pulled
-                            alpha = 1f - (pulled / height).coerceIn(0f, 1f) * 0.5f
+                            // The video panel stays opaque: it carries a live video texture.
+                            if (showHeader)
+                                alpha = 1f - (pulled / height).coerceIn(0f, 1f) * 0.5f
                             val shrink = 1f - (pulled / height).coerceIn(0f, 1f) * 0.08f
                             scaleX = shrink
                             scaleY = shrink
@@ -977,7 +979,7 @@ internal fun Panel(
         ) {
             CompositionLocalProvider(
                 LocalPanelDrag provides
-                    if (full && showHeader && swipeToClose) PanelDrag(drag, flyOff) else null
+                    if (full && swipeToClose) PanelDrag(drag, flyOff) else null
             ) {
                 Body(Modifier.fillMaxSize())
             }
@@ -1070,7 +1072,9 @@ private fun BrowsePane(
     // A tab swipe recreates this pane (key(tab)); the direction is handed over once.
     var enterFrom by remember { mutableIntStateOf(pendingTabEntry.also { pendingTabEntry = 0 }) }
     LaunchedEffect(tab, feed.request, reduced) {
-        if (!motion.animate) entry.snapTo(1f)
+        // Plain feed changes are animated by the cards themselves (appearance); only a tab or
+        // category swipe slides the whole grid, so the grid is not faded a second time.
+        if (!motion.animate || enterFrom == 0) entry.snapTo(1f)
         else {
             entry.snapTo(0f)
             entry.animateTo(1f, motion.enter(if (enterFrom == 0) 260 else 340))
@@ -1320,13 +1324,13 @@ private fun BrowsePane(
                     Modifier.fillMaxSize()
                         .then(swipe)
                         .graphicsLayer {
+                            // No offscreen buffer for a screen-sized scrolling grid.
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
                             val settle = 1f - entry.value
                             val dragged = (abs(pull.value) / paneWidth).coerceIn(0f, 1f)
                             alpha = (1f - settle.coerceIn(0f, 1f)) * (1f - dragged * 0.6f)
                             translationX =
                                 pull.value * 0.6f + settle * enterFrom * 64.dp.toPx()
-                            translationY =
-                                if (enterFrom == 0) settle * 24.dp.toPx() else 0f
                         }
                         .testTag("feed-list")
                         .focusRequester(browseFocus)

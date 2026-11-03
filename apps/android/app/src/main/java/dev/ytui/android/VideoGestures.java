@@ -34,7 +34,26 @@ final class VideoGestures {
   private enum Drag {
     NONE,
     BRIGHTNESS,
-    VOLUME
+    VOLUME,
+    /** Vertical swipe handed to the watch page (minimize down, fullscreen up). */
+    PANEL,
+    /** Downward swipe in the fullscreen activity: leave fullscreen. */
+    EXIT
+  }
+
+  /** Receives vertical swipes on the inline player so the panel can follow the finger. */
+  interface PanelSwipe {
+    boolean enabled();
+
+    /** Total vertical travel since the swipe began, in pixels (down is positive). */
+    void onDrag(float dy);
+
+    /** Release: final travel and vertical velocity (px/s, down positive). Zero on cancel. */
+    void onEnd(float dy, float velocity);
+  }
+
+  static void setPanelSwipe(PlayerView view, PanelSwipe swipe) {
+    view.setTag(R.id.ytui_panel_swipe, swipe);
   }
 
   private final PlayerView view;
@@ -47,6 +66,9 @@ final class VideoGestures {
   private boolean scaled;
   private float downX, downY, startLevel, dragScale = 1f;
   private boolean brightnessChanged;
+  // Raw (screen) coordinates: the view itself moves while the panel follows the finger.
+  private float panelStartY, panelLastY, panelVelocity;
+  private long panelLastTime;
 
   static void attach(PlayerView view) {
     new VideoGestures(view);
@@ -198,16 +220,43 @@ final class VideoGestures {
         if (scaled || event.getPointerCount() > 1) return true;
         if (drag == Drag.NONE && !holding) {
           float dy = event.getY() - downY, dx = event.getX() - downX;
-          if (Math.abs(dy) > slop * 2
-              && Math.abs(dy) > Math.abs(dx) * 1.5f
-              && MobileSettings.gesture("gesture_video_adjust")) {
-            drag = downX < view.getWidth() / 2f ? Drag.BRIGHTNESS : Drag.VOLUME;
-            startLevel = drag == Drag.BRIGHTNESS ? brightness() : volume();
-            downY = event.getY();
-            if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
-            cancelTaps(event);
+          if (Math.abs(dy) > slop * 2 && Math.abs(dy) > Math.abs(dx) * 1.5f) {
+            PanelSwipe panel = (PanelSwipe) view.getTag(R.id.ytui_panel_swipe);
+            boolean swipes = MobileSettings.gesture("gesture_swipe_dismiss");
+            boolean middle = downX > view.getWidth() / 3f && downX < view.getWidth() * 2f / 3f;
+            if (panel != null && panel.enabled() && swipes) {
+              // Watch page: like YouTube, a vertical swipe minimizes or goes fullscreen.
+              drag = Drag.PANEL;
+              panelStartY = panelLastY = event.getRawY();
+              panelLastTime = event.getEventTime();
+              panelVelocity = 0f;
+            } else if (panel == null && swipes && middle && dy > 0
+                && activity() instanceof FullscreenActivity) {
+              drag = Drag.EXIT;
+              panelStartY = event.getRawY();
+            } else if (MobileSettings.gesture("gesture_video_adjust")) {
+              drag = downX < view.getWidth() / 2f ? Drag.BRIGHTNESS : Drag.VOLUME;
+              startLevel = drag == Drag.BRIGHTNESS ? brightness() : volume();
+              downY = event.getY();
+            }
+            if (drag != Drag.NONE) {
+              if (view.getParent() != null)
+                view.getParent().requestDisallowInterceptTouchEvent(true);
+              cancelTaps(event);
+            }
           }
         }
+        if (drag == Drag.PANEL) {
+          PanelSwipe panel = (PanelSwipe) view.getTag(R.id.ytui_panel_swipe);
+          float y = event.getRawY();
+          long dt = event.getEventTime() - panelLastTime;
+          if (dt > 0) panelVelocity = 0.6f * panelVelocity + 0.4f * ((y - panelLastY) * 1000f / dt);
+          panelLastY = y;
+          panelLastTime = event.getEventTime();
+          if (panel != null) panel.onDrag(y - panelStartY);
+          return true;
+        }
+        if (drag == Drag.EXIT) return true;
         if (drag != Drag.NONE) {
           // A full-height drag sweeps the whole range.
           float delta = (downY - event.getY()) / Math.max(1, view.getHeight());
@@ -225,6 +274,18 @@ final class VideoGestures {
       case MotionEvent.ACTION_UP:
       case MotionEvent.ACTION_CANCEL:
         boolean consumed = drag != Drag.NONE || holding || scaled;
+        if (drag == Drag.PANEL) {
+          PanelSwipe panel = (PanelSwipe) view.getTag(R.id.ytui_panel_swipe);
+          boolean cancelled = event.getActionMasked() == MotionEvent.ACTION_CANCEL;
+          if (panel != null)
+            panel.onEnd(
+                cancelled ? 0f : event.getRawY() - panelStartY, cancelled ? 0f : panelVelocity);
+        } else if (drag == Drag.EXIT
+            && event.getActionMasked() == MotionEvent.ACTION_UP
+            && event.getRawY() - panelStartY > dp(72)) {
+          Activity activity = activity();
+          if (activity != null) activity.finish();
+        }
         if (drag != Drag.NONE) hide();
         drag = Drag.NONE;
         release();

@@ -31,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
@@ -41,8 +43,12 @@ internal fun VideoSurface(
     covered: Boolean = false,
     timingToken: Long = PlaybackService.current?.startupToken ?: 0,
     onSettings: (() -> Unit)? = null,
+    onPanelDrag: ((Float) -> Unit)? = null,
+    onPanelEnd: ((Float, Float) -> Unit)? = null,
 ) {
     val collapse by rememberUpdatedState(onCollapse)
+    val panelDrag by rememberUpdatedState(onPanelDrag)
+    val panelEnd by rememberUpdatedState(onPanelEnd)
     val settings by rememberUpdatedState(onSettings)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
@@ -73,6 +79,18 @@ internal fun VideoSurface(
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    VideoGestures.setPanelSwipe(
+                        this,
+                        object : VideoGestures.PanelSwipe {
+                            override fun enabled() = panelDrag != null
+                            override fun onDrag(dy: Float) {
+                                panelDrag?.invoke(dy)
+                            }
+                            override fun onEnd(dy: Float, velocity: Float) {
+                                panelEnd?.invoke(dy, velocity)
+                            }
+                        },
+                    )
                 }
         },
         modifier = modifier.background(Color.Black).testTag("native-video-surface"),
@@ -134,19 +152,17 @@ internal fun FocusedPlayer(
     val motion = LocalMotion.current
     val panelDrag = LocalPanelDrag.current
     val restingDrag = remember { Animatable(0f) }
-    // Music follows the finger through the panel; video only recognises the gesture so the
-    // native surface is never moved by a Compose layer.
+    // The whole panel follows the finger, music and video alike.
     val dismiss =
         Modifier.swipeAxis(
             enabled = mobile.gesture("gesture_swipe_dismiss"),
             horizontal = false,
-            offset = if (!player.video && panelDrag != null) panelDrag.offset else restingDrag,
+            offset = panelDrag?.offset ?: restingDrag,
             threshold = threshold,
-            follow = !player.video && panelDrag != null,
+            follow = panelDrag != null,
             allow = { it > 0 },
             onSwipe = { direction ->
-                if (!player.video && panelDrag != null) panelDrag.dismiss(this, direction)
-                else minimize()
+                if (panelDrag != null) panelDrag.dismiss(this, direction) else minimize()
             },
         )
     // Horizontal swipe on music artwork changes track, carousel style.
@@ -178,6 +194,48 @@ internal fun FocusedPlayer(
                     }
                 )
         }
+    val scope = rememberCoroutineScope()
+    val openFullscreen = {
+        context.startActivity(
+            Intent(context, FullscreenActivity::class.java)
+                .putExtra("reduced_motion", config.optBoolean("reduced_motion"))
+        )
+    }
+    val swipeGestures = mobile.gesture("gesture_swipe_dismiss")
+    val flingSpeed = with(LocalDensity.current) { 900.dp.toPx() }
+    val fullscreenThreshold = with(LocalDensity.current) { 56.dp.toPx() }
+    // YouTube-style: swipe the video down to minimize, up for fullscreen. The panel tracks the
+    // finger on the way down; an upward swipe springs back as the fullscreen activity opens.
+    val videoDrag: ((Float) -> Unit)? =
+        if (!swipeGestures || panelDrag == null) null
+        else
+            ({ dy: Float ->
+                if (motion.animate)
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        panelDrag.offset.snapTo(dy.coerceAtLeast(0f))
+                    }
+            })
+    val videoEnd: ((Float, Float) -> Unit)? =
+        if (!swipeGestures || panelDrag == null) null
+        else
+            ({ dy: Float, velocity: Float ->
+                scope.launch {
+                    when {
+                        dy > threshold || (velocity > flingSpeed && dy > threshold / 3) -> {
+                            haptic()
+                            panelDrag.dismiss(this, 1)
+                        }
+                        dy < -fullscreenThreshold ||
+                            (velocity < -flingSpeed && dy < -fullscreenThreshold / 3) -> {
+                            haptic()
+                            openFullscreen()
+                            panelDrag.offset.animateTo(0f, motion.spring())
+                        }
+                        else -> panelDrag.offset.animateTo(0f, motion.spring())
+                    }
+                }
+                Unit
+            })
     BoxWithConstraints(Modifier.fillMaxSize().testTag("focused-player")) {
         val landscape = maxWidth > maxHeight * 1.25f
         val portraitVideoHeight =
@@ -287,15 +345,12 @@ internal fun FocusedPlayer(
                                 vm.play(MediaCard(media), download = true)
                             }
                         if (player.video)
-                            MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
-                                context.startActivity(
-                                    Intent(context, FullscreenActivity::class.java)
-                                        .putExtra(
-                                            "reduced_motion",
-                                            config.optBoolean("reduced_motion"),
-                                        )
-                                )
-                            }
+                            MediaIconButton(
+                                Glyph.Expand,
+                                "Fullscreen video",
+                                "fullscreen-button",
+                                action = openFullscreen,
+                            )
                         MediaIconButton(
                             Glyph.More,
                             "Playback options",
@@ -366,6 +421,8 @@ internal fun FocusedPlayer(
                             Modifier.fillMaxSize(),
                             onCollapse = minimize,
                             onSettings = onMore,
+                            onPanelDrag = videoDrag,
+                            onPanelEnd = videoEnd,
                             playbackPlayer = PlaybackService.current?.controlsPlayer,
                             covered = player.preparing != null,
                             timingToken =
