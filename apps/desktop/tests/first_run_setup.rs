@@ -99,7 +99,9 @@ async fn skip_records_completion_and_keeps_the_settings_unchanged() {
     assert_eq!(step(&app), setup::LOOK);
     // Preview another theme, then return to the original one and skip.
     app.key(KeyCode::Right.into());
-    assert_ne!(app.palette, palette, "theme previews immediately");
+    tokio::time::sleep(std::time::Duration::from_millis(320)).await;
+    app.tick().await;
+    assert_ne!(app.palette, palette, "theme previews once the fade ends");
     app.key(KeyCode::Left.into());
     app.key(KeyCode::Esc.into());
     assert!(app.modal.is_none());
@@ -110,6 +112,35 @@ async fn skip_records_completion_and_keeps_the_settings_unchanged() {
         "an unchanged theme restores the palette"
     );
     assert_eq!(toml::to_string(&app.config).unwrap(), before);
+    app.shutdown().await;
+}
+
+#[tokio::test]
+async fn theme_preview_crossfades_and_reduced_motion_switches_instantly() {
+    let (mut app, _temp) = fixture(Snapshot::default(), false, false);
+    let start = app.palette.clone();
+    app.key(KeyCode::Enter.into());
+    app.key(KeyCode::Right.into());
+    let target = match &app.modal {
+        Some(Modal::Setup(s)) => theme::builtin(&s.draft.theme).unwrap(),
+        _ => unreachable!(),
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(140)).await;
+    app.tick().await;
+    assert!(
+        app.palette != start && app.palette != target,
+        "mid-fade palette sits between the two themes"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    app.tick().await;
+    assert_eq!(app.palette, target, "the fade lands on the chosen theme");
+    app.shutdown().await;
+
+    let (mut app, _temp) = fixture(Snapshot::default(), false, false);
+    app.config.reduced_motion = true;
+    app.key(KeyCode::Enter.into());
+    app.key(KeyCode::Right.into());
+    assert_ne!(app.palette, start, "reduced motion applies the theme at once");
     app.shutdown().await;
 }
 

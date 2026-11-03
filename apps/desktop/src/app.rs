@@ -288,6 +288,8 @@ pub struct App {
     pub input: Option<Input>,
     pub status: String,
     pub palette: Palette,
+    /// Setup theme preview crossfade: (from, to, started).
+    theme_fade: Option<(Palette, Palette, Instant)>,
     pub player_status: PlayerStatus,
     pub vinyl_motion: crate::ui::vinyl::Motion,
     pub visual_levels: Option<ytui_services::visualizer::AudioLevels>,
@@ -350,6 +352,30 @@ pub struct App {
 /// Seconds before the end of the current item at which the next one is prepared.
 /// Shorter than the player's stream-cache lifetime, so the result is still fresh.
 pub const PRELOAD_WINDOW: f64 = 90.0;
+/// Length of the setup theme-preview crossfade.
+const THEME_FADE: Duration = Duration::from_millis(280);
+
+/// Linear colour mix; `t` is eased (smoothstep) so the change starts and ends softly.
+fn blend_palette(from: &Palette, to: &Palette, t: f32) -> Palette {
+    let t = t.clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+    let rgb = |a: (u8, u8, u8), b: (u8, u8, u8)| (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2));
+    Palette {
+        name: to.name.clone(),
+        source: to.source.clone(),
+        background: rgb(from.background, to.background),
+        surface: rgb(from.surface, to.surface),
+        text: rgb(from.text, to.text),
+        muted: rgb(from.muted, to.muted),
+        accent: rgb(from.accent, to.accent),
+        selection: rgb(from.selection, to.selection),
+        error: rgb(from.error, to.error),
+        warning: rgb(from.warning, to.warning),
+        success: rgb(from.success, to.success),
+        light: to.light,
+    }
+}
 impl App {
     fn pending_text(&mut self, title: &str) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
@@ -619,6 +645,7 @@ impl App {
                 "Anonymous · F2 actions · , settings · ? help".into()
             },
             palette: theme::builtin("ytui-dark")?,
+            theme_fade: None,
             player_status: PlayerStatus::default(),
             demo,
             offline,
@@ -3663,14 +3690,44 @@ impl App {
             setup
                 .original_palette
                 .get_or_insert_with(|| self.palette.clone());
-            if let Ok(palette) = theme::builtin(&setup.draft.theme) {
-                self.palette = palette;
-            } else if let Some(original) = &setup.original_palette {
+            let target = match theme::builtin(&setup.draft.theme) {
+                Ok(palette) => Some(palette),
                 // "system" resolves through the theme provider once saved.
-                self.palette = original.clone();
+                Err(_) => setup.original_palette.clone(),
+            };
+            if let Some(target) = target {
+                self.fade_to(target);
             }
         }
         self.modal = Some(Modal::Setup(setup));
+    }
+    /// Crossfades to `target` over [`THEME_FADE`]; switches instantly with reduced
+    /// motion or when either palette maps to the terminal's own colours.
+    fn fade_to(&mut self, target: Palette) {
+        self.theme_fade = None;
+        if self.config.reduced_motion
+            || self.palette.name == "terminal"
+            || target.name == "terminal"
+            || self.palette == target
+        {
+            self.palette = target;
+        } else {
+            self.theme_fade = Some((self.palette.clone(), target, Instant::now()));
+        }
+        self.redraw = true;
+    }
+    fn advance_theme_fade(&mut self) {
+        let Some((from, to, started)) = &self.theme_fade else {
+            return;
+        };
+        let t = started.elapsed().as_secs_f32() / THEME_FADE.as_secs_f32();
+        if t >= 1.0 {
+            self.palette = to.clone();
+            self.theme_fade = None;
+        } else {
+            self.palette = blend_palette(from, to, t);
+        }
+        self.redraw = true;
     }
     /// Finishing and skipping both record completion and keep the choices made so
     /// far, like Android's onboarding. `connect` continues to the account flow.
@@ -3682,6 +3739,10 @@ impl App {
             && let Some(original) = setup.original_palette.clone()
         {
             self.palette = original;
+        }
+        // Land on the final palette instead of a half-faded one.
+        if let Some((_, to, _)) = self.theme_fade.take() {
+            self.palette = to;
         }
         self.status = "Setup saved · replay it any time from F2 actions".into();
         if setup.changed(&self.config) {
@@ -3938,6 +3999,7 @@ impl App {
         true
     }
     pub async fn tick(&mut self) {
+        self.advance_theme_fade();
         let spinning = self.vinyl_enabled()
             && self.player_status.active
             && !self.player_status.paused
