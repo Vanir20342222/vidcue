@@ -19,6 +19,7 @@ pub(crate) struct Key {
     pub url: String,
     pub audio: bool,
     pub quality: String,
+    pub audio_language: Option<String>,
 }
 
 struct Entry {
@@ -58,6 +59,7 @@ impl Resolver {
                 && scope.proxy == key.proxy
                 && scope.audio == key.audio
                 && scope.quality == key.quality
+                && scope.audio_language == key.audio_language
         }) {
             let cached = cache.remove(index).expect("client index");
             let client = cached.1.clone();
@@ -225,6 +227,7 @@ mod tests {
             url: "https://youtube.test/watch?v=fixture".into(),
             audio: true,
             quality: "1080".into(),
+            audio_language: None,
         }
     }
     #[test]
@@ -272,14 +275,20 @@ mod tests {
         let mut other = key();
         other.account = 1;
         cache.get_or_resolve(other, false, load()).await.unwrap();
+        let mut other_language = key();
+        other_language.audio_language = Some("zh".into());
+        cache
+            .get_or_resolve(other_language, false, load())
+            .await
+            .unwrap();
         cache.get_or_resolve(key(), true, load()).await.unwrap();
-        assert_eq!(count.load(Ordering::SeqCst), 3);
+        assert_eq!(count.load(Ordering::SeqCst), 4);
         cache.clear();
         assert!(cache.get_or_resolve(key(), false, load()).await.is_err());
         let mut current = key();
         current.epoch = cache.epoch();
         cache.get_or_resolve(current, false, load()).await.unwrap();
-        assert_eq!(count.load(Ordering::SeqCst), 4);
+        assert_eq!(count.load(Ordering::SeqCst), 5);
     }
     #[tokio::test]
     async fn invalidation_during_extraction_never_caches_or_returns_old_session_streams() {

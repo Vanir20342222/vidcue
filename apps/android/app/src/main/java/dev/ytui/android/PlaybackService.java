@@ -64,6 +64,7 @@ public final class PlaybackService extends MediaSessionService {
   long skipUntil = 0, lastSkipped = -1, lastPositionSave = 0, sleepDeadline = 0;
   boolean pendingStart, navigationPending, contextReady, contextPreparing, waitingForContext;
   int queuedNext;
+  JSONObject failedNavigation;
   String activeContext = "", playbackQuality = "1080", relatedForUrl = "";
   long startupAt, firstFrameMs, startMs, startupToken;
 
@@ -404,6 +405,7 @@ public final class PlaybackService extends MediaSessionService {
               StartupTimings.stage(
                   startupToken, "ready", SystemClock.elapsedRealtime() - startupAt);
             if (state == Player.STATE_ENDED) {
+              if (navigationPending || streamRefreshing) return;
               if (currentRequest.optBoolean("preview")) {
                 finishPreview();
               } else if (isLive()) {
@@ -681,6 +683,7 @@ public final class PlaybackService extends MediaSessionService {
     if (startupToken != request.optLong("startup_token"))
       StartupTimings.ended(startupToken, "cancelled", startupAt);
     currentRequest = request;
+    failedNavigation = null;
     streamRefreshing = false;
     startupToken = request.optLong("startup_token");
     StartupTimings.handoff(startupToken, startupAt);
@@ -894,6 +897,7 @@ public final class PlaybackService extends MediaSessionService {
       StartupTimings.output(startupToken, SystemClock.elapsedRealtime(), false);
     try {
       JSONObject started = new JSONObject(currentRequest.toString());
+      JSONObject acceptedRequest = currentRequest;
       String contextId = contextId();
       NativeBridge.activateContext(contextId);
       String queuedUrl = pendingQueueUrl;
@@ -921,13 +925,9 @@ public final class PlaybackService extends MediaSessionService {
             }
             handler.post(
                 () -> {
-                  if (current != this || !contextId.equals(contextId())) return;
+                  if (current != this || currentRequest != acceptedRequest) return;
                   prepareContext(started.optJSONObject("context"));
                   refreshPrefetch();
-                  if (queuedNext > 0) {
-                    queuedNext--;
-                    navigate(false);
-                  }
                 });
           });
     } catch (JSONException error) {
@@ -1044,6 +1044,10 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   JSONObject candidate(boolean previous, boolean shuffle, String id) throws Exception {
+    return candidate(previous, shuffle, id, -1);
+  }
+
+  JSONObject candidate(boolean previous, boolean shuffle, String id, int fromHistory) throws Exception {
     JSONObject media =
         previous
             ? new JSONObject()
@@ -1059,6 +1063,7 @@ public final class PlaybackService extends MediaSessionService {
           rpc(
               new JSONObject()
                   .put("op", "history_peek")
+                  .put("from_index", fromHistory)
                   .put("direction", previous ? "previous" : "next"));
       if (history.has("media")) {
         media = history.getJSONObject("media");
@@ -1074,7 +1079,8 @@ public final class PlaybackService extends MediaSessionService {
         queued = media.length() > 0;
       }
     }
-    JSONObject value = new JSONObject().put("queued", queued).put("history_index", historyIndex);
+    JSONObject value = new JSONObject().put("queued", queued).put("history_index", historyIndex)
+        .put("context_entry", media.optBoolean("context_entry"));
     if (media.length() > 0) value.put("media", media);
     return value;
   }
@@ -1225,6 +1231,9 @@ public final class PlaybackService extends MediaSessionService {
       case "quality":
         changeQuality(command.optString("value"));
         break;
+      case "audio_language":
+        changeAudioLanguage(command.optString("value"));
+        break;
       case "next":
         next();
         break;
@@ -1319,13 +1328,26 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   private void changeQuality(String quality) throws JSONException {
+    changeSelection(quality, currentRequest.optString("audio_language", ""));
+  }
+
+  private void changeAudioLanguage(String language) throws JSONException {
+    JSONObject stream = currentRequest.optJSONObject("stream");
+    JSONArray tracks = stream == null ? null : stream.optJSONArray("audio_tracks");
+    boolean offered = language.isEmpty();
+    for (int i = 0; tracks != null && i < tracks.length(); i++)
+      if (language.equals(tracks.getJSONObject(i).optString("language"))) offered = true;
+    if (offered) changeSelection(currentRequest.optString("quality", "1080"), language);
+  }
+
+  private void changeSelection(String quality, String language) throws JSONException {
     if (!Arrays.asList("360", "480", "720", "1080", "best").contains(quality)) return;
     if (currentRequest.optJSONObject("media") == null
         || currentRequest.optBoolean("offline")
         || currentRequest.optBoolean("local")
         || currentRequest.optBoolean("preview")
         || isLive()) {
-      MediaBridge.event("notice", "Quality selection is available for online videos");
+      MediaBridge.event("notice", "Track and quality selection is available for online media");
       return;
     }
     long intent = ++qualityIntent, version = generation;
@@ -1335,8 +1357,9 @@ public final class PlaybackService extends MediaSessionService {
             .put("op", "resolve")
             .put("media", original.getJSONObject("media"))
             .put("audio", original.optBoolean("audio"))
+            .put("audio_language", language)
             .put("quality", quality);
-    MediaBridge.event("notice", "Loading quality " + quality + "…");
+    MediaBridge.event("notice", "Loading playback selection…");
     worker.execute(
         () -> {
           try {
@@ -1348,9 +1371,11 @@ public final class PlaybackService extends MediaSessionService {
                       || intent != qualityIntent
                       || currentRequest != original) return;
                   try {
-                    replaceQuality(original, stream, quality);
+                    replaceQuality(
+                        new JSONObject(original.toString()).put("audio_language", language),
+                        stream, quality);
                   } catch (JSONException invalid) {
-                    MediaBridge.event("error", "Could not change video quality");
+                    MediaBridge.event("error", "Could not change playback selection");
                   }
                 });
           } catch (Exception unavailable) {
@@ -1358,7 +1383,7 @@ public final class PlaybackService extends MediaSessionService {
                 () -> {
                   if (current == this && version == generation && intent == qualityIntent)
                     MediaBridge.event(
-                        "error", "Could not load this quality. Current playback was kept.");
+                        "error", "Could not load this selection. Current playback was kept.");
                 });
           }
         });
@@ -1374,12 +1399,12 @@ public final class PlaybackService extends MediaSessionService {
             .put("quality", quality)
             .put("reconnect", true)
             .put("resume", false)
-            .put("queued", false);
+            .put("queued", started && original.optBoolean("queued"));
     play(replacement);
     pendingStart = started;
     contextReady = preparedContext;
     player.seekTo(position);
-    MediaBridge.event("notice", "Video quality: " + quality);
+    MediaBridge.event("notice", "Playback selection updated");
   }
 
   boolean isLive() {
@@ -1428,6 +1453,7 @@ public final class PlaybackService extends MediaSessionService {
                         .put("media", original.getJSONObject("media"))
                         .put("audio", original.optBoolean("audio"))
                         .put("quality", original.optString("quality", playbackQuality))
+                        .put("audio_language", original.optString("audio_language", ""))
                         .put("fresh", true));
             JSONObject replacement =
                 new JSONObject(original.toString())
@@ -1525,7 +1551,9 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   void previous() {
-    if (!isLive() && player.getCurrentPosition() > 3000) player.seekTo(0);
+    queuedNext = 0;
+    if (!navigationPending && failedNavigation == null
+        && !isLive() && player.getCurrentPosition() > 3000) player.seekTo(0);
     else navigate(true);
   }
 
@@ -1546,7 +1574,8 @@ public final class PlaybackService extends MediaSessionService {
     StartupTimings.playerCache(timing, warmReady());
     boolean shuffle = player.getShuffleModeEnabled();
     String contextId = contextId(), quality = playbackQuality;
-    JSONObject interrupted = currentRequest;
+    JSONObject interrupted = failedNavigation == null ? currentRequest : failedNavigation;
+    failedNavigation = null;
     boolean skipUnstarted = !previous && interrupted.optBoolean("queued");
     boolean wasPending = pendingStart;
     pendingStart = false;
@@ -1558,6 +1587,7 @@ public final class PlaybackService extends MediaSessionService {
     publish();
     afterPlaybackStored(
         () -> {
+          JSONObject selected = null;
           try {
             if (version != generation || current != this) return;
             // A deliberate Next skips a failed/buffering queue entry without
@@ -1571,7 +1601,8 @@ public final class PlaybackService extends MediaSessionService {
                       .put("context_entry", interrupted.optBoolean("context_entry"))
                       .put("skip_before", interrupted.optBoolean("context_skip")));
             }
-            JSONObject chosen = candidate(previous, shuffle, contextId);
+            JSONObject chosen = candidate(previous, shuffle, contextId, interrupted.optInt("history_index", -1));
+            selected = chosen;
             JSONObject media = chosen.optJSONObject("media");
             boolean queued = chosen.optBoolean("queued");
             int historyIndex = chosen.optInt("history_index", -1);
@@ -1661,25 +1692,39 @@ public final class PlaybackService extends MediaSessionService {
                   if (version != generation || current != this) return;
                   try {
                     play(ready);
+                    // Drain deliberate skips after handoff, without waiting for
+                    // an intermediate decoder to play (it may buffer forever).
+                    if (queuedNext > 0) {
+                      queuedNext--;
+                      navigate(false);
+                    }
                   } catch (Exception error) {
-                    navigationPending = false;
-                    queuedNext = 0;
-                    this.error = "Could not start the next queued item";
-                    publish();
+                    navigationFailed(ready);
                   }
                 });
           } catch (Exception error) {
+            JSONObject failed = selected;
             handler.post(
                 () -> {
                   if (version == generation && current == this) {
-                    navigationPending = false;
-                    queuedNext = 0;
-                    this.error = "Could not play the next queued item";
-                    publish();
+                    navigationFailed(failed);
                   }
                 });
           }
         });
+  }
+
+  private void navigationFailed(JSONObject failed) {
+    failedNavigation = failed;
+    navigationPending = false;
+    if (failed != null && queuedNext > 0) {
+      queuedNext--;
+      navigate(false);
+      return;
+    }
+    queuedNext = 0;
+    error = "Could not play the next item. Tap Next to skip or choose another item.";
+    publish();
   }
 
   boolean prepareRelated() {
@@ -1741,6 +1786,7 @@ public final class PlaybackService extends MediaSessionService {
     activeContext = "";
     contextPreparing = contextReady = waitingForContext = false;
     queuedNext = 0;
+    failedNavigation = null;
     pendingStart = false;
     navigationPending = false;
     streamTitle = "";
@@ -1851,6 +1897,11 @@ public final class PlaybackService extends MediaSessionService {
                   "offline",
                   currentRequest.optBoolean("offline") || currentRequest.optBoolean("local"))
               .put("quality", currentRequest.optString("quality", "1080"))
+              .put("audio_language", currentRequest.optString("audio_language", ""))
+              .put("selected_audio_language", currentRequest.optJSONObject("stream") == null
+                  ? "" : currentRequest.getJSONObject("stream").optString("audio_language", ""))
+              .put("audio_tracks", currentRequest.optJSONObject("stream") == null
+                  ? new JSONArray() : currentRequest.getJSONObject("stream").optJSONArray("audio_tracks"))
               .put("video_width", player.getVideoSize().width)
               .put("video_height", player.getVideoSize().height)
               .put("captions", captionText)

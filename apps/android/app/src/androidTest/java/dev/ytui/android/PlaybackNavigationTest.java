@@ -435,7 +435,7 @@ public final class PlaybackNavigationTest {
         byte[] body = audio;
         String mime = "audio/mp4";
         boolean library = first.contains("/library");
-        boolean missing = first.contains("/Missing.m4a");
+        boolean missing = first.contains("/Missing.m4a") || first.contains("/Unresolvable.m3u");
         if (first.contains("/Buffering.m4a")) {
           mediaEntered.countDown();
           CountDownLatch paused = pauseMedia;
