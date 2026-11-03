@@ -308,7 +308,13 @@ class CatalogUiTest {
             .onNodeWithTag("proxy-field")
             .performScrollTo()
             .performTextInput("editable-native-field")
-        compose.onNodeWithTag("proxy-field").assertTextContains("editable-native-field")
+        try {
+            compose.onNodeWithTag("proxy-field").assertTextContains("editable-native-field")
+        } catch (failure: AssertionError) {
+            compose.onRoot(useUnmergedTree = true).printToLog("ytui-settings-ui")
+            MediaRuntimeTest.capture("native-catalog-error.png")
+            throw failure
+        }
     }
 
     @Test

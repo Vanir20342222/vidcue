@@ -95,6 +95,10 @@ class NativeUiTest {
             .performScrollTo()
             .performTextInput("http://127.0.0.1:8080")
         compose.onNodeWithTag("proxy-field").assertTextContains("http://127.0.0.1:8080")
+        // A keyboard/configuration recreation must retain the open category and draft,
+        // without applying the proxy or sending any traffic through it.
+        scenario.recreate()
+        compose.onNodeWithTag("proxy-field").assertTextContains("http://127.0.0.1:8080")
         // Do not apply a proxy: this test verifies actual editing, not networking.
     }
 

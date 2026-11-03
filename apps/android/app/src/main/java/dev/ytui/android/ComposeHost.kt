@@ -2516,7 +2516,7 @@ private fun SettingsPanel(
         }
     var themeMenu by remember { mutableStateOf(false) }
     var proxy by
-        remember(config.optString("proxy")) {
+        rememberSaveable(config.optString("proxy")) {
             mutableStateOf(config.optString("proxy").takeUnless { it == "null" } ?: "")
         }
     Panel(
