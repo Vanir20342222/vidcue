@@ -201,6 +201,44 @@ async fn queue_reordering_is_durable_and_stale_actions_cannot_remove_the_wrong_i
     assert_eq!(e.request(json!({"op":"queue"})).await.unwrap(), queue);
 }
 #[tokio::test]
+async fn skipped_history_candidates_do_not_move_the_durable_playback_cursor() {
+    let (e, _root) = engine();
+    let items = [
+        media("abcdefghijk"),
+        media("lmnopqrstuv"),
+        media("zyxwvutsrqp"),
+    ];
+    for item in &items {
+        e.request(json!({"op":"history_record","media":item}))
+            .await
+            .unwrap();
+    }
+    e.request(json!({"op":"history_record","media":items[0],"index":0}))
+        .await
+        .unwrap();
+    let skipped = e
+        .request(json!({"op":"history_peek","direction":"next","from_index":1}))
+        .await
+        .unwrap();
+    assert_eq!(skipped["media"]["url"], items[2].url);
+    assert_eq!(
+        e.request(json!({"op":"history_peek","direction":"next"}))
+            .await
+            .unwrap()["media"]["url"],
+        items[1].url
+    );
+    assert_eq!(
+        e.request(json!({"op":"history_list"}))
+            .await
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
 async fn playback_history_commits_only_accepted_navigation_and_preserves_forward_tracks() {
     let (e, root) = engine();
     let a = media("abcdefghijk");

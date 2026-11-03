@@ -13,6 +13,7 @@ use ytui_providers::{
     auth::Session, browse::Browser, images::ImageCache, paths::atomic_write, radio::Radio,
 };
 mod account;
+mod audio_tracks;
 mod indexed_playback;
 mod lyrics;
 mod resolution;
@@ -495,7 +496,13 @@ impl Engine {
                 }
                 let state = self.state.lock().expect("state");
                 let timeline = &state.playback;
-                let target = timeline.current.and_then(|index| {
+                // Skipping an unstarted history candidate must not record it as played.
+                let from = r["from_index"]
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|i| *i < timeline.items.len())
+                    .or(timeline.current);
+                let target = from.and_then(|index| {
                     if r["direction"] == "previous" {
                         index.checked_sub(1)
                     } else {
@@ -964,6 +971,10 @@ impl Engine {
         }
         let config = self.config.lock().expect("config").clone();
         let audio = r["audio"].as_bool().unwrap_or(false);
+        let language = r["audio_language"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         let quality = r["quality"]
             .as_str()
             .unwrap_or(&config.download.quality)
@@ -978,6 +989,7 @@ impl Engine {
             url: media.url.clone(),
             audio,
             quality: quality.clone(),
+            audio_language: language.clone(),
         };
         // Wait for background capacity before taking a per-video flight lock.
         // Foreground taps can use their reserved slot while cancelled blocking
@@ -1023,7 +1035,10 @@ impl Engine {
                             Ok(yt_dlp_rs::YoutubeDl::with_options(
                                 yt_dlp_rs::YoutubeOptions {
                                     no_playlist: true,
-                                    playback_format: Some(mobile_format(audio, &quality)?),
+                                    playback_format: Some(audio_tracks::selector(
+                                        &mobile_format(audio, &quality)?,
+                                        language.as_deref(),
+                                    )?),
                                     playback_skip_direct: fresh,
                                     playback_visitor_data: visitor,
                                     js_runtime: if cfg!(target_os = "android") {
@@ -1052,7 +1067,10 @@ impl Engine {
                         let extract_at = std::time::Instant::now();
                         let info = client.extract_info_with_format(
                             &media.url,
-                            Some(&mobile_format(audio, &quality)?),
+                            Some(&audio_tracks::selector(
+                                &mobile_format(audio, &quality)?,
+                                language.as_deref(),
+                            )?),
                         )?;
                         let extract_ms = extract_at.elapsed().as_millis() as u64;
                         Ok((
@@ -1482,6 +1500,8 @@ fn stream(data: &Value, audio: bool) -> Result<Value> {
     let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":data["ytui_playback_route"],"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":ytui_providers::formats::Catalog::parse(data)});
     let duration = data["duration"].as_f64();
     let secondary = formats.and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"));
+    result["audio_tracks"] = json!(audio_tracks::choices(data));
+    result["audio_language"] = secondary.unwrap_or(primary)["language"].clone();
     let tracks = if !audio && let Some(second) = secondary {
         vec![primary, second]
     } else {

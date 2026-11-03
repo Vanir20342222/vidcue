@@ -2255,6 +2255,9 @@ internal fun PlayerPane(
                     }
                 "tracks" ->
                     SubPage("Audio & subtitles") {
+                        AudioLanguageOptions(player.value) { language ->
+                            vm.command("audio_language", "value" to language)
+                        }
                         SheetAction(
                             text = { Text("Toggle captions") },
                             leadingIcon = { MediaIcon(Glyph.Captions) },
