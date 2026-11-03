@@ -43,12 +43,15 @@ public final class FullscreenActivity extends ComponentActivity {
     view.setBackgroundColor(android.graphics.Color.BLACK);
     view.setUseController(true);
     PlayerChrome.apply(view);
-    view.findViewById(R.id.ytui_collapse).setOnClickListener(button -> finish());
+    android.view.View collapse = view.findViewById(R.id.ytui_collapse);
+    collapse.setOnClickListener(button -> finish());
+    collapse.setContentDescription(getString(R.string.ytui_player_exit_fullscreen));
     view.setControllerAnimationEnabled(
         !getIntent().getBooleanExtra("reduced_motion", false)
             && android.animation.ValueAnimator.areAnimatorsEnabled());
     view.setShowSubtitleButton(true);
-    view.setShowShuffleButton(true);
+    // Queue modes live in the app's player; the fullscreen chrome is for watching.
+    view.setShowShuffleButton(false);
     view.setFullscreenButtonState(true);
     view.setFullscreenButtonClickListener(
         fullscreen -> {
@@ -56,7 +59,48 @@ public final class FullscreenActivity extends ComponentActivity {
         });
     frames = new VisibleFrameTracker(view);
     VideoGestures.attach(view);
-    setContentView(view);
+    // The options layer sits above the video in this same window: every playback
+    // option is reachable without leaving fullscreen or revealing system bars.
+    android.widget.FrameLayout root = new android.widget.FrameLayout(this);
+    root.setBackgroundColor(android.graphics.Color.BLACK);
+    root.addView(view, matchParent());
+    setContentView(root);
+    root.addView(FullscreenOptions.attach(this, view), matchParent());
+    ViewCompat.setOnApplyWindowInsetsListener(
+        root,
+        (target, insets) -> {
+          fitControls(insets.getInsets(WindowInsetsCompat.Type.displayCutout()));
+          return insets;
+        });
+  }
+
+  private static android.widget.FrameLayout.LayoutParams matchParent() {
+    return new android.widget.FrameLayout.LayoutParams(
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+        android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+  }
+
+  /** Keep controls clear of cutouts and screen edges; scrims and video stay edge to edge. */
+  private void fitControls(androidx.core.graphics.Insets cutout) {
+    int edge = Math.round(16 * getResources().getDisplayMetrics().density);
+    int[] ids = {
+      R.id.ytui_top_bar,
+      androidx.media3.ui.R.id.exo_bottom_bar,
+      androidx.media3.ui.R.id.exo_progress,
+      androidx.media3.ui.R.id.exo_minimal_controls
+    };
+    for (int id : ids) {
+      android.view.View child = view.findViewById(id);
+      if (child == null
+          || !(child.getLayoutParams() instanceof android.view.ViewGroup.MarginLayoutParams))
+        continue;
+      android.view.ViewGroup.MarginLayoutParams params =
+          (android.view.ViewGroup.MarginLayoutParams) child.getLayoutParams();
+      params.leftMargin = Math.max(edge, cutout.left);
+      params.rightMargin = Math.max(edge, cutout.right);
+      if (id == R.id.ytui_top_bar) params.topMargin = cutout.top;
+      child.setLayoutParams(params);
+    }
   }
 
   @Override

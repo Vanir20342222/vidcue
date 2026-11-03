@@ -33,7 +33,7 @@ impl Field {
     }
 }
 pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
-    ("General", &[54, 15, 16, 17, 34, 38, 50]),
+    ("General", &[54, 15, 16, 17, 34, 56, 38, 50]),
     ("Appearance", &[0, 1, 2, 3, 55]),
     (
         "Downloads",
@@ -111,6 +111,9 @@ impl Form {
             }
             "Proxy" | "Proxy (optional)" => {
                 "HTTP(S) or SOCKS5 URL. Browsing/downloads support remote SOCKS DNS; mpv requires HTTP(S) or OS VPN routing. Credentials stay out of support exports."
+            }
+            "Resume videos where you left off" => {
+                "Playing a partly watched video continues from its locally saved position. Music, stations and finished videos start at the beginning. Use :player-seek 0 to start over. Requires saved playback positions."
             }
             "Limit KiB/s (0=off)" => {
                 "Per-job transfer cap in KiB/s; 0 disables this cap. Global/schedule caps may also apply."
@@ -311,6 +314,7 @@ impl Form {
                 &c.music_player_style,
                 ytui_core::MUSIC_PLAYER_STYLES,
             ),
+            Field::flag("Resume videos where you left off", c.resume_on_play),
         ];
         Self {
             kind: FormKind::Settings(config),
@@ -613,6 +617,7 @@ impl Form {
             .map(str::to_owned)
             .collect();
         c.music_player_style = self.value(55).into();
+        c.resume_on_play = self.value(56) == "yes";
         c.validate()?;
         Ok(c)
     }

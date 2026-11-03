@@ -1,9 +1,21 @@
 # ytui Rust rewrite plan
 
+M9 category loading (2026-11-02): Android prepares nearby video/Music category
+pages and the other media tab's Home in the background, reuses in-flight work,
+and retains first pages for one minute within bounded memory. Existing preload
+and metered-data preferences apply. Nine focused offline Kotlin cache tests pass;
+Android build/device latency remains unqualified in this SDK-less workspace.
+See [validation](docs/android/VALIDATION.md#category-preloading-2026-11-02).
+
 M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
 restyle brief to the remaining Downloads, player, options, account, lyrics and
-settings surfaces, and fixes search focus re-entry. Local build, JVM and lint
-checks pass. Native CI and screenshot acceptance of that revision are pending.
+settings surfaces, and fixes search focus re-entry. It is merged on main
+(`b6a76a2`, PR #33). The [Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249)
+(APK job plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222)
+runs for that exact commit succeeded. Screenshot review and physical-device
+acceptance of this UI remain pending; see
+[the 2026-11-02 local re-verification](docs/android/VALIDATION.md#local-re-verification-of-main-b6a76a2-2026-11-02-m9).
 
 M9 UI fidelity follow-up: the owner requested iterative comparison with an
 independent judge at every revision. [Findings, evidence boundary and rubric](docs/android/UI_FIDELITY_REVIEW.md)
@@ -557,6 +569,10 @@ See [the usage guide](docs/RUST.md) and [remaining parity](docs/PARITY.md).
 - Explicit local resume on `u` / `:resume`, bounded private positions, offline
   catalog and startup mode, and early-window-close handling. The user selected
   local resume actions, no automatic playback or YouTube history write-back.
+  On 2026-11-02 the user requested instant continue: `resume_on_play`
+  (default on, Settings → General) makes normal video playback start at the
+  saved local position. It never starts playback by itself; music/stations and
+  finished videos start from the top. Android parity for this option is open.
 - Recurring collection watches with a complete initial baseline, duplicate checks,
   persistence, resource limits/backoff and account/generation invalidation.
 - State format 2 adds a SQLite version-1 backup before upgrade; stale owned

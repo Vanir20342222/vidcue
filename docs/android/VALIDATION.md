@@ -54,6 +54,38 @@ Not run and not claimed: no emulator or instrumentation run (including
 no TalkBack check, and no live Google sign-in. The JVM result is logic-only and does
 not establish sign-in success, cookie capture, or any accessibility behaviour.
 
+## Category preloading (2026-11-02)
+
+Android's native ViewModel now caches network first pages for 60 seconds, with
+12 entries and a 2 MiB serialized-text estimate. Video and Music use distinct
+keys, including network revision; account changes, account-index changes and
+proxy edits clear cached/private navigation state. Selecting the current source
+again refreshes its UI entry. Local saved items and pagination bypass this cache.
+
+After a 300 ms settling delay, browsing prepares up to three nearby server
+categories, Home for the other media tab, and signed-in playlist/liked sources
+(at most six targets per batch). Only one speculative browse runs at a time;
+tapping a pending target shares its fetch. Cancelled batches do not schedule
+more work. Existing preload/mobile-data preferences apply, active playback
+suppresses new speculative browsing, and errors stop a batch without retries or
+visible error overlays. Category chips remain available while changing filters.
+
+Focused verification: **9 JUnit tests passed**, compiled directly with Kotlin
+2.1.21, kotlinx-coroutines 1.10.2 and JUnit 4.13.2. They exercise reuse/expiry,
+joining a cancelled preload waiter, account clearing and late replies, failed
+fetch recovery, entry/byte eviction, oversize rejection, explicit refresh,
+tab isolation, and rapid navigation without cancelling the visible request.
+Kotlin formatting and `git diff --check` also pass.
+
+This workspace has no Android SDK or Gradle installation/cache. The new cache
+and its tests were compiled in isolation; the complete Android app build,
+instrumentation, physical category-switch latency and live-service behavior
+have **not** been qualified for this change. On an Android-equipped worker run
+`apps/android/gradlew -p apps/android :app:testDebugUnitTest :app:lintDebug`
+and exercise video/Music category switching, refresh, pagination, account
+switch/disconnect, and preload disabled/metered-network settings on a device.
+No APK was built or published; M9's existing physical/live gates remain open.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version
@@ -810,3 +842,65 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 ## CI layout change, 2026-11-02 (M9)
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
+
+## Local re-verification of main b6a76a2, 2026-11-02 (M9)
+
+Environment: Linux container, 4 cores, no KVM, emulator or device. The workspace
+declares `rust-version = "1.99"`, so the container's rustc 1.97.0 was updated to
+1.99.1 first. Node.js 22.23.4 and FFmpeg were installed; mpv, Lua 5.4 and yt-dlp
+were not. Android SDK platform/build-tools 35 and NDK 27.2.12479018 were
+installed outside the repository.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo test --workspace --locked` | 337 passed, 0 failed, 31 explicit ignores |
+| Vendored `mobile_playback` test, `tools/test-ci-install-media.sh`, `tools/test-native-solver.sh` | pass |
+| `tools/android/build.sh` (debug): both Rust ABIs, `assembleDebug`, JVM tests, lint | pass; 21 JVM tests, lint 0 errors / 39 warnings |
+| `tools/android/inspect-apk.sh` | pass: signature, ZIP alignment, both ABIs, 16 KiB ELF segments, notices |
+| `cargo machete` | found four unused `ytui-services` dependencies (`directories`, `httpdate`, `image`, `sha1`); removed, then clean. Each is still declared by `ytui-providers`, and `ytui-mobile` does not depend on `ytui-services`. Fmt, clippy and tests were re-run afterwards with identical totals |
+
+The debug APK is `dev.ytui.android.preview` ("ytui Preview"), default version
+metadata (code 8), debuggable, and signed with a debug key generated in that
+container. It cannot update an install signed with another debug key, such as a
+CI artifact; do not uninstall such an install just to bypass this.
+
+Not run here: the CI `media` job (needs mpv, Lua 5.4 and yt-dlp) and the
+emulator suite. GitHub's runs for the same commit cover both and succeeded:
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249) (APK job
+plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222).
+Maven Central answered the first Gradle attempts with HTTP 429; a retry completed
+without any change. No screenshot, physical-device or live-service acceptance was
+added by this re-verification.
+
+## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
+
+Implemented (Android UI only; desktop and shared palettes unchanged):
+
+- Motion settings under Settings → Appearance → Motion: animation style
+  (smooth/snappy/bouncy/gentle), animation speed (50–200 %), animated cards and
+  haptic feedback. All Compose transitions read `Motion` (`Motion.kt`); the shared
+  "Reduced motion" setting still turns every animation into an instant change.
+- Smoother transitions: finger-following drag-to-minimize for the music player,
+  direction-aware feed slide when swiping tabs/categories, player open/close with
+  slide+scale, staggered card entry, press-in card feedback, artwork fade-in,
+  animated play/pause glyph and a mini-player progress bar that glides between
+  position snapshots (seeks and track changes still jump).
+- New gestures, each with its own toggle under Settings → Appearance → Gestures
+  (behind the existing "Swipe gestures" master switch): mini player swipe
+  (sideways next/previous, up to open, down to stop); swipe music artwork for
+  next/previous; double-tap music artwork to pause; video double-tap centre to
+  pause (left/right still seek); press-and-hold for temporary fast playback
+  (`speed_hold`, never saved as the user's speed; rate selectable 1.25–3×);
+  video vertical swipe for brightness (left) and media volume (right), restoring
+  system brightness when the video view leaves; pinch to zoom/fit video.
+- The native video surface is never moved by a Compose graphics layer; video
+  minimize recognises the swipe without following the finger.
+
+Checks: JVM unit tests `MotionTest` cover speed/style scaling, clamping and
+reduced-motion snapping. No Android SDK was available in the authoring
+container, so compilation and emulator/physical-device behaviour of the new
+gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
+Tab S9) are not yet qualified and must be checked before release.

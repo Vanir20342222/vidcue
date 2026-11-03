@@ -201,6 +201,13 @@ No playback, provider, Rust, networking, cache or persistence code changed.
 
 ## Evidence
 
+**Final result (added 2026-11-02).** This pass is merged on main as PR #33
+(`b6a76a2`). The
+[Android run for that commit](https://github.com/Vanir20342222/ytui/actions/runs/41491689249)
+(APK job plus four emulator shards) succeeded, so the failures recorded below for
+earlier revisions do not recur in it. The per-revision records are kept as history.
+Screenshot review and physical-device acceptance remain pending.
+
 Local (Linux, no KVM), on the final source:
 
 - Debug APK for x86_64 with the Rust engine.

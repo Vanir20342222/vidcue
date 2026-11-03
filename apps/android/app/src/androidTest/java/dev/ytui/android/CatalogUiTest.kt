@@ -1520,7 +1520,8 @@ class CatalogUiTest {
                         }
                         .onFailure {
                             decoded = false
-                            checks += "capture=${it.javaClass.simpleName}"
+                            val reason = it.message?.lineSequence()?.firstOrNull()?.take(200)
+                            checks += "capture=${it.javaClass.simpleName}: $reason"
                         }
                 }
                 diagnostics = checks
@@ -1528,7 +1529,10 @@ class CatalogUiTest {
             }
         } catch (error: Throwable) {
             captureSettled("restyle-fidelity-cover-failed.png")
-            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            android.util.Log.i(
+                "CoverEvidence",
+                (diagnostics + "requests per cover=${covers.perCover}").joinToString("; "),
+            )
             throw error
         }
     }
@@ -1549,12 +1553,17 @@ class CatalogUiTest {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
         val failures = AtomicInteger()
+        val perCover = java.util.concurrent.atomic.AtomicIntegerArray(6)
         @Volatile var failFirstCover = false
         private val images = (0..5).map(::cover)
         private val worker =
             Thread {
                     while (!socket.isClosed) try {
-                        socket.accept().use { client ->
+                        val accepted = socket.accept()
+                        // Serve each connection on its own thread: one stalled read must not
+                        // queue every other parallel cover load behind it.
+                        Thread {
+                                accepted.use { client ->
                             client.soTimeout = 5000
                             val reader = client.getInputStream().bufferedReader()
                             val request = reader.readLine() ?: return@use
@@ -1569,6 +1578,7 @@ class CatalogUiTest {
                                     ?.toIntOrNull() ?: 0
                             val bytes = images[index.coerceIn(0, 5)]
                             requests.incrementAndGet()
+                            perCover.incrementAndGet(index.coerceIn(0, 5))
                             if (index == 0 && failFirstCover) {
                                 failFirstCover = false
                                 failures.incrementAndGet()
@@ -1588,7 +1598,9 @@ class CatalogUiTest {
                                 write(bytes)
                                 flush()
                             }
+                                }
                         }
+                        .apply { isDaemon = true; start() }
                     } catch (_: java.io.IOException) {
                         /* closed fixture client/server */
                     }

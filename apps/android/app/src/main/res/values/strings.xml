@@ -1,4 +1,6 @@
 <resources>
     <string name="downloads_channel_name">Offline downloads</string>
     <string name="ytui_player_collapse">Minimize player</string>
+    <string name="ytui_player_exit_fullscreen">Exit full screen</string>
+    <string name="ytui_player_options">Playback options</string>
 </resources>
