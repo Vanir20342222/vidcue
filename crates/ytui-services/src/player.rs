@@ -34,7 +34,16 @@ pub enum PlayerCommand {
         media: Media,
         audio: bool,
     },
-    /// Resolve one likely next item without starting mpv.
+    /// Plays a saved local copy of `media` (Android: "Prefer saved offline media").
+    /// Status, history and queue identity keep the original media; mpv opens `path`.
+    PlayLocal {
+        media: Media,
+        audio: bool,
+        path: std::path::PathBuf,
+        seconds: Option<f64>,
+    },
+    /// Resolves one likely next item (the selected item or the next queued one) in the
+    /// background without starting mpv; a later Play reuses the prepared streams.
     Prepare {
         media: Media,
         audio: bool,
@@ -281,6 +290,13 @@ struct Launch<'a> {
     position: Option<f64>,
     preferences: &'a Preferences,
     streams: Arc<crate::cache::ResponseCache<crate::native::Resolved>>,
+    /// Local file to open instead of `media.url`.
+    source: Option<String>,
+}
+fn socks_proxy(config: &Config) -> bool {
+    config.proxy.as_deref().is_some_and(|proxy| {
+        url::Url::parse(proxy).is_ok_and(|url| url.scheme().starts_with("socks"))
+    })
 }
 #[cfg(test)]
 async fn start(
@@ -307,15 +323,12 @@ async fn start_prepared(
         position,
         preferences,
         streams,
+        source,
     } = launch;
-    let local = Path::new(&media.url).is_file();
+    let target = source.unwrap_or_else(|| media.url.clone());
+    let local = Path::new(&target).is_file();
     ensure!(
-        local
-            || !config
-                .proxy
-                .as_deref()
-                .is_some_and(|proxy| url::Url::parse(proxy)
-                    .is_ok_and(|url| url.scheme().starts_with("socks"))),
+        local || !socks_proxy(config),
         "mpv playback cannot use a SOCKS proxy directly. Use an HTTP(S) proxy or your VPN's system routing; SOCKS browsing/downloads remain supported. No direct connection was attempted"
     );
     let youtube = if local {
@@ -397,7 +410,7 @@ async fn start_prepared(
         args.push(format!("--http-proxy={proxy}"));
     }
     args.push("--".into());
-    args.push(media.url.clone());
+    args.push(target);
     let cancel = preparation
         .as_ref()
         .map(|p| p.cancel.clone())
@@ -657,6 +670,8 @@ struct Actor {
     streams: Arc<crate::cache::ResponseCache<crate::native::Resolved>>,
     preparation: Option<crate::playback_cache::Preparation>,
     prepare_backoff: Option<tokio::time::Instant>,
+    /// Local file opened instead of the playing media's URL (saved offline copy).
+    source: Option<String>,
 }
 fn native_stream_retryable(message: &str) -> bool {
     if crate::failure::rate_limited(message) {
@@ -769,7 +784,10 @@ impl Actor {
             ..Default::default()
         };
         self.ignore_segments_until = 0.0;
-        if self.config.playback_sponsorblock != "off"
+        // Saved copies may already have SponsorBlock segments removed (Android
+        // likewise skips segment lookup for offline playback).
+        if self.source.is_none()
+            && self.config.playback_sponsorblock != "off"
             && crate::sponsorblock::video_id(&media).is_some()
         {
             let config = self.config.clone();
@@ -794,6 +812,7 @@ impl Actor {
                 position,
                 preferences: &self.preferences(),
                 streams: self.streams.clone(),
+                source: self.source.clone(),
             },
             preparation,
         )
@@ -848,6 +867,7 @@ impl Actor {
                 position: None,
                 preferences: &self.preferences(),
                 streams: self.streams.clone(),
+                source: None,
             },
             None,
         )
@@ -867,6 +887,7 @@ impl Actor {
         match command {
             PlayerCommand::Play { media, audio } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, false, None, false).await
             }
             PlayerCommand::PlayAt {
@@ -875,11 +896,23 @@ impl Actor {
                 seconds,
             } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, false, Some(seconds), false).await;
             }
             PlayerCommand::PlayFallback { media, audio } => {
                 self.config.download.format_selector = None;
+                self.source = None;
                 self.play(media, audio, true, None, false).await
+            }
+            PlayerCommand::PlayLocal {
+                media,
+                audio,
+                path,
+                seconds,
+            } => {
+                self.config.download.format_selector = None;
+                self.source = Some(path.to_string_lossy().into_owned());
+                self.play(media, audio, false, seconds, false).await
             }
             PlayerCommand::Quality(quality) => {
                 if quality == "best"
@@ -1075,6 +1108,7 @@ impl Actor {
                     if config.playback_sponsorblock == "off" {
                         self.state.segments.clear();
                     } else if let Some((media, _, _)) = &self.playing
+                        && self.source.is_none()
                         && crate::sponsorblock::video_id(media).is_some()
                     {
                         let config = (*config).clone();
@@ -1091,6 +1125,7 @@ impl Actor {
                 if self.state.sponsor_enabled
                     && self.state.segments.is_empty()
                     && self.sponsor_task.is_none()
+                    && self.source.is_none()
                     && let Some((media, _, _)) = &self.playing
                     && crate::sponsorblock::video_id(media).is_some()
                 {
@@ -1114,10 +1149,17 @@ impl Actor {
             }
             PlayerCommand::Session(session) => {
                 self.stop().await;
+                if let Some(preparation) = self.preparation.take() {
+                    preparation.stop().await;
+                }
+                self.prepare_backoff = None;
                 self.streams = Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024));
                 self.session = session;
             }
-            PlayerCommand::Stop => self.stop().await,
+            PlayerCommand::Stop => {
+                self.stop().await;
+                self.source = None;
+            }
             command => {
                 let previewing = self.preview.is_some();
                 let active = self.preview.as_ref().or(self.full.as_ref());
@@ -1358,6 +1400,7 @@ impl Actor {
                         position: (!media.live).then_some(self.state.position),
                         preferences: &self.preferences(),
                         streams: self.streams.clone(),
+                        source: self.source.clone(),
                     },
                     None,
                 )
@@ -1550,6 +1593,7 @@ impl Player {
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
                 preparation: None,
                 prepare_backoff: None,
@@ -1669,6 +1713,82 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         );
     }
     #[tokio::test]
+    async fn saved_copy_source_opens_the_local_file_without_resolving_the_youtube_url() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let mpv = temp.path().join("mpv");
+        let args = temp.path().join("args.txt");
+        std::fs::write(
+            &mpv,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nsleep 30\n",
+                args.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&mpv, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let saved = temp.path().join("Saved video.mp4");
+        std::fs::write(&saved, b"synthetic").unwrap();
+        let config = Config {
+            mpv: mpv.display().to_string(),
+            // Resolution would fail loudly: a saved copy must never reach it.
+            native_js_runtime: Some("/must-not-run-a-runtime".into()),
+            ..Default::default()
+        };
+        let paths = Paths {
+            config_override: None,
+            xdg_state: temp.path().into(),
+            config: temp.path().into(),
+            state: temp.path().into(),
+            cache: temp.path().into(),
+            legacy_data: temp.path().into(),
+            home: temp.path().into(),
+        };
+        let media = Media {
+            url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+            title: "Saved video".into(),
+            ..Default::default()
+        };
+        let active = start(
+            &config,
+            &paths,
+            None,
+            &media,
+            Launch {
+                audio: false,
+                preview: false,
+                paused: false,
+                position: Some(42.0),
+                preferences: &Preferences::default(),
+                streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
+                source: Some(saved.display().to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let lines = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&args)
+                    && text.contains("--start=")
+                {
+                    return text;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        active.stop().await;
+        let lines = lines.lines().collect::<Vec<_>>();
+        assert_eq!(lines.last(), Some(&saved.to_str().unwrap()));
+        assert!(lines.contains(&"--start=42.000"));
+        assert!(!lines.iter().any(|l| l.contains("youtube.com")));
+        assert!(
+            !lines.iter().any(|l| l.starts_with("--user-agent")),
+            "local files get no YouTube network options"
+        );
+    }
+    #[tokio::test]
     async fn native_replay_uses_cached_streams_and_a_failed_open_invalidates_them() {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
@@ -1727,6 +1847,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: None,
                 preferences: &Preferences::default(),
                 streams: streams.clone(),
+                source: None,
             },
         )
         .await
@@ -1760,6 +1881,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: None,
                 preferences: &Preferences::default(),
                 streams: streams.clone(),
+                source: None,
             },
         )
         .await
@@ -1872,6 +1994,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -1993,6 +2116,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 position: Some(42.25),
                 preferences: &Preferences::default(),
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
+                source: None,
             },
         )
         .await
@@ -2077,6 +2201,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -2294,6 +2419,7 @@ sleep 30
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
                 preparation: None,
                 prepare_backoff: None,
@@ -2366,6 +2492,7 @@ mod responsiveness_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -2443,6 +2570,7 @@ mod responsiveness_tests {
                 reconnect_at: None,
                 sponsor_task: None,
                 ignore_segments_until: 0.0,
+                source: None,
                 streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
                 preparation: None,
                 prepare_backoff: None,
@@ -2490,6 +2618,7 @@ mod responsiveness_tests {
             resume_after_preview: false,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -2630,6 +2759,7 @@ mod responsiveness_tests {
             resume_after_preview: false,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -2744,6 +2874,7 @@ mod responsiveness_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -3148,6 +3279,7 @@ mod real_mpv_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,
@@ -3515,6 +3647,7 @@ mod real_mpv_tests {
             reconnect_at: None,
             sponsor_task: None,
             ignore_segments_until: 0.0,
+            source: None,
             streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
             preparation: None,
             prepare_backoff: None,

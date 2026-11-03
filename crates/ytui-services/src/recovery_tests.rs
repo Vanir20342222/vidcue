@@ -48,6 +48,7 @@ fn actor(root: &Path, live: bool) -> Actor {
         streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
         preparation: None,
         prepare_backoff: None,
+        source: None,
     }
 }
 async fn finished(actor: &mut Actor, success: bool, message: &str) {
