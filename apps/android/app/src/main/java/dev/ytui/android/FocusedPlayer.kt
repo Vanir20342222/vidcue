@@ -58,6 +58,9 @@ internal fun VideoSurface(
                     )
                 }
                 .apply {
+                    // Media3's workaround keeps SurfaceView geometry synchronized
+                    // inside Compose's AndroidView on Android 14+.
+                    setEnableComposeSurfaceSyncWorkaround(true)
                     useController = true
                     setControllerAnimationEnabled(
                         !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
