@@ -9,6 +9,23 @@ public final class AuthActivity extends ComponentActivity {
   WebView web;
   private String flow;
   private boolean loaded;
+  private boolean wasFound;
+  private final android.os.Handler poll = new android.os.Handler(android.os.Looper.getMainLooper());
+  private final Runnable pollSession =
+      new Runnable() {
+        @Override
+        public void run() {
+          checkSession();
+          if (!wasFound) poll.postDelayed(this, 1000);
+        }
+      };
+  /**
+   * Google's own sign-in page, returning to YouTube. Opening this directly skips the YouTube
+   * mobile shell, which is a blank page until its overflow menu is used to start sign-in.
+   */
+  static final String SIGN_IN_URL =
+      "https://accounts.google.com/ServiceLogin?service=youtube&continue="
+          + "https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26next%3D%252F";
   private static String activeFlow = "";
   private static String completedFlow = "";
   private static java.lang.ref.WeakReference<AuthActivity> active =
@@ -51,12 +68,15 @@ public final class AuthActivity extends ComponentActivity {
           @Override
           public void onPageFinished(WebView view, String url) {
             AuthUi.page(url);
-            // Only cookie names are checked; the user still confirms explicitly.
-            boolean found =
-                AuthUi.looksSignedIn(
-                    CookieManager.getInstance().getCookie("https://www.youtube.com"));
-            if (found && !ComposeHost.authBusy()) ComposeHost.authMessage("");
-            AuthUi.sessionFound(found);
+            checkSession();
+          }
+
+          // YouTube's mobile page is a single-page app that can navigate (or stall blank)
+          // without another page-finished callback, so history updates count too.
+          @Override
+          public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            AuthUi.page(url);
+            checkSession();
           }
         });
     web.setWebChromeClient(
@@ -64,6 +84,7 @@ public final class AuthActivity extends ComponentActivity {
           @Override
           public void onProgressChanged(WebView view, int progress) {
             AuthUi.progress(progress);
+            if (progress == 100) checkSession();
           }
         });
     ComposeHost.attachAuth(this, web);
@@ -78,7 +99,20 @@ public final class AuthActivity extends ComponentActivity {
     if (BuildConfig.DEBUG && getIntent().getBooleanExtra("ytui.offline-auth", false))
       web.loadData(
           "<p>Offline sign-in UI fixture. No account is contacted.</p>", "text/html", "UTF-8");
-    else web.loadUrl("https://www.youtube.com/feed/you");
+    else web.loadUrl(SIGN_IN_URL);
+  }
+
+  /**
+   * Only cookie names are checked; the user still confirms explicitly with the Use-session
+   * action. Runs on every navigation signal and on a slow poll, because the final YouTube page
+   * can stay blank and never report that it finished.
+   */
+  private void checkSession() {
+    boolean found =
+        AuthUi.looksSignedIn(CookieManager.getInstance().getCookie("https://www.youtube.com"));
+    if (found && !wasFound && !ComposeHost.authBusy()) ComposeHost.authMessage("");
+    wasFound = found;
+    AuthUi.sessionFound(found);
   }
 
   /** Only when the process was recreated straight into sign-in; the app sets it otherwise. */
@@ -99,6 +133,8 @@ public final class AuthActivity extends ComponentActivity {
     ComposeHost.authMessage("");
     if (!loaded) load();
     AuthUi.showWeb(true);
+    poll.removeCallbacks(pollSession);
+    poll.post(pollSession);
   }
 
   /** Help/privacy/terms links open in the user's browser, never inside the sign-in view. */
@@ -173,6 +209,14 @@ public final class AuthActivity extends ComponentActivity {
   protected void onResume() {
     super.onResume();
     if (flow.equals(completedFlow)) finish();
+    poll.removeCallbacks(pollSession);
+    if (loaded) poll.post(pollSession);
+  }
+
+  @Override
+  protected void onPause() {
+    poll.removeCallbacks(pollSession);
+    super.onPause();
   }
 
   @Override

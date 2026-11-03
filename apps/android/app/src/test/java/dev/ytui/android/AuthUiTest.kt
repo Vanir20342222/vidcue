@@ -104,4 +104,12 @@ class AuthUiTest {
         AuthUi.page(null)
         assertEquals("", AuthUi.url.value)
     }
+
+    @Test
+    fun signInOpensGoogleSignInDirectlyAndReturnsToYouTube() {
+        val url = AuthActivity.SIGN_IN_URL
+        assertTrue(url.startsWith("https://accounts.google.com/"))
+        assertTrue(url.contains("service=youtube"))
+        assertTrue(url.contains("www.youtube.com"))
+    }
 }
