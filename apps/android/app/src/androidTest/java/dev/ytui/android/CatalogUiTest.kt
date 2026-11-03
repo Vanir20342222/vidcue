@@ -189,6 +189,33 @@ class CatalogUiTest {
     }
 
     @Test
+    fun scrollingBackReusesReadyArtworkWithoutAnotherFetch() {
+        val cards = populate(1)
+        val firstRequests = covers.perCover.get(0)
+        compose.onNodeWithTag("feed-list").performScrollToIndex(cards.lastIndex)
+        awaitDecodedCovers(cards)
+        compose.onNodeWithTag("feed-list").performScrollToIndex(0)
+        // A warmed cover is present in the first settled composition after scroll-back.
+        compose
+            .onNodeWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+            .assertIsDisplayed()
+        val frame =
+            compose
+                .onNodeWithTag("artwork-${cards.first().key}", useUnmergedTree = true)
+                .captureToImage()
+        val color = frame.toPixelMap()[frame.width / 2, frame.height / 4]
+        Assert.assertTrue(
+            "Scroll-back paints decoded pixels immediately",
+            color.red > color.green * 1.15f,
+        )
+        Assert.assertEquals(
+            "Scroll-back must not fetch the first cover again",
+            firstRequests,
+            covers.perCover.get(0),
+        )
+    }
+
+    @Test
     fun artworkGridAdaptsAndCardActionsStayReachable() {
         covers.failFirstCover = true
         val cards = populate(1)
