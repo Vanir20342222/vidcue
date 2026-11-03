@@ -34,7 +34,9 @@ class PlaybackPerformanceTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             PlaybackService.current?.stopAndClear()
         }
-        MediaRuntimeTest.await("Previous test service must be closed") {
+        // The previous test can deliberately leave a playback failure. Cleanup
+        // must still wait for actual service destruction, not fail on that error.
+        MediaRuntimeTest.await("Previous test service must be closed", false) {
             PlaybackService.current == null
         }
         PlaybackCache.cancel()

@@ -21,6 +21,44 @@ internal object PlayerChrome {
         accent = value
     }
 
+    /**
+     * Show SponsorBlock segments on the video controller's timebar. Media3 draws extra ad-group
+     * markers as ticks, so each segment contributes a start and (when distinct) an end tick.
+     * Main thread only; the service updates its marks on the main looper.
+     */
+    @JvmStatic
+    fun showSponsorMarks(view: PlayerView) {
+        val marks = PlaybackService.current?.sponsors?.objects() ?: emptyList()
+        val times =
+            marks
+                .flatMap { mark ->
+                    val start = mark.optDouble("start")
+                    val end = mark.optDouble("end")
+                    if (start.isFinite() && end.isFinite() && end > start)
+                        listOf((start * 1000).toLong(), (end * 1000).toLong())
+                    else emptyList()
+                }
+                .filter { it >= 0 }
+                .distinct()
+                .sorted()
+                .toLongArray()
+        val applied = view.getTag(R.id.ytui_sponsor_marks) as? LongArray
+        if (applied?.contentEquals(times) == true) return
+        view.setTag(R.id.ytui_sponsor_marks, times)
+        view.setExtraAdGroupMarkers(times, BooleanArray(times.size))
+    }
+
+    /** Refresh the marks whenever the controller (and so its timebar) becomes visible. */
+    @JvmStatic
+    fun trackSponsorMarks(view: PlayerView) {
+        view.setControllerVisibilityListener(
+            PlayerView.ControllerVisibilityListener { visibility ->
+                if (visibility == View.VISIBLE) showSponsorMarks(view)
+            }
+        )
+        showSponsorMarks(view)
+    }
+
     /** Frosted-glass disc: tinted translucent fill with a lit hairline edge. */
     private fun glassDisc(resources: android.content.res.Resources) =
         GradientDrawable().apply {
@@ -74,6 +112,9 @@ internal object PlayerChrome {
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
             setPlayedColor(accent)
             setScrubberColor(accent)
+            // SponsorBlock ticks: a fixed warm marker stays distinct from any accent.
+            setAdMarkerColor(MediaTokens.sponsorMark.toArgb())
+            setPlayedAdMarkerColor(MediaTokens.sponsorMark.toArgb())
             // Choose the narrow keyline from the actual accent: fixed dark
             // backing would hide dark accents from light/imported palettes.
             val backing = mediaOnAccent(Color(accent))
