@@ -339,6 +339,9 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                 if (!onboarding) BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .background(background)
+                        // The video panel is opaque. Keep browse state/artwork
+                        // attached, but skip drawing the covered content.
+                        .graphicsLayer { alpha = if (playerOpen && videoPlayer) 0f else 1f }
                         .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
@@ -1970,6 +1973,12 @@ internal fun PlayerPane(
             Modifier.widthIn(max = if (player.video) 840.dp else 480.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(if (expanded) 0.dp else 12.dp),
         ) {
+            val preparing = player.preparing
+            if (preparing != null) {
+                Text(preparing.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                return@Column
+            }
             if (player.media == null) {
                 EmptyMediaState(
                     Glyph.Music,

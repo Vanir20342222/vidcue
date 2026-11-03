@@ -1,5 +1,10 @@
 # ytui Rust rewrite plan
 
+M9 subsecond-startup candidate: [scope, research and measurement](docs/android/SUBSECOND_STARTUP.md)
+track the new <1000 ms visible-and-playing target, separately from the earlier
+Tab S9 <2000 ms acceptance. This is an unmerged performance branch; native and
+physical qualification remain pending.
+
 M9 category loading (2026-11-02): Android prepares nearby video/Music category
 pages and the other media tab's Home in the background, reuses in-flight work,
 and retains first pages for one minute within bounded memory. Existing preload

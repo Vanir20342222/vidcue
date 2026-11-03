@@ -35,7 +35,7 @@ final class VisibleVideoProbe {
     }
   }
 
-  private static PlayerView find(View root) {
+  static PlayerView find(View root) {
     if (root instanceof PlayerView) return (PlayerView) root;
     if (root instanceof ViewGroup) {
       ViewGroup group = (ViewGroup) root;
@@ -47,6 +47,53 @@ final class VisibleVideoProbe {
     return null;
   }
 
+  static Result capture(ActivityScenario<RustActivity> scenario, long timing, String filename)
+      throws Exception {
+    return capture(scenario, timing, filename, 2000);
+  }
+
+  static Result capture(
+      ActivityScenario<RustActivity> scenario, long timing, String filename, long budgetMs)
+      throws Exception {
+    return capture(action -> scenario.onActivity(action::accept), timing, filename, budgetMs);
+  }
+
+  private interface Scheduler {
+    void onActivity(java.util.function.Consumer<RustActivity> action);
+  }
+
+  /** Bind before the tap: observing a frame must not wait for UI idleness. */
+  static Observer observe(ActivityScenario<RustActivity> scenario) {
+    java.util.concurrent.atomic.AtomicReference<RustActivity> activity =
+        new java.util.concurrent.atomic.AtomicReference<>();
+    scenario.onActivity(activity::set);
+    return new Observer(activity.get());
+  }
+
+  static final class Observer {
+    private final RustActivity activity;
+    int requests;
+    long observationMs;
+
+    private Observer(RustActivity activity) {
+      this.activity = activity;
+    }
+
+    Result capture(long timing, String filename, long budgetMs) throws Exception {
+      requests++;
+      long started = SystemClock.elapsedRealtime();
+      try {
+        return VisibleVideoProbe.capture(
+            action -> MediaBridge.main.post(() -> action.accept(activity)),
+            timing,
+            filename,
+            budgetMs);
+      } finally {
+        observationMs += SystemClock.elapsedRealtime() - started;
+      }
+    }
+  }
+
   /**
    * Time allowed for the GPU readback to finish after the window was sampled. Readback is probe
    * overhead (hundreds of milliseconds on software-rendered emulators), not time the user waits, so
@@ -54,14 +101,15 @@ final class VisibleVideoProbe {
    */
   private static final long READBACK_ALLOWANCE_MS = 2000;
 
-  static Result capture(ActivityScenario<RustActivity> scenario, long timing, String filename)
+  private static Result capture(Scheduler scheduler, long timing, String filename, long budgetMs)
       throws Exception {
     CompletableFuture<Frame> future = new CompletableFuture<>();
     CountDownLatch sampled = new CountDownLatch(1);
-    scenario.onActivity(
+    scheduler.onActivity(
         activity -> {
           PlayerView view = find(activity.getWindow().getDecorView());
-          if (!activity.hasWindowFocus()
+          if (activity.isDestroyed()
+              || !activity.hasWindowFocus()
               || view == null
               || !view.isShown()
               || view.getWidth() < 1
@@ -96,7 +144,7 @@ final class VisibleVideoProbe {
           sampled.countDown();
         });
     Frame frame;
-    long remaining = 2000 - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
+    long remaining = budgetMs - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
     try {
       // The window must be sampled within the budget; the readback may finish afterwards.
       if (!sampled.await(Math.max(1, remaining), TimeUnit.MILLISECONDS))

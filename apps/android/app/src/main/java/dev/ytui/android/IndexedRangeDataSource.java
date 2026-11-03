@@ -21,7 +21,7 @@ final class IndexedRangeDataSource implements DataSource {
     this.host = host;
   }
 
-  static DataSource.Factory factory(DefaultHttpDataSource.Factory http) {
+  static DataSource.Factory factory(HttpDataSource.Factory http) {
     return () ->
         new IndexedRangeDataSource(http.createDataSource(), IndexedRangeDataSource::youtubeCdn);
   }

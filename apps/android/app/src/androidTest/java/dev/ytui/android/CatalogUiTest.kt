@@ -1530,8 +1530,8 @@ class CatalogUiTest {
                         }
                         .onFailure {
                             decoded = false
-                            val reason = it.message?.lineSequence()?.firstOrNull()?.take(200)
-                            checks += "capture=${it.javaClass.simpleName}: $reason"
+                            checks +=
+                                "cover_index=${cards.indexOf(media)} capture=${it.javaClass.simpleName}:${it.message?.take(240)}"
                         }
                 }
                 diagnostics = checks
@@ -1541,8 +1541,34 @@ class CatalogUiTest {
             captureSettled("restyle-fidelity-cover-failed.png")
             android.util.Log.i(
                 "CoverEvidence",
-                (diagnostics + "requests per cover=${covers.perCover}").joinToString("; "),
+                diagnostics.joinToString("; ") + " requests=" + covers.requestCounts(),
             )
+            // Failure-only probes use this test's synthetic loopback artwork.
+            // Never retry the assertion or turn an initial failed cover into a pass.
+            for ((index, media) in cards.withIndex()) {
+                runCatching {
+                        if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed())
+                            return@runCatching
+                        if (
+                            compose
+                                .onAllNodesWithTag("artwork-${media.key}", useUnmergedTree = true)
+                                .fetchSemanticsNodes()
+                                .isNotEmpty()
+                        )
+                            return@runCatching
+                        val data = NativeBridge.thumbnail(media.value.toString(), 384)
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "missing_index=$index native_probe=${data?.let { "${it[0]}x${it[1]}" } ?: "unavailable"} requests=${covers.requestCounts()}",
+                        )
+                    }
+                    .onFailure {
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "probe_index=$index failed=${it.javaClass.simpleName}",
+                        )
+                    }
+            }
             throw error
         }
     }
@@ -1562,6 +1588,9 @@ class CatalogUiTest {
     private class CoverServer : AutoCloseable {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
+
+        fun requestCounts() = (0..5).map { perCover.get(it) }
+
         val failures = AtomicInteger()
         val perCover = java.util.concurrent.atomic.AtomicIntegerArray(6)
         @Volatile var failFirstCover = false
@@ -1574,43 +1603,46 @@ class CatalogUiTest {
                         // queue every other parallel cover load behind it.
                         Thread {
                                 accepted.use { client ->
-                            client.soTimeout = 5000
-                            val reader = client.getInputStream().bufferedReader()
-                            val request = reader.readLine() ?: return@use
-                            while (!reader.readLine().isNullOrEmpty()) {
-                                /* consume headers */
-                            }
-                            val index =
-                                Regex("/cover-(\\d+)")
-                                    .find(request)
-                                    ?.groupValues
-                                    ?.get(1)
-                                    ?.toIntOrNull() ?: 0
-                            val bytes = images[index.coerceIn(0, 5)]
-                            requests.incrementAndGet()
-                            perCover.incrementAndGet(index.coerceIn(0, 5))
-                            if (index == 0 && failFirstCover) {
-                                failFirstCover = false
-                                failures.incrementAndGet()
-                                client
-                                    .getOutputStream()
-                                    .write(
-                                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                                            .toByteArray()
-                                    )
-                                return@use
-                            }
-                            client.getOutputStream().apply {
-                                write(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
-                                        .toByteArray()
-                                )
-                                write(bytes)
-                                flush()
-                            }
+                                    client.soTimeout = 5000
+                                    val reader = client.getInputStream().bufferedReader()
+                                    val request = reader.readLine() ?: return@use
+                                    while (!reader.readLine().isNullOrEmpty()) {
+                                        /* consume headers */
+                                    }
+                                    val index =
+                                        Regex("/cover-(\\d+)")
+                                            .find(request)
+                                            ?.groupValues
+                                            ?.get(1)
+                                            ?.toIntOrNull() ?: 0
+                                    val bytes = images[index.coerceIn(0, 5)]
+                                    requests.incrementAndGet()
+                                    perCover.incrementAndGet(index.coerceIn(0, 5))
+                                    if (index == 0 && failFirstCover) {
+                                        failFirstCover = false
+                                        failures.incrementAndGet()
+                                        client
+                                            .getOutputStream()
+                                            .write(
+                                                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                                    .toByteArray()
+                                            )
+                                        return@use
+                                    }
+                                    client.getOutputStream().apply {
+                                        write(
+                                            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                                                .toByteArray()
+                                        )
+                                        write(bytes)
+                                        flush()
+                                    }
                                 }
-                        }
-                        .apply { isDaemon = true; start() }
+                            }
+                            .apply {
+                                isDaemon = true
+                                start()
+                            }
                     } catch (_: java.io.IOException) {
                         /* closed fixture client/server */
                     }

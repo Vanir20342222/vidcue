@@ -1,9 +1,9 @@
 package dev.ytui.android
 
 import android.content.Intent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -17,10 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalConfiguration
-import kotlin.math.abs
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -30,13 +29,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.ui.PlayerView
+import androidx.media3.common.Player
+import kotlin.math.abs
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 internal fun VideoSurface(
     modifier: Modifier = Modifier,
     onCollapse: (() -> Unit)? = null,
+    playbackPlayer: Player? = PlaybackService.current?.controlsPlayer,
+    covered: Boolean = false,
+    timingToken: Long = PlaybackService.current?.startupToken ?: 0,
     onSettings: (() -> Unit)? = null,
 ) {
     val collapse by rememberUpdatedState(onCollapse)
@@ -45,9 +48,15 @@ internal fun VideoSurface(
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
     AndroidView(
         factory = { context ->
-            (android.view.LayoutInflater.from(context)
-                    .inflate(R.layout.ytui_player, android.widget.FrameLayout(context), false)
-                    as PlayerView)
+            val inflateAt = android.os.SystemClock.elapsedRealtime()
+            VideoViewPreparation.take(context)
+                .also {
+                    StartupTimings.stage(
+                        timingToken,
+                        "view_inflate",
+                        android.os.SystemClock.elapsedRealtime() - inflateAt,
+                    )
+                }
                 .apply {
                     useController = true
                     setControllerAnimationEnabled(
@@ -89,7 +98,8 @@ internal fun VideoSurface(
                     settings?.invoke()
                 }
             }
-            val actual = PlaybackService.current?.controlsPlayer
+            val actual = playbackPlayer
+            (view.tag as VisibleFrameTracker).setPresentable(!covered)
             (view.tag as VisibleFrameTracker).bind(actual)
             view.keepScreenOn = actual?.playWhenReady == true
         },
@@ -142,7 +152,8 @@ internal fun FocusedPlayer(
     // Horizontal swipe on music artwork changes track, carousel style.
     val trackShift = remember { Animatable(0f) }
     val haptic = rememberGestureHaptic()
-    val trackWidth = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val trackWidth =
+        with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
     val trackSwipe =
         Modifier.swipeAxis(
             enabled = !player.video && mobile.gesture("gesture_swipe_tracks"),
@@ -173,6 +184,31 @@ internal fun FocusedPlayer(
             minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
         @Composable
         fun Controls(modifier: Modifier) {
+            val preparing = player.preparing
+            if (preparing != null) {
+                Column(
+                    modifier
+                        .padding(horizontal = MediaTokens.textInset)
+                        .heightIn(min = 48.dp)
+                        .testTag("panel-header")
+                        .then(dismiss)
+                ) {
+                    Text(
+                        preparing.media.title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (preparing.media.creator.isNotBlank())
+                        Text(
+                            preparing.media.creator,
+                            maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                }
+                return
+            }
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
@@ -314,19 +350,61 @@ internal fun FocusedPlayer(
         @Composable
         fun Art(modifier: Modifier) {
             BoxWithConstraints(
-                modifier.then(if (player.video) Modifier else dismiss.then(trackSwipe).then(artTaps)),
+                modifier.then(
+                    if (player.video) Modifier else dismiss.then(trackSwipe).then(artTaps)
+                ),
                 // Music art shares spare height above and below instead of
                 // leaving one gap between the cover and its title.
                 contentAlignment = if (player.video) Alignment.TopCenter else Alignment.Center,
             ) {
-                if (player.video && allowVideoSurface)
-                    VideoSurface(
+                if (player.video && allowVideoSurface) {
+                    Box(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
-                            .aspectRatio(16f / 9f),
-                        onCollapse = minimize,
-                        onSettings = onMore,
-                    )
-                else if (player.video) {
+                            .aspectRatio(16f / 9f)
+                    ) {
+                        VideoSurface(
+                            Modifier.fillMaxSize(),
+                            onCollapse = minimize,
+                            onSettings = onMore,
+                            playbackPlayer = PlaybackService.current?.controlsPlayer,
+                            covered = player.preparing != null,
+                            timingToken =
+                                player.preparing?.token ?: player.value.optLong("startup_token"),
+                        )
+                        player.preparing?.let { preparing ->
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .background(Color.Black)
+                                    .testTag("preparing-video")
+                                    .semantics { contentDescription = "Preparing video" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    Modifier.matchParentSize().pointerInput(preparing.token) {
+                                        awaitPointerEventScope {
+                                            while (true) awaitPointerEvent().changes.forEach {
+                                                it.consume()
+                                            }
+                                        }
+                                    }
+                                )
+                                CircularProgressIndicator()
+                                Box(Modifier.align(Alignment.TopStart).padding(4.dp)) {
+                                    CompositionLocalProvider(
+                                        LocalContentColor provides MediaTokens.videoInk
+                                    ) {
+                                        MediaIconButton(
+                                            Glyph.Down,
+                                            "Minimize player",
+                                            "panel-close",
+                                            minimize,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (player.video) {
                     // The root's distinct mode flow can lag the player snapshot
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
@@ -414,28 +492,29 @@ internal fun UpNext(
                 ?: state.context.firstOrNull { it.url != playingUrl }.takeIf { state.autoplay }
     Column(modifier.fillMaxWidth().testTag("up-next")) {
         if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        if (showHeader) Row(
-            Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Up next",
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            if (queue.isNotEmpty() && onManage != null)
-                TextButton(
-                    onManage,
-                    Modifier.heightIn(min = 48.dp),
-                    colors =
-                        ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                ) {
-                    Text("Edit queue")
-                }
-        }
+        if (showHeader)
+            Row(
+                Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Up next",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (queue.isNotEmpty() && onManage != null)
+                    TextButton(
+                        onManage,
+                        Modifier.heightIn(min = 48.dp),
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                    ) {
+                        Text("Edit queue")
+                    }
+            }
         if (queue.isEmpty() && state.context.isEmpty())
             Text(
                 if (state.loading) "Finding what plays next…"

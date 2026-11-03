@@ -27,6 +27,165 @@ class StartupUiTest {
         )
 
     @Test
+    fun coldAndPrefetchedCardTapsHaveActualPixelsUnderOneSecond() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val fixture = File(instrumentation.targetContext.cacheDir, "subsecond-fixture.mp4")
+        instrumentation.context.assets.open("fixture.mp4").use { input ->
+            fixture.outputStream().use { input.copyTo(it) }
+        }
+        val originalMobile = MobileSettings.snapshot()
+        val originalConfig = PlaybackService.rpc(json("op" to "settings"))
+        val evidence = StringBuilder()
+        try {
+            val config = originalConfig.copyJson()
+            config.getJSONObject("download").put("quality", "best")
+            PlaybackService.rpc(json("op" to "save_settings", "config" to config))
+            MobileSettings.save(
+                json(
+                    "preload_next" to false,
+                    "preload_mobile" to true,
+                    "autoplay_related" to false,
+                    "prefer_offline" to true,
+                )
+            )
+            MediaRuntimeTest.FixtureServer(fixture).use { server ->
+                RuntimeTest.launchOffline().use { scene ->
+                    compose.waitUntil(10_000) {
+                        compose
+                            .onAllNodes(
+                                hasTestTag("app-background") and
+                                    SemanticsMatcher.expectValue(
+                                        SemanticsProperties.StateDescription,
+                                        "Ready",
+                                    )
+                            )
+                            .fetchSemanticsNodes()
+                            .isNotEmpty()
+                    }
+                    val observer = VisibleVideoProbe.observe(scene)
+                    for (prepared in listOf(false, true)) {
+                        scene.onActivity { PlaybackService.current?.stopAndClear() }
+                        MediaRuntimeTest.await(
+                            "Previous service must finish closing before setup"
+                        ) {
+                            PlaybackService.current == null
+                        }
+                        PlaybackCache.cancel()
+                        NativeBridge.request(json("op" to "resolve_cache_clear").toString())
+                        MobileSettings.save(json("preload_next" to prepared))
+                        val name = if (prepared) "prefetched" else "cold"
+                        val media =
+                            json(
+                                "url" to "${server.url()}?sample=$name",
+                                "title" to "Subsecond $name fixture",
+                                "kind" to "video",
+                            )
+                        if (prepared) {
+                            val stream =
+                                PlaybackService.rpc(
+                                    json(
+                                        "op" to "resolve",
+                                        "media" to media,
+                                        "audio" to false,
+                                        "quality" to "best",
+                                    )
+                                )
+                            PlaybackCache.prefetchResolved(
+                                media,
+                                false,
+                                "best",
+                                stream,
+                                NativeBridge.accountIntent(),
+                                NetworkSettings.revision.get(),
+                            )
+                            MediaRuntimeTest.await("Startup bytes must finish prefetching") {
+                                PlaybackCache.readyFor(media, false, "best")
+                            }
+                        }
+                        scene.onActivity {
+                            val vm = ViewModelProvider(it)[YtuiViewModel::class.java]
+                            vm.playerOpen.value = false
+                            vm.feeds[1].value =
+                                FeedState(
+                                    cards = listOf(MediaCard(media)),
+                                    generation = if (prepared) 991 else 990,
+                                )
+                        }
+                        compose.waitForIdle()
+                        val previous = StartupTimings.latestToken()
+                        compose.onNodeWithText("Subsecond $name fixture").performClick()
+                        compose.waitUntil(10_000) { StartupTimings.latestToken() > previous }
+                        val token = StartupTimings.latestToken()
+                        var frame: VisibleVideoProbe.Result
+                        do {
+                            // Drive UI frames, but never wait for window idleness inside
+                            // the measured interval. PixelCopy observes the actual window.
+                            compose.mainClock.advanceTimeByFrame()
+                            frame =
+                                observer.capture(
+                                    token,
+                                    "startup-subsecond${if(prepared) "" else "-cold"}.png",
+                                    SubsecondTarget.observeMs,
+                                )
+                            if (frame.rgb && StartupTimings.usable(token) > 0) break
+                            Thread.sleep(8)
+                        } while (
+                            StartupTimings.elapsed(
+                                token,
+                                android.os.SystemClock.elapsedRealtime(),
+                            ) < SubsecondTarget.observeMs
+                        )
+                        val visible = StartupTimings.elapsed(token, frame.capturedAt)
+                        val usable = StartupTimings.usable(token)
+                        evidence.append(
+                            "$name subsecond_usable_ms=$usable subsecond_screenshot_confirmation_ms=$visible\n"
+                        )
+                        if (!SubsecondTarget.met(frame.rgb, visible, usable)) {
+                            evidence.append(StartupTimings.report())
+                            MediaRuntimeTest.capture("startup-subsecond-failed.png")
+                        }
+                        evidence.append(
+                            SubsecondTarget.check(
+                                name,
+                                frame.rgb,
+                                visible,
+                                usable,
+                                StartupTimings.report(),
+                            ) + "\n"
+                        )
+                        val lastVideo =
+                            StartupTimings.report().lineSequence().last { it.startsWith("Video") }
+                        Assert.assertTrue(
+                            lastVideo.contains(
+                                "warmup_bytes_at_tap=${if(prepared) "ready" else "not_ready"}"
+                            )
+                        )
+                        MediaRuntimeTest.await(
+                            "Fast startup must continue playing, not immediately stall"
+                        ) {
+                            val status = MediaRuntimeTest.status()
+                            status.optBoolean("playing") && status.optDouble("position") >= 1.0
+                        }
+                    }
+                    evidence.append(StartupTimings.report())
+                }
+            }
+        } finally {
+            if (evidence.isEmpty()) evidence.append(StartupTimings.report())
+            File(
+                    instrumentation.targetContext.getExternalFilesDir(null),
+                    "startup-subsecond-timings.txt",
+                )
+                .writeText(evidence.toString())
+            MediaRuntimeTest.command("stop")
+            PlaybackCache.cancel()
+            MobileSettings.save(originalMobile)
+            PlaybackService.rpc(json("op" to "save_settings", "config" to originalConfig))
+            fixture.delete()
+        }
+    }
+
+    @Test
     fun coldAndPreparedCardTapsReachAVisibleFrameWithinTwoSeconds() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val file = File(instrumentation.targetContext.cacheDir, "startup-fixture.mp4")

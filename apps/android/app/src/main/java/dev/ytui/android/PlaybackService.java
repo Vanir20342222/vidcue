@@ -26,8 +26,33 @@ public final class PlaybackService extends MediaSessionService {
   /** Matches desktop resume: positions under 5 s start from the beginning. */
   static final long AUTO_RESUME_MIN_MS = 5000;
   ExoPlayer player;
+  private volatile boolean initialized;
+  private int lastStartId;
+
+  static boolean warmReady() {
+    PlaybackService service = current;
+    return service != null && service.initialized;
+  }
+
+  static void warmForeground() {
+    if (!MediaBridge.uiVisible || current != null) return;
+    try {
+      MediaBridge.context.startService(
+          new Intent(MediaBridge.context, PlaybackService.class).setAction("warm"));
+    } catch (IllegalStateException unavailable) {
+      // Optional foreground infrastructure preparation; an actual play request
+      // retains the normal foreground-service path if the OS denies this start.
+    }
+  }
+
+  void releaseIdle() {
+    if (currentRequest.optJSONObject("media") == null && lastStartId != 0)
+      stopSelfResult(lastStartId);
+  }
+
   /** Speed to restore after a press-and-hold gesture; null when none is held. */
   private Float heldSpeedRestore;
+
   Player controlsPlayer;
   MediaSession session;
   LiveMetadataPlayer sessionPlayer;
@@ -164,7 +189,7 @@ public final class PlaybackService extends MediaSessionService {
                         }))
             .setLoadControl(
                 new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(5000, 20000, 250, 750)
+                    .setBufferDurationsMs(5000, 20000, 100, 750)
                     .build())
             .build();
     player.setAudioAttributes(
@@ -204,15 +229,19 @@ public final class PlaybackService extends MediaSessionService {
           @Override
           public void onVideoDecoderInitialized(
               EventTime time, String name, long at, long duration) {
-            if (at >= startupAt && StartupTimings.total(startupToken) < 0)
+            if (at >= startupAt && StartupTimings.total(startupToken) < 0) {
               StartupTimings.stage(startupToken, "codec", at - startupAt);
+              StartupTimings.stage(startupToken, "codec_init", duration);
+            }
           }
 
           @Override
           public void onAudioDecoderInitialized(
               EventTime time, String name, long at, long duration) {
-            if (at >= startupAt && StartupTimings.total(startupToken) < 0)
+            if (at >= startupAt && StartupTimings.total(startupToken) < 0) {
               StartupTimings.stage(startupToken, "audio_codec", at - startupAt);
+              StartupTimings.stage(startupToken, "audio_codec_init", duration);
+            }
           }
         });
     controlsPlayer = new ControlsPlayer(player);
@@ -424,7 +453,7 @@ public final class PlaybackService extends MediaSessionService {
           } catch (Exception ignored) {
           }
         });
-    handler.post(ticker);
+    initialized = true;
   }
 
   private void setLiveTitle(CharSequence raw) {
@@ -544,13 +573,23 @@ public final class PlaybackService extends MediaSessionService {
       stopSelf(id);
       return START_NOT_STICKY;
     }
+    lastStartId = id;
+    if ("warm".equals(intent.getAction())) {
+      if (currentRequest.optJSONObject("media") == null) {
+        if (!MediaBridge.uiVisible) releaseIdle();
+      }
+      // Do not register a session/notification or start a ticker for idle prep.
+      return START_NOT_STICKY;
+    }
     boolean startsPlayback = "play".equals(intent.getAction());
     if (startsPlayback) {
+      JSONObject request = null;
       try {
         // The external session must leave EMPTY before notification updates run.
         // Otherwise System UI can remove the preparation notification and send
         // a delayed Stop to the newly playing session.
-        play(new JSONObject(intent.getStringExtra("request")));
+        request = new JSONObject(intent.getStringExtra("request"));
+        play(request);
         sessionPlayer.metadataChanged();
         // Direct app playback has no controller bind to register the session.
         // Register only now, so its first notification update sees BUFFERING
@@ -558,9 +597,23 @@ public final class PlaybackService extends MediaSessionService {
         if (!getSessions().contains(session)) addSession(session);
       } catch (Exception e) {
         error = "Invalid playback request";
+        long rejectedToken = request == null ? 0 : request.optLong("startup_token");
+        StartupTimings.ended(rejectedToken, "failed", SystemClock.elapsedRealtime());
+        MediaBridge.event("playback_start_failed", error, Long.toString(rejectedToken), 0);
         publish();
+        // stopSelf alone does not discharge startForegroundService's promise:
+        // Android can crash the process immediately when it tears this service
+        // down. Settle that obligation only on this exceptional path, then
+        // remove the notification. Successful playback stays owned by Media3.
+        startForeground(
+            NotificationIds.PLAYBACK,
+            new android.app.Notification.Builder(this, "ytui-playback")
+                .setSmallIcon(R.drawable.ic_ytui)
+                .setContentTitle("Playback could not start")
+                .setOnlyAlertOnce(true)
+                .build());
         stopForeground(STOP_FOREGROUND_REMOVE);
-        stopSelf();
+        stopSelfResult(id);
         return START_NOT_STICKY;
       }
     }
@@ -571,7 +624,17 @@ public final class PlaybackService extends MediaSessionService {
     return super.onStartCommand(intent, flags, id);
   }
 
+  static void validateRequest(JSONObject request) throws JSONException {
+    JSONObject media = request.getJSONObject("media"), stream = request.getJSONObject("stream");
+    if (media.isNull("url")
+        || media.getString("url").trim().isEmpty()
+        || stream.isNull("url")
+        || stream.getString("url").trim().isEmpty())
+      throw new JSONException("Missing playback URL");
+  }
+
   void play(JSONObject request) throws JSONException {
+    validateRequest(request);
     // Resolution is finished: hand cached bytes to the foreground reader and
     // stop speculative prefix I/O competing with initial audio/video buffering.
     // Cancellation retains completed cache spans and Rust stream leases.
@@ -621,12 +684,7 @@ public final class PlaybackService extends MediaSessionService {
     JSONObject stream = request.getJSONObject("stream"), media = request.getJSONObject("media");
     if (stream.optBoolean("live")) media.put("live", true);
     pendingQueueUrl = request.optBoolean("queued") ? media.optString("url") : "";
-    DefaultHttpDataSource.Factory http =
-        new DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(8000)
-            .setReadTimeoutMs(12000)
-            .setAllowCrossProtocolRedirects(false)
-            .setDefaultRequestProperties(headers(stream.optJSONObject("headers")));
+    HttpDataSource.Factory http = PlaybackHttp.factory(headers(stream.optJSONObject("headers")));
     DataSource.Factory upstream =
         request.optBoolean("offline")
             ? OfflineStore.offlineFactory()
@@ -769,6 +827,8 @@ public final class PlaybackService extends MediaSessionService {
                       .build()));
     player.setMediaSource(source);
     player.prepare();
+    handler.removeCallbacks(ticker);
+    handler.post(ticker);
     if (pausedByUser) player.pause();
     else player.play();
     if (request.optBoolean("preview")) {
@@ -1386,6 +1446,7 @@ public final class PlaybackService extends MediaSessionService {
   void navigate(boolean previous) {
     long timing =
         StartupTimings.begin(SystemClock.elapsedRealtime(), !currentRequest.optBoolean("audio"));
+    StartupTimings.playerCache(timing, warmReady());
     boolean shuffle = player.getShuffleModeEnabled();
     String contextId = contextId(), quality = playbackQuality;
     long version = ++generation;
@@ -1420,6 +1481,9 @@ public final class PlaybackService extends MediaSessionService {
                   });
               return;
             }
+            // Next/Previous are foreground intent too: release speculative byte
+            // sockets before resolving, while retaining a joinable Rust flight.
+            PlaybackCache.pauseBytes();
             boolean audio = PlaybackPolicy.audioOnly(media.optString("kind"));
             StartupTimings.mediaType(timing, !audio);
             StartupTimings.stage(
@@ -1639,6 +1703,7 @@ public final class PlaybackService extends MediaSessionService {
                   isLive() && !streamTitle.isEmpty() && media != null
                       ? media.optString("title")
                       : "")
+              .put("startup_token", startupToken)
               .put("playing", player.isPlaying())
               // Presentation snapshot only; commands and queue policy are unchanged.
               .put("shuffle", player.getShuffleModeEnabled())
@@ -1648,7 +1713,7 @@ public final class PlaybackService extends MediaSessionService {
               .put("suppression", player.getPlaybackSuppressionReason())
               .put("paused", pausedByUser)
               .put("navigation_pending", navigationPending || queuedNext > 0)
-              .put("next_preloaded", PlaybackCache.ready)
+              .put("next_preloaded", PlaybackCache.isReady())
               .put("start_ms", startMs)
               .put("first_frame_ms", firstFrameMs)
               .put("tap_to_output_ms", StartupTimings.total(startupToken))
@@ -1713,6 +1778,7 @@ public final class PlaybackService extends MediaSessionService {
 
   @Override
   public void onDestroy() {
+    initialized = false;
     NativeBridge.activateContext("");
     cancelContextJobs();
     PlaybackCache.cancel();
