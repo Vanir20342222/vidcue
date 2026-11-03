@@ -891,6 +891,12 @@ private fun BrowsePane(
     browseFocus: FocusRequester,
     scrollToTop: Int = 0,
 ) {
+    // Sheets outlive recycled grid items, including relayout while the IME closes.
+    var cardMenu by remember { mutableStateOf<Pair<MediaCard, Boolean>?>(null) }
+    val openCardMenu: (MediaCard, Boolean) -> Unit = { media, square ->
+        releaseSearchFocus()
+        cardMenu = media to square
+    }
     val feed by vm.feeds[tab].collectAsState()
     val shared by vm.sharedQuery.collectAsState()
     val mobile by vm.mobile.collectAsState()
@@ -1286,6 +1292,7 @@ private fun BrowsePane(
                                                 current,
                                                 current && playingNow,
                                                 shelf = true,
+                                                openMenu = openCardMenu,
                                             )
                                         }
                                     }
@@ -1318,8 +1325,12 @@ private fun BrowsePane(
                                 .pressFeedback()
                         ) {
                             val current = media.url.isNotBlank() && media.url == playingUrl
-                            if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
-                            else MediaRow(vm, media, tab, thumbnails, mobile, current, current && playingNow)
+                            if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile, openCardMenu)
+                            else
+                                MediaRow(
+                                    vm, media, tab, thumbnails, mobile, current,
+                                    current && playingNow, openMenu = openCardMenu,
+                                )
                         }
                     }
                 }
@@ -1391,6 +1402,9 @@ private fun BrowsePane(
         }
         }
     }
+    cardMenu?.let { (media, square) ->
+        MediaCardMenu(vm, media, thumbnails, square) { cardMenu = null }
+    }
 }
 
 private val LocalArtworkScrolling = staticCompositionLocalOf<() -> Boolean> { { false } }
@@ -1415,15 +1429,20 @@ internal fun Artwork(
         val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
-        var bitmap by
+        val bitmapState =
             remember(media.key, source, pixels, enabled) {
                 mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
             }
+        val bitmap by bitmapState
         val scrolling = LocalArtworkScrolling.current
-        LaunchedEffect(media.key, source, pixels, enabled) {
-            if (bitmap != null || !enabled || !ArtworkCache.hasArtwork(media)) return@LaunchedEffect
+        // Key the producer by the exact cell it fills so relayout cannot leave a new
+        // placeholder attached to work publishing into an abandoned state cell.
+        LaunchedEffect(bitmapState) {
+            if (bitmapState.value != null || !enabled || !ArtworkCache.hasArtwork(media)) return@LaunchedEffect
             // Retry transient failures with a growing pause outside the limited decode slots.
             // Leaving the screen cancels retries and work that has not started yet.
+            if (BuildConfig.DEBUG)
+                android.util.Log.d("ytui.artwork", "Loading cover ${media.key.hashCode()} at $pixels px")
             var pause = 1_000L
             repeat(8) {
                 // Let flings use the frame budget for scrolling. A small settling window avoids
@@ -1436,12 +1455,16 @@ internal fun Artwork(
                     try {
                         ArtworkCache.load(media, pixels)
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        if (BuildConfig.DEBUG)
+                            android.util.Log.d("ytui.artwork", "Cover ${media.key.hashCode()} detached at $pixels px")
                         throw cancelled
                     } catch (error: Exception) {
                         null
                     }
                 if (loaded != null) {
-                    bitmap = loaded
+                    bitmapState.value = loaded
+                    if (BuildConfig.DEBUG)
+                        android.util.Log.d("ytui.artwork", "Cover ${media.key.hashCode()} ready at $pixels px")
                     return@LaunchedEffect
                 }
                 android.util.Log.w("ytui.artwork", "Cover not loaded; retrying in $pause ms")
@@ -1499,6 +1522,7 @@ private fun MediaRow(
     current: Boolean = false,
     playing: Boolean = false,
     shelf: Boolean = false,
+    openMenu: (MediaCard, Boolean) -> Unit,
 ) {
     val square = tab in 2..3 || media.kind in setOf("album", "song", "station")
     // Feed video art is full bleed; in a shelf it is a rounded object like the music covers.
@@ -1603,70 +1627,69 @@ private fun MediaRow(
                         )
                     }
             }
-            MediaCardActions(vm, media, thumbnails, square)
+            MediaCardActions(media) { openMenu(media, square) }
         }
     }
 }
 
 @Composable
-private fun MediaCardActions(
+private fun MediaCardActions(media: MediaCard, open: () -> Unit) {
+    MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", open)
+}
+
+@Composable
+private fun MediaCardMenu(
     vm: YtuiViewModel,
     media: MediaCard,
     thumbnails: Boolean,
-    square: Boolean = false,
+    square: Boolean,
+    close: () -> Unit,
 ) {
-    var menu by remember(media.key) { mutableStateOf(false) }
-    Box {
-        MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}") {
-            menu = true
+    Panel("", close) {
+        ActionSheetHeader(media, thumbnails, square)
+        fun execute(action: () -> Unit) {
+            close()
+            action()
         }
-        if (menu)
-            Panel("", { menu = false }) {
-                ActionSheetHeader(media, thumbnails, square)
-                fun execute(action: () -> Unit) {
-                    menu = false
-                    action()
-                }
-                // The four things people do most, as big targets; the rest as rows below.
-                Row(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    QuickTile(
-                        Glyph.Play,
-                        if (media.collection) "Open collection" else "Play now",
-                        Modifier.weight(1f),
-                        primary = true,
-                    ) {
-                        execute { vm.play(media) }
-                    }
-                    QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
-                        execute { vm.enqueue(media) }
-                    }
-                    if (!media.live)
-                        QuickTile(Glyph.Download, "Download", Modifier.weight(1f)) {
-                            execute { vm.play(media, download = true) }
-                        }
-                    if (!media.collection && !media.live)
-                        QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
-                            execute { vm.play(media, preview = true) }
-                        }
-                }
-                if (media.collection)
-                    ValueRow("Play all", glyph = Glyph.Queue, chevron = false) {
-                        execute { vm.playCollection(media) }
-                    }
-                ValueRow(
-                    "Bookmark",
-                    glyph = Glyph.Save,
-                    subtitle = "Keep a link in Saved locally, without downloading",
-                    chevron = false,
-                ) {
-                    execute { vm.save(media) }
-                }
-                if (media.value.optString("tracks_url").let { it.isNotBlank() && it != "null" })
-                    ValueRow("Browse tracks", glyph = Glyph.Music) { execute { vm.tracks(media) } }
+        // The four things people do most, as big targets; the rest as rows below.
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            QuickTile(
+                Glyph.Play,
+                if (media.collection) "Open collection" else "Play now",
+                Modifier.weight(1f),
+                primary = true,
+            ) {
+                execute { vm.play(media) }
             }
+            QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
+                execute { vm.enqueue(media) }
+            }
+            if (!media.live)
+                QuickTile(Glyph.Download, "Download", Modifier.weight(1f)) {
+                    execute { vm.play(media, download = true) }
+                }
+            if (!media.collection && !media.live)
+                QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
+                    execute { vm.play(media, preview = true) }
+                }
+        }
+        if (media.collection)
+            ValueRow("Play all", glyph = Glyph.Queue, chevron = false) {
+                execute { vm.playCollection(media) }
+            }
+        ValueRow(
+            "Bookmark",
+            glyph = Glyph.Save,
+            subtitle = "Keep a link in Saved locally, without downloading",
+            chevron = false,
+        ) {
+            execute { vm.save(media) }
+        }
+        if (media.value.optString("tracks_url").let { it.isNotBlank() && it != "null" })
+            ValueRow("Browse tracks", glyph = Glyph.Music) { execute { vm.tracks(media) } }
     }
 }
 
@@ -1745,6 +1768,7 @@ private fun WideMediaRow(
     media: MediaCard,
     thumbnails: Boolean,
     mobile: JSONObject,
+    openMenu: (MediaCard, Boolean) -> Unit,
 ) {
     Row(
         Modifier.fillMaxWidth()
@@ -1783,7 +1807,7 @@ private fun WideMediaRow(
                     )
                 }
         }
-        MediaCardActions(vm, media, thumbnails)
+        MediaCardActions(media) { openMenu(media, false) }
     }
 }
 
