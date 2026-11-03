@@ -405,6 +405,15 @@ from revision8; fresh native evidence must verify it. The synthetic fixture's
 concurrent server/per-cover counts and failure-only native probe are retained.
 This integration is on the feature branch only; PR32 remains draft and unmerged.
 
-The combined host build, test APK build, lint and 38 JVM tests pass locally.
+The combined host build, test APK build, lint and 37 JVM tests pass locally.
 Native CI must rebuild both Rust ABIs from this source; local packaging reuses
 retained JNI binaries and does not qualify the updated engine or live playback.
+
+
+Optimistic seek/pause/volume/speed updates now copy the current PlayerState,
+preserving a pending video intent. Reconstructing PlayerState from only its
+native JSON erased that intent during resolution and could interrupt handoff.
+The blocked-resolution regression exercises volume/speed feedback and pause
+while retaining the same selection through a subsequent real bridge snapshot;
+its existing actual playback/view-identity checks still follow. No placeholder
+frame or optimistic playing flag qualifies its startup timing.

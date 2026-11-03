@@ -1011,20 +1011,26 @@ internal class YtuiViewModel : ViewModel() {
             val target = seconds.coerceIn(0f, player.value.duration)
             seekTarget = (player.value.media?.optString("url") ?: "") to target
             seekDeadline = android.os.SystemClock.elapsedRealtime() + 2000
-            player.value = PlayerState(player.value.value.copyJson().put("position", target))
+            player.update { current ->
+                current.copy(value = current.value.copyJson().put("position", target))
+            }
         }
         if (op == "pause")
-            player.value =
-                PlayerState(
-                    player.value.value
-                        .copyJson()
-                        .put("playing", !player.value.playing)
-                        .put("paused", player.value.playing)
+            player.update { current ->
+                current.copy(
+                    value =
+                        current.value
+                            .copyJson()
+                            .put("playing", !current.playing)
+                            .put("paused", current.playing)
                 )
+            }
         if (op == "volume" || op == "speed") {
             val value = fields.firstOrNull { it.first == "value" }?.second as? Number
             if (value != null && value.toDouble().isFinite()) {
-                player.value = PlayerState(player.value.value.copyJson().put(op, value))
+                player.update { current ->
+                    current.copy(value = current.value.copyJson().put(op, value))
+                }
             }
         }
         effect(op, *fields)

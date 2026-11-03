@@ -106,6 +106,26 @@ class PreparationUiTest {
                     kotlinx.coroutines.runBlocking { vm.get().snapshot() }
                     Assert.assertEquals(firstToken, vm.get().player.value.preparing!!.token)
                     Assert.assertEquals(-1L, StartupTimings.total(firstToken))
+                    // Transport feedback must not erase the scoped selection
+                    // while resolution is held. Reuse current volume/speed so
+                    // this check does not change persisted playback preferences.
+                    val beforeControls = MediaRuntimeTest.status()
+                    scene.onActivity {
+                        for ((op, value) in
+                            listOf(
+                                "volume" to beforeControls.optDouble("volume", 0.7),
+                                "speed" to beforeControls.optDouble("speed", 1.0),
+                            )) {
+                            vm.get().command(op, "value" to value)
+                            Assert.assertEquals(firstToken, vm.get().player.value.preparing?.token)
+                        }
+                        repeat(2) {
+                            vm.get().command("pause")
+                            Assert.assertEquals(firstToken, vm.get().player.value.preparing?.token)
+                        }
+                    }
+                    kotlinx.coroutines.runBlocking { vm.get().snapshot() }
+                    Assert.assertEquals(firstToken, vm.get().player.value.preparing?.token)
                     scene.onActivity {
                         val view = VisibleVideoProbe.find(it.window.decorView)
                         Assert.assertNotNull(
