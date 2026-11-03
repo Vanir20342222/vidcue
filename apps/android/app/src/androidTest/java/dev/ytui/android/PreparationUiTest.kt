@@ -264,7 +264,10 @@ class PreparationUiTest {
                         !vm.get().playerOpen.value
                 }
                 if (directService) {
-                    MediaRuntimeTest.await("Rejected foreground service must finish safely") {
+                    MediaRuntimeTest.await(
+                        "Rejected foreground service must finish safely",
+                        false,
+                    ) {
                         PlaybackService.current == null
                     }
                 }
