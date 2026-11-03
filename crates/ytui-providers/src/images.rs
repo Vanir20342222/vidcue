@@ -163,19 +163,41 @@ impl ImageCache {
             }
             let _ = tokio::fs::remove_file(&path).await;
         }
-        let mut response = crate::http::get(
-            ytui_core::http_url(url)?,
-            |url| {
-                Ok(self
-                    .client
-                    .get(url.clone())
-                    .timeout(std::time::Duration::from_secs(8)))
-            },
-            crate::http::Redirects::Public,
-            "Thumbnail",
-        )
-        .await
-        .context("Thumbnail unavailable")?;
+        let mut attempt = 0;
+        let mut response = loop {
+            let response = crate::http::get(
+                ytui_core::http_url(url)?,
+                |url| {
+                    let mut request = self
+                        .client
+                        .get(url.clone())
+                        .timeout(std::time::Duration::from_secs(8));
+                    // Wikimedia throttles generic browser-style agents; its policy asks
+                    // for a descriptive one. Station photos are served from there.
+                    if url.host_str() == Some("upload.wikimedia.org") {
+                        request = request.header(
+                            reqwest::header::USER_AGENT,
+                            "ytui/1.0 (https://github.com/vanir20342222/ytui; radio artwork)",
+                        );
+                    }
+                    Ok(request)
+                },
+                crate::http::Redirects::Public,
+                "Thumbnail",
+            )
+            .await
+            .context("Thumbnail unavailable")?;
+            // A burst of grid covers can hit a CDN rate limit. Wait out a short
+            // Retry-After instead of leaving the tile blank until the next refresh.
+            let status = response.status().as_u16();
+            if (status == 429 || status == 503) && attempt < 3 {
+                attempt += 1;
+                let wait = retry_after_secs(response.headers()).unwrap_or(2 * attempt);
+                tokio::time::sleep(std::time::Duration::from_secs(wait.clamp(1, 8))).await;
+                continue;
+            }
+            break response;
+        };
         ensure!(
             response.status().is_success(),
             "Thumbnail HTTP {}",
@@ -235,6 +257,15 @@ impl ImageCache {
         })
         .await?
     }
+}
+fn retry_after_secs(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 async fn decode(bytes: Vec<u8>, width: u32, height: u32) -> Result<image::DynamicImage> {
     tokio::task::spawn_blocking(move || {
