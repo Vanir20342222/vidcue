@@ -936,3 +936,25 @@ reduced-motion snapping. No Android SDK was available in the authoring
 container, so compilation and emulator/physical-device behaviour of the new
 gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
 Tab S9) are not yet qualified and must be checked before release.
+
+## Verified Preview release workflow, 2026-11-03 (M9)
+
+Added the manual **Release verified Android Preview** workflow
+(`.github/workflows/android-preview-release.yml`), its
+`tools/android/prepare-preview-release.py` helper and a default version of
+`0.2.0-alpha.12-mobile.11` (code 11) in `apps/android/app/build.gradle`
+(owner-signed builds override it through the environment, as before). The
+owner's request to fix, merge and release supersedes the earlier PR-only
+restriction. The stable key is held privately by the owner, so this publishes a
+CI debug-signed **ytui Preview**, not a stable update; see
+[SIGNING.md](SIGNING.md).
+
+Checks run in the authoring container: the 15 helper unit tests
+(`python3 -m unittest discover -s tools/android -p 'test_*.py'`, nine of them
+new: byte-identical publication, altered/wrong-source/wrong-version/missing-ABI/
+ambiguous artifacts rejected, unsafe version and run inputs rejected, release
+notes content and bounded change list) and a YAML parse of the workflow. The
+workflow itself runs only after dispatch on `main` with successful exact-source
+checks, so it was **not** exercised before merge. No physical-device, live
+YouTube or stable-update acceptance was added.
+

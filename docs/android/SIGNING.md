@@ -78,6 +78,25 @@ A separate stable package is necessary because the old Preview's private key is
 unavailable. The new stable key cannot update that old package in place. No
 uninstall is required. Physical-device stable-update acceptance remains open.
 
+## CI debug-signed Preview releases
+
+The manual **Release verified Android Preview** workflow publishes a prerelease
+of the current `main` revision when no owner-signed build is available. It runs
+only from `main` and takes the version name the tested APK was built with (the
+default is in `apps/android/app/build.gradle`). It requires successful
+Android, Rust and Secret scan runs for that exact revision, downloads the exact
+`ytui-android-<sha>` APK that the Android run built and inspected, and checks
+its CI inspection report, checksum, both ABIs, notices, source revision and
+version name (`tools/android/prepare-preview-release.py`, with offline tests).
+It never rebuilds or re-signs the APK, refuses an existing tag, and lists the
+merged changes since the last `android-0.2.0-alpha.12-mobile.*` release.
+
+These releases are named `android-preview-<version>`. The APK is
+`dev.ytui.android.preview` (**ytui Preview**) with a CI debug certificate, so it
+neither updates the stable app nor, normally, an earlier Preview, because each
+CI runner generates its own debug key. It is not the in-place update channel
+for `dev.ytui.android.stable`; that remains the locally signed flow above.
+
 ## Optional: owner-managed GitHub signing
 
 The existing **Android signed APK** workflow remains available if the owner
