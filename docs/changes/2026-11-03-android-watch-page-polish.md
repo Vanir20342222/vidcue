@@ -28,6 +28,7 @@ Follow-up to user screenshots of the watch page and the top-bar overflow menu.
 | --- | --- | --- | --- |
 | Relative date unit test | `RelativeUploadDateTest` | added, not run here | unit |
 | Kotlin compile / instrumentation | Android CI on the PR | pending | CI |
+| Device tests follow the new chrome | `MediaRuntimeTest` enters fullscreen through the on-video control; `ContrastUiTest` asserts a compact inline frame hides rewind/forward, then shows them to keep checking their contrast and 48dp targets | pending CI | emulator |
 
 ## Not verified and limits
 - No Android SDK in the authoring container; the code was not compiled or rendered locally.
