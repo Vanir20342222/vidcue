@@ -1,5 +1,59 @@
 # Android validation record (M9)
 
+## Sign-in card and first-run setup (2026-11-02, M9)
+
+Added in commit `7f566e5` and these test files:
+
+- A native sign-in card (`AuthScreen.kt`, `AuthActivity.java`): a two-column account
+  card inside in-app-browser chrome, with a close button, a live address pill with
+  lock and load progress, and a "you'll come back here" strip. A detected signed-in
+  cookie name highlights "Use this session", but import still needs an explicit tap.
+  Help, Privacy and Terms open in the external browser.
+- A five-step skippable first-run setup (`Onboarding.kt`) with Skip, Back, swipe and
+  reduced-motion handling. Completion is stored in app-private preferences, and
+  Settings > Setup guide replays it. Instrumented offline launches show it only with
+  the `ytui.onboarding` extra.
+- `src/test/.../AuthUiTest.kt` (JVM, pure logic only; `AuthUi.host` is excluded because
+  it needs `android.net.Uri`) and `src/androidTest/.../OnboardingUiTest.kt`
+  (instrumentation: Skip, Next to finish, Back).
+
+Checks actually run on 2026-11-02 (`apps/android`, debug variant):
+
+- `:app:testDebugUnitTest --tests 'dev.ytui.android.AuthUiTest'`: passed, 11 tests,
+  0 failures: `missingOrEmptyCookieHeadersDoNotLookSignedIn`,
+  `unrelatedCookiesDoNotLookSignedIn`, `signedInCookieNamesAreDetectedWhereverTheyAppear`,
+  `namesThatMerelyContainASignedInNameAreNotDetected`, `onlyCookieNamesAreInspectedNotValues`,
+  `secureMeansAnHttpsAddress`, `resetRestoresTheIntroductionState`,
+  `resetCanOpenTheWebStageDirectly`, `showWebTogglesOnlyTheStage`,
+  `progressIsClampedToAPercentage`, `pageAcceptsANullAddressAsEmpty`.
+- `:app:compileDebugAndroidTestKotlin`: passed. This compiles `OnboardingUiTest`
+  but does not run it.
+
+Follow-up from code review and Robolectric/Roborazzi renders (phone and tablet,
+throwaway rig outside the repository; renders are visual previews, not device
+acceptance):
+
+- Onboarding no longer composes the app beneath it, so keyboard/D-pad focus,
+  TalkBack and a notification-opened player cannot reach hidden content.
+- Theme and Reduce-motion controls stay disabled until the user's settings have
+  loaded, and remain disabled if loading failed. `save_settings` replaces the whole
+  document, so an early tap could otherwise reset existing settings.
+- The sign-in web stage reloads if nothing was restored after rotation or process
+  death. Reduced motion is read from settings when the sign-in activity is recreated
+  alone. Size changes snap under reduced motion. The pulse no longer recomposes every
+  frame. Stale sign-in messages clear on Continue and when a session is detected.
+- Replaying setup from Settings keeps the saved completion flag. The onboarding
+  Account step offers cookie-file import and shows sign-in errors. Pages have
+  headings, the overlay has a pane title and step changes are announced.
+- Checks re-run: `compileDebugKotlin`, `compileDebugJavaWithJavac`, full
+  `testDebugUnitTest` (including `ThemeLabelTest`) and `compileDebugAndroidTestKotlin`
+  all pass.
+
+Not run and not claimed: no emulator or instrumentation run (including
+`OnboardingUiTest` and the existing `NativeUiTest`), no physical Galaxy Tab S9 run,
+no TalkBack check, and no live Google sign-in. The JVM result is logic-only and does
+not establish sign-in success, cookie capture, or any accessibility behaviour.
+
 ## Category preloading (2026-11-02)
 
 Android's native ViewModel now caches network first pages for 60 seconds, with
