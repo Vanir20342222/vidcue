@@ -321,17 +321,12 @@ class IndexedPlaybackTest {
                     var frame: VisibleVideoProbe.Result
                     do {
                         compose.mainClock.advanceTimeByFrame()
-                        // Wait for actual output/playing before reading the GPU.
-                        // Repeated black-frame copies during decoder startup perturb
-                        // rendering; the original tap clock/deadline still applies.
+                        // The observer waits for this source's decoded frame and
+                        // actual playing state. Start its readback in parallel with
+                        // the conservative view-frame guard, then require both
+                        // completed RGB evidence and usable output below.
                         frame =
-                            if (StartupTimings.usable(token) > 0)
-                                observer.capture(token, "startup-indexed-prefetched.png", 1000)
-                            else
-                                VisibleVideoProbe.Result(
-                                    false,
-                                    android.os.SystemClock.elapsedRealtime(),
-                                )
+                            observer.capture(token, "startup-indexed-prefetched.png", 1000)
                         if (frame.rgb && StartupTimings.usable(token) > 0) break
                         Thread.sleep(8)
                     } while (
