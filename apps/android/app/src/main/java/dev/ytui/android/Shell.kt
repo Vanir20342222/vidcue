@@ -184,10 +184,14 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
             color = tint,
             modifier =
-                Modifier.widthIn(
-                        min = with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
-                    )
-                    .then(if (alignStart) Modifier else Modifier.fillMaxWidth())
+                with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
+                    .let { measured ->
+                        // Beside an icon the label takes exactly its measured (bold) width, so
+                        // its layout is as wide as the paragraph laid out in it and the group
+                        // can stay centred. Under an icon it fills the cell, as before.
+                        if (alignStart) Modifier.width(measured)
+                        else Modifier.widthIn(min = measured).fillMaxWidth()
+                    }
                     .testTag("navigation-label-$index"),
         )
     }
