@@ -67,7 +67,10 @@ public final class PlaybackSkipTest {
         MediaRuntimeTest.await("Resolution failure was not shown",
             () -> !MediaRuntimeTest.status().isNull("error"));
         assertEquals(2, PlaybackService.rpcArray(new JSONObject().put("op", "queue")).length());
-        MediaRuntimeTest.command("next");
+        // Process the deliberate skip before the fail-fast playback wait observes
+        // the previous item's expected resolution error. New errors still fail it.
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(
+            () -> PlaybackService.current.controlsPlayer.seekToNext());
       } else {
         // Hold the ordered persistence lane so both taps precede resolution.
         CountDownLatch held = new CountDownLatch(1);

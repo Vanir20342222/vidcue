@@ -174,7 +174,7 @@ public final class MediaRuntimeTest {
       }
       if (fullscreenHasInputFocus()) {
         androidx.test.uiautomator.UiObject2 exit = device.findObject(button);
-        if (exit != null) return exit;
+        if (exit != null && fullscreenControlsReady()) return exit;
         long now = android.os.SystemClock.elapsedRealtime();
         if (now - lastTap >= 1000) {
           device.click(device.getDisplayWidth() / 4, device.getDisplayHeight() / 3);
@@ -187,6 +187,30 @@ public final class MediaRuntimeTest {
     device.dumpWindowHierarchy(
         new File(MediaBridge.context.getExternalFilesDir(null), "native-video-controls.xml"));
     throw new AssertionError("The native fullscreen exit button must be reachable");
+  }
+
+  static boolean fullscreenControlsReady() {
+    java.util.concurrent.atomic.AtomicBoolean ready = new java.util.concurrent.atomic.AtomicBoolean();
+    InstrumentationRegistry.getInstrumentation().runOnMainSync(
+        () -> {
+          for (android.app.Activity activity :
+              androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                  .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
+            if (!(activity instanceof FullscreenActivity)) continue;
+            androidx.media3.ui.PlayerControlView controller =
+                activity.findViewById(androidx.media3.ui.R.id.exo_controller);
+            android.view.View center = activity.findViewById(androidx.media3.ui.R.id.exo_center_controls);
+            if (controller != null && controller.isFullyVisible()
+                && center != null && center.isShown() && center.getAlpha() >= 0.99f) {
+              // The bottom exit button survives Media3's centre-controls fade.
+              // Acquire the fully shown controller, then renew its existing
+              // timeout so the next real UI tap cannot race that old hide task.
+              controller.setShowTimeoutMs(controller.getShowTimeoutMs());
+              ready.set(true);
+            }
+          }
+        });
+    return ready.get();
   }
 
   static boolean videoVisible(String filename, boolean landscape) throws IOException {
