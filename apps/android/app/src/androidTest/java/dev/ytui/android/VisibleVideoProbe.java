@@ -141,7 +141,7 @@ final class VisibleVideoProbe {
       COMPOSITOR.execute(
           () -> {
             if (future.isDone()) return;
-            Bitmap whole = null, reduced = null, target = null;
+            Bitmap whole = null, software = null, target = null;
             long requestedAt = SystemClock.elapsedRealtime();
             try {
               android.app.UiAutomation automation =
@@ -152,37 +152,23 @@ final class VisibleVideoProbe {
                       ? automation.takeScreenshot(activity.getWindow())
                       : automation.takeScreenshot();
               if (whole == null) throw new IllegalStateException("Compositor unavailable");
-              if (!region.intersect(0, 0, whole.getWidth(), whole.getHeight()))
+              software =
+                  whole.getConfig() == Bitmap.Config.HARDWARE
+                      ? whole.copy(Bitmap.Config.ARGB_8888, false)
+                      : whole;
+              if (software == null
+                  || !region.intersect(0, 0, software.getWidth(), software.getHeight()))
                 throw new IllegalStateException("Player outside compositor capture");
-              if (Build.VERSION.SDK_INT >= 29 && whole.getConfig() == Bitmap.Config.HARDWARE) {
-                // Keep the full composited window (including overlays) on the GPU.
-                // Reading every pixel of a phone-sized hardware bitmap back to the
-                // CPU can take longer than decoding the video on SwiftShader.
-                // Crop/scale that same screenshot first; only read the 320x180
-                // evidence bitmap back. The completion deadline still includes
-                // screenshot, GPU scaling and CPU readback, with no clock credit.
-                RenderNode node = new RenderNode("video-window-evidence");
-                node.setPosition(0, 0, 320, 180);
-                node.beginRecording(320, 180)
-                    .drawBitmap(whole, region, new Rect(0, 0, 320, 180),
-                        new Paint(Paint.FILTER_BITMAP_FLAG));
-                node.endRecording();
-                try {
-                  reduced = HardwareRenderer.createHardwareBitmap(node, 320, 180);
-                  if (reduced == null) throw new IllegalStateException("GPU crop unavailable");
-                  target = reduced.copy(Bitmap.Config.ARGB_8888, false);
-                } finally {
-                  node.discardDisplayList();
-                }
-              } else {
-                target = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888);
-                new Canvas(target).drawBitmap(whole, region, new Rect(0, 0, 320, 180),
-                    new Paint(Paint.FILTER_BITMAP_FLAG));
-              }
-              if (target == null) throw new IllegalStateException("CPU readback unavailable");
+              target = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888);
+              new Canvas(target)
+                  .drawBitmap(
+                      software,
+                      region,
+                      new Rect(0, 0, 320, 180),
+                      new Paint(Paint.FILTER_BITMAP_FLAG));
               Frame frame =
                   new Frame(target, requestedAt, SystemClock.elapsedRealtime(), PixelCopy.SUCCESS);
-              frame.method = "window-compositor-gpu-crop";
+              frame.method = "window-compositor";
               if (!future.complete(frame)) target.recycle();
               target = null;
             } catch (RuntimeException unavailable) {
@@ -190,7 +176,7 @@ final class VisibleVideoProbe {
               future.complete(
                   new Frame(null, SystemClock.elapsedRealtime(), PixelCopy.ERROR_SOURCE_NO_DATA));
             } finally {
-              if (reduced != null) reduced.recycle();
+              if (software != null && software != whole) software.recycle();
               if (whole != null) whole.recycle();
             }
           });

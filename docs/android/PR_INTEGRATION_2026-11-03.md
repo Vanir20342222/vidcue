@@ -30,13 +30,17 @@ Network settings drafts now survive activity recreation with the open category.
 The native input regression recreates the activity before checking the retained
 text, without applying a proxy.
 
-Compositor screenshots now crop/scale the actual composited window on the GPU
-before CPU readback. This avoids copying an entire phone-sized hardware bitmap;
-it still includes covers/overlays and charges screenshot, scaling and readback
-completion against the unchanged deadline. Indexed observation starts after the
-source's real decoded frame/playing state while the view-frame guard completes.
-Both genuine RGB evidence and usable output must still finish under 1000 ms.
-This is observer optimization, not evidence of an application latency reduction.
+CI uses a 720×1600 display at 280 dpi, proportionally scaling Pixel 7's
+1080×2400/420-dpi profile so logical layout dimensions remain unchanged. This
+bounds SwiftShader and full-window compositor readback work on hosted four-core
+runners. Tests still capture the complete composited window with covers/overlays
+and charge completion against the unchanged deadline. Android's screenshot API
+already copies to CPU internally, so a proposed subsequent GPU crop could not
+reduce that work and was removed. Indexed observation starts after the source's
+real decoded frame/playing state while the view-frame guard completes. Both
+genuine RGB evidence and usable output must still finish under 1000 ms. The new
+emulator profile is not comparable physical-device latency evidence or evidence
+of an application speedup. Responsive tests retain their explicit size overrides.
 
 ## Checks and delivery
 
