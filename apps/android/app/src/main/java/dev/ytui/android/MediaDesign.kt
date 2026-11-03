@@ -62,6 +62,8 @@ internal object MediaTokens {
     val videoGlassEdge = Color.White.copy(alpha = 0.26f)
     /** Glass sheen at the top of the fullscreen options panel. */
     val videoGlassSheen = Color.White.copy(alpha = 0.09f)
+    /** SponsorBlock ticks on the video timebar; amber reads over video and every accent. */
+    val sponsorMark = Color(0xffffc107)
     val transparent = Color.Transparent
     val typography =
         Typography(

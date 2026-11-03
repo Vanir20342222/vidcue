@@ -16,7 +16,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -89,6 +88,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -1403,15 +1403,27 @@ private fun BrowsePane(
                     span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
                     contentType = { "media-card" },
                 ) { media ->
-                    Box(
-                        Modifier.then(
-                                if (feed.instantContent) Modifier
-                                else Modifier.appearance(media.key, cardIndex[media.key] ?: 0, seen)
-                            )
-                            .pressFeedback()
+                    // Scroll state is read in image effects, without recomposing every card.
+                    CompositionLocalProvider(
+                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
                     ) {
-                        if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
-                        else MediaRow(vm, media, tab, thumbnails, mobile)
+                        Box(
+                            Modifier.then(
+                                    // Cached categories display at once, without card entrances.
+                                    if (feed.instantContent) Modifier
+                                    else
+                                        Modifier.appearance(
+                                            media.key,
+                                            cardIndex[media.key] ?: 0,
+                                            seen,
+                                            isScrolling = { grid.isScrollInProgress },
+                                        )
+                                )
+                                .pressFeedback()
+                        ) {
+                            if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
+                            else MediaRow(vm, media, tab, thumbnails, mobile)
+                        }
                     }
                 }
                 if (feed.loading)
@@ -1453,6 +1465,8 @@ private fun BrowsePane(
     }
 }
 
+private val LocalArtworkScrolling = staticCompositionLocalOf<() -> Boolean> { { false } }
+
 @Composable
 internal fun Artwork(
     media: MediaCard,
@@ -1477,19 +1491,25 @@ internal fun Artwork(
             remember(media.key, source, pixels, enabled) {
                 mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
             }
+        val scrolling = LocalArtworkScrolling.current
         LaunchedEffect(media.key, source, pixels, enabled) {
             if (bitmap != null || !enabled || !ArtworkCache.hasArtwork(media)) return@LaunchedEffect
-            // load() retries quickly a few times. If the cover is still missing, keep trying with
-            // a growing pause while this card stays composed, so a transient failure never leaves
-            // a permanent placeholder. Leaving the screen cancels the loop.
+            // Retry transient failures with a growing pause outside the limited decode slots.
+            // Leaving the screen cancels retries and work that has not started yet.
             var pause = 1_000L
             repeat(8) {
+                // Let flings use the frame budget for scrolling. A small settling window avoids
+                // starting decodes between consecutive drags; cached art still paints immediately.
+                while (scrolling()) {
+                    snapshotFlow { scrolling() }.first { !it }
+                    delay(100)
+                }
                 val loaded =
                     try {
                         ArtworkCache.load(media, pixels)
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         throw cancelled
-                    } catch (error: Throwable) {
+                    } catch (error: Exception) {
                         null
                     }
                 if (loaded != null) {
@@ -1507,8 +1527,22 @@ internal fun Artwork(
             remember(media.key, source, pixels, enabled) {
                 Animatable(if (bitmap != null || !motion.animate) 1f else 0f)
             }
-        LaunchedEffect(bitmap != null) {
-            if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(260))
+        LaunchedEffect(reveal, bitmap, motion) {
+            if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
+        }
+        // Keep a quiet, fixed-size surface underneath the fade instead of removing the icon
+        // and briefly exposing a different background as soon as the image arrives.
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer { alpha = if (bitmap == null) 1f else 1f - reveal.value }
+                .background(MaterialTheme.colorScheme.surfaceContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            MediaIcon(
+                if (media.audio || media.kind == "album") Glyph.Music else Glyph.Preview,
+                Modifier.size(28.dp),
+                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+            )
         }
         if (bitmap != null)
             Image(
@@ -1524,17 +1558,6 @@ internal fun Artwork(
                 // centre-cropped off the left side.
                 alignment = Alignment.CenterStart,
             )
-        else
-            Box(
-                Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center,
-            ) {
-                MediaIcon(
-                    if (media.audio || media.kind == "album") Glyph.Music else Glyph.Preview,
-                    Modifier.size(36.dp),
-                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-                )
-            }
     }
 }
 
