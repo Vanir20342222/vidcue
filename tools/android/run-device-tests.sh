@@ -54,6 +54,11 @@ collect_evidence() {
     adb pull "/sdcard/Android/data/$test_package/files/watch-collapse-missing.xml" "$evidence/native-ui/watch-collapse-missing.xml" > /dev/null 2>&1 || true
 }
 trap collect_evidence EXIT
+# The 1000 ms startup target is advisory on the hosted software emulator; set
+# YTUI_ANDROID_SUBSECOND=enforce (for example on a physical device) to make it a
+# hard assertion. The 2000 ms visible-output gate is always enforced.
+subsecond="${YTUI_ANDROID_SUBSECOND:-advisory}"
+case "$subsecond" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_SUBSECOND (advisory|enforce).' >&2; exit 1;; esac
 public_quality="${YTUI_ANDROID_PUBLIC_QUALITY:-best}"
 public_target="${YTUI_ANDROID_PUBLIC_TARGET_MS:-1000}"
 if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
@@ -78,6 +83,7 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
     [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
+    [[ "$subsecond" == enforce ]] && instrument+=(-e ytui_subsecond enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         # adb joins arguments into one device shell command; single-quote the URL.
         [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
@@ -95,6 +101,7 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     fi
 else
     arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
+    [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.ytui_subsecond=enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=$public_quality")

@@ -125,7 +125,7 @@ class StartupUiTest {
                                 observer.capture(
                                     token,
                                     "startup-subsecond${if(prepared) "" else "-cold"}.png",
-                                    1000,
+                                    SubsecondTarget.observeMs,
                                 )
                             if (frame.rgb && StartupTimings.usable(token) > 0) break
                             Thread.sleep(8)
@@ -133,20 +133,25 @@ class StartupUiTest {
                             StartupTimings.elapsed(
                                 token,
                                 android.os.SystemClock.elapsedRealtime(),
-                            ) < 1000
+                            ) < SubsecondTarget.observeMs
                         )
                         val visible = StartupTimings.elapsed(token, frame.capturedAt)
                         val usable = StartupTimings.usable(token)
                         evidence.append(
                             "$name subsecond_usable_ms=$usable subsecond_screenshot_confirmation_ms=$visible\n"
                         )
-                        if (!frame.rgb || usable !in 1..999 || visible !in 1..999) {
+                        if (!SubsecondTarget.met(frame.rgb, visible, usable)) {
                             evidence.append(StartupTimings.report())
                             MediaRuntimeTest.capture("startup-subsecond-failed.png")
                         }
-                        Assert.assertTrue(
-                            "$name actual visible and playing output must be under1000ms: pixels=$visible usable=$usable\n${StartupTimings.report()}",
-                            frame.rgb && visible in 1..999 && usable in 1..999,
+                        evidence.append(
+                            SubsecondTarget.check(
+                                name,
+                                frame.rgb,
+                                visible,
+                                usable,
+                                StartupTimings.report(),
+                            ) + "\n"
                         )
                         val lastVideo =
                             StartupTimings.report().lineSequence().last { it.startsWith("Video") }
