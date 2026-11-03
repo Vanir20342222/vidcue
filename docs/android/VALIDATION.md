@@ -1,43 +1,5 @@
 # Android validation record (M9)
 
-## Artwork scrolling (2026-11-03, M9)
-
-Cover loads now share one Kotlin fetch/JNI decode per media/source/size. Four
-loads may run at once. A card leaving the composition cancels its wait and drops
-queued work with no remaining viewers; a decode already running finishes into
-the existing 24 MiB LRU instead of throwing away pixels. The native image cache,
-origin/proxy handling and disk limits remain in use. Bitmap preparation runs off
-the main thread, and a cached larger decode can serve a smaller artwork frame.
-
-Cold feed loads wait for scrolling to finish plus a 100 ms settling window.
-Cached covers render in their initial composition. Placeholders use a quieter
-surface/icon and stay below the 180 ms artwork fade; opacity is read in graphics
-layers rather than recomposing the card each animation frame. Reduced motion
-still snaps. Cards first encountered during scrolling skip staggered entrances.
-
-`ArtworkLoaderTest` covers sharing, cache hits, scroll-away/back joins, warming
-the cache after viewers leave, dropping queued offscreen work, independent viewer
-cancellation, concurrency including orphaned work, and recovery after null/error
-results. `CatalogUiTest.scrollingBackReusesReadyArtworkWithoutAnotherFetch` adds
-a loopback/device check for decoded scroll-back pixels and request reuse.
-
-Local verification after rebasing onto main `4cdec38`, with Kotlin 2.1.21,
-JDK 21 and Android SDK 35:
-
-- `:app:testDebugUnitTest`: **64 tests passed**, zero failures/errors/skips;
-  all **8** `ArtworkLoaderTest` regressions passed, including 100 concurrent
-  viewers sharing four covers across worker threads.
-- `:app:compileDebugAndroidTestKotlin`: passed, including the new loopback
-  scroll-back test. This compiles instrumentation; it does not execute it.
-- `:app:lintDebug`: passed. The combined Gradle build completed successfully.
-- `git diff --check`: passed.
-
-No emulator/physical-device scroll timing, GPU frame/jank measurement, live CDN
-acceptance or APK publication is claimed by these source changes. The device
-regression must run on a disposable app, followed by cold and warm fast scrolling
-on phone/tablet with animations enabled and reduced motion, offline/network
-failure recovery, and confirmation that artwork-disabled feeds remain usable.
-
 ## Sign-in card and first-run setup (2026-11-02, M9)
 
 Added in commit `7f566e5` and these test files:

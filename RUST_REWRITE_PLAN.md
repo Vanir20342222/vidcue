@@ -1,12 +1,5 @@
 # ytui Rust rewrite plan
 
-M9 artwork scrolling (2026-11-03): Android shares in-flight cover decodes, drops
-abandoned queued loads, keeps finished decodes in bounded memory and defers cold
-feed artwork until scrolling settles. Cached covers paint immediately; quieter
-placeholders remain under a shorter fade, and scrolled-in cards skip staggered
-entrances. [Validation and device gates](docs/android/VALIDATION.md#artwork-scrolling-2026-11-03-m9)
-separate regression/build checks from physical scrolling performance.
-
 M9 subsecond-startup candidate: [scope, research and measurement](docs/android/SUBSECOND_STARTUP.md)
 track the new <1000 ms visible-and-playing target, separately from the earlier
 Tab S9 <2000 ms acceptance. This is an unmerged performance branch; native and
