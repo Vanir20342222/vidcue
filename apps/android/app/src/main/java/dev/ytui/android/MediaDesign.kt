@@ -1,15 +1,22 @@
 package dev.ytui.android
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,8 +31,10 @@ import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -45,12 +54,17 @@ internal object MediaTokens {
     val neutralText = Color.White.copy(red = 0.94f, green = 0.94f, blue = 0.94f)
     val grid = 4.dp
     val textInset = 16.dp
-    val small = RoundedCornerShape(4.dp)
-    val medium = RoundedCornerShape(8.dp)
+    val small = RoundedCornerShape(8.dp)
+    val medium = RoundedCornerShape(12.dp)
+    /** Feed artwork: a softer radius than controls, so pictures read as objects. */
+    val card = RoundedCornerShape(16.dp)
+    val chip = RoundedCornerShape(12.dp)
+    val menu = RoundedCornerShape(18.dp)
+    val dock = RoundedCornerShape(24.dp)
     val pill = RoundedCornerShape(50)
     val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val dialog = RoundedCornerShape(28.dp)
-    /** Multi-line inputs cannot be pills; keep a soft rectangle. */
+    /** Inputs are soft rectangles, so single and multi-line fields match. */
     val fieldShape = RoundedCornerShape(16.dp)
     // Reuse the shared ytui dark/light accent values for a stable teal brand role.
     val brandOnDark = Color(0xff6ddbc1)
@@ -66,20 +80,7 @@ internal object MediaTokens {
     /** SponsorBlock ticks on the video timebar; amber reads over video and every accent. */
     val sponsorMark = Color(0xffffc107)
     val transparent = Color.Transparent
-    val typography =
-        Typography(
-            titleLarge =
-                TextStyle(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Medium),
-            titleMedium =
-                TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
-            titleSmall =
-                TextStyle(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
-            bodySmall = TextStyle(fontSize = 13.sp, lineHeight = 18.sp),
-            labelLarge =
-                TextStyle(fontSize = 14.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
-            labelMedium =
-                TextStyle(fontSize = 13.sp, lineHeight = 18.sp, fontWeight = FontWeight.Medium),
-        )
+    val typography = YtuiType.typography
 }
 
 /** Ensure secondary text remains AA-readable on raised surfaces, including imports. */
@@ -180,7 +181,7 @@ internal fun MediaIcon(
                         if (closed) close()
                     }
                 if (filled && closed) drawPath(path, tint)
-                else drawPath(path, tint, style = Stroke(1.8f, cap = StrokeCap.Round))
+                else drawPath(path, tint, style = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round))
             }
             fun play(x: Float = 8f) =
                 drawPath(
@@ -518,37 +519,67 @@ internal fun MediaChip(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    // All filter chips share this composable so their height cannot drift;
-    // 48dp keeps the visible chip at Material's minimum touch-target size.
-    FilterChip(
-        selected = selected,
-        onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
-        label = { Text(label, style = MaterialTheme.typography.labelLarge) },
-        shape = MediaTokens.pill,
-        border = BorderStroke(0.dp, MediaTokens.transparent),
-        colors =
-            FilterChipDefaults.filterChipColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                labelColor = MaterialTheme.colorScheme.onSurface,
-                selectedContainerColor = MaterialTheme.colorScheme.onBackground,
-                selectedLabelColor = MaterialTheme.colorScheme.background,
+    // Every filter chip shares this composable so heights cannot drift. The visible
+    // tag is 36dp inside a 48dp touch target.
+    val motion = LocalMotion.current
+    val colors = MaterialTheme.colorScheme
+    val container by
+        animateColorAsState(
+            if (selected) colors.onBackground else colors.surfaceContainer,
+            motion.fade(220),
+            label = "chip-fill",
+        )
+    val ink by
+        animateColorAsState(
+            if (selected) colors.background else colors.onSurface,
+            motion.fade(220),
+            label = "chip-ink",
+        )
+    val source = remember { MutableInteractionSource() }
+    Box(
+        modifier
+            .heightIn(min = 48.dp)
+            .pressScale(source, 0.95f)
+            .selectable(
+                selected,
+                interactionSource = source,
+                indication = null,
+                role = Role.Tab,
+                onClick = onClick,
             ),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        CompositionLocalProvider(LocalContentColor provides ink) {
+            Box(
+                Modifier.heightIn(min = 36.dp)
+                    .clip(MediaTokens.chip)
+                    .background(container)
+                    .indication(source, SoftIndication)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(label, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+            }
+        }
+    }
 }
 
 @Composable
 internal fun MediaIconButton(glyph: Glyph, label: String, tag: String = "", action: () -> Unit) {
-    IconButton(action, Modifier.size(48.dp).testTag(tag).semantics { contentDescription = label }) {
-        val secondary = glyph == Glyph.Shuffle || glyph == Glyph.Repeat
-        MediaIcon(
-            glyph,
-            Modifier.size(if (secondary) 20.dp else 24.dp),
-            if (secondary) MaterialTheme.colorScheme.onSurfaceVariant else LocalContentColor.current,
-        )
-    }
+    val secondary = glyph == Glyph.Shuffle || glyph == Glyph.Repeat
+    RoundIconButton(
+        glyph,
+        label,
+        Modifier.testTag(tag),
+        iconSize = if (secondary) 20.dp else 24.dp,
+        tint =
+            if (secondary) MaterialTheme.colorScheme.onSurfaceVariant
+            else LocalContentColor.current,
+        action = action,
+    )
 }
 
+/** Mode toggle (shuffle, repeat): accent ink and a small dot under the glyph when on. */
 @Composable
 internal fun MediaModeButton(
     glyph: Glyph,
@@ -557,23 +588,49 @@ internal fun MediaModeButton(
     checked: Boolean,
     action: () -> Unit,
 ) {
-    IconToggleButton(
-        checked,
-        { action() },
-        Modifier.size(48.dp).testTag(tag).semantics {
-            contentDescription = label
-            selected = checked
-        },
-        colors =
-            IconButtonDefaults.iconToggleButtonColors(
-                contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                checkedContentColor = MaterialTheme.colorScheme.primary,
-            ),
-    ) {
-        MediaIcon(glyph, Modifier.size(20.dp))
+    val motion = LocalMotion.current
+    val tint by
+        animateColorAsState(
+            if (checked) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            motion.fade(200),
+            label = "mode-tint",
+        )
+    val dot by animateFloatAsState(if (checked) 1f else 0f, motion.spring(), label = "mode-dot")
+    val source = remember { MutableInteractionSource() }
+    CompositionLocalProvider(LocalContentColor provides tint) {
+        Box(
+            Modifier.size(48.dp)
+                .testTag(tag)
+                .pressScale(source, 0.88f)
+                .clip(CircleShape)
+                .toggleable(checked, source, SoftIndication, role = Role.Switch) { action() }
+                .semantics {
+                    contentDescription = label
+                    selected = checked
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            MediaIcon(glyph, Modifier.size(20.dp), tint)
+            Box(
+                Modifier.align(Alignment.BottomCenter)
+                    .padding(bottom = 7.dp)
+                    .size(4.dp)
+                    .graphicsLayer {
+                        scaleX = dot
+                        scaleY = dot
+                        alpha = dot
+                    }
+                    .background(tint, CircleShape)
+            )
+        }
     }
 }
 
+/**
+ * Settings group: an optional quiet label above a softly raised card whose rows are separated
+ * by spacing, not dividers.
+ */
 @Composable
 internal fun SettingGroup(
     title: String,
@@ -581,14 +638,8 @@ internal fun SettingGroup(
     showTitle: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (showTitle)
-            Text(
-                title,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(top = 16.dp, start = 4.dp),
-            )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (showTitle) GroupLabel(title)
         if (subtitle.isNotBlank())
             Text(
                 subtitle,
@@ -597,8 +648,11 @@ internal fun SettingGroup(
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         Column(
-            Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxWidth()
+                .clip(MediaTokens.card)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
             content = content,
         )
     }
@@ -613,38 +667,56 @@ internal fun EmptyMediaState(
     content: @Composable () -> Unit = {},
 ) {
     Column(
-        modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 36.dp),
+        modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        MediaIcon(icon, Modifier.size(56.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        GlyphBadge(icon, 72.dp, MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
         Text(
             detail,
+            Modifier.widthIn(max = 360.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodyMedium,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
+        Spacer(Modifier.height(4.dp))
         content()
     }
 }
 
+/** Initial in a circle whose colour is derived from the name, so channels are recognisable. */
 @Composable
 internal fun ChannelAvatar(creator: String, size: androidx.compose.ui.unit.Dp) {
-    Box(
-        Modifier.size(size).background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
+    val name = creator.trim()
+    val colors = MaterialTheme.colorScheme
+    val hue = (name.hashCode() and 0x7fffffff) % 360
+    val dark = colors.background.luminance() < 0.4f
+    val tone =
+        if (name.isEmpty()) colors.surfaceContainerHigh
+        else
+            Color.hsv(
+                hue.toFloat(),
+                if (dark) 0.42f else 0.28f,
+                if (dark) 0.42f else 0.86f,
+            )
+    Box(Modifier.size(size).background(tone, CircleShape), contentAlignment = Alignment.Center) {
         // Keep a complete code point for emoji-leading channel names.
         val initial =
-            creator.trim().let { name ->
-                if (name.isEmpty()) "·"
-                else name.substring(0, name.offsetByCodePoints(0, 1)).uppercase()
-            }
+            if (name.isEmpty()) "·" else name.substring(0, name.offsetByCodePoints(0, 1)).uppercase()
         Text(
             initial,
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.typography.labelLarge,
+            color = if (name.isEmpty()) colors.onSurface else mediaOnAccent(tone),
+            style =
+                MaterialTheme.typography.titleSmall.copy(
+                    fontFamily = YtuiType.title,
+                    fontSize = (size.value * 0.42f).sp,
+                ),
         )
     }
 }
@@ -666,21 +738,22 @@ internal fun SheetAction(
             modifier
                 .fillMaxWidth()
                 .heightIn(min = 56.dp)
+                .clip(MediaTokens.medium)
                 .clickable(enabled = enabled, onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
+            horizontalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             leadingIcon?.invoke()
-            Box(Modifier.weight(1f)) { text() }
+            Box(Modifier.weight(1f)) { ProvideTextStyle(MaterialTheme.typography.bodyLarge) { text() } }
             trailing?.invoke()
         }
     }
 }
 
 /**
- * Menu/settings row: leading outlined icon, title, optional grey subtitle and a trailing current
- * value with a chevron (YouTube quality/speed/settings menus).
+ * Menu/settings row: leading glyph in a small tile, title, optional grey subtitle and a trailing
+ * current value with a chevron.
  */
 @Composable
 internal fun ValueRow(
@@ -698,7 +771,7 @@ internal fun ValueRow(
         enabled = enabled,
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
                 if (subtitle.isNotBlank())
                     Text(
                         subtitle,
@@ -707,8 +780,7 @@ internal fun ValueRow(
                     )
             }
         },
-        leadingIcon =
-            glyph?.let { { MediaIcon(it, tint = MaterialTheme.colorScheme.onSurfaceVariant) } },
+        leadingIcon = glyph?.let { { GlyphTile(it, Modifier.size(36.dp).clip(MediaTokens.medium)) } },
         trailing = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -726,7 +798,7 @@ internal fun ValueRow(
                 if (chevron)
                     MediaIcon(
                         Glyph.Forward,
-                        Modifier.size(20.dp),
+                        Modifier.size(18.dp),
                         MaterialTheme.colorScheme.onSurfaceVariant,
                     )
             }
@@ -735,7 +807,7 @@ internal fun ValueRow(
     )
 }
 
-/** Secondary pill: outlined, neutral ink. Pair with at most one primary [Action]. */
+/** Secondary pill: raised neutral fill. Pair with at most one primary [Action]. */
 @Composable
 internal fun SecondaryAction(
     label: String,
@@ -743,24 +815,7 @@ internal fun SecondaryAction(
     enabled: Boolean = true,
     glyph: Glyph? = null,
     action: () -> Unit,
-) {
-    OutlinedButton(
-        action,
-        modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        shape = MediaTokens.pill,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors =
-            ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-    ) {
-        if (glyph != null) {
-            MediaIcon(glyph, Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-        }
-        Text(label, style = MaterialTheme.typography.labelLarge)
-    }
-}
+) = Pill(label, modifier, PillStyle.Tonal, enabled, glyph, onClick = action)
 
 /** Tertiary text action in neutral ink; destructive actions use the error role. */
 @Composable
@@ -770,23 +825,16 @@ internal fun QuietAction(
     enabled: Boolean = true,
     destructive: Boolean = false,
     action: () -> Unit,
-) {
-    TextButton(
-        action,
-        modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        colors =
-            ButtonDefaults.textButtonColors(
-                contentColor =
-                    if (destructive) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurface
-            ),
-    ) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
-    }
-}
+) =
+    Pill(
+        label,
+        modifier,
+        if (destructive) PillStyle.Destructive else PillStyle.Quiet,
+        enabled,
+        onClick = action,
+    )
 
-/** Neutral filled input matching the search pill; label keeps native semantics. */
+/** Neutral filled input with its label inside; label keeps native semantics. */
 @Composable
 internal fun MediaTextField(
     value: String,
@@ -801,42 +849,25 @@ internal fun MediaTextField(
     minLines: Int = 1,
     keyboardActions: androidx.compose.foundation.text.KeyboardActions =
         androidx.compose.foundation.text.KeyboardActions.Default,
-) {
-    TextField(
+) =
+    FieldFrame(
         value,
         onValueChange,
-        modifier.fillMaxWidth(),
-        keyboardActions = keyboardActions,
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        label,
+        modifier,
         singleLine = singleLine,
         minLines = minLines,
         keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
         visualTransformation = visualTransformation,
-        shape = if (singleLine) MediaTokens.pill else MediaTokens.fieldShape,
-        colors =
-            TextFieldDefaults.colors(
-                focusedIndicatorColor = MediaTokens.transparent,
-                unfocusedIndicatorColor = MediaTokens.transparent,
-                disabledIndicatorColor = MediaTokens.transparent,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-            ),
     )
-}
 
 /** Small section header used inside sheets and settings pages. */
 @Composable
-internal fun SectionHeader(title: String, modifier: Modifier = Modifier) {
-    Text(
-        title,
-        modifier.padding(top = 16.dp, bottom = 4.dp, start = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
-        fontWeight = FontWeight.Bold,
-    )
-}
+internal fun SectionHeader(title: String, modifier: Modifier = Modifier) = GroupLabel(title, modifier)
 
 /**
- * Quiet list row for queues, history, offline media and playlists: a small-radius thumbnail,
+ * Quiet list row for queues, history, offline media and playlists: a rounded thumbnail,
  * two-line title, one-line metadata and an optional trailing control.
  */
 @Composable
@@ -852,33 +883,37 @@ internal fun MediaListRow(
     extra: @Composable (ColumnScope.() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {
+    val motion = LocalMotion.current
+    val wash by
+        animateColorAsState(
+            if (highlighted) MaterialTheme.colorScheme.surfaceContainerHigh
+            else MediaTokens.transparent,
+            motion.fade(240),
+            label = "row-highlight",
+        )
     Row(
         modifier
             .fillMaxWidth()
             .heightIn(min = 64.dp)
-            .background(
-                if (highlighted) MaterialTheme.colorScheme.surfaceContainer
-                else MediaTokens.transparent,
-                MediaTokens.medium,
-            )
+            .clip(MediaTokens.medium)
+            .background(wash)
             .then(
                 if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick)
                 else Modifier
             )
-            .padding(vertical = 4.dp),
+            .padding(vertical = 6.dp, horizontal = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         artwork(
-            Modifier.width(if (square) 56.dp else 96.dp)
+            Modifier.width(if (square) 56.dp else 104.dp)
                 .aspectRatio(if (square) 1f else 16f / 9f)
                 .clip(MediaTokens.small)
         )
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 title,
                 style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 color =
@@ -903,9 +938,9 @@ internal fun MediaListRow(
 @Composable
 internal fun GlyphTile(glyph: Glyph, modifier: Modifier) {
     Box(
-        modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier.background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f)),
         contentAlignment = Alignment.Center,
     ) {
-        MediaIcon(glyph, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        MediaIcon(glyph, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
     }
 }

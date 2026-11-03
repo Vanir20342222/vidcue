@@ -24,6 +24,13 @@ https://github.com/jspecify/jspecify
 JetBrains annotations: Copyright JetBrains s.r.o. and contributors, Apache-2.0.
 https://github.com/JetBrains/java-annotations
 
+Bricolage Grotesque (display type): Copyright 2022 The Bricolage Grotesque Project
+Authors, SIL Open Font License 1.1 (licenses/OFL-BricolageGrotesque.txt).
+https://github.com/ateliertriay/bricolage
+Instrument Sans (interface type): Copyright 2022 The Instrument Sans Project
+Authors, SIL Open Font License 1.1 (licenses/OFL-InstrumentSans.txt).
+https://github.com/Instrument/instrument-sans
+
 Apache-2.0 text is included in licenses/Apache-2.0.txt. Rust dependencies and their
 original available notices are in notices/inventory.json and notices/<package>.
 The Android SDK/system codecs, WebView and JavaScript sandbox service are provided

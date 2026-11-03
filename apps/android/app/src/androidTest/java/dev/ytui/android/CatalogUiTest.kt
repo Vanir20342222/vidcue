@@ -695,7 +695,7 @@ class CatalogUiTest {
             compose.onNodeWithTag("theme-ytui-dark").performScrollTo().assertIsSelected()
             compose.onNodeWithTag("theme-ytui-light").performScrollTo().assertIsDisplayed()
             captureSettled("restyle-large-text-theme-dialog.png")
-            compose.onNodeWithText("CANCEL").performClick()
+            compose.onNodeWithText("Cancel").performClick()
             captureSettled("restyle-large-text-settings.png")
             compose.onNodeWithContentDescription("Close").performClick()
             scenario.close()

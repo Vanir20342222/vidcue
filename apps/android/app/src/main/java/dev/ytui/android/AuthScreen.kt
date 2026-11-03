@@ -251,15 +251,9 @@ private fun AuthTopBar(
                     )
                 }
                 if (loading)
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier =
-                            Modifier.align(Alignment.BottomCenter)
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
-                                .height(2.dp)
-                                .clip(MediaTokens.pill),
-                        drawStopIndicator = {},
+                    MediaProgressBar(
+                        progress,
+                        Modifier.align(Alignment.BottomCenter).padding(horizontal = 20.dp, vertical = 2.dp),
                     )
             }
         }
@@ -420,12 +414,12 @@ private fun AuthIntro(
                             "Privacy" to AuthUi.PRIVACY_URL,
                             "Terms" to AuthUi.TERMS_URL,
                         ))
-                        TextButton(
-                            { open(url) },
-                            Modifier.heightIn(min = 48.dp).testTag("sign-in-link-${label.lowercase()}"),
-                            colors = ButtonDefaults.textButtonColors(contentColor = scheme.onSurfaceVariant),
+                        Pill(
+                            label,
+                            Modifier.testTag("sign-in-link-${label.lowercase()}"),
+                            PillStyle.Quiet,
                         ) {
-                            Text(label, style = MaterialTheme.typography.bodySmall)
+                            open(url)
                         }
                 }
             }
@@ -505,14 +499,12 @@ private fun AuthChoices(
             }
         }
         // Like "Forgot email?": the alternative path. Returns to Account, which owns import.
-        TextButton(
-            cancel,
-            Modifier.heightIn(min = 48.dp).testTag("sign-in-import"),
-            contentPadding = PaddingValues(horizontal = 0.dp),
-            colors = ButtonDefaults.textButtonColors(contentColor = scheme.primary),
-        ) {
-            Text("Import a cookie file instead?", style = MaterialTheme.typography.labelLarge)
-        }
+        Pill(
+            "Import a cookie file instead?",
+            Modifier.testTag("sign-in-import"),
+            PillStyle.Quiet,
+            onClick = cancel,
+        )
         Spacer(Modifier.height(16.dp))
         val linkStyle =
             TextLinkStyles(SpanStyle(color = scheme.primary, fontWeight = FontWeight.Medium))
@@ -565,7 +557,7 @@ private fun AuthReturnStrip(
         )
     Surface(Modifier.fillMaxWidth().testTag("sign-in-return"), color = band) {
         Column {
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+            if (busy) MediaProgressBar(null, Modifier.fillMaxWidth())
             Row(
                 Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,

@@ -96,6 +96,7 @@ private fun blurVideo(content: View?, radius: Float) {
 }
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: () -> Unit) {
     val visible by FullscreenOptions.open.collectAsState()
@@ -158,6 +159,9 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
             LocalReducedMotion provides reduced,
+            LocalMotion provides Motion(reduced = reduced),
+            androidx.compose.foundation.LocalIndication provides SoftIndication,
+            LocalRippleConfiguration provides null,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val wide = maxWidth > maxHeight

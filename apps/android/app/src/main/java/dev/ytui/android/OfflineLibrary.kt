@@ -223,12 +223,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 } ?: GlyphTile(Glyph.Download, modifier)
                             },
                             extra = {
-                                LinearProgressIndicator(
-                                    { progress },
-                                    Modifier.fillMaxWidth().padding(top = 6.dp).height(3.dp),
-                                    trackColor = MaterialTheme.colorScheme.outlineVariant,
-                                    gapSize = 0.dp,
-                                    drawStopIndicator = {},
+                                MediaProgressBar(
+                                    progress,
+                                    Modifier.fillMaxWidth().padding(top = 6.dp),
                                 )
                             },
                         ) {
@@ -414,7 +411,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         ) {
                             Box {
                                 MediaIconButton(Glyph.More, "Playlist item actions") { menu = true }
-                                DropdownMenu(menu, { menu = false }) {
+                                MediaMenu(menu, { menu = false }) {
                                     fun move(to: Int) {
                                         menu = false
                                         vm.updateOfflinePlaylist(
@@ -425,29 +422,27 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                                 },
                                         )
                                     }
-                                    DropdownMenuItem(
-                                        text = { Text("Move up") },
-                                        leadingIcon = { MediaIcon(Glyph.Up) },
-                                        enabled = index > 0,
-                                        onClick = { move(index - 1) },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Move down") },
-                                        leadingIcon = { MediaIcon(Glyph.Down) },
+                                    MediaMenuItem("Move up", Glyph.Up, enabled = index > 0) {
+                                        move(index - 1)
+                                    }
+                                    MediaMenuItem(
+                                        "Move down",
+                                        Glyph.Down,
                                         enabled = index + 1 < items.size,
-                                        onClick = { move(index + 1) },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Remove from playlist") },
-                                        leadingIcon = { MediaIcon(Glyph.Close) },
-                                        onClick = {
-                                            menu = false
-                                            vm.updateOfflinePlaylist(
-                                                opened,
-                                                items = items.filterIndexed { at, _ -> at != index },
-                                            )
-                                        },
-                                    )
+                                    ) {
+                                        move(index + 1)
+                                    }
+                                    MediaMenuItem(
+                                        "Remove from playlist",
+                                        Glyph.Close,
+                                        destructive = true,
+                                    ) {
+                                        menu = false
+                                        vm.updateOfflinePlaylist(
+                                            opened,
+                                            items = items.filterIndexed { at, _ -> at != index },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -456,42 +451,42 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             }
         }
     if (removing != null)
-        AlertDialog(
-            onDismissRequest = { removing = null },
-            shape = MediaTokens.dialog,
-            title = { Text("Remove offline copy?", fontWeight = FontWeight.Bold) },
-            text = {
-                Text(
-                    "${removing!!.optString("title")} will be removed from app storage and its saved folder copy. Your playlists keep their references."
-                )
-            },
-            confirmButton = {
-                TextButton({
+        MediaDialog(
+            { removing = null },
+            "Remove offline copy?",
+            actions = {
+                QuietAction("Cancel") { removing = null }
+                QuietAction("Remove", destructive = true) {
                     vm.effect("download_remove", "id" to removing!!.optString("id"))
                     removing = null
-                }) {
-                    Text("Remove")
                 }
             },
-            dismissButton = { TextButton({ removing = null }) { Text("Cancel") } },
-        )
+        ) {
+            Text(
+                "${removing!!.optString("title")} will be removed from app storage and its saved folder copy. Your playlists keep their references.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     if (deleting != null)
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            shape = MediaTokens.dialog,
-            title = { Text("Delete playlist?", fontWeight = FontWeight.Bold) },
-            text = { Text("Saved media files will stay in your library.") },
-            confirmButton = {
-                TextButton({
+        MediaDialog(
+            { deleting = null },
+            "Delete playlist?",
+            actions = {
+                QuietAction("Cancel") { deleting = null }
+                QuietAction("Delete", destructive = true) {
                     vm.deleteOfflinePlaylist(deleting!!.optString("id"))
                     deleting = null
                     opened = ""
-                }) {
-                    Text("Delete")
                 }
             },
-            dismissButton = { TextButton({ deleting = null }) { Text("Cancel") } },
-        )
+        ) {
+            Text(
+                "Saved media files will stay in your library.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 }
 
 @Composable
