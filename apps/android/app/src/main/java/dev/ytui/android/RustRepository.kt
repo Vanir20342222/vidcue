@@ -203,17 +203,26 @@ internal object ArtworkCache {
             override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
         }
 
+    private val decodeSizes = intArrayOf(96, 160, 240, 320, 480, 640, 768)
+
+    /**
+     * Rounds a displayed width up to a shared decode size. Grid columns differ by a pixel of
+     * rounding; exact widths fetched, decoded and cached the same cover once per column width.
+     */
+    fun decodeSize(pixels: Int): Int =
+        decodeSizes.firstOrNull { it >= pixels } ?: decodeSizes.last()
+
+    fun hasArtwork(media: MediaCard): Boolean =
+        media.value.optString("thumbnail").isNotBlank() ||
+            (media.value.optJSONArray("thumbnails")?.length() ?: 0) > 0
+
     /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
     fun cached(media: MediaCard, pixels: Int): Bitmap? =
-        memory.get("${media.key}:${media.artworkSource}:${pixels.coerceIn(32, 768)}")
+        memory.get("${media.key}:${media.artworkSource}:${decodeSize(pixels)}")
 
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
-        if (
-            media.value.optString("thumbnail").isBlank() &&
-                (media.value.optJSONArray("thumbnails")?.length() ?: 0) == 0
-        )
-            return null
-        val size = pixels.coerceIn(32, 768)
+        if (!hasArtwork(media)) return null
+        val size = decodeSize(pixels)
         val key = "${media.key}:${media.artworkSource}:$size"
         memory.get(key)?.let {
             return it

@@ -1529,7 +1529,10 @@ class CatalogUiTest {
             }
         } catch (error: Throwable) {
             captureSettled("restyle-fidelity-cover-failed.png")
-            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            android.util.Log.i(
+                "CoverEvidence",
+                (diagnostics + "requests per cover=${covers.perCover}").joinToString("; "),
+            )
             throw error
         }
     }
@@ -1550,6 +1553,7 @@ class CatalogUiTest {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
         val failures = AtomicInteger()
+        val perCover = java.util.concurrent.atomic.AtomicIntegerArray(6)
         @Volatile var failFirstCover = false
         private val images = (0..5).map(::cover)
         private val worker =
@@ -1574,6 +1578,7 @@ class CatalogUiTest {
                                     ?.toIntOrNull() ?: 0
                             val bytes = images[index.coerceIn(0, 5)]
                             requests.incrementAndGet()
+                            perCover.incrementAndGet(index.coerceIn(0, 5))
                             if (index == 0 && failFirstCover) {
                                 failFirstCover = false
                                 failures.incrementAndGet()
