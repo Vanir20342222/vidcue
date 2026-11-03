@@ -829,6 +829,17 @@ and mpv resume/preview checks. Tests reproduced and fixed per-file hook metadata
 duplicate invocation and missing output records on hook failure (M3/M8). Final
 counts and reproducible commands are in docs/VALIDATION.md.
 
+
+### M4/M5/M8 follow-up: native playback startup (26 October 2026)
+
+The screenshot's exact M83 album recording exposed a stale authenticated native
+extractor and slow repeated resolution. The new pin preserves native-only
+playback, bounds stream-format probing, prepares a settled selection/next queue
+item, shares in-flight resolution and expires signed streams in memory. Runtime
+shim discovery, account expiry, cancellation and cooldown retention have focused
+regressions. See [the startup repair report](docs/PLAYBACK_STARTUP_2026-10-26.md)
+for final measured evidence and the separate remaining release gates.
+
 ### M9: Android and monorepo (in progress)
 
 **Current Android UI decision (2026-10-28):** the user's Tab S9 acceptance found
