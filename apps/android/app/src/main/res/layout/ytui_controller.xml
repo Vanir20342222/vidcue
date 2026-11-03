@@ -62,7 +62,7 @@
           style="@style/ExoStyledControls.TimeText.Position"/>
 
       <TextView
-          style="@style/ExoStyledControls.TimeText.Separator"/>
+          style="@style/ExoStyledControls.TimeText.Separator" android:text=" / "/>
 
       <TextView android:id="@id/exo_duration"
           style="@style/ExoStyledControls.TimeText.Duration"/>

@@ -134,6 +134,36 @@ class ContrastUiTest {
                     }
                     compose.waitForIdle()
                     instrumentation.uiAutomation.waitForIdle(300, 3000)
+                    // A compact inline frame hides rewind/forward (PlayerChrome.fitTransport;
+                    // fullscreen keeps them). Check that, then show them so their contrast and
+                    // touch targets are still inspected below.
+                    scenario.onActivity { activity ->
+                        val playerView =
+                            generateSequence(
+                                    activity.findViewById<View>(
+                                        androidx.media3.ui.R.id.exo_play_pause
+                                    )
+                                ) {
+                                    it.parent as? View
+                                }
+                                .filterIsInstance<PlayerView>()
+                                .first()
+                        val widthDp = playerView.width / activity.resources.displayMetrics.density
+                        if (widthDp < 560f)
+                            for (id in
+                                listOf(
+                                    androidx.media3.ui.R.id.exo_rew_with_amount,
+                                    androidx.media3.ui.R.id.exo_ffwd_with_amount,
+                                ))
+                                assertFalse(
+                                    "A compact inline frame hides rewind and forward",
+                                    activity.findViewById<View>(id)?.isShown == true,
+                                )
+                        playerView.setShowRewindButton(true)
+                        playerView.setShowFastForwardButton(true)
+                    }
+                    compose.waitForIdle()
+                    instrumentation.uiAutomation.waitForIdle(300, 3000)
                     scenario.onActivity { activity ->
                         assertTrue(
                             activity

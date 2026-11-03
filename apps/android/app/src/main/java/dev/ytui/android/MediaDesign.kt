@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.testTag
@@ -154,6 +155,8 @@ internal enum class Glyph {
     Speed,
     Edit,
     Lock,
+    Browse,
+    Refresh,
 }
 
 @Composable
@@ -374,8 +377,44 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Check -> outline(4f to 12f, 10f to 18f, 21f to 6f)
+                Glyph.Sleep ->
+                    // Crescent moon: distinct from the History clock in shared menus.
+                    drawPath(
+                        Path().apply {
+                            moveTo(20f, 14.5f)
+                            cubicTo(16.5f, 16f, 11f, 15f, 9.5f, 10.5f)
+                            cubicTo(8.5f, 7.5f, 9.5f, 5f, 11f, 3.5f)
+                            cubicTo(6.5f, 4f, 3f, 7.8f, 3f, 12.3f)
+                            cubicTo(3f, 17.1f, 7f, 21f, 11.8f, 21f)
+                            cubicTo(15.6f, 21f, 18.8f, 18.4f, 20f, 14.5f)
+                            close()
+                        },
+                        tint,
+                        style = if (filled) Fill else Stroke(1.8f, join = StrokeJoin.Round),
+                    )
+                Glyph.Browse -> {
+                    val round = CornerRadius(1.5f)
+                    for (x in listOf(3.5f, 13.5f)) for (y in listOf(3.5f, 13.5f)) drawRoundRect(
+                        tint,
+                        Offset(x, y),
+                        Size(7f, 7f),
+                        round,
+                        style = Stroke(1.8f),
+                    )
+                }
+                Glyph.Refresh -> {
+                    drawArc(
+                        tint,
+                        -60f,
+                        300f,
+                        false,
+                        Offset(4f, 4f),
+                        Size(16f, 16f),
+                        style = Stroke(1.8f, cap = StrokeCap.Round),
+                    )
+                    outline(14.5f to 3f, 17f to 6.2f, 13.2f to 7.8f)
+                }
                 Glyph.History,
-                Glyph.Sleep,
                 Glyph.Info -> {
                     drawCircle(tint, 9f, Offset(12f, 12f), style = Stroke(1.8f))
                     if (glyph == Glyph.Info) {

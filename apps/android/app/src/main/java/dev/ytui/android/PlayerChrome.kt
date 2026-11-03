@@ -59,6 +59,31 @@ internal object PlayerChrome {
         showSponsorMarks(view)
     }
 
+    /**
+     * The inline portrait frame is too narrow for five discs: prev, rewind, play, forward and
+     * next crowd the picture and clip at the edge. Below [COMPACT_WIDTH_DP] keep prev/play/next;
+     * double-tap seeking (VideoGestures) still covers rewind and forward.
+     */
+    @JvmStatic
+    fun fitTransport(view: PlayerView) {
+        // Prepared views can be reused; attach the listener once.
+        if (view.getTag(R.id.ytui_transport_wide) != null) return
+        view.setTag(R.id.ytui_transport_wide, "pending")
+        view.addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left == oldRight - oldLeft) return@addOnLayoutChangeListener
+            val wide = (right - left) / v.resources.displayMetrics.density >= COMPACT_WIDTH_DP
+            if (v.getTag(R.id.ytui_transport_wide) == wide) return@addOnLayoutChangeListener
+            v.setTag(R.id.ytui_transport_wide, wide)
+            // Post: changing button visibility inside a layout pass would be dropped.
+            v.post {
+                view.setShowRewindButton(wide)
+                view.setShowFastForwardButton(wide)
+            }
+        }
+    }
+
+    private const val COMPACT_WIDTH_DP = 560f
+
     /** Frosted-glass disc: tinted translucent fill with a lit hairline edge. */
     private fun glassDisc(resources: android.content.res.Resources) =
         GradientDrawable().apply {

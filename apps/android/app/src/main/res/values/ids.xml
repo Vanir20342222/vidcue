@@ -2,6 +2,7 @@
 <resources>
     <!-- View tag key: SponsorBlock marker times last applied to a PlayerView timebar. -->
     <item name="ytui_sponsor_marks" type="id" />
+    <item name="ytui_transport_wide" type="id" />
     <!-- Tag slot for the inline player's vertical-swipe (minimize / fullscreen) listener. -->
     <item name="ytui_panel_swipe" type="id" />
 </resources>
