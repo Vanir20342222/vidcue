@@ -214,6 +214,87 @@ public final class PlaybackNavigationTest {
       JSONArray history = PlaybackService.rpcArray(new JSONObject().put("op", "history_list"));
       for (int i = 0; i < history.length(); i++)
         assertNotEquals("Missing", history.getJSONObject(i).getString("title"));
+      PlaybackService.rpc(
+          new JSONObject().put("op", "enqueue").put("media", media(server, "Recovery")));
+      InstrumentationRegistry.getInstrumentation()
+          .runOnMainSync(() -> PlaybackService.current.controlsPlayer.seekToNext());
+      playing("Recovery");
+      MediaRuntimeTest.await(
+          "Explicit Next must leave the failed queue item behind",
+          () -> PlaybackService.rpcArray(new JSONObject().put("op", "queue")).length() == 0);
+    } finally {
+      MediaRuntimeTest.command("stop");
+      MediaBridge.playbackStore.submit(() -> null).get(5, TimeUnit.SECONDS);
+      clearQueue();
+      PlaybackService.rpc(new JSONObject().put("op", "save_settings").put("config", original));
+    }
+  }
+
+  @Test
+  public void nextDuringInitialBufferingUsesTheSeedWithoutWaitingForPlayback() throws Exception {
+    JSONObject original = PlaybackService.rpc(new JSONObject().put("op", "settings"));
+    byte[] audio;
+    try (InputStream input =
+        InstrumentationRegistry.getInstrumentation()
+            .getContext()
+            .getAssets()
+            .open("fixture-audio.m4a")) {
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      byte[] buffer = new byte[8192];
+      int count;
+      while ((count = input.read(buffer)) != -1) bytes.write(buffer, 0, count);
+      audio = bytes.toByteArray();
+    }
+    try (ActivityScenario<RustActivity> activity = RuntimeTest.launchOffline();
+        CollectionServer server = new CollectionServer(audio)) {
+      clearQueue();
+      PlaybackService.rpc(
+          new JSONObject()
+              .put("op", "save_settings")
+              .put("config", new JSONObject(original.toString()).put("proxy", server.url(""))));
+      MediaBridge.playbackStore
+          .submit(
+              () -> {
+                PlaybackService.rpcArray(new JSONObject().put("op", "history_clear"));
+                return null;
+              })
+          .get(5, TimeUnit.SECONDS);
+      server.pauseMedia = new CountDownLatch(1);
+      server.pauseLibrary = new CountDownLatch(1);
+      JSONArray items = new JSONArray();
+      items.put(media(server, "Buffering")).put(media(server, "Second"));
+      JSONObject descriptor =
+          new JSONObject()
+              .put("op", "prepare_context")
+              .put("context_id", "buffering-seed")
+              .put("source_url", server.url("/Buffering.m4a"))
+              .put("source_id", "Buffering")
+              .put("items", items)
+              .put(
+                  "request",
+                  new JSONObject().put("CliampTracks", "http://radio.cliamp.stream/library"));
+      JSONObject request =
+          new JSONObject()
+              .put("media", media(server, "Buffering"))
+              .put("audio", true)
+              .put("stream", new JSONObject().put("url", server.url("/Buffering.m4a")))
+              .put("context_id", "buffering-seed")
+              .put("context", descriptor);
+      MediaBridge.execute(new JSONObject().put("op", "play").put("request", request).toString());
+      assertTrue("Media request never started", server.mediaEntered.await(5, TimeUnit.SECONDS));
+      MediaRuntimeTest.await(
+          "Seed was not prepared before playback",
+          () ->
+              PlaybackService.rpc(
+                      new JSONObject().put("op", "queue_peek").put("context_id", "buffering-seed"))
+                  .optString("title")
+                  .equals("Second"));
+      MediaRuntimeTest.command("next");
+      playing("Second");
+      assertEquals("Next must not wait for the first track", 1, server.pauseMedia.getCount());
+      JSONArray history = PlaybackService.rpcArray(new JSONObject().put("op", "history_list"));
+      for (int i = 0; i < history.length(); i++)
+        assertNotEquals("Buffering", history.getJSONObject(i).getString("title"));
     } finally {
       MediaRuntimeTest.command("stop");
       MediaBridge.playbackStore.submit(() -> null).get(5, TimeUnit.SECONDS);
@@ -311,6 +392,8 @@ public final class PlaybackNavigationTest {
     final Thread acceptor;
     final byte[] audio;
     volatile CountDownLatch pauseLibrary;
+    volatile CountDownLatch pauseMedia;
+    final CountDownLatch mediaEntered = new CountDownLatch(1);
     final CountDownLatch libraryEntered = new CountDownLatch(1);
 
     CollectionServer(byte[] audio) throws Exception {
@@ -353,6 +436,11 @@ public final class PlaybackNavigationTest {
         String mime = "audio/mp4";
         boolean library = first.contains("/library");
         boolean missing = first.contains("/Missing.m4a");
+        if (first.contains("/Buffering.m4a")) {
+          mediaEntered.countDown();
+          CountDownLatch paused = pauseMedia;
+          if (paused != null) paused.await(30, TimeUnit.SECONDS);
+        }
         if (library) {
           libraryEntered.countDown();
           CountDownLatch paused = pauseLibrary;
@@ -398,6 +486,7 @@ public final class PlaybackNavigationTest {
     @Override
     public void close() throws Exception {
       if (pauseLibrary != null) pauseLibrary.countDown();
+      if (pauseMedia != null) pauseMedia.countDown();
       socket.close();
       acceptor.join(2000);
       clients.shutdownNow();

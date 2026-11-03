@@ -2,6 +2,10 @@ package dev.ytui.android;
 
 /** The Rust MediaKind JSON contract uses lowercase names. */
 final class PlaybackPolicy {
+  static boolean refreshableStatus(int status) {
+    return status == 403 || status == 410;
+  }
+
   static boolean audioOnly(String kind) {
     return "song".equals(kind) || "station".equals(kind);
   }

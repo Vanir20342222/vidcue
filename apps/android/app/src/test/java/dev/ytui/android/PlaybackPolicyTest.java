@@ -6,6 +6,14 @@ import org.junit.Test;
 
 public final class PlaybackPolicyTest {
   @Test
+  public void onlyRejectedOrExpiredUrlsTriggerAutomaticRefresh() {
+    assertTrue(PlaybackPolicy.refreshableStatus(403));
+    assertTrue(PlaybackPolicy.refreshableStatus(410));
+    for (int status : new int[] {0, 200, 400, 401, 404, 429, 500, 503})
+      assertFalse(PlaybackPolicy.refreshableStatus(status));
+  }
+
+  @Test
   public void rustSongAndStationQueueEntriesRemainAudioOnly() {
     assertTrue(PlaybackPolicy.audioOnly("song"));
     assertTrue(PlaybackPolicy.audioOnly("station"));
