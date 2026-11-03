@@ -14,11 +14,13 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.luminance
@@ -54,7 +56,12 @@ internal object MediaTokens {
     val brandOnLight = Color(0xff006f62)
     val videoInk = Color.White
     val videoScrim = Color.Black.copy(alpha = 0.72f)
-    val videoDisc = Color.Black.copy(alpha = 0.48f)
+    /** Tinted glass behind native video transports: still 3:1 for white icons on white video. */
+    val videoDisc = Color(0x80141A20)
+    /** Light hairline that gives glass discs and panels a lit edge. */
+    val videoGlassEdge = Color.White.copy(alpha = 0.26f)
+    /** Glass sheen at the top of the fullscreen options panel. */
+    val videoGlassSheen = Color.White.copy(alpha = 0.09f)
     /** SponsorBlock ticks on the video timebar; amber reads over video and every accent. */
     val sponsorMark = Color(0xffffc107)
     val transparent = Color.Transparent
@@ -146,6 +153,7 @@ internal enum class Glyph {
     Captions,
     Speed,
     Edit,
+    Lock,
 }
 
 @Composable
@@ -439,6 +447,25 @@ internal fun MediaIcon(
                 Glyph.Edit -> {
                     outline(4f to 20f, 4f to 16f, 15f to 5f, 19f to 9f, 8f to 20f, closed = true)
                     line(13f, 7f, 17f, 11f)
+                }
+                Glyph.Lock -> {
+                    drawRoundRect(
+                        tint,
+                        Offset(5f, 10.5f),
+                        Size(14f, 10f),
+                        CornerRadius(2f, 2f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(8.5f, 10.5f)
+                            lineTo(8.5f, 7.5f)
+                            cubicTo(8.5f, 2.8f, 15.5f, 2.8f, 15.5f, 7.5f)
+                            lineTo(15.5f, 10.5f)
+                        },
+                        tint,
+                        style = Stroke(1.8f, cap = StrokeCap.Round),
+                    )
                 }
             }
         }

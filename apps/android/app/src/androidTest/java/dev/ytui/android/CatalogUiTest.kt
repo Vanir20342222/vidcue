@@ -1491,13 +1491,17 @@ class CatalogUiTest {
                 for (media in cards) {
                     if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed()) continue
                     runCatching {
-                            val node =
-                                compose.onNode(
-                                    hasTestTag("artwork-${media.key}") and
-                                        hasAnyAncestor(hasTestTag("media-card-${media.key}")),
-                                    useUnmergedTree = true,
-                                )
-                            val bounds = node.getUnclippedBoundsInRoot()
+                            // Judge visibility by the artwork frame, which exists before the
+                            // cover loads: a still-loading cover in a partially visible row is
+                            // not a full cover either.
+                            val bounds =
+                                compose
+                                    .onNode(
+                                        hasTestTag("artwork-frame-${media.key}") and
+                                            hasAnyAncestor(hasTestTag("media-card-${media.key}")),
+                                        useUnmergedTree = true,
+                                    )
+                                    .getUnclippedBoundsInRoot()
                             // A partially visible virtualized row is not a full cover.
                             // captureToImage clips it, changing the sample's coordinates.
                             if (
@@ -1510,6 +1514,12 @@ class CatalogUiTest {
                                 return@runCatching
                             }
                             inspected++
+                            val node =
+                                compose.onNode(
+                                    hasTestTag("artwork-${media.key}") and
+                                        hasAnyAncestor(hasTestTag("media-card-${media.key}")),
+                                    useUnmergedTree = true,
+                                )
                             val frame = node.captureToImage()
                             val color = frame.toPixelMap()[frame.width / 2, frame.height / 4]
                             val saturated =
@@ -1520,7 +1530,8 @@ class CatalogUiTest {
                         }
                         .onFailure {
                             decoded = false
-                            checks += "capture=${it.javaClass.simpleName}"
+                            checks +=
+                                "cover_index=${cards.indexOf(media)} capture=${it.javaClass.simpleName}:${it.message?.take(240)}"
                         }
                 }
                 diagnostics = checks
@@ -1528,7 +1539,36 @@ class CatalogUiTest {
             }
         } catch (error: Throwable) {
             captureSettled("restyle-fidelity-cover-failed.png")
-            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            android.util.Log.i(
+                "CoverEvidence",
+                diagnostics.joinToString("; ") + " requests=" + covers.requestCounts(),
+            )
+            // Failure-only probes use this test's synthetic loopback artwork.
+            // Never retry the assertion or turn an initial failed cover into a pass.
+            for ((index, media) in cards.withIndex()) {
+                runCatching {
+                        if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed())
+                            return@runCatching
+                        if (
+                            compose
+                                .onAllNodesWithTag("artwork-${media.key}", useUnmergedTree = true)
+                                .fetchSemanticsNodes()
+                                .isNotEmpty()
+                        )
+                            return@runCatching
+                        val data = NativeBridge.thumbnail(media.value.toString(), 384)
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "missing_index=$index native_probe=${data?.let { "${it[0]}x${it[1]}" } ?: "unavailable"} requests=${covers.requestCounts()}",
+                        )
+                    }
+                    .onFailure {
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "probe_index=$index failed=${it.javaClass.simpleName}",
+                        )
+                    }
+            }
             throw error
         }
     }
@@ -1548,47 +1588,61 @@ class CatalogUiTest {
     private class CoverServer : AutoCloseable {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
+
+        fun requestCounts() = (0..5).map { perCover.get(it) }
+
         val failures = AtomicInteger()
+        val perCover = java.util.concurrent.atomic.AtomicIntegerArray(6)
         @Volatile var failFirstCover = false
         private val images = (0..5).map(::cover)
         private val worker =
             Thread {
                     while (!socket.isClosed) try {
-                        socket.accept().use { client ->
-                            client.soTimeout = 5000
-                            val reader = client.getInputStream().bufferedReader()
-                            val request = reader.readLine() ?: return@use
-                            while (!reader.readLine().isNullOrEmpty()) {
-                                /* consume headers */
+                        val accepted = socket.accept()
+                        // Serve each connection on its own thread: one stalled read must not
+                        // queue every other parallel cover load behind it.
+                        Thread {
+                                accepted.use { client ->
+                                    client.soTimeout = 5000
+                                    val reader = client.getInputStream().bufferedReader()
+                                    val request = reader.readLine() ?: return@use
+                                    while (!reader.readLine().isNullOrEmpty()) {
+                                        /* consume headers */
+                                    }
+                                    val index =
+                                        Regex("/cover-(\\d+)")
+                                            .find(request)
+                                            ?.groupValues
+                                            ?.get(1)
+                                            ?.toIntOrNull() ?: 0
+                                    val bytes = images[index.coerceIn(0, 5)]
+                                    requests.incrementAndGet()
+                                    perCover.incrementAndGet(index.coerceIn(0, 5))
+                                    if (index == 0 && failFirstCover) {
+                                        failFirstCover = false
+                                        failures.incrementAndGet()
+                                        client
+                                            .getOutputStream()
+                                            .write(
+                                                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                                    .toByteArray()
+                                            )
+                                        return@use
+                                    }
+                                    client.getOutputStream().apply {
+                                        write(
+                                            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                                                .toByteArray()
+                                        )
+                                        write(bytes)
+                                        flush()
+                                    }
+                                }
                             }
-                            val index =
-                                Regex("/cover-(\\d+)")
-                                    .find(request)
-                                    ?.groupValues
-                                    ?.get(1)
-                                    ?.toIntOrNull() ?: 0
-                            val bytes = images[index.coerceIn(0, 5)]
-                            requests.incrementAndGet()
-                            if (index == 0 && failFirstCover) {
-                                failFirstCover = false
-                                failures.incrementAndGet()
-                                client
-                                    .getOutputStream()
-                                    .write(
-                                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                                            .toByteArray()
-                                    )
-                                return@use
+                            .apply {
+                                isDaemon = true
+                                start()
                             }
-                            client.getOutputStream().apply {
-                                write(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
-                                        .toByteArray()
-                                )
-                                write(bytes)
-                                flush()
-                            }
-                        }
                     } catch (_: java.io.IOException) {
                         /* closed fixture client/server */
                     }

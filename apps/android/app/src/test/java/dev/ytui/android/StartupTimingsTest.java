@@ -6,6 +6,23 @@ import org.junit.Test;
 
 public final class StartupTimingsTest {
   @Test
+  public void subsecondGoalIncludesPlayingAndKeepsByteReadinessSeparateFromResolution() {
+    long token = StartupTimings.begin(1000, true);
+    StartupTimings.resolved(token, 1002, true);
+    StartupTimings.byteCache(token, false);
+    StartupTimings.playerCache(token, true);
+    StartupTimings.handoff(token, 1010);
+    StartupTimings.output(token, 1300, true);
+    StartupTimings.started(token, 2000);
+    assertEquals(1000, StartupTimings.usable(token));
+    String report = StartupTimings.report();
+    assertTrue(report.contains("< 1000 ms"));
+    assertTrue(report.contains("warmup_bytes_at_tap=not_ready"));
+    assertTrue(report.contains("player_at_tap=ready"));
+    assertTrue(report.contains("USABLE OVER TARGET"));
+  }
+
+  @Test
   public void aVisibleFrameCannotHideBufferingBeforeActualPlayback() {
     long token = StartupTimings.begin(1000, true);
     StartupTimings.handoff(token, 1100);

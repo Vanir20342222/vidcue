@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity;
 import java.io.InputStream;
 
 public final class RustActivity extends ComponentActivity {
+  final VideoViewPreparation videoViews = new VideoViewPreparation(this);
   static final java.util.concurrent.atomic.AtomicLong generations =
       new java.util.concurrent.atomic.AtomicLong();
   static final java.util.concurrent.atomic.AtomicLong shutdowns =
@@ -71,24 +72,39 @@ public final class RustActivity extends ComponentActivity {
   protected void onResume() {
     super.onResume();
     MediaBridge.uiVisible = true;
+    PlaybackService.warmForeground();
+    videoViews.schedule();
     MediaBridge.notifyUi();
   }
 
   @Override
   protected void onStop() {
+    videoViews.clear();
     if (!FullscreenActivity.visible) {
       MediaBridge.uiVisible = false;
-      if (!isChangingConfigurations() && PlaybackService.current != null)
+      if (!isChangingConfigurations() && PlaybackService.current != null) {
         PlaybackService.current.pauseForBackground();
+        PlaybackService.current.releaseIdle();
+      }
     }
     super.onStop();
   }
 
   @Override
   protected void onDestroy() {
+    videoViews.clear();
     if (reference.get() == this) reference.clear();
     super.onDestroy();
     shutdowns.incrementAndGet();
+  }
+
+  @Override
+  public void onConfigurationChanged(android.content.res.Configuration configuration) {
+    // Detached widgets retain resolved font/dimension attributes. Discard an
+    // unused view rather than attach stale configuration after rotation/scaling.
+    videoViews.clear();
+    super.onConfigurationChanged(configuration);
+    videoViews.schedule();
   }
 
   @Override

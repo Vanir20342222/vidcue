@@ -32,7 +32,10 @@ collect_evidence() {
     adb pull /sdcard/Android/data/$test_package/files/startup-timings.txt "$evidence/startup-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-hls-timings.txt "$evidence/startup-hls-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-indexed-timings.txt "$evidence/startup-indexed-timings.txt" > /dev/null 2>&1 || true
-    for state in cold prepared missing-frame settings hls hls-prepared indexed; do
+    for name in public-startup-timings startup-subsecond-timings startup-indexed-prefetched-timings; do
+        adb pull "/sdcard/Android/data/$test_package/files/$name.txt" "$evidence/$name.txt" > /dev/null 2>&1 || true
+    done
+    for state in cold prepared missing-frame settings hls hls-prepared indexed indexed-prefetched indexed-prefetched-failed subsecond subsecond-cold subsecond-failed; do
         adb pull /sdcard/Android/data/$test_package/files/startup-$state.png "$evidence/startup-$state.png" > /dev/null 2>&1 || true
     done
     mkdir -p "$evidence/native-ui"
@@ -51,6 +54,17 @@ collect_evidence() {
     adb pull "/sdcard/Android/data/$test_package/files/watch-collapse-missing.xml" "$evidence/native-ui/watch-collapse-missing.xml" > /dev/null 2>&1 || true
 }
 trap collect_evidence EXIT
+# The 1000 ms startup target is advisory on the hosted software emulator; set
+# YTUI_ANDROID_SUBSECOND=enforce (for example on a physical device) to make it a
+# hard assertion. The 2000 ms visible-output gate is always enforced.
+subsecond="${YTUI_ANDROID_SUBSECOND:-advisory}"
+case "$subsecond" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_SUBSECOND (advisory|enforce).' >&2; exit 1;; esac
+public_quality="${YTUI_ANDROID_PUBLIC_QUALITY:-best}"
+public_target="${YTUI_ANDROID_PUBLIC_TARGET_MS:-1000}"
+if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
+    case "$public_quality" in best|1080|720) ;; *) echo 'Invalid public quality.' >&2; exit 1;; esac
+    case "$public_target" in 1000|2000) ;; *) echo 'Invalid public target.' >&2; exit 1;; esac
+fi
 if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     # CI shards: install the exact APKs built (and uploaded) by the apk job
     # instead of rebuilding them, then run one AndroidJUnitRunner shard.
@@ -69,10 +83,12 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
     [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
+    [[ "$subsecond" == enforce ]] && instrument+=(-e ytui_subsecond enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         # adb joins arguments into one device shell command; single-quote the URL.
         [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
         instrument+=(-e youtubeUrl "'$YTUI_ANDROID_PUBLIC_URL'")
+        instrument+=(-e youtubeQuality "$public_quality" -e youtubeTargetMs "$public_target")
     fi
     "${instrument[@]}" "$runner" | tee "$evidence/instrumentation-shard-$shard_index.txt"
     # grep, not rg: emulator shard runners do not ship ripgrep.
@@ -85,8 +101,11 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     fi
 else
     arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
+    [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.ytui_subsecond=enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
+        arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=$public_quality")
+        arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeTargetMs=$public_target")
     fi
     apps/android/gradlew -p apps/android --no-daemon "${arguments[@]}" :app:connectedDebugAndroidTest
 fi

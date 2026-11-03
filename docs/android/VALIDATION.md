@@ -1,5 +1,91 @@
 # Android validation record (M9)
 
+## Sign-in card and first-run setup (2026-11-02, M9)
+
+Added in commit `7f566e5` and these test files:
+
+- A native sign-in card (`AuthScreen.kt`, `AuthActivity.java`): a two-column account
+  card inside in-app-browser chrome, with a close button, a live address pill with
+  lock and load progress, and a "you'll come back here" strip. A detected signed-in
+  cookie name highlights "Use this session", but import still needs an explicit tap.
+  Help, Privacy and Terms open in the external browser.
+- A five-step skippable first-run setup (`Onboarding.kt`) with Skip, Back, swipe and
+  reduced-motion handling. Completion is stored in app-private preferences, and
+  Settings > Setup guide replays it. Instrumented offline launches show it only with
+  the `ytui.onboarding` extra.
+- `src/test/.../AuthUiTest.kt` (JVM, pure logic only; `AuthUi.host` is excluded because
+  it needs `android.net.Uri`) and `src/androidTest/.../OnboardingUiTest.kt`
+  (instrumentation: Skip, Next to finish, Back).
+
+Checks actually run on 2026-11-02 (`apps/android`, debug variant):
+
+- `:app:testDebugUnitTest --tests 'dev.ytui.android.AuthUiTest'`: passed, 11 tests,
+  0 failures: `missingOrEmptyCookieHeadersDoNotLookSignedIn`,
+  `unrelatedCookiesDoNotLookSignedIn`, `signedInCookieNamesAreDetectedWhereverTheyAppear`,
+  `namesThatMerelyContainASignedInNameAreNotDetected`, `onlyCookieNamesAreInspectedNotValues`,
+  `secureMeansAnHttpsAddress`, `resetRestoresTheIntroductionState`,
+  `resetCanOpenTheWebStageDirectly`, `showWebTogglesOnlyTheStage`,
+  `progressIsClampedToAPercentage`, `pageAcceptsANullAddressAsEmpty`.
+- `:app:compileDebugAndroidTestKotlin`: passed. This compiles `OnboardingUiTest`
+  but does not run it.
+
+Follow-up from code review and Robolectric/Roborazzi renders (phone and tablet,
+throwaway rig outside the repository; renders are visual previews, not device
+acceptance):
+
+- Onboarding no longer composes the app beneath it, so keyboard/D-pad focus,
+  TalkBack and a notification-opened player cannot reach hidden content.
+- Theme and Reduce-motion controls stay disabled until the user's settings have
+  loaded, and remain disabled if loading failed. `save_settings` replaces the whole
+  document, so an early tap could otherwise reset existing settings.
+- The sign-in web stage reloads if nothing was restored after rotation or process
+  death. Reduced motion is read from settings when the sign-in activity is recreated
+  alone. Size changes snap under reduced motion. The pulse no longer recomposes every
+  frame. Stale sign-in messages clear on Continue and when a session is detected.
+- Replaying setup from Settings keeps the saved completion flag. The onboarding
+  Account step offers cookie-file import and shows sign-in errors. Pages have
+  headings, the overlay has a pane title and step changes are announced.
+- Checks re-run: `compileDebugKotlin`, `compileDebugJavaWithJavac`, full
+  `testDebugUnitTest` (including `ThemeLabelTest`) and `compileDebugAndroidTestKotlin`
+  all pass.
+
+Not run and not claimed: no emulator or instrumentation run (including
+`OnboardingUiTest` and the existing `NativeUiTest`), no physical Galaxy Tab S9 run,
+no TalkBack check, and no live Google sign-in. The JVM result is logic-only and does
+not establish sign-in success, cookie capture, or any accessibility behaviour.
+
+## Category preloading (2026-11-02)
+
+Android's native ViewModel now caches network first pages for 60 seconds, with
+12 entries and a 2 MiB serialized-text estimate. Video and Music use distinct
+keys, including network revision; account changes, account-index changes and
+proxy edits clear cached/private navigation state. Selecting the current source
+again refreshes its UI entry. Local saved items and pagination bypass this cache.
+
+After a 300 ms settling delay, browsing prepares up to three nearby server
+categories, Home for the other media tab, and signed-in playlist/liked sources
+(at most six targets per batch). Only one speculative browse runs at a time;
+tapping a pending target shares its fetch. Cancelled batches do not schedule
+more work. Existing preload/mobile-data preferences apply, active playback
+suppresses new speculative browsing, and errors stop a batch without retries or
+visible error overlays. Category chips remain available while changing filters.
+
+Focused verification: **9 JUnit tests passed**, compiled directly with Kotlin
+2.1.21, kotlinx-coroutines 1.10.2 and JUnit 4.13.2. They exercise reuse/expiry,
+joining a cancelled preload waiter, account clearing and late replies, failed
+fetch recovery, entry/byte eviction, oversize rejection, explicit refresh,
+tab isolation, and rapid navigation without cancelling the visible request.
+Kotlin formatting and `git diff --check` also pass.
+
+This workspace has no Android SDK or Gradle installation/cache. The new cache
+and its tests were compiled in isolation; the complete Android app build,
+instrumentation, physical category-switch latency and live-service behavior
+have **not** been qualified for this change. On an Android-equipped worker run
+`apps/android/gradlew -p apps/android :app:testDebugUnitTest :app:lintDebug`
+and exercise video/Music category switching, refresh, pagination, account
+switch/disconnect, and preload disabled/metered-network settings on a device.
+No APK was built or published; M9's existing physical/live gates remain open.
+
 ## Published content-first UI release: mobile.10 (2026-11-01)
 
 [Download, checksum and qualification](MOBILE10_RELEASE.md). Version
@@ -753,6 +839,133 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 
 [Research and implementation](TWO_SECOND_STARTUP.md) and [mobile.5 qualification](STARTUP_VALIDATION_2026-10-29.md) distinguish the successful offline/native checks from the still-open physical Tab S9 / live YouTube two-second gate. Failed and infrastructure-contaminated attempts are preserved in those records.
 
+
+## M9 subsecond startup candidate, 2026-11-02
+
+[Research, changes and retained failures](SUBSECOND_STARTUP.md) record the
+strict <1000 ms target. PR32 was a draft at that point; on 2026-11-03 the owner
+chose to merge it with the 1000 ms emulator target advisory (see that record). The first
+native run passed 43 tests, failed the new window-readback deadline (1020 ms),
+and explicitly skipped one optional public-YouTube case. Actual usable startup
+was 734 ms for that prepared fixture; this is not a physical/live qualification.
+The observer scheduling and cache-eviction follow-up require a fresh native run.
+
 ## CI layout change, 2026-11-02 (M9)
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
+
+## Watch-page Up next follow-up, 2026-11-02 (M9)
+
+The video watch page's **Up next** now shows what Next/autoplay will actually
+take, in the same order: the manual queue, then the active playback context —
+the rest of the playlist the video was started from ("From this playlist") or
+the related videos YouTube returned for it ("Recommended"). The first entry
+that will play is labelled "Plays next" (omitted while shuffle is on). Tapping
+a playlist entry continues that playlist from it; tapping a recommendation
+starts it with its own related list. When "Related media autoplay" is off,
+recommendations are still listed (display-only fetch) but not marked to play.
+
+The Rust engine gains a read-only `up_next` op and a `skip_before` option on
+context `queue_commit`; `PlaybackService` emits `up_next_changed` when a context
+becomes available. Checks run: `cargo test -p ytui-mobile --lib` (40 passed,
+including `up_next_lists_queue_then_context_and_skips_to_a_chosen_entry`),
+`cargo clippy -p ytui-mobile --all-targets -D warnings` and `cargo fmt --check`.
+The Kotlin/Java changes were **not compiled or run** in the authoring container
+(no Android SDK); APK build, emulator and live related/playlist acceptance are
+pending. The landscape watch layout still shows no inline list.
+
+## Resume where you left off (desktop parity), 2026-11-03 (M9)
+
+New `resume_on_play` mobile setting (default on). Ordinary video plays and
+service Next/auto-advance seek to the saved position (≥ 5 s); music, live,
+previews and downloads start at 0; History resume is unchanged. The authoring
+container had no Android SDK (its download was not permitted), so Kotlin
+compile, JVM tests, lint and emulator checks were **not run**. `javac` without
+the Android classpath reported no Java syntax errors. Existing instrumentation
+position assertions are lower bounds or relative checks, which a resume would not
+break. Requests sent straight to `PlaybackService` never set `auto_resume`. CI
+remains the check. See [../PR_PARITY_2026-11-03.md](../PR_PARITY_2026-11-03.md).
+
+## Local re-verification of main b6a76a2, 2026-11-02 (M9)
+
+Environment: Linux container, 4 cores, no KVM, emulator or device. The workspace
+declares `rust-version = "1.99"`, so the container's rustc 1.97.0 was updated to
+1.99.1 first. Node.js 22.23.4 and FFmpeg were installed; mpv, Lua 5.4 and yt-dlp
+were not. Android SDK platform/build-tools 35 and NDK 27.2.12479018 were
+installed outside the repository.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo test --workspace --locked` | 337 passed, 0 failed, 31 explicit ignores |
+| Vendored `mobile_playback` test, `tools/test-ci-install-media.sh`, `tools/test-native-solver.sh` | pass |
+| `tools/android/build.sh` (debug): both Rust ABIs, `assembleDebug`, JVM tests, lint | pass; 21 JVM tests, lint 0 errors / 39 warnings |
+| `tools/android/inspect-apk.sh` | pass: signature, ZIP alignment, both ABIs, 16 KiB ELF segments, notices |
+| `cargo machete` | found four unused `ytui-services` dependencies (`directories`, `httpdate`, `image`, `sha1`); removed, then clean. Each is still declared by `ytui-providers`, and `ytui-mobile` does not depend on `ytui-services`. Fmt, clippy and tests were re-run afterwards with identical totals |
+
+The debug APK is `dev.ytui.android.preview` ("ytui Preview"), default version
+metadata (code 8), debuggable, and signed with a debug key generated in that
+container. It cannot update an install signed with another debug key, such as a
+CI artifact; do not uninstall such an install just to bypass this.
+
+Not run here: the CI `media` job (needs mpv, Lua 5.4 and yt-dlp) and the
+emulator suite. GitHub's runs for the same commit cover both and succeeded:
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249) (APK job
+plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222).
+Maven Central answered the first Gradle attempts with HTTP 429; a retry completed
+without any change. No screenshot, physical-device or live-service acceptance was
+added by this re-verification.
+
+## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
+
+Implemented (Android UI only; desktop and shared palettes unchanged):
+
+- Motion settings under Settings → Appearance → Motion: animation style
+  (smooth/snappy/bouncy/gentle), animation speed (50–200 %), animated cards and
+  haptic feedback. All Compose transitions read `Motion` (`Motion.kt`); the shared
+  "Reduced motion" setting still turns every animation into an instant change.
+- Smoother transitions: finger-following drag-to-minimize for the music player,
+  direction-aware feed slide when swiping tabs/categories, player open/close with
+  slide+scale, staggered card entry, press-in card feedback, artwork fade-in,
+  animated play/pause glyph and a mini-player progress bar that glides between
+  position snapshots (seeks and track changes still jump).
+- New gestures, each with its own toggle under Settings → Appearance → Gestures
+  (behind the existing "Swipe gestures" master switch): mini player swipe
+  (sideways next/previous, up to open, down to stop); swipe music artwork for
+  next/previous; double-tap music artwork to pause; video double-tap centre to
+  pause (left/right still seek); press-and-hold for temporary fast playback
+  (`speed_hold`, never saved as the user's speed; rate selectable 1.25–3×);
+  video vertical swipe for brightness (left) and media volume (right), restoring
+  system brightness when the video view leaves; pinch to zoom/fit video.
+- The native video surface is never moved by a Compose graphics layer; video
+  minimize recognises the swipe without following the finger.
+
+Checks: JVM unit tests `MotionTest` cover speed/style scaling, clamping and
+reduced-motion snapping. No Android SDK was available in the authoring
+container, so compilation and emulator/physical-device behaviour of the new
+gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
+Tab S9) are not yet qualified and must be checked before release.
+
+## Verified Preview release workflow, 2026-11-03 (M9)
+
+Added the manual **Release verified Android Preview** workflow
+(`.github/workflows/android-preview-release.yml`), its
+`tools/android/prepare-preview-release.py` helper and a default version of
+`0.2.0-alpha.12-mobile.11` (code 11) in `apps/android/app/build.gradle`
+(owner-signed builds override it through the environment, as before). The
+owner's request to fix, merge and release supersedes the earlier PR-only
+restriction. The stable key is held privately by the owner, so this publishes a
+CI debug-signed **ytui Preview**, not a stable update; see
+[SIGNING.md](SIGNING.md).
+
+Checks run in the authoring container: the 15 helper unit tests
+(`python3 -m unittest discover -s tools/android -p 'test_*.py'`, nine of them
+new: byte-identical publication, altered/wrong-source/wrong-version/missing-ABI/
+ambiguous artifacts rejected, unsafe version and run inputs rejected, release
+notes content and bounded change list) and a YAML parse of the workflow. The
+workflow itself runs only after dispatch on `main` with successful exact-source
+checks, so it was **not** exercised before merge. No physical-device, live
+YouTube or stable-update acceptance was added.
+

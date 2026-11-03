@@ -11,14 +11,16 @@ import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -131,56 +133,11 @@ object ComposeHost {
         activity.setContent {
             val busy by authWorking.collectAsState()
             val message by authStatus.collectAsState()
-            BackHandler { if (!busy) activity.cancelSession() }
             val dark = isSystemInDarkTheme()
             val scheme = colorScheme ?: if (dark) darkColorScheme() else lightColorScheme()
             MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
                 CompositionLocalProvider(LocalContentColor provides scheme.onBackground) {
-                    Column(
-                        Modifier.fillMaxSize()
-                            .background(scheme.background)
-                            .safeDrawingPadding()
-                            .imePadding()
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth()
-                                .heightIn(min = 56.dp)
-                                .padding(horizontal = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            MediaIconButton(Glyph.Close, "Cancel sign-in", "sign-in-cancel") {
-                                if (!busy) activity.cancelSession()
-                            }
-                            Text(
-                                "Sign in to YouTube",
-                                Modifier.weight(1f).padding(horizontal = 8.dp),
-                                style = MaterialTheme.typography.titleLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Action("Use this session", "sign-in-complete", !busy) {
-                                activity.useSession()
-                            }
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(
-                            "Tap Use this session after you finish signing in. If Google rejects this embedded page, cancel and import a cookie file or header from Account.",
-                            Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        if (message.isNotBlank())
-                            Text(
-                                message,
-                                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        AndroidView(
-                            factory = { web },
-                            modifier = Modifier.padding(top = 8.dp).weight(1f).fillMaxWidth(),
-                        )
-                    }
+                    AuthScreen(activity, web, busy, message)
                 }
             }
         }
@@ -275,6 +232,15 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         key(tab) { searchRequestState.first.collectAsState(searchRequestState.second).value }
     val searchMode = searchFocused || searchResults
     var dialog by rememberSaveable { mutableStateOf("") }
+    // First-run setup. Instrumented offline launches opt in explicitly so existing
+    // UI tests keep starting on the feed.
+    var onboarding by rememberSaveable {
+        mutableStateOf(
+            OnboardingStore.shouldShow(activity) &&
+                (!MediaBridge.offlineUi ||
+                    activity.intent.getBooleanExtra("ytui.onboarding", false))
+        )
+    }
     var menu by remember { mutableStateOf(false) }
     // Imported documents can legitimately reuse a built-in name. Their paint
     // roles must remain exactly the imported values rather than the default preset.
@@ -306,7 +272,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             outline = lerp(background, foreground, 0.35f),
             outlineVariant = lerp(background, foreground, 0.12f),
         )
-    SideEffect { ComposeHost.colorScheme = colors }
+    SideEffect {
+        ComposeHost.colorScheme = colors
+        AuthUi.motion(config.optBoolean("reduced_motion"))
+    }
     LaunchedEffect(Unit) { vm.initialize(dark) }
     LaunchedEffect(dark) { vm.systemTheme(dark) }
     LaunchedEffect(lifecycle) {
@@ -344,6 +313,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             if (searchResults) vm.back()
         } else if (!vm.back()) activity.moveTaskToBack(true)
     }
+    val motion =
+        remember(mobile, config.optBoolean("reduced_motion")) {
+            Motion.from(mobile, config.optBoolean("reduced_motion"))
+        }
     MaterialTheme(
         colorScheme = colors,
         typography = MediaTokens.typography,
@@ -357,11 +330,18 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         CompositionLocalProvider(
             LocalContentColor provides foreground,
             LocalReducedMotion provides config.optBoolean("reduced_motion"),
+            LocalMotion provides motion,
         ) {
             Box(Modifier.fillMaxSize()) {
-                BoxWithConstraints(
+                // While setup is shown the app beneath is not composed at all, so neither
+                // touch, keyboard focus, TalkBack nor a notification-opened player can reach
+                // it. Feeds and settings keep loading in the view model.
+                if (!onboarding) BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .background(background)
+                        // The video panel is opaque. Keep browse state/artwork
+                        // attached, but skip drawing the covered content.
+                        .graphicsLayer { alpha = if (playerOpen && videoPlayer) 0f else 1f }
                         .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
@@ -375,15 +355,21 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         AnimatedVisibility(
                             visible = !searchMode,
                             enter =
-                                if (config.optBoolean("reduced_motion")) EnterTransition.None
+                                if (!motion.animate) EnterTransition.None
                                 else
-                                    fadeIn(tween(120)) +
-                                        expandVertically(tween(160), expandFrom = Alignment.Top),
+                                    fadeIn(motion.fade(160)) +
+                                        expandVertically(
+                                            motion.enter(240),
+                                            expandFrom = Alignment.Top,
+                                        ),
                             exit =
-                                if (config.optBoolean("reduced_motion")) ExitTransition.None
+                                if (!motion.animate) ExitTransition.None
                                 else
-                                    fadeOut(tween(100)) +
-                                        shrinkVertically(tween(160), shrinkTowards = Alignment.Top),
+                                    fadeOut(motion.fade(120)) +
+                                        shrinkVertically(
+                                            motion.exit(200),
+                                            shrinkTowards = Alignment.Top,
+                                        ),
                         ) {
                             Row(
                                 Modifier.fillMaxWidth()
@@ -528,6 +514,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                     dialog = "queue"
                                                     vm.loadQueue()
                                                 },
+                                                onSleep = { dialog = "sleep" },
+                                                onSettings = { dialog = "player-options" },
                                             )
                                         }
                                     }
@@ -542,7 +530,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     }
                 }
-                if (!fullscreen) {
+                if (!fullscreen && !onboarding) {
                     @Composable
                     fun PlaybackPanel(allowVideoSurface: Boolean) {
                         Panel(
@@ -551,7 +539,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             full = true,
                             showHeader = !videoPlayer,
                             scroll = false,
-                            swipeToClose = mobile.optBoolean("gestures", true),
+                            swipeToClose = mobile.gesture("gesture_swipe_dismiss"),
                         ) {
                             FocusedPlayer(
                                 vm,
@@ -575,23 +563,28 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     if (videoPlayer) {
                         if (playerOpen) PlaybackPanel(allowVideoSurface = true)
                     } else {
-                        val animate = !config.optBoolean("reduced_motion")
                         AnimatedVisibility(
                             visible = playerOpen,
+                            // Rises from the mini player: slide most of the way with a
+                            // slight scale, so it reads as the dock expanding.
                             enter =
-                                if (animate)
-                                    fadeIn(tween(160)) + slideInVertically(tween(220)) { it / 8 }
+                                if (motion.animate)
+                                    fadeIn(motion.fade(200)) +
+                                        slideInVertically(motion.enter(380)) { it / 3 } +
+                                        scaleIn(motion.enter(380), initialScale = 0.96f)
                                 else EnterTransition.None,
                             exit =
-                                if (animate)
-                                    fadeOut(tween(120)) + slideOutVertically(tween(160)) { it / 10 }
+                                if (motion.animate)
+                                    fadeOut(motion.exit(220)) +
+                                        slideOutVertically(motion.exit(280)) { it / 3 } +
+                                        scaleOut(motion.exit(280), targetScale = 0.96f)
                                 else ExitTransition.None,
                         ) {
                             PlaybackPanel(allowVideoSurface = false)
                         }
                     }
                 }
-                when (dialog) {
+                if (!onboarding) when (dialog) {
                     "player-options" ->
                         Panel("Playback options", { dialog = "" }) {
                             PlayerPane(
@@ -607,7 +600,19 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             )
                         }
                     "settings" ->
-                        SettingsPanel(vm, dark, onAccount = { dialog = "account" }) { dialog = "" }
+                        SettingsPanel(
+                            vm,
+                            dark,
+                            onAccount = { dialog = "account" },
+                            onSetup = {
+                                // Replay keeps the saved completion, so a process death
+                                // mid-replay does not turn it into a first run again.
+                                dialog = ""
+                                onboarding = true
+                            },
+                        ) {
+                            dialog = ""
+                        }
                     "account" -> AccountPanel(vm) { dialog = "" }
                     "feeds" -> FeedPanel(vm) { dialog = "" }
                     "queue" -> QueuePanel(vm) { dialog = "" }
@@ -618,26 +623,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             dialog = ""
                         }
                     "sleep" ->
-                        Panel("Sleep timer", { dialog = "" }) {
-                            for (minutes in listOf(15, 30, 60, 120)) {
-                                SheetAction(
-                                    text = { Text("$minutes minutes") },
-                                    leadingIcon = { MediaIcon(Glyph.Sleep) },
-                                    onClick = {
-                                        vm.command("sleep", "seconds" to minutes * 60)
-                                        dialog = ""
-                                    },
-                                )
-                            }
-                            SheetAction(
-                                text = { Text("Cancel timer") },
-                                leadingIcon = { MediaIcon(Glyph.Close) },
-                                onClick = {
-                                    vm.command("sleep_cancel")
-                                    dialog = ""
-                                },
-                            )
-                        }
+                        Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
                     "about" ->
                         Panel("About ytui", { dialog = "" }) {
                             Text(
@@ -661,6 +647,19 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 )
                             }
                         }
+                }
+                val reducedMotion = config.optBoolean("reduced_motion")
+                AnimatedVisibility(
+                    visible = onboarding,
+                    enter = EnterTransition.None,
+                    exit =
+                        if (reducedMotion) ExitTransition.None
+                        else fadeOut(tween(280)) + scaleOut(tween(320), targetScale = 1.04f),
+                ) {
+                    Onboarding(vm, dark) {
+                        OnboardingStore.complete(activity)
+                        onboarding = false
+                    }
                 }
             }
         }
@@ -892,6 +891,15 @@ internal fun Panel(
     showHeader: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // Full-screen panels follow a downward drag and fly off when released past the threshold.
+    val drag = remember { Animatable(0f) }
+    val motion = LocalMotion.current
+    val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val dismissThreshold = with(LocalDensity.current) { 96.dp.toPx() }
+    val flyOff: suspend kotlinx.coroutines.CoroutineScope.(Int) -> Unit = {
+        drag.animateTo(height, motion.exit(240))
+        close()
+    }
     @Composable
     fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
         Column(modifier.testTag("panel-body")) {
@@ -901,19 +909,14 @@ internal fun Panel(
                         .heightIn(min = 56.dp)
                         .padding(horizontal = 8.dp)
                         .testTag("panel-header")
-                        .pointerInput(full, swipeToClose) {
-                            if (full && swipeToClose) {
-                                var distance = 0f
-                                detectVerticalDragGestures(
-                                    onDragStart = { distance = 0f },
-                                    onVerticalDrag = { change, amount ->
-                                        distance += amount
-                                        change.consume()
-                                    },
-                                    onDragEnd = { if (distance > 48.dp.toPx()) close() },
-                                )
-                            }
-                        },
+                        .swipeAxis(
+                            enabled = full && swipeToClose,
+                            horizontal = false,
+                            offset = drag,
+                            threshold = dismissThreshold,
+                            allow = { it > 0 },
+                            onSwipe = flyOff,
+                        ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (full || page)
@@ -952,12 +955,32 @@ internal fun Panel(
     if (full || page) {
         // Keep native video in the activity window; no new dialog surface/decoder handoff.
         Surface(
-            Modifier.fillMaxSize().safeDrawingPadding().imePadding().semantics {
-                paneTitle = title
-            },
+            Modifier.fillMaxSize()
+                // Only header-bearing panels move: a native video surface (headerless player)
+                // must never sit under a transformed Compose layer.
+                .then(
+                    if (full && showHeader && motion.animate)
+                        Modifier.graphicsLayer {
+                            val pulled = drag.value.coerceAtLeast(0f)
+                            translationY = pulled
+                            alpha = 1f - (pulled / height).coerceIn(0f, 1f) * 0.5f
+                            val shrink = 1f - (pulled / height).coerceIn(0f, 1f) * 0.08f
+                            scaleX = shrink
+                            scaleY = shrink
+                        }
+                    else Modifier
+                )
+                .safeDrawingPadding()
+                .imePadding()
+                .semantics { paneTitle = title },
             color = MaterialTheme.colorScheme.background,
         ) {
-            Body(Modifier.fillMaxSize())
+            CompositionLocalProvider(
+                LocalPanelDrag provides
+                    if (full && showHeader && swipeToClose) PanelDrag(drag, flyOff) else null
+            ) {
+                Body(Modifier.fillMaxSize())
+            }
         }
     } else if (title == "About ytui") {
         AlertDialog(
@@ -1010,6 +1033,9 @@ internal fun Panel(
     }
 }
 
+/** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
+private var pendingTabEntry = 0
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BrowsePane(
@@ -1034,42 +1060,59 @@ private fun BrowsePane(
         tab == 1 &&
             LocalConfiguration.current.screenWidthDp >= 840 &&
             (feed.request as? JSONObject)?.has("Search") == true
-    val entry = remember { Animatable(1f) }
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    val paneWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    // Feed content follows a horizontal drag; a committed swipe slides the next tab or
+    // category in from the side it was pulled from.
+    val pull = remember { Animatable(0f) }
+    val entry = remember { Animatable(if (motion.animate) 0f else 1f) }
+    // A tab swipe recreates this pane (key(tab)); the direction is handed over once.
+    var enterFrom by remember { mutableIntStateOf(pendingTabEntry.also { pendingTabEntry = 0 }) }
     LaunchedEffect(tab, feed.request, reduced) {
-        if (reduced) entry.snapTo(1f)
+        if (!motion.animate) entry.snapTo(1f)
         else {
-            entry.snapTo(0.6f)
-            entry.animateTo(1f, tween(180))
+            entry.snapTo(0f)
+            entry.animateTo(1f, motion.enter(if (enterFrom == 0) 260 else 340))
         }
+        enterFrom = 0
+    }
+    // +1 = forward (next tab/category), -1 = back; null when nothing lies that way.
+    fun swipeTarget(forward: Int): (() -> Unit)? {
+        if (feed.categories.isEmpty()) {
+            val next = (tab + forward).coerceIn(1, 3)
+            return if (next == tab) null else ({ vm.chooseTab(next) })
+        }
+        val at =
+            feed.categories.indexOfFirst {
+                it.opt("request")?.toString() == feed.request.toString()
+            }
+        val next = (at + forward).coerceIn(0, feed.categories.lastIndex)
+        return if (next == at) null
+        else ({ vm.navigate(tab, feed.categories[next].get("request")) })
     }
     val swipe =
-        Modifier.pointerInput(tab, feed.categories, mobile.optBoolean("gestures", true)) {
-            if (mobile.optBoolean("gestures", true)) {
-                var distance = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { distance = 0f },
-                    onHorizontalDrag = { change, amount ->
-                        distance += amount
-                        change.consume()
-                    },
-                    onDragEnd = {
-                        if (kotlin.math.abs(distance) > 96.dp.toPx()) {
-                            val direction = if (distance < 0) 1 else -1
-                            if (feed.categories.isEmpty())
-                                vm.chooseTab((tab + direction).coerceIn(1, 3))
-                            else {
-                                val at =
-                                    feed.categories.indexOfFirst {
-                                        it.opt("request")?.toString() == feed.request.toString()
-                                    }
-                                val next = (at + direction).coerceIn(0, feed.categories.lastIndex)
-                                vm.navigate(tab, feed.categories[next].get("request"))
-                            }
-                        }
-                    },
-                )
-            }
-        }
+        Modifier.swipeAxis(
+            enabled = mobile.gesture("gesture_swipe_tabs"),
+            horizontal = true,
+            offset = pull,
+            threshold = with(density) { 96.dp.toPx() },
+            // Dragging left (negative) moves forward.
+            allow = { swipeTarget(-it) != null },
+            onSwipe = { direction ->
+                val go = swipeTarget(-direction) ?: return@swipeAxis
+                pull.animateTo(direction * paneWidth * 0.35f, motion.exit(160))
+                enterFrom = -direction
+                if (feed.categories.isEmpty()) pendingTabEntry = -direction
+                entry.snapTo(0f)
+                go()
+                pull.snapTo(0f)
+            },
+        )
+    // Cards animate in once per loaded list, not again when scrolled back into view.
+    val seen = remember(tab, feed.request) { mutableSetOf<Any>() }
+    val cardIndex =
+        remember(feed.cards) { feed.cards.withIndex().associate { it.value.key to it.index } }
     var query by rememberSaveable(tab) { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
     val searchKey = if (tab == 3) "RadioSearch" else "Search"
@@ -1277,8 +1320,13 @@ private fun BrowsePane(
                     Modifier.fillMaxSize()
                         .then(swipe)
                         .graphicsLayer {
-                            alpha = entry.value
-                            translationY = (1f - entry.value) * 32.dp.toPx()
+                            val settle = 1f - entry.value
+                            val dragged = (abs(pull.value) / paneWidth).coerceIn(0f, 1f)
+                            alpha = (1f - settle.coerceIn(0f, 1f)) * (1f - dragged * 0.6f)
+                            translationX =
+                                pull.value * 0.6f + settle * enterFrom * 64.dp.toPx()
+                            translationY =
+                                if (enterFrom == 0) settle * 24.dp.toPx() else 0f
                         }
                         .testTag("feed-list")
                         .focusRequester(browseFocus)
@@ -1351,8 +1399,13 @@ private fun BrowsePane(
                     span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
                     contentType = { "media-card" },
                 ) { media ->
-                    if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
-                    else MediaRow(vm, media, tab, thumbnails, mobile)
+                    Box(
+                        Modifier.appearance(media.key, cardIndex[media.key] ?: 0, seen)
+                            .pressFeedback()
+                    ) {
+                        if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
+                        else MediaRow(vm, media, tab, thumbnails, mobile)
+                    }
                 }
                 if (feed.loading)
                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -1403,9 +1456,14 @@ internal fun Artwork(
     // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
     // and a reused node of unchanged size never reports its size again.
     BoxWithConstraints(
-        modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
+        modifier
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .testTag("artwork-frame-${media.key}")
     ) {
-        val pixels = with(LocalDensity.current) { maxWidth.roundToPx().coerceIn(32, 768) }
+        // A shared decode size: a one-pixel width difference between grid columns must not
+        // restart the load or fetch and cache the same cover again.
+        val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
         var bitmap by
@@ -1413,17 +1471,46 @@ internal fun Artwork(
                 mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
             }
         LaunchedEffect(media.key, source, pixels, enabled) {
-            if (bitmap != null) return@LaunchedEffect
-            bitmap =
-                if (enabled) runCatching { ArtworkCache.load(media, pixels) }.getOrNull() else null
+            if (bitmap != null || !enabled || !ArtworkCache.hasArtwork(media)) return@LaunchedEffect
+            // load() retries quickly a few times. If the cover is still missing, keep trying with
+            // a growing pause while this card stays composed, so a transient failure never leaves
+            // a permanent placeholder. Leaving the screen cancels the loop.
+            var pause = 1_000L
+            repeat(8) {
+                val loaded =
+                    try {
+                        ArtworkCache.load(media, pixels)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        null
+                    }
+                if (loaded != null) {
+                    bitmap = loaded
+                    return@LaunchedEffect
+                }
+                android.util.Log.w("ytui.artwork", "Cover not loaded; retrying in $pause ms")
+                delay(pause)
+                pause = (pause * 2).coerceAtMost(15_000L)
+            }
+        }
+        // Cached art paints at once; art that arrives later fades in over the placeholder.
+        val motion = LocalMotion.current
+        val reveal =
+            remember(media.key, source, pixels, enabled) {
+                Animatable(if (bitmap != null || !motion.animate) 1f else 0f)
+            }
+        LaunchedEffect(bitmap != null) {
+            if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(260))
         }
         if (bitmap != null)
             Image(
                 bitmap!!.asImageBitmap(),
                 media.title,
-                Modifier.fillMaxSize().testTag("artwork-${media.key}").semantics {
-                    stateDescription = "Ready"
-                },
+                Modifier.fillMaxSize()
+                    .graphicsLayer { alpha = reveal.value }
+                    .testTag("artwork-${media.key}")
+                    .semantics { stateDescription = "Ready" },
                 contentScale = ContentScale.Crop,
                 // Crop from the leading edge so captions composed near the left of
                 // wide artwork survive inside a squarer container instead of being
@@ -1711,31 +1798,94 @@ private fun MediaDurationBadge(media: MediaCard, mobile: JSONObject, modifier: M
 private fun PlayerDock(vm: YtuiViewModel) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
+    val mobile by vm.mobile.collectAsState()
     val media = player.media?.let(::MediaCard) ?: return
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    val width = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val gestures = mobile.gesture("gesture_mini_player")
+    // Swipe sideways: next/previous; swipe up: expand; swipe down: stop and dismiss.
+    val sideways = remember { Animatable(0f) }
+    val vertical = remember { Animatable(0f) }
+    val appear = remember { Animatable(if (motion.animate) 0f else 1f) }
+    LaunchedEffect(Unit) { appear.animateTo(1f, motion.enter(320)) }
+    // Bridge the gap between position snapshots so the bar glides instead of ticking;
+    // seeks and track changes jump directly.
+    val target = mediaProgress(player.position, player.duration)
+    val glide = remember { Animatable(target) }
+    LaunchedEffect(target) {
+        if (!motion.animate || target < glide.value || target - glide.value > 0.05f)
+            glide.snapTo(target)
+        else glide.animateTo(target, tween(900, easing = LinearEasing))
+    }
     Surface(
         onClick = { vm.playerOpen.value = true },
         modifier =
             Modifier.fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 6.dp)
+                .graphicsLayer {
+                    val lift = (1f - appear.value) * 24.dp.toPx()
+                    translationX = sideways.value
+                    translationY = vertical.value.coerceAtLeast(0f) + lift
+                    val away =
+                        maxOf(
+                            abs(sideways.value) / width,
+                            vertical.value.coerceAtLeast(0f) / (72.dp.toPx()),
+                        )
+                    alpha = appear.value.coerceIn(0f, 1f) * (1f - away.coerceIn(0f, 1f) * 0.6f)
+                }
+                .swipeAxis(
+                    enabled = gestures,
+                    horizontal = true,
+                    offset = sideways,
+                    threshold = with(density) { 72.dp.toPx() },
+                    onSwipe = { direction ->
+                        val out = direction * width
+                        sideways.animateTo(out, motion.exit(200))
+                        vm.command(if (direction < 0) "next" else "previous")
+                        sideways.snapTo(-out * 0.4f)
+                        sideways.animateTo(0f, motion.spring())
+                    },
+                )
+                .swipeAxis(
+                    enabled = gestures,
+                    horizontal = false,
+                    offset = vertical,
+                    threshold = with(density) { 40.dp.toPx() },
+                    onSwipe = { direction ->
+                        if (direction < 0) {
+                            vm.playerOpen.value = true
+                            vertical.snapTo(0f)
+                        } else {
+                            vertical.animateTo(with(density) { 96.dp.toPx() }, motion.exit(180))
+                            vm.command("stop")
+                        }
+                    },
+                )
                 .testTag("mini-player"),
-        shape = MediaTokens.pill,
+        shape = MediaTokens.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp,
+        tonalElevation = 3.dp,
+        shadowElevation = 4.dp,
     ) {
         Column {
             Row(
-                Modifier.fillMaxWidth().padding(8.dp),
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Artwork(media, Modifier.size(48.dp), config.optBoolean("thumbnails", true))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Artwork(
+                    media,
+                    Modifier.size(44.dp).clip(MediaTokens.small),
+                    config.optBoolean("thumbnails", true),
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
                         player.title,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = FontWeight.Medium,
                     )
                     Text(
                         media.creator.ifBlank {
@@ -1748,40 +1898,69 @@ private fun PlayerDock(vm: YtuiViewModel) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                MediaIconButton(
-                    if (player.playing) Glyph.Pause else Glyph.Play,
-                    if (player.playing) "Pause" else "Play",
-                    "dock-pause",
+                IconButton(
+                    { vm.command("pause") },
+                    Modifier.size(48.dp).testTag("dock-pause").semantics {
+                        contentDescription = if (player.playing) "Pause" else "Play"
+                    },
                 ) {
-                    vm.command("pause")
+                    PlayPauseIcon(player.playing, Modifier.size(24.dp))
                 }
-                MediaIconButton(Glyph.Next, "Next track", "dock-next") { vm.command("next") }
                 // The mini player can be dismissed, as on YouTube; this is the
-                // existing stop command, not a new playback mode.
+                // existing stop command, not a new playback mode. Next stays
+                // available from the expanded player to keep the dock uncluttered.
                 MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
                     vm.command("stop")
                 }
             }
-            val progress = mediaProgress(player.position, player.duration)
             if (player.duration > 0)
                 LinearProgressIndicator(
-                    progress = { progress },
+                    progress = { glide.value },
                     modifier = Modifier.fillMaxWidth().height(2.dp),
                     gapSize = 0.dp,
                     drawStopIndicator = {},
+                    trackColor = Color.Transparent,
                 )
         }
     }
 }
 
+/** Sleep timer choices shared by the main sheet and the fullscreen options panel. */
 @Composable
-private fun PlayerPane(
+internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
+    for (minutes in listOf(15, 30, 60, 120)) {
+        SheetAction(
+            text = { Text("$minutes minutes") },
+            leadingIcon = { MediaIcon(Glyph.Sleep) },
+            onClick = {
+                vm.command("sleep", "seconds" to minutes * 60)
+                done()
+            },
+        )
+    }
+    SheetAction(
+        text = { Text("Cancel timer") },
+        leadingIcon = { MediaIcon(Glyph.Close) },
+        onClick = {
+            vm.command("sleep_cancel")
+            done()
+        },
+    )
+}
+
+/**
+ * Playback options. `expanded` is the full options list (main sheet and fullscreen panel);
+ * otherwise this is the tablet side pane's compact transport.
+ */
+@Composable
+internal fun PlayerPane(
     vm: YtuiViewModel,
     expanded: Boolean,
     showSurface: Boolean = true,
     onQueue: () -> Unit,
     onSleep: () -> Unit = {},
     onDone: () -> Unit = {},
+    onSettings: (() -> Unit)? = null,
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -1794,6 +1973,12 @@ private fun PlayerPane(
             Modifier.widthIn(max = if (player.video) 840.dp else 480.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(if (expanded) 0.dp else 12.dp),
         ) {
+            val preparing = player.preparing
+            if (preparing != null) {
+                Text(preparing.media.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                return@Column
+            }
             if (player.media == null) {
                 EmptyMediaState(
                     Glyph.Music,
@@ -1806,7 +1991,8 @@ private fun PlayerPane(
                 // Compact side panel (tablet): surface, title, seek and transport.
                 if (player.video && showSurface) {
                     VideoSurface(
-                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium)
+                        Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium),
+                        onSettings = onSettings,
                     )
                 } else if (showSurface && tab in 2..3) Visualizer(player, config)
                 else if (showSurface)
@@ -2314,6 +2500,7 @@ private fun SettingsPanel(
     vm: YtuiViewModel,
     dark: Boolean,
     onAccount: () -> Unit,
+    onSetup: () -> Unit,
     close: () -> Unit,
 ) {
     var category by rememberSaveable { mutableStateOf("") }
@@ -2343,7 +2530,7 @@ private fun SettingsPanel(
         if (category.isBlank()) {
             for ((label, icon, detail) in
                 listOf(
-                    Triple("Appearance", Glyph.Palette, "Theme, artwork, music player, gestures"),
+                    Triple("Appearance", Glyph.Palette, "Theme, motion, music player, gestures"),
                     Triple("Playback", Glyph.Play, "Quality, SponsorBlock, preloading, seeking"),
                     Triple("Offline & storage", Glyph.Download, "Audio-only saves and folders"),
                     Triple("Video information", Glyph.Info, "Choose what cards show"),
@@ -2351,6 +2538,7 @@ private fun SettingsPanel(
                     Triple("Performance", Glyph.Speed, "Startup timing report"),
                     Triple("Privacy", Glyph.History, "History and resume"),
                     Triple("Account", Glyph.Account, "Sign in or import a session"),
+                    Triple("Setup guide", Glyph.Play, "Replay the welcome and setup steps"),
                 )) {
                 ValueRow(
                     label,
@@ -2358,7 +2546,11 @@ private fun SettingsPanel(
                     subtitle = detail,
                     modifier = Modifier.testTag("settings-$label"),
                 ) {
-                    if (label == "Account") onAccount() else category = label
+                    when (label) {
+                        "Account" -> onAccount()
+                        "Setup guide" -> onSetup()
+                        else -> category = label
+                    }
                 }
             }
             Text(
@@ -2449,7 +2641,7 @@ private fun SettingsPanel(
                 SettingToggle(
                     "Reduced motion",
                     config.optBoolean("reduced_motion"),
-                    "Keep visualizers still",
+                    "Keep visualizers still and turn off all animations",
                 ) { value ->
                     vm.updateConfig(dark) { it.put("reduced_motion", value) }
                 }
@@ -2552,9 +2744,76 @@ private fun SettingsPanel(
                 }
             }
         if (category == "Appearance")
-            SettingGroup("Interaction") {
-                SettingToggle("Swipe gestures", mobile.optBoolean("gestures", true)) {
+            SettingGroup("Motion") {
+                val reducedMotion = config.optBoolean("reduced_motion")
+                if (reducedMotion)
+                    Text(
+                        "Reduced motion is on, so animations are off. These choices apply when it is off.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                Choice(
+                    "Animation style",
+                    mobile.optString("animation_style", "smooth"),
+                    listOf("smooth", "snappy", "bouncy", "gentle"),
+                ) {
+                    vm.updateMobile("animation_style", it)
+                }
+                Text(
+                    when (mobile.optString("animation_style", "smooth")) {
+                        "snappy" -> "Short, crisp transitions"
+                        "bouncy" -> "Springy, with a little overshoot"
+                        "gentle" -> "Longer, softer transitions"
+                        else -> "Fluid ease-out transitions (default)"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Choice(
+                    "Animation speed",
+                    animationSpeedLabel(mobile.optInt("animation_speed", 100)),
+                    ANIMATION_SPEEDS.map { it.second },
+                ) { label ->
+                    ANIMATION_SPEEDS.firstOrNull { it.second == label }?.let {
+                        vm.updateMobile("animation_speed", it.first)
+                    }
+                }
+                SettingToggle(
+                    "Animated cards",
+                    mobile.optBoolean("animate_cards", true),
+                    "Cards press in when touched and ease in as a list loads",
+                ) {
+                    vm.updateMobile("animate_cards", it)
+                }
+                SettingToggle(
+                    "Haptic feedback",
+                    mobile.optBoolean("haptics", true),
+                    "A light tick when a gesture takes effect",
+                ) {
+                    vm.updateMobile("haptics", it)
+                }
+            }
+        if (category == "Appearance")
+            SettingGroup("Gestures") {
+                val gesturesOn = mobile.optBoolean("gestures", true)
+                SettingToggle("Swipe gestures", gesturesOn, "Master switch for every gesture below") {
                     vm.updateMobile("gestures", it)
+                }
+                if (gesturesOn) {
+                    for ((key, title, detail) in GESTURE_SETTINGS)
+                        SettingToggle(title, mobile.optBoolean(key, true), detail) {
+                            vm.updateMobile(key, it)
+                        }
+                    if (mobile.optBoolean("gesture_hold_speed", true))
+                        Choice(
+                            "Hold-to-speed rate",
+                            "${mobile.optInt("hold_speed", 200) / 100f}×".replace(".0×", "×"),
+                            listOf("1.25×", "1.5×", "2×", "3×"),
+                        ) {
+                            val percent =
+                                (it.removeSuffix("×").toFloat() * 100).roundToInt()
+                            vm.updateMobile("hold_speed", percent)
+                        }
                 }
             }
         if (category == "Playback")
@@ -2564,6 +2823,7 @@ private fun SettingsPanel(
                         "preload_next" to "Preload visible and next items",
                         "preload_mobile" to "Preload on mobile data",
                         "autoplay_related" to "Related media autoplay",
+                        "resume_on_play" to "Resume videos where you left off",
                         "prefer_offline" to "Prefer saved offline media",
                         "background_playback" to "Background playback",
                     )) {
@@ -2662,6 +2922,56 @@ private fun SettingsPanel(
         ActionError(vm)
     }
 }
+
+private val ANIMATION_SPEEDS =
+    listOf(50 to "Slowest", 75 to "Slow", 100 to "Normal", 150 to "Fast", 200 to "Fastest")
+
+private fun animationSpeedLabel(percent: Int) =
+    ANIMATION_SPEEDS.minByOrNull { abs(it.first - percent) }?.second ?: "Normal"
+
+private val GESTURE_SETTINGS =
+    listOf(
+        Triple(
+            "gesture_swipe_tabs",
+            "Swipe between tabs",
+            "Swipe the feed sideways to change tab or category",
+        ),
+        Triple(
+            "gesture_swipe_dismiss",
+            "Swipe down to minimize",
+            "Pull the player down to shrink it to the mini player",
+        ),
+        Triple(
+            "gesture_mini_player",
+            "Mini player swipes",
+            "Sideways: next or previous · Up: open · Down: stop",
+        ),
+        Triple(
+            "gesture_swipe_tracks",
+            "Swipe artwork to change track",
+            "Swipe the music artwork left for next, right for previous",
+        ),
+        Triple(
+            "gesture_double_tap_seek",
+            "Double-tap to seek",
+            "Video: left or right to seek, centre to pause · Music artwork: pause",
+        ),
+        Triple(
+            "gesture_hold_speed",
+            "Press and hold for fast playback",
+            "Video plays faster while you hold your finger down",
+        ),
+        Triple(
+            "gesture_video_adjust",
+            "Brightness and volume swipes",
+            "On video, swipe up or down: left side brightness, right side volume",
+        ),
+        Triple(
+            "gesture_pinch_zoom",
+            "Pinch to zoom video",
+            "Pinch out to fill the screen, pinch in to fit the whole frame",
+        ),
+    )
 
 @Composable
 private fun SettingToggle(

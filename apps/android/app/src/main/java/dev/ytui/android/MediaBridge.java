@@ -61,6 +61,7 @@ public final class MediaBridge {
           new JSONObject(NativeBridge.request("{\"op\":\"settings\"}")).getJSONObject("data"));
     } catch (Exception ignored) {
     }
+    PlaybackHttp.warm();
   }
 
   static void event(String kind, String text) {
@@ -176,11 +177,33 @@ public final class MediaBridge {
                 break;
               case "play":
                 {
+                  JSONObject playRequest = request.getJSONObject("request");
                   Intent intent =
                       new Intent(context, PlaybackService.class)
                           .setAction("play")
-                          .putExtra("request", request.getJSONObject("request").toString());
-                  context.startForegroundService(intent);
+                          .putExtra("request", playRequest.toString());
+                  try {
+                    // Reject malformed descriptors before creating an Android
+                    // foreground-service obligation or interrupting current media.
+                    PlaybackService.validateRequest(playRequest);
+                    context.startForegroundService(intent);
+                  } catch (JSONException invalid) {
+                    long timing = playRequest.optLong("startup_token");
+                    StartupTimings.ended(timing, "failed", SystemClock.elapsedRealtime());
+                    event(
+                        "playback_start_failed",
+                        "Invalid playback request",
+                        Long.toString(timing),
+                        0);
+                  } catch (RuntimeException unavailable) {
+                    long timing = playRequest.optLong("startup_token");
+                    StartupTimings.ended(timing, "failed", SystemClock.elapsedRealtime());
+                    event(
+                        "playback_start_failed",
+                        "Playback could not start. Try again.",
+                        Long.toString(timing),
+                        0);
+                  }
                   break;
                 }
               case "download_playlist":

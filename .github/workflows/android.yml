@@ -9,6 +9,16 @@ on:
         description: 'Optional public YouTube URL for a cookie-free live playback check'
         required: false
         type: string
+      public_quality:
+        description: 'Explicit quality for the optional public check'
+        type: choice
+        default: best
+        options: [best, '1080', '720']
+      public_target_ms:
+        description: 'Visible and playing startup budget; misses fail the check'
+        type: choice
+        default: '1000'
+        options: ['1000', '2000']
 permissions:
   contents: read
 concurrency:
@@ -98,6 +108,8 @@ jobs:
         shard: [0, 1, 2, 3]
     env:
       YTUI_ANDROID_PUBLIC_URL: ${{ inputs.public_url }}
+      YTUI_ANDROID_PUBLIC_QUALITY: ${{ inputs.public_quality || 'best' }}
+      YTUI_ANDROID_PUBLIC_TARGET_MS: ${{ inputs.public_target_ms || '1000' }}
       YTUI_ANDROID_TEST_APKS: ${{ github.workspace }}/test-apks
       YTUI_ANDROID_NUM_SHARDS: '4'
       YTUI_ANDROID_SHARD_INDEX: ${{ matrix.shard }}
