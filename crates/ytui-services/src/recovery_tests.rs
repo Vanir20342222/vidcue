@@ -46,6 +46,8 @@ fn actor(root: &Path, live: bool) -> Actor {
         sponsor_task: None,
         ignore_segments_until: 0.0,
         streams: Arc::new(crate::cache::ResponseCache::new(16, 512 * 1024)),
+        source: None,
+        prepare: None,
     }
 }
 async fn finished(actor: &mut Actor, success: bool, message: &str) {

@@ -834,6 +834,15 @@ internal class YtuiViewModel : ViewModel() {
             if (!preview && !download && !queued && continueContext == null)
                 context(media, related)
             else null
+        // Desktop parity (`resume_on_play`): ordinary video plays continue from the
+        // saved position; music, live media, previews and downloads start at 0.
+        val autoResume =
+            !resume &&
+                !preview &&
+                !download &&
+                !audio &&
+                !media.live &&
+                mobile.value.optBoolean("resume_on_play", true)
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
         if (!download) playbackJob?.cancel()
@@ -883,7 +892,8 @@ internal class YtuiViewModel : ViewModel() {
                         put("audio", audio)
                         put("quality", quality)
                         put("preview", preview)
-                        put("resume", resume)
+                        put("resume", resume || autoResume)
+                        put("auto_resume", autoResume)
                         put("queued", queued)
                         put("context_id", continueContext ?: context?.optString("context_id"))
                         put("context", context)
