@@ -21,6 +21,17 @@ internal object PlayerChrome {
         accent = value
     }
 
+    /** Frosted-glass disc: tinted translucent fill with a lit hairline edge. */
+    private fun glassDisc(resources: android.content.res.Resources) =
+        GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(MediaTokens.videoDisc.toArgb())
+            setStroke(
+                maxOf(1, resources.displayMetrics.density.toInt()),
+                MediaTokens.videoGlassEdge.toArgb(),
+            )
+        }
+
     @JvmStatic
     fun apply(view: PlayerView) {
         if (view.getTag(R.id.ytui_top_scrim) == accent) return
@@ -39,11 +50,7 @@ internal object PlayerChrome {
                 androidx.media3.ui.R.id.exo_prev,
                 androidx.media3.ui.R.id.exo_next,
             )) {
-            view.findViewById<View>(id)?.background =
-                GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(MediaTokens.videoDisc.toArgb())
-                }
+            view.findViewById<View>(id)?.apply { background = glassDisc(resources) }
         }
         // API 23+ layouts merge these Buttons straight into the shared transport
         // strip. Their arrows are foregrounds; painting their parent creates a
@@ -54,11 +61,7 @@ internal object PlayerChrome {
                 androidx.media3.ui.R.id.exo_ffwd_with_amount,
             )) {
             view.findViewById<View>(id)?.apply {
-                val disc =
-                    GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
-                        setColor(MediaTokens.videoDisc.toArgb())
-                    }
+                val disc = glassDisc(resources)
                 val glyph =
                     (background as? LayerDrawable)?.findDrawableByLayerId(android.R.id.icon)
                         ?: background

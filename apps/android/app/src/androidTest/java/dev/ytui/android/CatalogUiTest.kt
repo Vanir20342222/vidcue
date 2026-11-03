@@ -1578,52 +1578,61 @@ class CatalogUiTest {
     private class CoverServer : AutoCloseable {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
-        private val byIndex = java.util.concurrent.atomic.AtomicIntegerArray(6)
 
-        fun requestCounts() = (0..5).map { byIndex.get(it) }
+        fun requestCounts() = (0..5).map { perCover.get(it) }
 
         val failures = AtomicInteger()
+        val perCover = java.util.concurrent.atomic.AtomicIntegerArray(6)
         @Volatile var failFirstCover = false
         private val images = (0..5).map(::cover)
         private val worker =
             Thread {
                     while (!socket.isClosed) try {
-                        socket.accept().use { client ->
-                            client.soTimeout = 5000
-                            val reader = client.getInputStream().bufferedReader()
-                            val request = reader.readLine() ?: return@use
-                            while (!reader.readLine().isNullOrEmpty()) {
-                                /* consume headers */
+                        val accepted = socket.accept()
+                        // Serve each connection on its own thread: one stalled read must not
+                        // queue every other parallel cover load behind it.
+                        Thread {
+                                accepted.use { client ->
+                                    client.soTimeout = 5000
+                                    val reader = client.getInputStream().bufferedReader()
+                                    val request = reader.readLine() ?: return@use
+                                    while (!reader.readLine().isNullOrEmpty()) {
+                                        /* consume headers */
+                                    }
+                                    val index =
+                                        Regex("/cover-(\\d+)")
+                                            .find(request)
+                                            ?.groupValues
+                                            ?.get(1)
+                                            ?.toIntOrNull() ?: 0
+                                    val bytes = images[index.coerceIn(0, 5)]
+                                    requests.incrementAndGet()
+                                    perCover.incrementAndGet(index.coerceIn(0, 5))
+                                    if (index == 0 && failFirstCover) {
+                                        failFirstCover = false
+                                        failures.incrementAndGet()
+                                        client
+                                            .getOutputStream()
+                                            .write(
+                                                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                                    .toByteArray()
+                                            )
+                                        return@use
+                                    }
+                                    client.getOutputStream().apply {
+                                        write(
+                                            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
+                                                .toByteArray()
+                                        )
+                                        write(bytes)
+                                        flush()
+                                    }
+                                }
                             }
-                            val index =
-                                Regex("/cover-(\\d+)")
-                                    .find(request)
-                                    ?.groupValues
-                                    ?.get(1)
-                                    ?.toIntOrNull() ?: 0
-                            val bytes = images[index.coerceIn(0, 5)]
-                            requests.incrementAndGet()
-                            byIndex.incrementAndGet(index.coerceIn(0, 5))
-                            if (index == 0 && failFirstCover) {
-                                failFirstCover = false
-                                failures.incrementAndGet()
-                                client
-                                    .getOutputStream()
-                                    .write(
-                                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                                            .toByteArray()
-                                    )
-                                return@use
+                            .apply {
+                                isDaemon = true
+                                start()
                             }
-                            client.getOutputStream().apply {
-                                write(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\n\r\n"
-                                        .toByteArray()
-                                )
-                                write(bytes)
-                                flush()
-                            }
-                        }
                     } catch (_: java.io.IOException) {
                         /* closed fixture client/server */
                     }

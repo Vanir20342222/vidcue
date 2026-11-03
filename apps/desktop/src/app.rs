@@ -2962,6 +2962,7 @@ impl App {
                     self.dirty = true;
                 } else {
                     self.snapshot.playback = previous;
+                    self.status = "End of queue · e queues the selected item".into();
                 }
             }
             Action::PreviousTrack => {
@@ -3242,23 +3243,35 @@ impl App {
         if !self.play_existing(media.clone()) {
             return;
         }
-        // Opening a song starts the remaining songs from the current collection.
-        // Live stations keep their continuous stream and do not enqueue catalog tracks.
-        if media.kind == MediaKind::Song && self.tab > 0 {
+        // Opening a song or video queues the remaining playable entries of the
+        // current list so Next/auto-advance continue through it. Live stations
+        // keep their continuous stream and do not enqueue catalog entries.
+        if matches!(media.kind, MediaKind::Song | MediaKind::Video) && self.tab > 0 {
             let items = &self.tabs[self.tab].page.items;
             if let Some(index) = items.iter().position(|m| m.url == media.url) {
+                let following = items
+                    .iter()
+                    .skip(index + 1)
+                    .filter(|m| {
+                        matches!(m.kind, MediaKind::Song | MediaKind::Video)
+                            && m.browse_id.is_none()
+                            && !m.live
+                            && m.url != media.url
+                    })
+                    .cloned()
+                    .map(|mut m| {
+                        if m.kind == MediaKind::Video && self.selection_is_audio(&m) {
+                            m.kind = MediaKind::Song;
+                        }
+                        m
+                    })
+                    .collect::<Vec<_>>();
                 let queue = &mut self.snapshot.playback;
                 queue
                     .items
                     .truncate(queue.current.map(|i| i + 1).unwrap_or(queue.items.len()));
                 queue.play(media.clone());
-                for next in items
-                    .iter()
-                    .skip(index + 1)
-                    .filter(|m| m.kind == MediaKind::Song)
-                {
-                    queue.push(next.clone());
-                }
+                queue.items.extend(following);
             } else {
                 self.snapshot.playback.play(media.clone());
             }
@@ -3393,13 +3406,32 @@ impl App {
             media.url = path.to_string_lossy().into();
         }
         let audio = matches!(media.kind, MediaKind::Song | MediaKind::Station);
-        if self
-            .player
-            .try_send(PlayerCommand::Play { media, audio })
-            .is_err()
-        {
+        // Videos continue from their saved local position; music, stations and
+        // finished/near-start videos start from the beginning.
+        let resume_at = (self.config.playback_history
+            && self.config.resume_on_play
+            && media.kind == MediaKind::Video)
+            .then(|| self.snapshot.positions.for_media(&media).map(|p| p.seconds))
+            .flatten();
+        let command = match resume_at {
+            Some(seconds) => PlayerCommand::PlayAt {
+                media,
+                audio,
+                seconds,
+            },
+            None => PlayerCommand::Play { media, audio },
+        };
+        if self.player.try_send(command).is_err() {
             self.status = "Player is busy; retry playback".into();
             return false;
+        }
+        if let Some(seconds) = resume_at {
+            let seconds = seconds as u64;
+            self.status = format!(
+                "Resumed at {}:{:02} · :player-seek 0 to start over",
+                seconds / 60,
+                seconds % 60
+            );
         }
         true
     }

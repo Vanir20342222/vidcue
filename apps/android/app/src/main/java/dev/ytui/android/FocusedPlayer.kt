@@ -1,9 +1,10 @@
 package dev.ytui.android
 
 import android.content.Intent
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,8 +16,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -27,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
+import kotlin.math.abs
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
@@ -36,8 +40,10 @@ internal fun VideoSurface(
     playbackPlayer: Player? = PlaybackService.current?.controlsPlayer,
     covered: Boolean = false,
     timingToken: Long = PlaybackService.current?.startupToken ?: 0,
+    onSettings: (() -> Unit)? = null,
 ) {
     val collapse by rememberUpdatedState(onCollapse)
+    val settings by rememberUpdatedState(onSettings)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
     AndroidView(
@@ -57,7 +63,8 @@ internal fun VideoSurface(
                         !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
                     )
                     setShowSubtitleButton(true)
-                    setShowShuffleButton(true)
+                    // Queue modes stay in the app's transport; the video chrome is for watching.
+                    setShowShuffleButton(false)
                     setFullscreenButtonClickListener {
                         context.startActivity(
                             Intent(context, FullscreenActivity::class.java)
@@ -80,6 +87,16 @@ internal fun VideoSurface(
                 visibility =
                     if (collapse == null) android.view.View.GONE else android.view.View.VISIBLE
                 setOnClickListener { collapse?.invoke() }
+            }
+            // The app's own options (quality, speed, volume, tracks, sleep, segments)
+            // replace Media3's reduced settings popup.
+            view.findViewById<android.view.View>(R.id.ytui_settings)?.apply {
+                visibility =
+                    if (settings == null) android.view.View.GONE else android.view.View.VISIBLE
+                setOnClickListener {
+                    view.hideController()
+                    settings?.invoke()
+                }
             }
             val actual = playbackPlayer
             (view.tag as VisibleFrameTracker).setPresentable(!covered)
@@ -113,19 +130,52 @@ internal fun FocusedPlayer(
     // Keep the inline Up next list current as playback advances.
     LaunchedEffect(mediaUrl) { vm.loadQueue() }
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
+    val motion = LocalMotion.current
+    val panelDrag = LocalPanelDrag.current
+    val restingDrag = remember { Animatable(0f) }
+    // Music follows the finger through the panel; video only recognises the gesture so the
+    // native surface is never moved by a Compose layer.
     val dismiss =
-        Modifier.pointerInput(mobile.optBoolean("gestures", true)) {
-            if (mobile.optBoolean("gestures", true)) {
-                var distance = 0f
-                detectVerticalDragGestures(
-                    onDragStart = { distance = 0f },
-                    onVerticalDrag = { change, amount ->
-                        distance += amount
-                        change.consume()
-                    },
-                    onDragEnd = { if (distance > threshold) minimize() },
+        Modifier.swipeAxis(
+            enabled = mobile.gesture("gesture_swipe_dismiss"),
+            horizontal = false,
+            offset = if (!player.video && panelDrag != null) panelDrag.offset else restingDrag,
+            threshold = threshold,
+            follow = !player.video && panelDrag != null,
+            allow = { it > 0 },
+            onSwipe = { direction ->
+                if (!player.video && panelDrag != null) panelDrag.dismiss(this, direction)
+                else minimize()
+            },
+        )
+    // Horizontal swipe on music artwork changes track, carousel style.
+    val trackShift = remember { Animatable(0f) }
+    val haptic = rememberGestureHaptic()
+    val trackWidth =
+        with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val trackSwipe =
+        Modifier.swipeAxis(
+            enabled = !player.video && mobile.gesture("gesture_swipe_tracks"),
+            horizontal = true,
+            offset = trackShift,
+            threshold = with(LocalDensity.current) { 80.dp.toPx() },
+            onSwipe = { direction ->
+                val out = direction * trackWidth * 0.6f
+                trackShift.animateTo(out, motion.exit(200))
+                vm.command(if (direction < 0) "next" else "previous")
+                trackShift.snapTo(-out)
+                trackShift.animateTo(0f, motion.spring())
+            },
+        )
+    val artTaps =
+        Modifier.pointerInput(mobile.gesture("gesture_double_tap_seek")) {
+            if (mobile.gesture("gesture_double_tap_seek"))
+                detectTapGestures(
+                    onDoubleTap = {
+                        haptic()
+                        vm.command("pause")
+                    }
                 )
-            }
         }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("focused-player")) {
         val landscape = maxWidth > maxHeight * 1.25f
@@ -280,10 +330,7 @@ internal fun FocusedPlayer(
                                     contentColor = MaterialTheme.colorScheme.background,
                                 ),
                         ) {
-                            MediaIcon(
-                                if (player.playing) Glyph.Pause else Glyph.Play,
-                                Modifier.size(32.dp),
-                            )
+                            PlayPauseIcon(player.playing, Modifier.size(32.dp))
                         }
                         MediaIconButton(Glyph.Next, "Next track", "player-next") {
                             vm.command("next")
@@ -302,7 +349,9 @@ internal fun FocusedPlayer(
         @Composable
         fun Art(modifier: Modifier) {
             BoxWithConstraints(
-                modifier.then(if (player.video) Modifier else dismiss),
+                modifier.then(
+                    if (player.video) Modifier else dismiss.then(trackSwipe).then(artTaps)
+                ),
                 // Music art shares spare height above and below instead of
                 // leaving one gap between the cover and its title.
                 contentAlignment = if (player.video) Alignment.TopCenter else Alignment.Center,
@@ -315,6 +364,7 @@ internal fun FocusedPlayer(
                         VideoSurface(
                             Modifier.fillMaxSize(),
                             onCollapse = minimize,
+                            onSettings = onMore,
                             playbackPlayer = PlaybackService.current?.controlsPlayer,
                             covered = player.preparing != null,
                             timingToken =
@@ -364,7 +414,14 @@ internal fun FocusedPlayer(
                     Visualizer(
                         player,
                         config,
-                        Modifier.width(minOf(maxWidth, maxHeight * ratio)).aspectRatio(ratio),
+                        Modifier.width(minOf(maxWidth, maxHeight * ratio))
+                            .aspectRatio(ratio)
+                            .graphicsLayer {
+                                translationX = trackShift.value
+                                val away = (abs(trackShift.value) / trackWidth).coerceIn(0f, 1f)
+                                alpha = 1f - away * 0.7f
+                                rotationZ = trackShift.value / trackWidth * 6f
+                            },
                     )
                 }
             }
@@ -406,41 +463,46 @@ internal fun FocusedPlayer(
     }
 }
 
-/** Inline queue under the video; full management stays in the queue sheet. */
+/**
+ * Inline queue under the video and in the fullscreen options panel; full management stays in the
+ * queue sheet (`onManage == null` hides that entry).
+ */
 @Composable
-private fun UpNext(
+internal fun UpNext(
     queue: List<MediaCard>,
     playingUrl: String?,
     thumbnails: Boolean,
     showCreator: Boolean,
     modifier: Modifier,
-    onManage: () -> Unit,
+    onManage: (() -> Unit)?,
+    showHeader: Boolean = true,
     play: (MediaCard) -> Unit,
 ) {
     Column(modifier.fillMaxWidth().testTag("up-next")) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "Up next",
-                Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-            )
-            if (queue.isNotEmpty())
-                TextButton(
-                    onManage,
-                    Modifier.heightIn(min = 48.dp),
-                    colors =
-                        ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        ),
-                ) {
-                    Text("Edit queue")
-                }
-        }
+        if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        if (showHeader)
+            Row(
+                Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Up next",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (queue.isNotEmpty() && onManage != null)
+                    TextButton(
+                        onManage,
+                        Modifier.heightIn(min = 48.dp),
+                        colors =
+                            ButtonDefaults.textButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            ),
+                    ) {
+                        Text("Edit queue")
+                    }
+            }
         if (queue.isEmpty())
             Text(
                 "Nothing queued. Add videos with Add to queue in any ⋮ menu.",
@@ -493,6 +555,7 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                     drag = null
                 },
                 modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+                marks = player.sponsorMarks(),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(time(drag ?: player.position), style = MaterialTheme.typography.labelMedium)
@@ -502,7 +565,18 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
     }
 }
 
-/** Keep Material's seek semantics/drag handling; draw a slim line and persistent round playhead. */
+/** SponsorBlock segments as (start, end) seconds for drawing on the seek timeline. */
+internal fun PlayerState.sponsorMarks(): List<Pair<Float, Float>> =
+    value.optJSONArray("segments")?.objects()?.mapNotNull { mark ->
+        val start = mark.optDouble("start").toFloat()
+        val end = mark.optDouble("end").toFloat()
+        if (start.isFinite() && end.isFinite() && end > start) start to end else null
+    } ?: emptyList()
+
+/**
+ * Keep Material's seek semantics/drag handling; draw a slim line and persistent round playhead.
+ * [marks] are (start, end) values in [valueRange] highlighted on the track, e.g. sponsor segments.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MediaSeekSlider(
@@ -511,9 +585,11 @@ internal fun MediaSeekSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     onValueChangeFinished: () -> Unit,
     modifier: Modifier = Modifier,
+    marks: List<Pair<Float, Float>> = emptyList(),
 ) {
     val accent = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.outlineVariant
+    val markColor = MaterialTheme.colorScheme.tertiary
     Slider(
         value,
         onValueChange,
@@ -540,6 +616,22 @@ internal fun MediaSeekSlider(
                     androidx.compose.ui.geometry.Offset(size.width * fraction, size.height / 2),
                     size.height,
                 )
+                val span = state.valueRange.endInclusive - state.valueRange.start
+                if (span > 0f) {
+                    marks.forEach { (start, end) ->
+                        val from = ((start - state.valueRange.start) / span).coerceIn(0f, 1f)
+                        val to = ((end - state.valueRange.start) / span).coerceIn(from, 1f)
+                        if (to > from) {
+                            val y = size.height / 2
+                            drawLine(
+                                markColor,
+                                androidx.compose.ui.geometry.Offset(size.width * from, y),
+                                androidx.compose.ui.geometry.Offset(size.width * to, y),
+                                size.height,
+                            )
+                        }
+                    }
+                }
             }
         },
     )

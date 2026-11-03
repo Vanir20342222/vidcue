@@ -391,3 +391,20 @@ Artifacts for shards0–3 are `13170227451`, `13170326828`, `13169278343` and
 `13169178642`; APK `13170925283`. The later idle-view candidate passed local APK
 builds, lint and 23 JVM tests but still needs exact-source native and physical
 qualification. No live subsecond claim follows from these results.
+
+
+## Integration with current main (2026-11-03)
+
+Main advanced to `60f272b` through PR45 while this candidate was paused. The
+performance branch integrates those accepted changes, preserving the fullscreen
+options, motion/gesture controls, category preloading, playback resume, radio
+artwork and desktop fixes. Its cover-loader change retries transient failures
+while the card remains composed, rethrows cancellation, and buckets nearby decode
+sizes to avoid one-pixel layout restarts. It addresses the open cover failure
+from revision8; fresh native evidence must verify it. The synthetic fixture's
+concurrent server/per-cover counts and failure-only native probe are retained.
+This integration is on the feature branch only; PR32 remains draft and unmerged.
+
+The combined host build, test APK build, lint and 38 JVM tests pass locally.
+Native CI must rebuild both Rust ABIs from this source; local packaging reuses
+retained JNI binaries and does not qualify the updated engine or live playback.
