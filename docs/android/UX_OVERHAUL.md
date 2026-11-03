@@ -264,3 +264,22 @@ visual acceptance. The rev. 3 failures in large-text navigation measurement,
 offline-playlist rename timing and HLS start timing belong to the PR #31 work
 and remain open. Physical-device and live-YouTube acceptance remain separate
 gates.
+
+## Sign-in flow follow-up (2026-11-03)
+
+Reported on a physical device: sign-in opened YouTube's mobile page (blank until the
+overflow menu was used), and after Google login the page stayed on a loading screen
+with an always-enabled "Use this session" button.
+
+- The web stage now opens Google's sign-in form directly (`AuthActivity.SIGN_IN_URL`,
+  returning to YouTube), so no menu hunting.
+- The signed-in cookie-name check runs on every navigation signal (including SPA history
+  updates and progress 100) and on a 1 s poll while the web stage is visible.
+- When a session is detected, a native "You're signed in" card (`sign-in-detected`,
+  action `sign-in-finish`) covers the possibly blank YouTube page.
+- The bottom "Use this session" button (`sign-in-complete`) is disabled until a session
+  is detected; the hint reads "Sign in with Google. ytui detects it and returns you here."
+- Confirmation stays explicit; only cookie names are inspected.
+
+Evidence: not compiled or run in this environment (no Android SDK). Needs CI
+`testDebugUnitTest`, and an emulator/physical-device pass of the live sign-in flow.
