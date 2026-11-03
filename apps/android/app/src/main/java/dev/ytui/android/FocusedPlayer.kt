@@ -23,7 +23,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,6 +83,7 @@ internal fun VideoSurface(
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
+                    PlayerChrome.fitTransport(this)
                     VideoGestures.setPanelSwipe(
                         this,
                         object : VideoGestures.PanelSwipe {
@@ -295,71 +299,75 @@ internal fun FocusedPlayer(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // Video: views and age under the title, then the channel row (watch-page
+                    // order). Music keeps the artist directly under the title.
+                    if (player.video) player.media?.let { MediaInformation(it, mobile) }
+                    val creator =
+                        player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        }
                     if (
-                        mobile.optBoolean("show_channel", true) ||
-                            player.media?.optBoolean("live") == true
+                        creator.isNotBlank() &&
+                            (mobile.optBoolean("show_channel", true) ||
+                                player.media?.optBoolean("live") == true)
                     )
-                        Text(
-                            player.value.optString("station").ifBlank {
-                                player.media?.optString("creator") ?: ""
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (player.video) ChannelAvatar(creator, 32.dp)
+                            Text(
+                                creator,
+                                style =
+                                    if (player.video) MaterialTheme.typography.titleSmall
+                                    else MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (player.video) FontWeight.Medium else null,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color =
+                                    if (player.video) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                 }
-                if (player.video) player.media?.let { MediaInformation(it, mobile) }
                 player.value
                     .optString("error")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                // One row of existing actions under the title (YouTube watch-page
-                // pattern). Every entry maps to an action the app already performs.
-                // Narrow columns (landscape watch split) scroll instead of overlapping.
+                // Labelled pill actions under the title (YouTube watch-page pattern), with
+                // More pinned to the trailing edge. Every entry maps to an existing action;
+                // fullscreen lives on the video itself. Narrow columns scroll the pills.
                 val media = player.media
                 val canSave =
                     media != null &&
                         !player.value.optBoolean("offline") &&
                         !media.optBoolean("live") &&
                         !player.preview
-                val actionCount =
-                    3 +
-                        (if (!player.video) 1 else 0) +
-                        (if (canSave) 1 else 0) +
-                        (if (player.video) 1 else 0)
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val minimum = 48.dp * actionCount
+                Row(
+                    Modifier.fillMaxWidth().testTag("player-actions"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                     Row(
-                        (if (maxWidth < minimum)
-                                Modifier.horizontalScroll(rememberScrollState())
-                                    .widthIn(min = minimum)
-                            else Modifier.fillMaxWidth())
-                            .testTag("player-actions"),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
+                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", action = onQueue)
                         if (!player.video)
-                            MediaIconButton(Glyph.Lyrics, "Lyrics", action = onLyrics)
-                        MediaIconButton(Glyph.Sleep, "Sleep timer", action = onSleep)
+                            PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", action = onLyrics)
                         if (canSave && media != null)
-                            MediaIconButton(Glyph.Download, "Save offline", "player-download") {
+                            PlayerAction(Glyph.Download, "Save", "Save offline", "player-download") {
                                 vm.play(MediaCard(media), download = true)
                             }
-                        if (player.video)
-                            MediaIconButton(
-                                Glyph.Expand,
-                                "Fullscreen video",
-                                "fullscreen-button",
-                                action = openFullscreen,
-                            )
-                        MediaIconButton(
-                            Glyph.More,
-                            "Playback options",
-                            "player-options",
-                            action = onMore,
-                        )
+                        PlayerAction(Glyph.Sleep, "Sleep", "Sleep timer", action = onSleep)
                     }
+                    Spacer(Modifier.width(4.dp))
+                    MediaIconButton(
+                        Glyph.More,
+                        "Playback options",
+                        "player-options",
+                        action = onMore,
+                    )
                 }
                 if (!player.video) PlayerSeek(vm, player)
                 if (!player.video)
@@ -549,6 +557,7 @@ internal fun UpNext(
         else
             upcoming.firstOrNull()
                 ?: state.context.firstOrNull { it.url != playingUrl }.takeIf { state.autoplay }
+    val contextLabel = if (state.related) "Recommended" else "From this playlist"
     Column(modifier.fillMaxWidth().testTag("up-next")) {
         if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (showHeader)
@@ -558,9 +567,18 @@ internal fun UpNext(
             ) {
                 Text(
                     "Up next",
-                    Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
+                )
+                // With no manual queue the context list is all there is: name its source in
+                // the header instead of stacking a second heading above the first row.
+                Text(
+                    if (queue.isEmpty() && state.context.isNotEmpty()) contextLabel else "",
+                    Modifier.weight(1f).padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (queue.isNotEmpty() && onManage != null)
                     TextButton(
@@ -586,7 +604,7 @@ internal fun UpNext(
             androidx.compose.foundation.lazy.LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 @Composable
                 fun Entry(media: MediaCard, fromQueue: Boolean) {
@@ -610,12 +628,13 @@ internal fun UpNext(
                 }
                 items(queue.size, key = { "${queue[it].key}#$it" }) { Entry(queue[it], true) }
                 if (state.context.isNotEmpty()) {
-                    item(key = "context-header") {
-                        SectionHeader(
-                            if (state.related) "Recommended" else "From this playlist",
-                            Modifier.padding(horizontal = 8.dp).testTag("up-next-context"),
-                        )
-                    }
+                    if (queue.isNotEmpty() || !showHeader)
+                        item(key = "context-header") {
+                            SectionHeader(
+                                contextLabel,
+                                Modifier.padding(start = 4.dp).testTag("up-next-context"),
+                            )
+                        }
                     items(state.context.size, key = { "context:${state.context[it].key}#$it" }) {
                         Entry(state.context[it], false)
                     }
@@ -630,6 +649,38 @@ internal fun UpNext(
                         }
                 }
             }
+    }
+}
+
+/** Labelled pill for the watch-page action row; [description] stays the accessible name. */
+@Composable
+internal fun PlayerAction(
+    glyph: Glyph,
+    label: String,
+    description: String,
+    tag: String = "",
+    action: () -> Unit,
+) {
+    Surface(
+        onClick = action,
+        modifier =
+            Modifier.testTag(tag).semantics {
+                contentDescription = description
+                role = Role.Button
+            },
+        shape = MediaTokens.pill,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        Row(
+            // The visible label repeats the description; keep one accessible name.
+            Modifier.padding(start = 12.dp, end = 16.dp).heightIn(min = 36.dp).clearAndSetSemantics {},
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MediaIcon(glyph, Modifier.size(20.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        }
     }
 }
 

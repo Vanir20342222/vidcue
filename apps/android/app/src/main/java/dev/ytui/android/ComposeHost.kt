@@ -412,13 +412,21 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     MediaIconButton(Glyph.More, "More options", "menu-button") {
                                         menu = true
                                     }
-                                    DropdownMenu(menu, { menu = false }) {
-                                        if (tab > 0)
+                                    DropdownMenu(
+                                        menu,
+                                        { menu = false },
+                                        shape = MediaTokens.fieldShape,
+                                        containerColor =
+                                            MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    ) {
+                                        // Feed actions first, then player panels, then About;
+                                        // every row has its own glyph so none read alike.
+                                        if (tab > 0) {
                                             DropdownMenuItem(
                                                 text = { Text("Browse") },
                                                 leadingIcon = {
                                                     MediaIcon(
-                                                        if (tab == 3) Glyph.Radio else Glyph.Queue
+                                                        if (tab == 3) Glyph.Radio else Glyph.Browse
                                                     )
                                                 },
                                                 modifier =
@@ -430,6 +438,22 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                     dialog = "feeds"
                                                 },
                                             )
+                                            DropdownMenuItem(
+                                                text = { Text("Refresh feed") },
+                                                leadingIcon = { MediaIcon(Glyph.Refresh) },
+                                                onClick = {
+                                                    menu = false
+                                                    vm.navigate(
+                                                        request = vm.feeds[tab].value.request,
+                                                        remember = false,
+                                                    )
+                                                },
+                                            )
+                                            HorizontalDivider(
+                                                Modifier.padding(vertical = 4.dp),
+                                                color = MaterialTheme.colorScheme.outlineVariant,
+                                            )
+                                        }
                                         for ((label, name, icon) in
                                             listOf(
                                                 Triple("Playback queue", "queue", Glyph.Queue),
@@ -438,6 +462,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 Triple("Sleep timer", "sleep", Glyph.Sleep),
                                                 Triple("About", "about", Glyph.Info),
                                             )) {
+                                            if (name == "about")
+                                                HorizontalDivider(
+                                                    Modifier.padding(vertical = 4.dp),
+                                                    color = MaterialTheme.colorScheme.outlineVariant,
+                                                )
                                             DropdownMenuItem(
                                                 text = { Text(label) },
                                                 leadingIcon = { MediaIcon(icon) },
@@ -451,17 +480,6 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 },
                                             )
                                         }
-                                        if (tab > 0)
-                                            DropdownMenuItem(
-                                                text = { Text("Refresh feed") },
-                                                onClick = {
-                                                    menu = false
-                                                    vm.navigate(
-                                                        request = vm.feeds[tab].value.request,
-                                                        remember = false,
-                                                    )
-                                                },
-                                            )
                                     }
                                 }
                             }
