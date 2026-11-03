@@ -279,7 +279,10 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
                                     Modifier.weight(1f)
                                         .heightIn(
                                             min =
-                                                if (sidewaysCells) maxOf(60.dp, labelHeight + 16.dp)
+                                                // The cell's own padding (4dp outside the highlight,
+                                                // 4dp inside) is 16dp of this, and the tab itself
+                                                // must still reach the 48dp touch target.
+                                                if (sidewaysCells) maxOf(66.dp, labelHeight + 24.dp)
                                                 else maxOf(76.dp, labelHeight + 44.dp)
                                         )
                                         .padding(4.dp)
