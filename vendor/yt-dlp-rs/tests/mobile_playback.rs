@@ -64,6 +64,40 @@ fn mobile_audio_selects_audio_without_fetching_watch_page_or_player_js() {
 }
 
 #[test]
+fn rejected_audio_recovery_bypasses_direct_player_and_keeps_playback_metadata() {
+    let proxy = site_proxy::SiteProxy::start("youtube-direct-indexed");
+    let dl = YoutubeDl::with_options(
+        YoutubeOptions {
+            no_playlist: true,
+            playback_format: Some("bestaudio/best".into()),
+            playback_skip_direct: true,
+            playback_visitor_data: Some("synthetic-visitor".into()),
+            ..Default::default()
+        },
+        HttpOptions {
+            proxy: Some(proxy.url.clone()),
+            no_check_certificates: true,
+            socket_timeout: Some(2.0),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let info = dl
+        .extract_info_with_format(VIDEO, Some("bestaudio/best"))
+        .unwrap_or_else(|error| panic!("{error}; requests={:?}", proxy.requests.lock().unwrap()));
+    assert_eq!(info.vcodec.as_deref(), Some("none"));
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    assert_eq!(info.extra["ytui_init_range"]["end"], "99");
+    let requests = proxy.requests.lock().unwrap();
+    assert!(requests[0].contains("/watch?"), "requests: {requests:?}");
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains("/visitor_id?"))
+    );
+}
+
+#[test]
 fn restricted_direct_response_falls_back_to_watch_acquisition() {
     let proxy = site_proxy::SiteProxy::start("youtube-direct-fallback");
     let info = downloader(&proxy, Some(FORMAT))

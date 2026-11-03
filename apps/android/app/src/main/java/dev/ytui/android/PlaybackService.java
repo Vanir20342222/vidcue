@@ -83,8 +83,10 @@ public final class PlaybackService extends MediaSessionService {
   boolean previewPlaying;
   JSONObject currentRequest = new JSONObject();
   JSONArray sponsors = new JSONArray();
-  boolean skipSponsors = true, historyEnabled = true, pausedByUser = false;
+  boolean skipSponsors = true, historyEnabled = true, pausedByUser = false, playbackRecorded;
   int reconnectCount = 0;
+  int streamRefreshCount = 0;
+  boolean streamRefreshing;
   SharedPreferences prefs;
 
   @Override
@@ -362,9 +364,9 @@ public final class PlaybackService extends MediaSessionService {
 
           @Override
           public void onPlayerError(PlaybackException e) {
-            pendingStart = navigationPending = waitingForContext = false;
-            queuedNext = 0;
-            StringBuilder trace = new StringBuilder();
+            // Errors from the item being left must not cancel a newer Next/Previous intent.
+            if (navigationPending || streamRefreshing) return;
+            StringBuilder trace = new StringBuilder(e.getErrorCodeName()).append("\n");
             Throwable cause = e;
             for (int i = 0; cause != null && i < 4; i++, cause = cause.getCause()) {
               trace.append(cause.getClass().getName()).append("\n");
@@ -373,6 +375,15 @@ public final class PlaybackService extends MediaSessionService {
                 trace.append(stack[j]).append("\n");
             }
             errorTrace = trace.toString();
+            if (!isLive()
+                && youtubeStream()
+                && PlaybackPolicy.refreshableStatus(httpStatus(e))
+                && streamRefreshCount == 0) {
+              refreshStream();
+              return;
+            }
+            pendingStart = navigationPending = waitingForContext = false;
+            queuedNext = 0;
             if (isLive() && !rateLimited(e) && reconnectCount < 3) {
               reconnect();
             } else {
@@ -381,8 +392,8 @@ public final class PlaybackService extends MediaSessionService {
                   rateLimited(e)
                       ? "Service rate limit; wait before retrying"
                       : "Playback failed ("
-                          + e.getErrorCodeName()
-                          + "). Try another quality or reconnect.";
+                          + (httpStatus(e) == 0 ? e.getErrorCodeName() : "HTTP " + httpStatus(e))
+                          + "). Tap Play to retry or Next to skip.";
               publish();
             }
           }
@@ -650,6 +661,8 @@ public final class PlaybackService extends MediaSessionService {
     }
     if (!request.optBoolean("reconnect")) {
       reconnectCount = 0;
+      streamRefreshCount = 0;
+      playbackRecorded = false;
       pausedByUser = false;
     }
     String nextContext = request.isNull("context_id") ? "" : request.optString("context_id");
@@ -668,6 +681,7 @@ public final class PlaybackService extends MediaSessionService {
     if (startupToken != request.optLong("startup_token"))
       StartupTimings.ended(startupToken, "cancelled", startupAt);
     currentRequest = request;
+    streamRefreshing = false;
     startupToken = request.optLong("startup_token");
     StartupTimings.handoff(startupToken, startupAt);
     pendingStart = !request.optBoolean("preview");
@@ -826,6 +840,8 @@ public final class PlaybackService extends MediaSessionService {
                               : stream.optString("audio_cache_key"))
                       .build()));
     player.setMediaSource(source);
+    // Next must remain usable even if this item never reaches READY/playing.
+    if (!request.optBoolean("preview")) prepareContext(request.optJSONObject("context"));
     player.prepare();
     handler.removeCallbacks(ticker);
     handler.post(ticker);
@@ -871,6 +887,7 @@ public final class PlaybackService extends MediaSessionService {
   void recordStarted() {
     if (!pendingStart || !player.isPlaying() || currentRequest.optBoolean("preview")) return;
     pendingStart = false;
+    playbackRecorded = true;
     startMs = SystemClock.elapsedRealtime() - startupAt;
     StartupTimings.started(startupToken, SystemClock.elapsedRealtime());
     if (currentRequest.optBoolean("audio"))
@@ -1131,6 +1148,18 @@ public final class PlaybackService extends MediaSessionService {
   void command(JSONObject command) throws JSONException {
     switch (command.optString("op")) {
       case "pause":
+        if (streamRefreshing) break;
+        if (player.getPlayerError() != null) {
+          pausedByUser = false;
+          if (youtubeStream()) refreshStream();
+          else {
+            error = "";
+            pendingStart = !playbackRecorded;
+            player.prepare();
+            player.play();
+          }
+          break;
+        }
         pausedByUser = player.getPlayWhenReady();
         if (pausedByUser) player.pause();
         else {
@@ -1359,12 +1388,80 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   static boolean rateLimited(Throwable error) {
+    return httpStatus(error) == 429;
+  }
+
+  static int httpStatus(Throwable error) {
     for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-      if (cause instanceof DefaultHttpDataSource.InvalidResponseCodeException
-          && ((DefaultHttpDataSource.InvalidResponseCodeException) cause).responseCode == 429)
-        return true;
+      if (cause instanceof HttpDataSource.InvalidResponseCodeException)
+        return ((HttpDataSource.InvalidResponseCodeException) cause).responseCode;
     }
-    return false;
+    return 0;
+  }
+
+  boolean youtubeStream() {
+    JSONObject media = currentRequest.optJSONObject("media");
+    if (media == null
+        || currentRequest.optBoolean("offline")
+        || currentRequest.optBoolean("local")
+        || currentRequest.optBoolean("preview")) return false;
+    String host = android.net.Uri.parse(media.optString("url")).getHost();
+    return Arrays.asList("youtube.com", "www.youtube.com", "music.youtube.com", "youtu.be")
+        .contains(host);
+  }
+
+  void refreshStream() {
+    streamRefreshCount++;
+    long version = ++generation, position = player.getCurrentPosition();
+    JSONObject original = currentRequest;
+    boolean recordOnStart = !playbackRecorded;
+    streamRefreshing = true;
+    error = "";
+    publish();
+    worker.execute(
+        () -> {
+          try {
+            JSONObject stream =
+                rpc(
+                    new JSONObject()
+                        .put("op", "resolve")
+                        .put("media", original.getJSONObject("media"))
+                        .put("audio", original.optBoolean("audio"))
+                        .put("quality", original.optString("quality", playbackQuality))
+                        .put("fresh", true));
+            JSONObject replacement =
+                new JSONObject(original.toString())
+                    .put("stream", stream)
+                    .put("reconnect", true)
+                    .put("resume", false);
+            handler.post(
+                () -> {
+                  if (current != this || version != generation || currentRequest != original) return;
+                  try {
+                    play(replacement);
+                    pendingStart = recordOnStart;
+                    if (position > 0) player.seekTo(position);
+                  } catch (Exception invalid) {
+                    streamRefreshFailed();
+                  }
+                });
+          } catch (Exception unavailable) {
+            handler.post(
+                () -> {
+                  if (current == this && version == generation && currentRequest == original)
+                    streamRefreshFailed();
+                });
+          }
+        });
+  }
+
+  void streamRefreshFailed() {
+    streamRefreshing = false;
+    pendingStart = navigationPending = waitingForContext = false;
+    queuedNext = 0;
+    StartupTimings.ended(startupToken, "failed", SystemClock.elapsedRealtime());
+    error = "Could not refresh playback. Tap Play to retry or Next to skip.";
+    publish();
   }
 
   void reconnect() {
@@ -1420,7 +1517,7 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   void next() {
-    if (navigationPending || pendingStart) {
+    if (navigationPending) {
       queuedNext = Math.min(queuedNext + 1, 20);
       return;
     }
@@ -1449,13 +1546,31 @@ public final class PlaybackService extends MediaSessionService {
     StartupTimings.playerCache(timing, warmReady());
     boolean shuffle = player.getShuffleModeEnabled();
     String contextId = contextId(), quality = playbackQuality;
+    JSONObject interrupted = currentRequest;
+    boolean skipUnstarted = !previous && interrupted.optBoolean("queued");
+    boolean wasPending = pendingStart;
+    pendingStart = false;
+    streamRefreshing = false;
     long version = ++generation;
     navigationPending = true;
+    error = "";
+    errorTrace = "";
     publish();
     afterPlaybackStored(
         () -> {
           try {
             if (version != generation || current != this) return;
+            // A deliberate Next skips a failed/buffering queue entry without
+            // recording it as played. Merely failing still retains the entry.
+            if (skipUnstarted) {
+              rpc(
+                  new JSONObject()
+                      .put("op", "queue_commit")
+                      .put("url", interrupted.getJSONObject("media").optString("url"))
+                      .put("context_id", contextId)
+                      .put("context_entry", interrupted.optBoolean("context_entry"))
+                      .put("skip_before", interrupted.optBoolean("context_skip")));
+            }
             JSONObject chosen = candidate(previous, shuffle, contextId);
             JSONObject media = chosen.optJSONObject("media");
             boolean queued = chosen.optBoolean("queued");
@@ -1476,6 +1591,12 @@ public final class PlaybackService extends MediaSessionService {
                     }
                     navigationPending = false;
                     queuedNext = 0;
+                    if (!skipUnstarted) {
+                      pendingStart = wasPending;
+                      if (player.isPlaying()) recordStarted();
+                    }
+                    if (player.getPlayerError() != null && error.isEmpty())
+                      error = "No next track available. Tap Play to retry.";
                     if (previous && !isLive()) player.seekTo(0);
                     publish();
                   });
@@ -1541,6 +1662,8 @@ public final class PlaybackService extends MediaSessionService {
                   try {
                     play(ready);
                   } catch (Exception error) {
+                    navigationPending = false;
+                    queuedNext = 0;
                     this.error = "Could not start the next queued item";
                     publish();
                   }
@@ -1611,6 +1734,7 @@ public final class PlaybackService extends MediaSessionService {
 
   void stopAndClear() {
     generation++;
+    streamRefreshing = false;
     NativeBridge.activateContext("");
     cancelContextJobs();
     PlaybackCache.cancel();
@@ -1717,7 +1841,8 @@ public final class PlaybackService extends MediaSessionService {
               .put("start_ms", startMs)
               .put("first_frame_ms", firstFrameMs)
               .put("tap_to_output_ms", StartupTimings.total(startupToken))
-              .put("buffering", player.getPlaybackState() == Player.STATE_BUFFERING)
+              .put(
+                  "buffering", streamRefreshing || player.getPlaybackState() == Player.STATE_BUFFERING)
               .put("buffered_ms", player.getTotalBufferedDuration())
               .put("position", player.getCurrentPosition() / 1000.0)
               .put("duration", Math.max(0, player.getDuration()) / 1000.0)

@@ -36,6 +36,9 @@ pub struct YoutubeOptions {
     /// full watch-page/client acquisition. Validate the requested selector first.
     /// None preserves CLI/download acquisition and format discovery.
     pub playback_format: Option<String>,
+    /// Retry a rejected playback URL through full watch/client acquisition.
+    /// Keeps playback format/index metadata while bypassing the direct shortcut.
+    pub playback_skip_direct: bool,
     /// Existing browse visitor context for this same account/network. Memory only.
     pub playback_visitor_data: Option<String>,
 }
@@ -45,6 +48,7 @@ struct ConfiguredYoutube {
     no_playlist: bool,
     runtime: Option<challenge::Runtime>,
     playback_format: Option<String>,
+    playback_skip_direct: bool,
     playback_visitor: std::sync::Mutex<Option<(String, std::time::Instant)>>,
 }
 
@@ -56,6 +60,7 @@ impl Youtube {
             include_translated_subtitles: options.include_translated_subtitles,
             no_playlist: options.no_playlist,
             playback_format: options.playback_format,
+            playback_skip_direct: options.playback_skip_direct,
             playback_visitor: std::sync::Mutex::new(
                 options
                     .playback_visitor_data
@@ -755,7 +760,9 @@ impl Extractor for ConfiguredYoutube {
         crate::screen::set_extractor("youtube");
         let page = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))?;
         let _ = page;
-        if let Some(format) = self.playback_format.as_deref() {
+        if !self.playback_skip_direct
+            && let Some(format) = self.playback_format.as_deref()
+        {
             // Do not hold a context lock across network I/O: a speculative
             // visitor request must never block foreground extraction admission.
             let visitor = self

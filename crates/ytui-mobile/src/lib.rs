@@ -990,9 +990,10 @@ impl Engine {
             None
         };
         let client_key = key.clone();
+        let fresh = r["fresh"].as_bool().unwrap_or(false);
         let mut value = self
             .resolver
-            .get_or_resolve(key, r["fresh"].as_bool().unwrap_or(false), async {
+            .get_or_resolve(key, fresh, async {
                 if !ytui_core::youtube_host(url.host_str().unwrap_or_default()) {
                     let radio = self.radio.lock().expect("radio").clone();
                     let resolved = radio.resolve_playlist(url.as_str()).await?;
@@ -1017,12 +1018,13 @@ impl Engine {
                         let client_at = std::time::Instant::now();
                         let _permit = permit;
                         let _background = background;
-                        let client = pool.client(&client_key, || {
+                        let create = || {
                             let jar = cookies.as_deref().map(account::native_jar).transpose()?;
                             Ok(yt_dlp_rs::YoutubeDl::with_options(
                                 yt_dlp_rs::YoutubeOptions {
                                     no_playlist: true,
                                     playback_format: Some(mobile_format(audio, &quality)?),
+                                    playback_skip_direct: fresh,
                                     playback_visitor_data: visitor,
                                     js_runtime: if cfg!(target_os = "android") {
                                         Some("ytui-android-js".into())
@@ -1038,7 +1040,14 @@ impl Engine {
                                     ..Default::default()
                                 },
                             )?)
-                        })?;
+                        };
+                        // A rejected stream must bypass both its lease and the
+                        // direct-player shortcut, without replacing pooled fast clients.
+                        let client = if fresh {
+                            Arc::new(create()?)
+                        } else {
+                            pool.client(&client_key, create)?
+                        };
                         let client_ms = client_at.elapsed().as_millis() as u64;
                         let extract_at = std::time::Instant::now();
                         let info = client.extract_info_with_format(

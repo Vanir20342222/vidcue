@@ -104,6 +104,7 @@ pub fn worker(path: &Path) -> Result<()> {
             include_translated_subtitles: o.auto_subtitles,
             no_playlist: request.resolve || !o.playlist,
             playback_format: None,
+            playback_skip_direct: false,
             playback_visitor_data: None,
         },
         HttpOptions {
