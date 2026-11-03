@@ -87,6 +87,14 @@ Test updates (copy and navigation changes, none loosened):
 - `CatalogUiTest` and `NativeUiTest` go back before closing settings sub-pages.
 - `NativeUiTest` finds the theme row by its new "Theme" label plus the theme's readable name.
 
+CI correction (first emulator run): `ContrastUiTest.enabledNativeTransportsKeepContrastOnBrightVideo`
+failed with "forward must have 3:1 white-icon contrast on actual white video". The test samples a
+point inside each transport disc, beside the glyph. The new forward arrowhead reached that point
+(1.2 dp inside the stroke), while the mirrored rewind arrow did not. Both glyphs are now drawn at
+80% so the arrow stays clear of it (2.3 dp from the stroke edge for forward). The test and its 3:1
+threshold are unchanged. Checked by computing the stroke geometry, not by an emulator run; the next
+CI emulator run is the real check.
+
 ## Not verified and limits
 - No emulator or device: the instrumentation suites, real drag, swipe and shared-element motion,
   IME behaviour and the Media3 overlay were not run. Robolectric cannot draw `TextureView`.
