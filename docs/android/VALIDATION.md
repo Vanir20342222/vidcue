@@ -789,6 +789,38 @@ remain explicit in [PARITY.md](PARITY.md). M9 remains open.
 
 The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
 
+## Local re-verification of main b6a76a2, 2026-11-02 (M9)
+
+Environment: Linux container, 4 cores, no KVM, emulator or device. The workspace
+declares `rust-version = "1.99"`, so the container's rustc 1.97.0 was updated to
+1.99.1 first. Node.js 22.23.4 and FFmpeg were installed; mpv, Lua 5.4 and yt-dlp
+were not. Android SDK platform/build-tools 35 and NDK 27.2.12479018 were
+installed outside the repository.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo test --workspace --locked` | 337 passed, 0 failed, 31 explicit ignores |
+| Vendored `mobile_playback` test, `tools/test-ci-install-media.sh`, `tools/test-native-solver.sh` | pass |
+| `tools/android/build.sh` (debug): both Rust ABIs, `assembleDebug`, JVM tests, lint | pass; 21 JVM tests, lint 0 errors / 39 warnings |
+| `tools/android/inspect-apk.sh` | pass: signature, ZIP alignment, both ABIs, 16 KiB ELF segments, notices |
+| `cargo machete` | found four unused `ytui-services` dependencies (`directories`, `httpdate`, `image`, `sha1`); removed, then clean. Each is still declared by `ytui-providers`, and `ytui-mobile` does not depend on `ytui-services`. Fmt, clippy and tests were re-run afterwards with identical totals |
+
+The debug APK is `dev.ytui.android.preview` ("ytui Preview"), default version
+metadata (code 8), debuggable, and signed with a debug key generated in that
+container. It cannot update an install signed with another debug key, such as a
+CI artifact; do not uninstall such an install just to bypass this.
+
+Not run here: the CI `media` job (needs mpv, Lua 5.4 and yt-dlp) and the
+emulator suite. GitHub's runs for the same commit cover both and succeeded:
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249) (APK job
+plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222).
+Maven Central answered the first Gradle attempts with HTTP 429; a retry completed
+without any change. No screenshot, physical-device or live-service acceptance was
+added by this re-verification.
+
 ## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
 
 Implemented (Android UI only; desktop and shared palettes unchanged):
