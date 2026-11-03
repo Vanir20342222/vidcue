@@ -181,6 +181,7 @@ internal data class FeedState(
     val scrollIndex: Int = 0,
     val failedRequest: Any? = null,
     val failedAppend: Boolean = false,
+    val instantContent: Boolean = false,
 )
 
 @androidx.compose.runtime.Immutable
@@ -287,7 +288,12 @@ internal object ArtworkCache {
     }
 }
 
-internal class YtuiViewModel : ViewModel() {
+internal class YtuiViewModel(
+    private val browsePage: suspend (Int, Any, Int) -> JSONObject = { index, request, offset ->
+        RustRpc.objectCall("browse", "tab" to index, "request" to request, "offset" to offset)
+    },
+    clock: () -> Long = android.os.SystemClock::elapsedRealtime,
+) : ViewModel() {
     val tab = MutableStateFlow(1)
     val feeds = Array(4) { MutableStateFlow(FeedState()) }
     private val history = Array(4) { ArrayDeque<FeedState>() }
@@ -298,11 +304,14 @@ internal class YtuiViewModel : ViewModel() {
     private val feedPages =
         FeedPageCache<FeedKey, JSONObject>(
             viewModelScope,
-            android.os.SystemClock::elapsedRealtime,
+            clock,
             { it.toString().length * 2 },
+            maxEntries = 64,
+            maxBytes = 8 * 1024 * 1024,
+            retainMs = 30 * 60_000L,
         )
     private var categoryJob: Job? = null
-    private var categoryFetch: Job? = null
+    private val categoryPreloader = FeedPagePreloader(feedPages)
     private var playbackJob: Job? = null
     private var latestPlaybackIntent = -1L
     private var lastVideoPreparation: PreparingVideo? = null
@@ -508,15 +517,23 @@ internal class YtuiViewModel : ViewModel() {
                 request != "Favorites" &&
                 (request as? JSONObject)?.has("SavedMedia") != true
         val cacheKey = FeedKey(index, request.toString(), network)
-        // Selecting the current source again is an explicit refresh.
+        // Refresh is explicit (pull-to-refresh / menu / retry). Re-tapping a chip
+        // should keep its prepared content instead of invalidating it.
         if (
             cacheable &&
+                !remember &&
+                retry == 0 &&
                 previous.generation > 0 &&
                 !previous.loading &&
                 previous.request.toString() == request.toString()
         )
             feedPages.invalidate(cacheKey)
-        if (!append && remember && previous.generation > 0) {
+        if (
+            !append &&
+                remember &&
+                previous.generation > 0 &&
+                previous.request.toString() != request.toString()
+        ) {
             history[index].addLast(previous.copy(loading = false))
             while (
                 history[index].size > 12 ||
@@ -526,7 +543,9 @@ internal class YtuiViewModel : ViewModel() {
             ) history[index].removeFirst()
         }
         val generation = previous.generation + 1
-        val loading =
+        val cached = if (cacheable) feedPages.peek(cacheKey, allowStale = true) else null
+        val fresh = cached != null && feedPages.peek(cacheKey) != null
+        var loading =
             if (append) previous.copy(loading = true, error = null, generation = generation)
             else
                 FeedState(
@@ -534,18 +553,24 @@ internal class YtuiViewModel : ViewModel() {
                     categories = if (categoryNavigation) previous.categories else emptyList(),
                     loading = true,
                     generation = generation,
+                    instantContent = categoryNavigation || cached != null,
                 )
+        // Publish prepared cards in the tap itself, before launching any coroutine.
+        // Stale cards stay visible while the same key refreshes in the background.
+        if (cached != null) loading = pageState(cached, loading, previous, categoryNavigation)
+        if (fresh) {
+            feeds[index].value = loading
+            if (autoPlay && tab.value == index)
+                loading.cards.firstOrNull { !it.collection && !it.live }?.let { play(it) }
+            if (index == tab.value) preloadCategories(index)
+            return
+        }
         feeds[index].value = loading
         feedJobs[index] =
             viewModelScope.launch {
                 try {
                     val fetch: suspend () -> JSONObject = {
-                        RustRpc.objectCall(
-                            "browse",
-                            "tab" to index,
-                            "request" to request,
-                            "offset" to if (append) previous.cards.size else 0,
-                        )
+                        browsePage(index, request, if (append) previous.cards.size else 0)
                     }
                     val page = if (cacheable) feedPages.load(cacheKey, fetch) else fetch()
                     if (feeds[index].value.generation != generation) return@launch
@@ -556,38 +581,30 @@ internal class YtuiViewModel : ViewModel() {
                     }
                     val incoming =
                         page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
-                    val cards =
-                        (if (append) previous.cards + incoming else incoming)
-                            .distinctBy { it.key }
-                            .takeLast(2000)
                     feeds[index].value =
-                        loading.copy(
-                            request = if (append) previous.request else request,
-                            title = page.optString("title", previous.title),
-                            cards = cards,
-                            categories =
-                                if (append) previous.categories
-                                else
-                                    (page.optJSONArray("categories")?.objects() ?: emptyList())
-                                        .ifEmpty {
-                                            if (categoryNavigation) previous.categories
-                                            else emptyList()
-                                        },
-                            continuation =
-                                page.optString("continuation").takeUnless {
-                                    it.isBlank() || it == "null"
-                                },
-                            notice =
-                                page.optString("notice").takeUnless {
-                                    it.isBlank() || it == "null"
-                                },
-                            loading = false,
-                            scrollIndex = feeds[index].value.scrollIndex,
-                        )
+                        pageState(page, loading, previous, categoryNavigation, append)
+                            .copy(scrollIndex = feeds[index].value.scrollIndex)
                     if (autoPlay && tab.value == index)
                         incoming.firstOrNull { !it.collection && !it.live }?.let { play(it) }
                     if (!append && index == tab.value) preloadCategories(index)
                 } catch (cancelled: CancellationException) {
+                    // A speculative fetch can be cancelled by a settings change while
+                    // this screen is still waiting for it. Retry as a foreground request.
+                    if (
+                        currentCoroutineContext().isActive &&
+                            feeds[index].value.generation == generation &&
+                            epoch == accountEpoch &&
+                            network == NetworkSettings.revision.get()
+                    ) {
+                        navigate(
+                            index,
+                            request,
+                            append,
+                            remember = false,
+                            retry = retry,
+                            autoPlay = autoPlay,
+                        )
+                    }
                     throw cancelled
                 } catch (error: Exception) {
                     if (feeds[index].value.generation != generation) return@launch
@@ -617,7 +634,35 @@ internal class YtuiViewModel : ViewModel() {
             }
     }
 
-    /** One speculative request at a time; opening it joins the same fetch. */
+    private fun pageState(
+        page: JSONObject,
+        state: FeedState,
+        previous: FeedState,
+        categoryNavigation: Boolean,
+        append: Boolean = false,
+    ): FeedState {
+        val incoming = page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
+        return state.copy(
+            request = if (append) previous.request else state.request,
+            title = page.optString("title", previous.title),
+            cards =
+                (if (append) previous.cards + incoming else incoming)
+                    .distinctBy { it.key }
+                    .takeLast(2000),
+            categories =
+                if (append) previous.categories
+                else
+                    (page.optJSONArray("categories")?.objects() ?: emptyList()).ifEmpty {
+                        if (categoryNavigation) previous.categories else emptyList()
+                    },
+            continuation =
+                page.optString("continuation").takeUnless { it.isBlank() || it == "null" },
+            notice = page.optString("notice").takeUnless { it.isBlank() || it == "null" },
+            loading = false,
+        )
+    }
+
+    /** Prepare the category strip with two bounded fetches; taps join the same work. */
     private fun preloadCategories(index: Int) {
         categoryJob?.cancel()
         if (index !in 1..2 || !categoryPreloadAllowed()) return
@@ -629,57 +674,38 @@ internal class YtuiViewModel : ViewModel() {
                 .sortedBy { kotlin.math.abs(it - selected.coerceAtLeast(0)) }
                 .map { requests[it] }
                 .filter { it.toString() != feed.request.toString() }
-                .take(3)
+                .take(24)
         val targets =
             buildList<Pair<Int, Any>> {
-                    nearby.forEach { add(index to it) }
+                    nearby.take(1).forEach { add(index to it) }
                     if (feed.request != "Home") add(index to "Home")
-                    add((if (index == 1) 2 else 1) to "Home")
                     if (account.value.optBoolean("connected")) {
                         add(index to "Playlists")
                         add(index to "Liked")
+                        if (index == 1) {
+                            add(index to "Subscriptions")
+                            add(index to "WatchLater")
+                        }
                     }
+                    nearby.drop(1).forEach { add(index to it) }
+                    add((if (index == 1) 2 else 1) to "Home")
                 }
                 .distinctBy { "${it.first}:${it.second}" }
-                .take(6)
+                .take(30)
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
         categoryJob =
             viewModelScope.launch {
-                delay(300) // Let visible content and touch handling settle first.
-                for ((target, request) in targets) {
-                    // A cancelled batch may still have one fetch that a tap can reuse.
-                    // Wait for it before starting more speculative network work.
-                    categoryFetch?.join()
-                    if (
-                        !categoryPreloadAllowed() ||
-                            epoch != accountEpoch ||
-                            network != NetworkSettings.revision.get()
-                    )
-                        return@launch
-                    try {
-                        feedPages.load(FeedKey(target, request.toString(), network)) {
-                            val work = currentCoroutineContext()[Job]
-                            categoryFetch = work
-                            try {
-                                RustRpc.objectCall(
-                                    "browse",
-                                    "tab" to target,
-                                    "request" to request,
-                                    "offset" to 0,
-                                )
-                            } finally {
-                                if (categoryFetch == work) categoryFetch = null
-                            }
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        // Stop on any failure/cooldown; background work never retries or opens
-                        // errors.
-                        return@launch
-                    }
-                }
+                categoryPreloader.prepare(
+                    targets,
+                    keyOf = { (target, request) -> FeedKey(target, request.toString(), network) },
+                    allowed = {
+                        categoryPreloadAllowed() &&
+                            epoch == accountEpoch &&
+                            network == NetworkSettings.revision.get()
+                    },
+                    fetch = { (target, request) -> browsePage(target, request, 0) },
+                )
             }
     }
 
@@ -688,7 +714,6 @@ internal class YtuiViewModel : ViewModel() {
             MediaBridge.offlineUi ||
                 !mobile.value.optBoolean("preload_next", true) ||
                 playbackJob?.isActive == true ||
-                player.value.playing ||
                 playerOpen.value
         )
             return false

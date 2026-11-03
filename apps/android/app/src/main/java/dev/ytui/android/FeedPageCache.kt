@@ -10,6 +10,7 @@ internal class FeedPageCache<K, V>(
     private val ttlMs: Long = 60_000,
     private val maxEntries: Int = 12,
     private val maxBytes: Int = 2 * 1024 * 1024,
+    private val retainMs: Long = ttlMs,
 ) {
     private data class Entry<V>(val value: V, val expires: Long, val bytes: Int)
 
@@ -19,14 +20,15 @@ internal class FeedPageCache<K, V>(
     private var bytes = 0
     private var epoch = 0L
 
-    fun peek(key: K): V? {
+    fun peek(key: K, allowStale: Boolean = false): V? {
         val entry = entries.remove(key) ?: return null
-        if (clock() >= entry.expires) {
+        val now = clock()
+        if (now >= entry.expires + (retainMs - ttlMs).coerceAtLeast(0)) {
             bytes -= entry.bytes
             return null
         }
         entries[key] = entry
-        return entry.value
+        return entry.value.takeIf { allowStale || now < entry.expires }
     }
 
     suspend fun load(key: K, fetch: suspend () -> V): V {

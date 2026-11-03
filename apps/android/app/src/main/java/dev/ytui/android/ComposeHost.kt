@@ -1068,13 +1068,13 @@ private fun BrowsePane(
     // Feed content follows a horizontal drag; a committed swipe slides the next tab or
     // category in from the side it was pulled from.
     val pull = remember { Animatable(0f) }
-    val entry = remember { Animatable(if (motion.animate) 0f else 1f) }
+    val entry = remember { Animatable(if (motion.animate && !feed.instantContent) 0f else 1f) }
     // A tab swipe recreates this pane (key(tab)); the direction is handed over once.
     var enterFrom by remember { mutableIntStateOf(pendingTabEntry.also { pendingTabEntry = 0 }) }
-    LaunchedEffect(tab, feed.request, reduced) {
+    LaunchedEffect(tab, feed.request, reduced, feed.instantContent) {
         // Plain feed changes are animated by the cards themselves (appearance); only a tab or
         // category swipe slides the whole grid, so the grid is not faded a second time.
-        if (!motion.animate || enterFrom == 0) entry.snapTo(1f)
+        if (!motion.animate || enterFrom == 0 || feed.instantContent) entry.snapTo(1f)
         else {
             entry.snapTo(0f)
             entry.animateTo(1f, motion.enter(if (enterFrom == 0) 260 else 340))
@@ -1326,7 +1326,7 @@ private fun BrowsePane(
                         .graphicsLayer {
                             // No offscreen buffer for a screen-sized scrolling grid.
                             compositingStrategy = CompositingStrategy.ModulateAlpha
-                            val settle = 1f - entry.value
+                            val settle = if (feed.instantContent) 0f else 1f - entry.value
                             val dragged = (abs(pull.value) / paneWidth).coerceIn(0f, 1f)
                             alpha = (1f - settle.coerceIn(0f, 1f)) * (1f - dragged * 0.6f)
                             translationX =
@@ -1404,7 +1404,10 @@ private fun BrowsePane(
                     contentType = { "media-card" },
                 ) { media ->
                     Box(
-                        Modifier.appearance(media.key, cardIndex[media.key] ?: 0, seen)
+                        Modifier.then(
+                                if (feed.instantContent) Modifier
+                                else Modifier.appearance(media.key, cardIndex[media.key] ?: 0, seen)
+                            )
                             .pressFeedback()
                     ) {
                         if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile)
