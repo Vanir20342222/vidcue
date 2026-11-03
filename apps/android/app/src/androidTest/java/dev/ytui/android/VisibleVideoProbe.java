@@ -9,27 +9,40 @@ import java.io.*;
 import java.util.concurrent.*;
 
 /**
- * Small GPU window readback, including overlays; no full-display screenshot latency in the budget.
+ * Small actual-window readback, including overlays. Request and completed evidence have distinct
+ * clocks; completion is a conservative upper bound, not an exact display-presentation timestamp.
  */
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 final class VisibleVideoProbe {
   static final class Result {
     final boolean rgb;
+    final long requestedAt;
     final long capturedAt;
 
     Result(boolean rgb, long capturedAt) {
+      this(rgb, -1, capturedAt);
+    }
+
+    Result(boolean rgb, long requestedAt, long capturedAt) {
       this.rgb = rgb;
+      this.requestedAt = requestedAt;
       this.capturedAt = capturedAt;
     }
   }
 
   static final class Frame {
     final Bitmap bitmap;
+    final long requestedAt;
     final long at;
     final int status;
 
     Frame(Bitmap bitmap, long at, int status) {
+      this(bitmap, -1, at, status);
+    }
+
+    Frame(Bitmap bitmap, long requestedAt, long at, int status) {
       this.bitmap = bitmap;
+      this.requestedAt = requestedAt;
       this.at = at;
       this.status = status;
     }
@@ -95,16 +108,15 @@ final class VisibleVideoProbe {
   }
 
   /**
-   * Time allowed for the GPU readback to finish after the window was sampled. Readback is probe
-   * overhead (hundreds of milliseconds on software-rendered emulators), not time the user waits, so
-   * it is not part of the startup budget. The sample itself must still be taken within the budget.
+   * Allow a late readback to provide diagnostics. Callers still qualify the original startup budget
+   * against capturedAt (completion); requesting a copy alone does not establish its sampled pixels.
    */
   private static final long READBACK_ALLOWANCE_MS = 2000;
 
   private static Result capture(Scheduler scheduler, long timing, String filename, long budgetMs)
       throws Exception {
     CompletableFuture<Frame> future = new CompletableFuture<>();
-    CountDownLatch sampled = new CountDownLatch(1);
+    CountDownLatch submitted = new CountDownLatch(1);
     scheduler.onActivity(
         activity -> {
           PlayerView view = find(activity.getWindow().getDecorView());
@@ -116,7 +128,7 @@ final class VisibleVideoProbe {
               || view.getHeight() < 1) {
             future.complete(
                 new Frame(null, SystemClock.elapsedRealtime(), PixelCopy.ERROR_SOURCE_NO_DATA));
-            sampled.countDown();
+            submitted.countDown();
             return;
           }
           int[] point = new int[2];
@@ -124,16 +136,18 @@ final class VisibleVideoProbe {
           Rect region =
               new Rect(point[0], point[1], point[0] + view.getWidth(), point[1] + view.getHeight());
           Bitmap target = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888);
-          // PixelCopy copies the window content present when it is requested; that request time
-          // is when this output was visible. Completing the copy is measurement overhead.
-          long sampledAt = SystemClock.elapsedRealtime();
+          // PixelCopy is asynchronous and supplies no buffer-presentation timestamp.
+          // Keep submission separate from the time genuine RGB evidence becomes available.
+          long requestedAt = SystemClock.elapsedRealtime();
           try {
             PixelCopy.request(
                 activity.getWindow(),
                 region,
                 target,
                 status -> {
-                  if (!future.complete(new Frame(target, sampledAt, status))) target.recycle();
+                  if (!future.complete(
+                      new Frame(target, requestedAt, SystemClock.elapsedRealtime(), status)))
+                    target.recycle();
                 },
                 MediaBridge.main);
           } catch (IllegalArgumentException unavailable) {
@@ -141,14 +155,13 @@ final class VisibleVideoProbe {
             future.complete(
                 new Frame(null, SystemClock.elapsedRealtime(), PixelCopy.ERROR_SOURCE_NO_DATA));
           }
-          sampled.countDown();
+          submitted.countDown();
         });
     Frame frame;
     long remaining = budgetMs - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
     try {
-      // The window must be sampled within the budget; the readback may finish afterwards.
-      if (!sampled.await(Math.max(1, remaining), TimeUnit.MILLISECONDS))
-        throw new TimeoutException("Window was not sampled within the budget");
+      if (!submitted.await(Math.max(1, remaining), TimeUnit.MILLISECONDS))
+        throw new TimeoutException("Window copy was not requested within the budget");
       frame = future.get(READBACK_ALLOWANCE_MS, TimeUnit.MILLISECONDS);
     } catch (TimeoutException late) {
       if (!future.cancel(false)) {
@@ -174,7 +187,7 @@ final class VisibleVideoProbe {
           new FileOutputStream(new File(MediaBridge.context.getExternalFilesDir(null), filename))) {
         frame.bitmap.compress(Bitmap.CompressFormat.PNG, 100, out);
       }
-      return new Result(red > 100 && green > 100 && blue > 100, frame.at);
+      return new Result(red > 100 && green > 100 && blue > 100, frame.requestedAt, frame.at);
     } finally {
       frame.bitmap.recycle();
     }
