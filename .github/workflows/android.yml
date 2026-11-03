@@ -3,8 +3,18 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Merge queue: the exact commit that will land on main is built and emulator-tested here.
+  merge_group:
+  # Nightly run that enforces the startup timing budgets (see docs/MERGE_PROCESS.md).
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
+      timing:
+        description: 'advisory records startup timings; enforce fails on the 1000/2000 ms budgets'
+        type: choice
+        default: advisory
+        options: [advisory, enforce]
       public_url:
         description: 'Optional public YouTube URL for a cookie-free live playback check'
         required: false
@@ -29,8 +39,26 @@ env:
   CARGO_TERM_COLOR: never
   # GitHub-hosted runners have 4 vCPUs; build.sh defaults to 2 for small PCs.
   YTUI_BUILD_JOBS: '4'
+  # Hosted software emulators miss timing budgets by tens of milliseconds at random, so pull
+  # requests and the merge queue only record timings. The nightly run enforces them; hangs still fail.
+  YTUI_ANDROID_TIMING: ${{ (github.event_name == 'schedule' && 'enforce') || inputs.timing || 'advisory' }}
 jobs:
+  changes:
+    name: Which checks apply
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      run: ${{ steps.filter.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: filter
+        run: echo "run=$(tools/ci/should-run.sh android)" >> "$GITHUB_OUTPUT"
+
   apk:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -168,3 +196,20 @@ jobs:
           name: android-device-tests-${{ github.sha }}-shard-${{ matrix.shard }}
           path: target/android-device-evidence/
           if-no-files-found: ignore
+
+  # The single required check for branch rulesets and the merge queue. Heavy jobs above are
+  # skipped for documentation-only and desktop-only changes; a skipped build passes, a failed
+  # or cancelled one does not.
+  gate:
+    name: Android gate
+    needs: [changes, apk, device]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every Android job to have passed or been skipped on purpose
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          case " $RESULTS " in *' failure '*|*' cancelled '*) exit 1;; esac

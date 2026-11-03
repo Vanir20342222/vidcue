@@ -10,8 +10,15 @@ baseline defects, milestones, migration requirements, and acceptance checks.
   CachyOS + Caelestia is the historical target. The user confirmed
   a terminal app with mpv playback, short muted previews on `v`, native radio with
   optional cliamp launch, and permits yt-dlp/FFmpeg as external tools.
-- Reference milestone IDs in changes and update completion evidence in the plan.
-  Coordinate shared model/service contracts before independent feature work.
+- Reference milestone IDs in changes. Record completion evidence in a new
+  `docs/changes/<date>-<slug>.md` note, not in the shared plan, parity or validation
+  files (the owner folds notes into them at release). Coordinate shared
+  model/service contracts before independent feature work.
+- Agents that push PRs follow [docs/AGENT_PR_RULES.md](docs/AGENT_PR_RULES.md): one topic
+  per PR, branch from latest `main`, fill `.github/pull_request_template.md`, never edit
+  workflows, versions or shared evidence docs unless the task is about them, never weaken
+  a test, and stop after two failed CI fixes on the same job. Merge flow and settings:
+  [docs/MERGE_PROCESS.md](docs/MERGE_PROCESS.md).
 - The user explicitly authorized removing the Python app on 2026-10-21 after
   documenting gaps. Rust is now the repository application. Keep migration and
   existing user settings, queues, history and downloaded files intact. Remaining

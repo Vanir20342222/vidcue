@@ -49,7 +49,7 @@ final class VisibleVideoProbe {
 
   static Result capture(ActivityScenario<RustActivity> scenario, long timing, String filename)
       throws Exception {
-    return capture(scenario, timing, filename, 2000);
+    return capture(scenario, timing, filename, StartupBudget.ms());
   }
 
   static Result capture(
