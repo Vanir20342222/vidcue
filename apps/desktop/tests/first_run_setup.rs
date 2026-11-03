@@ -140,7 +140,10 @@ async fn theme_preview_crossfades_and_reduced_motion_switches_instantly() {
     app.config.reduced_motion = true;
     app.key(KeyCode::Enter.into());
     app.key(KeyCode::Right.into());
-    assert_ne!(app.palette, start, "reduced motion applies the theme at once");
+    assert_ne!(
+        app.palette, start,
+        "reduced motion applies the theme at once"
+    );
     app.shutdown().await;
 }
 
