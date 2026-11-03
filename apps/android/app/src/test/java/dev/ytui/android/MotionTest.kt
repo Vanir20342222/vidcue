@@ -51,4 +51,13 @@ class MotionTest {
         assertEquals(150, spec.durationMillis)
         assertEquals(50, spec.delay)
     }
+
+    @Test
+    fun dragSettlingSpringsAreCrispAndOrderedByStyle() {
+        fun stiffness(style: String) = (Motion(style = style).spring<Float>() as SpringSpec).stiffness
+        assertTrue(stiffness("snappy") > stiffness("smooth"))
+        assertTrue(stiffness("smooth") > stiffness("gentle"))
+        // Release springs must not be the slow "medium-low" default that felt laggy.
+        assertTrue(stiffness("smooth") >= 1000f)
+    }
 }

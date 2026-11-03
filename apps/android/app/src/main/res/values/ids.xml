@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tag slot for the inline player's vertical-swipe (minimize / fullscreen) listener. -->
+    <item name="ytui_panel_swipe" type="id" />
+</resources>

@@ -948,6 +948,31 @@ container, so compilation and emulator/physical-device behaviour of the new
 gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
 Tab S9) are not yet qualified and must be checked before release.
 
+## Animation smoothness and watch-page swipes, 2026-11-03 (M9, qualification pending)
+
+Implemented (Android UI only; compile and device behaviour **not yet verified**,
+no Android SDK in the authoring container):
+
+- Smoother motion: release/press springs were the slow `StiffnessMediumLow`
+  (~0.5 s to settle) and are now 1400 (smooth) / 2200 (snappy) / 1100 (bouncy);
+  drag offsets are applied undispatched (no one-frame lag behind the finger);
+  the browse grid no longer fades as a whole screen-sized offscreen layer
+  (`CompositingStrategy.ModulateAlpha`) and no longer fades twice on plain feed
+  changes (cards already animate; only tab/category swipes slide the grid);
+  card stagger 35 → 22 ms; the music panel opens with slide + fade only.
+- YouTube-style video swipes on the inline player: dragging the video down moves
+  the whole watch page with the finger and minimizes on release (distance or
+  fling); swiping up opens fullscreen. In fullscreen, a downward swipe in the
+  middle third exits (left/right halves keep brightness/volume). Controlled by
+  the existing "Swipe to minimize" gesture toggle. Inline video no longer uses
+  the brightness/volume drag (fullscreen keeps it), as on YouTube.
+- This supersedes the earlier rule that the video panel is never moved by a
+  Compose graphics layer: the video is a `TextureView`, which transforms with
+  its layer; the video panel is translated/scaled but never faded.
+
+Open: emulator/physical-device check of the drag-to-minimize with live video,
+fullscreen swipe handoff, frame-time (jank) measurement, `MotionTest` run.
+
 ## Verified Preview release workflow, 2026-11-03 (M9)
 
 Added the manual **Release verified Android Preview** workflow
