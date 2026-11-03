@@ -1,5 +1,7 @@
 # ytui Rust rewrite plan
 
+M9 all-PR integration (2026-11-03): [combined features, fixes and release checks](docs/android/PR_INTEGRATION_2026-11-03.md).
+
 M9 subsecond-startup candidate: [scope, research and measurement](docs/android/SUBSECOND_STARTUP.md)
 track the new <1000 ms visible-and-playing target, separately from the earlier
 Tab S9 <2000 ms acceptance. This is an unmerged performance branch; native and
