@@ -335,6 +335,9 @@ public final class OfflineStore {
                     .put(
                         "storage_error",
                         StorageLocations.prefs().getString("error:" + d.request.id, ""))
+                    // Byte counts let the library show sizes, live speed and time left.
+                    .put("bytes", Math.max(0, d.getBytesDownloaded()))
+                    .put("total", d.contentLength > 0 ? d.contentLength : 0)
                     .put("progress", progress));
           }
         }

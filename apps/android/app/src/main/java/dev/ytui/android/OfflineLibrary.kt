@@ -38,7 +38,6 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     val playlists by vm.offlinePlaylists.collectAsState()
     val config by vm.config.collectAsState()
     val playerOpen by vm.playerOpen.collectAsState()
-    val error by vm.actionError.collectAsState()
     var section by rememberSaveable { mutableStateOf("Offline") }
     var add by remember { mutableStateOf(false) }
     var newPlaylist by remember { mutableStateOf(false) }
@@ -88,20 +87,31 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     }
                 }
             }
-            MediaIconButton(Glyph.Link, "Save a video or playlist offline", "add-download") {
+        }
+        // Labelled actions instead of two look-alike icons, plus what the library holds.
+        FlowRow(
+            Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Pill(
+                "Save a link",
+                Modifier.testTag("add-download").semantics {
+                    contentDescription = "Save a video or playlist offline"
+                },
+                glyph = Glyph.Link,
+            ) {
                 add = true
             }
-            MediaIconButton(Glyph.Queue, "Create offline playlist", "create-offline-playlist") {
+            Pill(
+                "New playlist",
+                Modifier.testTag("create-offline-playlist").semantics {
+                    contentDescription = "Create offline playlist"
+                },
+                glyph = Glyph.Plus,
+            ) {
                 newPlaylist = true
             }
         }
-        if (error != null)
-            Text(
-                error!!,
-                Modifier.padding(horizontal = MediaTokens.textInset),
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium,
-            )
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = MediaTokens.textInset, vertical = 4.dp),
@@ -109,6 +119,17 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         ) {
             when (section) {
                 "Offline" -> {
+                    if (available.isNotEmpty())
+                        item(key = "summary") {
+                            val stored = available.sumOf { it.optLong("bytes") }
+                            Text(
+                                (if (available.size == 1) "1 item" else "${available.size} items") +
+                                    if (stored > 0) " · ${byteLabel(stored)} on this device" else "",
+                                Modifier.padding(horizontal = 6.dp, vertical = 4.dp).testTag("library-summary"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     if (available.isEmpty())
                         item {
                             EmptyMediaState(
@@ -160,13 +181,6 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     }
                 }
                 "Playlists" -> {
-                    item {
-                        SheetAction(
-                            text = { Text("New playlist") },
-                            leadingIcon = { MediaIcon(Glyph.Plus) },
-                            onClick = { newPlaylist = true },
-                        )
-                    }
                     if (playlists.isEmpty())
                         item {
                             EmptyMediaState(
@@ -197,6 +211,21 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     }
                 }
                 else -> {
+                    val active =
+                        transfers.filter {
+                            !it.optString("id").startsWith("export:") &&
+                                !it.optString("id").startsWith("job:") &&
+                                transferAction(it).second == "Pause download"
+                        }
+                    if (active.size > 1)
+                        item(key = "pause-all") {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                QuietAction("Pause all", Modifier.testTag("transfers-pause-all")) {
+                                    for (item in active)
+                                        vm.effect("download_toggle", "id" to item.optString("id"))
+                                }
+                            }
+                        }
                     if (transfers.isEmpty())
                         item {
                             EmptyMediaState(
@@ -213,10 +242,15 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 .takeIf { it.isFinite() }
                                 ?.coerceIn(0f, 1f) ?: 0f
                         val (glyph, label) = transferAction(item)
+                        val rate = rememberTransferRate(item)
                         MediaListRow(
                             item.optString("title"),
-                            item.optString("state") +
-                                if (progress > 0f) " · ${(progress * 100).toInt()}%" else "",
+                            listOfNotNull(
+                                    item.optString("state"),
+                                    if (progress > 0f) "${(progress * 100).toInt()}%" else null,
+                                    rate,
+                                )
+                                .joinToString(" · "),
                             artwork = { modifier ->
                                 item.optJSONObject("media")?.let {
                                     Artwork(MediaCard(it), modifier, thumbnails)
@@ -396,12 +430,31 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                LazyColumn(Modifier.weight(1f, fill = false)) {
-                    itemsIndexed(items, key = { _, it -> it.optString("offline_id") }) { index, item
-                        ->
+                ReorderableList(
+                    items,
+                    key = { it.optString("offline_id") },
+                    onMove = { from, to ->
+                        vm.updateOfflinePlaylist(
+                            opened,
+                            items = items.toMutableList().apply { add(to, removeAt(from)) },
+                        )
+                    },
+                    modifier = Modifier.weight(1f, fill = false),
+                    onSwipeRemove = { index, _ ->
+                        vm.updateOfflinePlaylist(
+                            opened,
+                            items = items.filterIndexed { at, _ -> at != index },
+                        )
+                    },
+                ) { index, item, handle ->
                         val saved =
                             available.any { it.optString("id") == item.optString("offline_id") }
                         var menu by remember(item.optString("offline_id")) { mutableStateOf(false) }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(handle.size(36.dp, 56.dp), contentAlignment = Alignment.Center) {
+                            MediaIcon(Glyph.Drag, Modifier.size(20.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Box(Modifier.weight(1f)) {
                         MediaListRow(
                             item.optString("title"),
                             if (saved) item.optString("creator") else "Offline copy unavailable",
@@ -446,7 +499,8 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 }
                             }
                         }
-                    }
+                        }
+                        }
                 }
             }
         }
@@ -523,4 +577,41 @@ private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
             Action("Save offline", enabled = url.isNotBlank()) { save() }
         }
     }
+}
+
+internal fun byteLabel(bytes: Long): String =
+    when {
+        bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
+        bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
+        else -> "%.0f KB".format(bytes / 1024.0)
+    }
+
+/**
+ * Speed and time left for a running transfer, from how many bytes arrived between snapshots.
+ * Smoothed so the label does not flicker; null until there is something honest to show.
+ */
+@Composable
+private fun rememberTransferRate(item: JSONObject): String? {
+    val id = item.optString("id")
+    val bytes = item.optLong("bytes")
+    val total = item.optLong("total")
+    var last by remember(id) { mutableStateOf(bytes to android.os.SystemClock.elapsedRealtime()) }
+    var speed by remember(id) { mutableDoubleStateOf(0.0) }
+    LaunchedEffect(bytes) {
+        val now = android.os.SystemClock.elapsedRealtime()
+        val (before, at) = last
+        if (bytes > before && now > at) {
+            val sample = (bytes - before) * 1000.0 / (now - at)
+            speed = if (speed == 0.0) sample else speed * 0.7 + sample * 0.3
+        }
+        last = bytes to now
+    }
+    if (speed <= 0.0 || item.optString("state") == "Paused") return null
+    val perSecond = "${byteLabel(speed.toLong())}/s"
+    if (total <= bytes) return perSecond
+    val seconds = ((total - bytes) / speed).toLong()
+    val left =
+        if (seconds >= 3600) "${seconds / 3600} h ${seconds / 60 % 60} min left"
+        else if (seconds >= 60) "${seconds / 60} min left" else "${seconds.coerceAtLeast(1)} s left"
+    return "$perSecond · $left"
 }

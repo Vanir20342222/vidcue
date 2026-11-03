@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The video controller uses ytui's own line glyphs instead of Media3's defaults. -->
+<resources>
+    <drawable name="exo_styled_controls_previous">@drawable/ytui_previous</drawable>
+    <drawable name="exo_styled_controls_next">@drawable/ytui_next</drawable>
+    <drawable name="exo_styled_controls_rewind">@drawable/ytui_rewind</drawable>
+    <drawable name="exo_styled_controls_fastforward">@drawable/ytui_forward</drawable>
+    <drawable name="exo_styled_controls_fullscreen_enter">@drawable/ytui_fullscreen_enter</drawable>
+    <drawable name="exo_styled_controls_fullscreen_exit">@drawable/ytui_fullscreen_exit</drawable>
+    <drawable name="exo_styled_controls_subtitle_on">@drawable/ytui_captions_on</drawable>
+    <drawable name="exo_styled_controls_subtitle_off">@drawable/ytui_captions_off</drawable>
+    <drawable name="exo_styled_controls_overflow_show">@drawable/ytui_chevron_right</drawable>
+    <drawable name="exo_styled_controls_overflow_hide">@drawable/ytui_chevron_left</drawable>
+    <drawable name="exo_styled_controls_repeat_all">@drawable/ytui_repeat_all</drawable>
+    <drawable name="exo_styled_controls_repeat_off">@drawable/ytui_repeat_off</drawable>
+    <drawable name="exo_styled_controls_repeat_one">@drawable/ytui_repeat_one</drawable>
+    <drawable name="exo_styled_controls_play">@drawable/ytui_play</drawable>
+    <drawable name="exo_styled_controls_pause">@drawable/ytui_pause</drawable>
+</resources>

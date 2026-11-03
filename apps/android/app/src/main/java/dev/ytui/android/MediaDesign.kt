@@ -158,6 +158,8 @@ internal enum class Glyph {
     Lock,
     Browse,
     Refresh,
+    Drag,
+    Clipboard,
 }
 
 @Composable
@@ -414,6 +416,30 @@ internal fun MediaIcon(
                         style = Stroke(1.8f, cap = StrokeCap.Round),
                     )
                     outline(14.5f to 3f, 17f to 6.2f, 13.2f to 7.8f)
+                }
+                Glyph.Drag ->
+                    for (x in listOf(9f, 15f)) for (y in listOf(6f, 12f, 18f)) drawCircle(
+                        tint,
+                        1.6f,
+                        Offset(x, y),
+                    )
+                Glyph.Clipboard -> {
+                    drawRoundRect(
+                        tint,
+                        Offset(5f, 4.5f),
+                        Size(14f, 16.5f),
+                        CornerRadius(2.5f),
+                        style = Stroke(1.8f),
+                    )
+                    drawRoundRect(
+                        tint,
+                        Offset(9f, 2.5f),
+                        Size(6f, 4f),
+                        CornerRadius(1.5f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                    line(8.5f, 11f, 15.5f, 11f)
+                    line(8.5f, 15f, 13f, 15f)
                 }
                 Glyph.History,
                 Glyph.Info -> {

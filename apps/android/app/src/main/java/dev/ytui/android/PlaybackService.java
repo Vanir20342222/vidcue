@@ -1836,6 +1836,8 @@ public final class PlaybackService extends MediaSessionService {
               .put("play_when_ready", player.getPlayWhenReady())
               .put("suppression", player.getPlaybackSuppressionReason())
               .put("paused", pausedByUser)
+              // Elapsed-realtime deadline (0 = off); the UI counts down from it locally.
+              .put("sleep_deadline", sleepDeadline)
               .put("navigation_pending", navigationPending || queuedNext > 0)
               .put("next_preloaded", PlaybackCache.isReady())
               .put("start_ms", startMs)

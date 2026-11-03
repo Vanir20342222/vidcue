@@ -65,6 +65,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -182,7 +183,7 @@ internal fun time(seconds: Float): String {
     else "%d:%02d".format(value / 60, value % 60)
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.animation.ExperimentalSharedTransitionApi::class)
 @Composable
 private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val dark = isSystemInDarkTheme()
@@ -346,6 +347,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             LocalIndication provides SoftIndication,
             LocalRippleConfiguration provides null,
         ) {
+            androidx.compose.animation.SharedTransitionLayout(Modifier.fillMaxSize()) {
+            CompositionLocalProvider(
+                LocalSharedScope provides this,
+                LocalPlayerExpanded provides (playerOpen && !videoPlayer),
+            ) {
             Box(Modifier.fillMaxSize()) {
                 // While setup is shown the app beneath is not composed at all, so neither
                 // touch, keyboard focus, TalkBack nor a notification-opened player can reach
@@ -366,6 +372,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     Column(Modifier.fillMaxSize()) {
                         // First in traversal order, so a root re-entry also lands here.
                         Spacer(Modifier.size(0.dp).focusRequester(focusSink).focusable())
+                        // The page title and actions; on tablets they sit over the content
+                        // column, beside the navigation dock, instead of spanning the window.
+                        @Composable
+                        fun Toolbar() {
                         AnimatedVisibility(
                             visible = !searchMode,
                             enter =
@@ -456,11 +466,15 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 }
                             }
                         }
+                        }
+                        if (!tabletLayout) Toolbar()
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             val tablet = tabletLayout
                             Row(Modifier.fillMaxSize()) {
                                 if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
-                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                Column(Modifier.weight(1f).fillMaxHeight()) {
+                                if (tablet) Toolbar()
+                                Box(Modifier.weight(1f).fillMaxWidth()) {
                                     if (tab == 0) OfflineLibrary(vm)
                                     else
                                         key(tab) {
@@ -476,6 +490,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                                 scrollToTop = scrollToTop,
                                             )
                                         }
+                                }
                                 }
                                 if (tablet && hasPlayer) {
                                     TabletPlayerPanel(vm, colors) {
@@ -636,6 +651,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             }
                         }
                 }
+                if (!onboarding && !fullscreen)
+                    NoticeHost(
+                        vm,
+                        bottom =
+                            with(LocalDensity.current) {
+                                WindowInsets.safeDrawing.getBottom(this).toDp()
+                            } + if (playerOpen || tabletLayoutOf()) 24.dp else if (hasPlayer) 156.dp else 92.dp,
+                    )
                 val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,
@@ -650,30 +673,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ActionError(vm: YtuiViewModel) {
-    val error by vm.actionError.collectAsState()
-    if (error != null)
-        Surface(
-            color = MaterialTheme.colorScheme.errorContainer,
-            shape = RoundedCornerShape(16.dp),
-        ) {
-            Row(
-                Modifier.fillMaxWidth().padding(start = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    error!!,
-                    Modifier.weight(1f).padding(vertical = 12.dp),
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-                MediaIconButton(Glyph.Close, "Dismiss error") { vm.actionError.value = null }
+            }
             }
         }
+    }
 }
 
 @Composable
@@ -747,7 +750,8 @@ internal fun Panel(
                         textAlign = if (full) TextAlign.Center else TextAlign.Start,
                     )
                     if (full) Spacer(Modifier.size(48.dp))
-                    if (!full && (!page || headerBack != null)) SheetClose(dismiss)
+                    // Sub-pages go back one level; only the top page and sheets close.
+                    if (!full && !page) SheetClose(dismiss)
                 }
             else if (!full && !page)
                 // Untitled action sheets keep a close control without spending a header row.
@@ -965,6 +969,8 @@ private fun BrowsePane(
             ?.let { query = it }
     }
     val focus = remember { FocusRequester() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val rememberSearches = config.optBoolean("playback_history", true)
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = feed.scrollIndex)
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
@@ -986,11 +992,33 @@ private fun BrowsePane(
     val playingNow by
         remember(vm) { vm.player.map { it.playing }.distinctUntilChanged() }.collectAsState(false)
     val cardsByKey = remember(feed.cards) { feed.cards.associateBy { it.key } }
+    // Provider sections ("Quick picks", "Listen again") become titled shelves once a feed has
+    // at least two of them; search results and single-section feeds stay a grid.
+    val shelves =
+        remember(feed.cards, tab, feed.request) {
+            val searching = (feed.request as? JSONObject)?.has("Search") == true
+            if (tab !in 1..2 || searching) null
+            else
+                feed.cards
+                    .groupBy {
+                        it.value.optString("section").takeUnless { s -> s.isBlank() || s == "null" } ?: ""
+                    }
+                    .takeIf { groups -> groups.keys.count { it.isNotBlank() } >= 2 }
+                    ?.entries
+                    ?.map { it.key to it.value }
+        }
     LaunchedEffect(grid, feed.cards, focused) {
         if (!focused)
             snapshotFlow {
                     val visible =
-                        grid.layoutInfo.visibleItemsInfo.mapNotNull { info -> cardsByKey[info.key] }
+                        grid.layoutInfo.visibleItemsInfo.flatMap { info ->
+                            cardsByKey[info.key]?.let(::listOf)
+                                ?: shelves
+                                    ?.firstOrNull { "shelf:${it.first}" == info.key }
+                                    ?.second
+                                    ?.take(2)
+                                ?: emptyList()
+                        }
                     visible.take(3)
                 }
                 .distinctUntilChanged()
@@ -1056,11 +1084,11 @@ private fun BrowsePane(
                 },
                 onSubmit = {
                     keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
                     vm.search(query)
                 },
             )
         }
-        ActionError(vm)
         if (tab in 1..2 || feed.categories.isNotEmpty())
             LazyRow(
                 Modifier.fillMaxWidth().testTag("feed-filters"),
@@ -1109,6 +1137,7 @@ private fun BrowsePane(
         var refreshing by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
         val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         PullToRefreshBox(
             refreshing && feed.loading,
             onRefresh = {
@@ -1118,7 +1147,7 @@ private fun BrowsePane(
             state = pullState,
             indicator = { RefreshDisc(pullState, refreshing && feed.loading) },
             modifier =
-                Modifier.weight(1f).fillMaxWidth().pointerInput(searchActive) {
+                Modifier.fillMaxSize().pointerInput(searchActive) {
                     // Touching content ends an unsubmitted search session, as tapping
                     // outside a field does elsewhere. The touch itself is not consumed.
                     if (searchActive)
@@ -1211,7 +1240,60 @@ private fun BrowsePane(
                             )
                         }
                     }
-                items(
+                if (shelves != null)
+                    for ((section, cards) in shelves) {
+                        item(
+                            span = { GridItemSpan(maxLineSpan) },
+                            key = "shelf-head:$section",
+                            contentType = "shelf-head",
+                        ) {
+                            Text(
+                                section.ifBlank { "More for you" },
+                                Modifier.padding(
+                                        start = if (tab == 1) MediaTokens.textInset else 0.dp,
+                                        top = 4.dp,
+                                    )
+                                    .semantics { heading() }
+                                    .testTag("shelf-$section"),
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                        }
+                        item(
+                            span = { GridItemSpan(maxLineSpan) },
+                            key = "shelf:$section",
+                            contentType = "shelf",
+                        ) {
+                            LazyRow(
+                                Modifier.fillMaxWidth(),
+                                contentPadding =
+                                    PaddingValues(horizontal = if (tab == 1) MediaTokens.textInset else 0.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
+                                    CompositionLocalProvider(
+                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
+                                    ) {
+                                        Box(
+                                            Modifier.width(if (tab == 1) 272.dp else 152.dp).pressFeedback()
+                                        ) {
+                                            val current = media.url.isNotBlank() && media.url == playingUrl
+                                            MediaRow(
+                                                vm,
+                                                media,
+                                                tab,
+                                                thumbnails,
+                                                mobile,
+                                                current,
+                                                current && playingNow,
+                                                shelf = true,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                else items(
                     feed.cards,
                     key = { it.key },
                     span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
@@ -1280,6 +1362,33 @@ private fun BrowsePane(
                         }
                     }
             }
+        }
+        // While the field is focused and empty, recent searches cover the feed (which stays
+        // composed underneath so focus and scroll position survive).
+        androidx.compose.animation.AnimatedVisibility(
+            searchActive && query.isBlank(),
+            Modifier.matchParentSize(),
+            enter = fadeIn(motion.fade(160)),
+            exit = fadeOut(motion.fade(120)),
+        ) {
+            SearchSuggestions(
+                radio = tab == 3,
+                remember = rememberSearches,
+                onSearch = {
+                    query = it
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
+                    vm.search(it)
+                },
+                onPaste = {
+                    query = it
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
+                    vm.search(it)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         }
     }
 }
@@ -1389,13 +1498,17 @@ private fun MediaRow(
     mobile: JSONObject,
     current: Boolean = false,
     playing: Boolean = false,
+    shelf: Boolean = false,
 ) {
     val square = tab in 2..3 || media.kind in setOf("album", "song", "station")
+    // Feed video art is full bleed; in a shelf it is a rounded object like the music covers.
+    val bleed = !square && !shelf
+    val artShape = if (bleed) RoundedCornerShape(0.dp) else MediaTokens.medium
     Column(Modifier.fillMaxWidth().testTag("media-card-${media.key}")) {
         Box(
             Modifier.fillMaxWidth()
                 .aspectRatio(if (square) 1f else 16f / 9f)
-                .clip(if (square) MediaTokens.medium else RoundedCornerShape(0.dp))
+                .clip(artShape)
         ) {
             Artwork(
                 media,
@@ -1403,7 +1516,7 @@ private fun MediaRow(
                     .clickable { vm.play(media) }
                     .semantics { contentDescription = "Play ${media.title}" },
                 thumbnails,
-                shape = if (square) MediaTokens.medium else RoundedCornerShape(0.dp),
+                shape = artShape,
             )
             if (media.live || !square)
                 MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
@@ -1419,13 +1532,13 @@ private fun MediaRow(
         Row(
             Modifier.fillMaxWidth()
                 .padding(
-                    start = if (square) 0.dp else 16.dp,
-                    end = if (square) 0.dp else 4.dp,
+                    start = if (bleed) 16.dp else 0.dp,
+                    end = if (bleed) 4.dp else 0.dp,
                     top = 8.dp,
                 ),
             verticalAlignment = Alignment.Top,
         ) {
-            if (!square) {
+            if (bleed) {
                 ChannelAvatar(
                     if (mobile.optBoolean("show_channel", true)) media.creator else "",
                     36.dp,
@@ -1479,7 +1592,7 @@ private fun MediaRow(
                     )
                 media.value
                     .optString("section")
-                    .takeIf { it.isNotBlank() && mobile.optBoolean("show_section") }
+                    .takeIf { it.isNotBlank() && !shelf && mobile.optBoolean("show_section") }
                     ?.let {
                         Text(
                             it,
@@ -1514,46 +1627,82 @@ private fun MediaCardActions(
                     menu = false
                     action()
                 }
-                SheetAction(
-                    text = { Text(if (media.collection) "Open collection" else "Play now") },
-                    leadingIcon = { MediaIcon(Glyph.Play) },
-                    onClick = { execute { vm.play(media) } },
-                )
+                // The four things people do most, as big targets; the rest as rows below.
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    QuickTile(
+                        Glyph.Play,
+                        if (media.collection) "Open collection" else "Play now",
+                        Modifier.weight(1f),
+                        primary = true,
+                    ) {
+                        execute { vm.play(media) }
+                    }
+                    QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
+                        execute { vm.enqueue(media) }
+                    }
+                    if (!media.live)
+                        QuickTile(Glyph.Download, "Download", Modifier.weight(1f)) {
+                            execute { vm.play(media, download = true) }
+                        }
+                    if (!media.collection && !media.live)
+                        QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
+                            execute { vm.play(media, preview = true) }
+                        }
+                }
                 if (media.collection)
-                    SheetAction(
-                        text = { Text("Play all") },
-                        leadingIcon = { MediaIcon(Glyph.Queue) },
-                        onClick = { execute { vm.playCollection(media) } },
-                    )
-                if (!media.collection && !media.live)
-                    SheetAction(
-                        text = { Text("Preview") },
-                        leadingIcon = { MediaIcon(Glyph.Preview) },
-                        onClick = { execute { vm.play(media, preview = true) } },
-                    )
-                SheetAction(
-                    text = { Text("Add to queue") },
-                    leadingIcon = { MediaIcon(Glyph.Queue) },
-                    onClick = { execute { vm.enqueue(media) } },
-                )
-                SheetAction(
-                    text = { Text("Save to library") },
-                    leadingIcon = { MediaIcon(Glyph.Save) },
-                    onClick = { execute { vm.save(media) } },
-                )
-                if (!media.live)
-                    SheetAction(
-                        text = { Text("Download") },
-                        leadingIcon = { MediaIcon(Glyph.Download) },
-                        onClick = { execute { vm.play(media, download = true) } },
-                    )
+                    ValueRow("Play all", glyph = Glyph.Queue, chevron = false) {
+                        execute { vm.playCollection(media) }
+                    }
+                ValueRow(
+                    "Bookmark",
+                    glyph = Glyph.Save,
+                    subtitle = "Keep a link in Saved locally, without downloading",
+                    chevron = false,
+                ) {
+                    execute { vm.save(media) }
+                }
                 if (media.value.optString("tracks_url").let { it.isNotBlank() && it != "null" })
-                    SheetAction(
-                        text = { Text("Browse tracks") },
-                        leadingIcon = { MediaIcon(Glyph.Music) },
-                        onClick = { execute { vm.tracks(media) } },
-                    )
+                    ValueRow("Browse tracks", glyph = Glyph.Music) { execute { vm.tracks(media) } }
             }
+    }
+}
+
+/** Big square-ish action in an item's sheet: glyph over a short label. */
+@Composable
+private fun QuickTile(
+    glyph: Glyph,
+    label: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    action: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val ink = if (primary) colors.background else colors.onSurface
+    CompositionLocalProvider(LocalContentColor provides ink) {
+        Column(
+            modifier
+                .pressScale(source, 0.94f)
+                .heightIn(min = 76.dp)
+                .clip(MediaTokens.card)
+                .background(if (primary) colors.onBackground else colors.onSurface.copy(alpha = 0.07f))
+                .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+                .padding(horizontal = 6.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterVertically),
+        ) {
+            MediaIcon(glyph, Modifier.size(22.dp), ink)
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = ink,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
+        }
     }
 }
 
@@ -1648,29 +1797,6 @@ private fun MediaDurationBadge(media: MediaCard, mobile: JSONObject, modifier: M
             if (media.live) "Live" else time(media.value.optLong("duration").toFloat()),
             modifier.testTag("duration-${media.key}"),
         )
-}
-
-/** Sleep timer choices shared by the main sheet and the fullscreen options panel. */
-@Composable
-internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
-    for (minutes in listOf(15, 30, 60, 120)) {
-        SheetAction(
-            text = { Text("$minutes minutes") },
-            leadingIcon = { MediaIcon(Glyph.Sleep) },
-            onClick = {
-                vm.command("sleep", "seconds" to minutes * 60)
-                done()
-            },
-        )
-    }
-    SheetAction(
-        text = { Text("Cancel timer") },
-        leadingIcon = { MediaIcon(Glyph.Close) },
-        onClick = {
-            vm.command("sleep_cancel")
-            done()
-        },
-    )
 }
 
 /**
@@ -2088,7 +2214,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         if (style == "classic")
             Artwork(
                 media,
-                Modifier.fillMaxSize().align(Alignment.Center),
+                Modifier.fillMaxSize().align(Alignment.Center).sharedCover(media.key, LocalPlayerExpanded.current),
                 config.optBoolean("thumbnails", true),
                 shape = RoundedCornerShape(cornerRadius),
             )
@@ -2217,21 +2343,26 @@ private fun SettingsPanel(
         remember(config.optString("proxy")) {
             mutableStateOf(config.optString("proxy").takeUnless { it == "null" } ?: "")
         }
+    // Wide windows show the sections beside their content instead of one page at a time.
+    val twoPane = LocalConfiguration.current.screenWidthDp >= 960
+    val shown = if (twoPane && category.isBlank()) "Appearance" else category
     Panel(
-        category.ifBlank { "Settings" },
+        if (twoPane) "Settings" else category.ifBlank { "Settings" },
         close,
         page = true,
-        headerBack = if (category.isNotBlank()) ({ category = "" }) else null,
+        scroll = !twoPane,
+        headerBack = if (!twoPane && category.isNotBlank()) ({ category = "" }) else null,
         headerBackTag = "settings-back",
     ) {
-        BackHandler(category.isNotBlank()) { category = "" }
-        if (category.isBlank()) {
+        BackHandler(category.isNotBlank() && !twoPane) { category = "" }
+        @Composable
+        fun RootList() {
             for ((group, rows) in
                 listOf(
                     "Look and feel" to
                         listOf(
                             Triple("Appearance", Glyph.Palette, "Theme, motion, music player, gestures"),
-                            Triple("Video information", Glyph.Info, "Choose what cards show"),
+                            Triple("What cards show", Glyph.Info, "Channel, views, dates and more on each card"),
                         ),
                     "Listening" to
                         listOf(
@@ -2256,7 +2387,13 @@ private fun SettingsPanel(
                             label,
                             glyph = icon,
                             subtitle = detail,
-                            modifier = Modifier.testTag("settings-$label"),
+                            modifier =
+                                Modifier.testTag("settings-$label").then(
+                                    if (twoPane && shown == label)
+                                        Modifier.clip(MediaTokens.medium)
+                                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                    else Modifier
+                                ),
                         ) {
                             when (label) {
                                 "Account" -> onAccount()
@@ -2274,17 +2411,36 @@ private fun SettingsPanel(
                 textAlign = TextAlign.Center,
             )
         }
-        if (category == "Appearance")
+        @Composable
+        fun CategoryContent() {
+        if (shown == "Appearance")
             SettingGroup("Appearance", "Colour, artwork and motion", showTitle = false) {
                 Box {
-                    ValueRow(
-                        "Theme: ${config.optString("theme", "system")}",
-                        Modifier.testTag("theme-selector"),
-                        glyph = Glyph.Palette,
-                        subtitle = "Applies immediately and is saved automatically",
-                    ) {
-                        themeMenu = true
-                    }
+                    val palettes by vm.palettes.collectAsState()
+                    LaunchedEffect(Unit) { vm.loadPalettes() }
+                    val current = config.optString("theme", "system")
+                    SheetAction(
+                        modifier = Modifier.testTag("theme-selector"),
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("Theme", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                Text(
+                                    if (current == "custom") "Imported palette" else themeLabel(current),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                        leadingIcon = {
+                            GlyphTile(Glyph.Palette, Modifier.size(36.dp).clip(MediaTokens.medium))
+                        },
+                        trailing = {
+                            PaletteSwatch(
+                                if (current == "custom") appliedPalette else palettes.optJSONObject(current)
+                            )
+                        },
+                        onClick = { themeMenu = true },
+                    )
                     if (themeMenu)
                         MediaDialog(
                             { themeMenu = false },
@@ -2308,15 +2464,17 @@ private fun SettingsPanel(
                                                 themeMenu = false
                                                 vm.updateConfig(dark) { it.put("theme", name) }
                                             }
-                                            .padding(horizontal = 8.dp),
+                                            .padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                                     ) {
                                         ChoiceMark(selectedTheme == name)
                                         Text(
-                                            name.replace('-', ' ').replaceFirstChar(Char::titlecase),
+                                            themeLabel(name),
+                                            Modifier.weight(1f),
                                             style = MaterialTheme.typography.bodyLarge,
                                         )
+                                        PaletteSwatch(palettes.optJSONObject(name))
                                     }
                                 }
                             }
@@ -2360,7 +2518,7 @@ private fun SettingsPanel(
                     vm.updateConfig(dark) { it.put("music_player_style", value) }
                 }
             }
-        if (category == "Playback")
+        if (shown == "Playback")
             SettingGroup("Playback", showTitle = false) {
                 // One setting backs both playback and offline saves.
                 Choice(
@@ -2383,17 +2541,17 @@ private fun SettingsPanel(
                     vm.updateConfig(dark) { it.put("playback_sponsorblock", value) }
                 }
             }
-        if (category == "Privacy")
+        if (shown == "Privacy")
             SettingGroup("Privacy", showTitle = false) {
                 SettingToggle(
                     "History & resume",
                     config.optBoolean("playback_history", true),
-                    "Remember playback locally on this device",
+                    "Remember playback and recent searches on this device",
                 ) { value ->
                     vm.updateConfig(dark) { it.put("playback_history", value) }
                 }
             }
-        if (category == "Performance") {
+        if (shown == "Performance") {
             val player by vm.player.collectAsState()
             val report = remember(player) { StartupTimings.report() }
             val context = androidx.compose.ui.platform.LocalContext.current
@@ -2423,7 +2581,7 @@ private fun SettingsPanel(
                 }
             }
         }
-        if (category == "Network")
+        if (shown == "Network")
             SettingGroup(
                 "Network",
                 "Your Android VPN works normally. Changes apply to new connections.",
@@ -2442,7 +2600,7 @@ private fun SettingsPanel(
                     }
                 }
             }
-        if (category == "Appearance")
+        if (shown == "Appearance")
             SettingGroup("Motion") {
                 val reducedMotion = config.optBoolean("reduced_motion")
                 if (reducedMotion)
@@ -2492,11 +2650,21 @@ private fun SettingsPanel(
                     vm.updateMobile("haptics", it)
                 }
             }
-        if (category == "Appearance")
+        if (shown == "Appearance")
             SettingGroup("Gestures") {
                 val gesturesOn = mobile.optBoolean("gestures", true)
                 SettingToggle("Swipe gestures", gesturesOn, "Master switch for every gesture below") {
                     vm.updateMobile("gestures", it)
+                }
+                val context = androidx.compose.ui.platform.LocalContext.current
+                ValueRow(
+                    "Show gesture tips again",
+                    glyph = Glyph.Info,
+                    subtitle = "The mini player shows how to swipe it next time it appears",
+                    chevron = false,
+                ) {
+                    GestureTips.reset(context)
+                    vm.confirm("tips")
                 }
                 if (gesturesOn) {
                     for ((key, title, detail) in GESTURE_SETTINGS)
@@ -2515,7 +2683,7 @@ private fun SettingsPanel(
                         }
                 }
             }
-        if (category == "Playback")
+        if (shown == "Playback")
             SettingGroup("Fast playback") {
                 for ((key, label) in
                     listOf(
@@ -2553,7 +2721,7 @@ private fun SettingsPanel(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        if (category == "Offline & storage")
+        if (shown == "Offline & storage")
             SettingGroup("Offline media", showTitle = false) {
                 SettingToggle(
                     "Audio-only saves",
@@ -2598,7 +2766,7 @@ private fun SettingsPanel(
                     vm.effect("folder_retry")
                 }
             }
-        if (category == "Video information")
+        if (shown == "What cards show")
             SettingGroup("Visible information") {
                 for ((key, label) in
                     listOf(
@@ -2618,7 +2786,27 @@ private fun SettingsPanel(
                     }
                 }
             }
-        ActionError(vm)
+        }
+        if (twoPane)
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Column(
+                    Modifier.width(360.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    RootList()
+                }
+                Column(
+                    Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(shown, style = MaterialTheme.typography.headlineSmall)
+                    CategoryContent()
+                }
+            }
+        else {
+            if (category.isBlank()) RootList()
+            CategoryContent()
+        }
     }
 }
 
@@ -2940,7 +3128,31 @@ private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
     val queue by vm.queue.collectAsState()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
+    // Sheets sit above the app's notice layer, so undo lives inside the sheet.
+    var undo by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    LaunchedEffect(undo) {
+        if (undo != null) {
+            delay(6_000)
+            undo = null
+        }
+    }
     Panel("Playback queue", close, scroll = false) {
+        undo?.let { (text, restore) ->
+            Row(
+                Modifier.fillMaxWidth()
+                    .clip(MediaTokens.medium)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    .padding(start = 14.dp)
+                    .testTag("queue-undo"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                QuietAction("Undo") {
+                    restore()
+                    undo = null
+                }
+            }
+        }
         if (queue.isEmpty())
             EmptyMediaState(
                 Glyph.Queue,
@@ -2948,79 +3160,106 @@ private fun QueuePanel(vm: YtuiViewModel, close: () -> Unit) {
                 "Add a video or song to play it next.",
                 Modifier.testTag("queue-empty"),
             )
-        else
-            LazyColumn(
-                Modifier.weight(1f, fill = false).fillMaxWidth().testTag("queue-list"),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+        else {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                itemsIndexed(queue) { index, media ->
-                    var actions by remember(media.key) { mutableStateOf(false) }
-                    Row(
-                        Modifier.fillMaxWidth().testTag("queue-item-${media.key}"),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.weight(1f)) {
-                            LibraryMediaRow(
-                                media,
-                                config.optBoolean("thumbnails", true),
-                                mobile.optBoolean("show_channel", true),
-                            ) {
+                Text(
+                    if (queue.size == 1) "1 item · drag to reorder, swipe to remove"
+                    else "${queue.size} items · drag to reorder, swipe to remove",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                QuietAction("Clear queue", Modifier.testTag("queue-clear"), destructive = true) {
+                    val saved = queue
+                    vm.clearQueue(saved)
+                    undo = "Queue cleared" to { vm.requeue(saved) }
+                }
+            }
+            ReorderableList(
+                queue,
+                key = { it.key },
+                onMove = { from, to -> vm.moveQueue(from, to, queue[from]) },
+                modifier = Modifier.weight(1f, fill = false).fillMaxWidth().testTag("queue-list"),
+                swipeEnabled = mobile.optBoolean("gestures", true),
+                onSwipeRemove = { index, media ->
+                    vm.removeQueue(index, media)
+                    undo = "Removed ${media.title}" to { vm.restoreQueue(index, media) }
+                },
+            ) { index, media, handle ->
+                var actions by remember(media.key) { mutableStateOf(false) }
+                Row(
+                    Modifier.fillMaxWidth().testTag("queue-item-${media.key}"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(handle.size(40.dp, 56.dp), contentAlignment = Alignment.Center) {
+                        MediaIcon(
+                            Glyph.Drag,
+                            Modifier.size(20.dp),
+                            MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Box(Modifier.weight(1f)) {
+                        LibraryMediaRow(
+                            media,
+                            config.optBoolean("thumbnails", true),
+                            mobile.optBoolean("show_channel", true),
+                        ) {
+                            vm.play(media, queued = true)
+                            close()
+                        }
+                    }
+                    Box {
+                        MediaIconButton(Glyph.More, "Queue actions", "queue-menu-${media.key}") {
+                            actions = true
+                        }
+                        MediaMenu(actions, { actions = false }) {
+                            MediaMenuItem("Play", Glyph.Play) {
+                                actions = false
                                 vm.play(media, queued = true)
                                 close()
                             }
-                        }
-                        Box {
-                            MediaIconButton(
-                                Glyph.More,
-                                "Queue actions",
-                                "queue-menu-${media.key}",
+                            MediaMenuItem(
+                                "Move up",
+                                Glyph.Up,
+                                Modifier.testTag("queue-up-${media.key}").semantics {
+                                    contentDescription = "Move up"
+                                },
+                                enabled = index > 0,
                             ) {
-                                actions = true
+                                actions = false
+                                vm.moveQueue(index, index - 1, media)
                             }
-                            MediaMenu(actions, { actions = false }) {
-                                MediaMenuItem("Play", Glyph.Play) {
-                                    actions = false
-                                    vm.play(media, queued = true)
-                                    close()
-                                }
-                                MediaMenuItem(
-                                    "Move up",
-                                    Glyph.Up,
-                                    Modifier.testTag("queue-up-${media.key}").semantics {
-                                        contentDescription = "Move up"
-                                    },
-                                    enabled = index > 0,
-                                ) {
-                                    actions = false
-                                    vm.moveQueue(index, index - 1, media)
-                                }
-                                MediaMenuItem(
-                                    "Move down",
-                                    Glyph.Down,
-                                    Modifier.testTag("queue-down-${media.key}").semantics {
-                                        contentDescription = "Move down"
-                                    },
-                                    enabled = index + 1 < queue.size,
-                                ) {
-                                    actions = false
-                                    vm.moveQueue(index, index + 1, media)
-                                }
-                                MediaMenuItem(
-                                    "Remove",
-                                    Glyph.Close,
-                                    Modifier.testTag("queue-remove-${media.key}").semantics {
-                                        contentDescription = "Remove"
-                                    },
-                                    destructive = true,
-                                ) {
-                                    actions = false
-                                    vm.removeQueue(index, media)
-                                }
+                            MediaMenuItem(
+                                "Move down",
+                                Glyph.Down,
+                                Modifier.testTag("queue-down-${media.key}").semantics {
+                                    contentDescription = "Move down"
+                                },
+                                enabled = index + 1 < queue.size,
+                            ) {
+                                actions = false
+                                vm.moveQueue(index, index + 1, media)
+                            }
+                            MediaMenuItem(
+                                "Remove",
+                                Glyph.Close,
+                                Modifier.testTag("queue-remove-${media.key}").semantics {
+                                    contentDescription = "Remove"
+                                },
+                                destructive = true,
+                            ) {
+                                actions = false
+                                vm.removeQueue(index, media)
+                                undo = "Removed ${media.title}" to { vm.restoreQueue(index, media) }
                             }
                         }
                     }
                 }
             }
+        }
     }
 }
 
@@ -3030,8 +3269,10 @@ private fun HistoryPanel(vm: YtuiViewModel, close: () -> Unit) {
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     Panel("Recently played", close, scroll = false) {
+        val context = androidx.compose.ui.platform.LocalContext.current
         QuietAction("Clear history and resume positions", destructive = true) {
             vm.command("history_clear")
+            RecentSearches.clear(context)
         }
         if (history.isEmpty())
             EmptyMediaState(
@@ -3118,7 +3359,9 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
         }
     }
     var editing by remember { mutableStateOf(false) }
-    val showEditor = editing || lines.isEmpty()
+    val showEditor = editing
+    // Between one-second snapshots the playhead is extrapolated per frame, so the sweep glides.
+    val smooth = rememberSmoothPosition(player)
     Panel("Lyrics", close, scroll = false) {
         if (media.length() > 0)
             Column(Modifier.padding(horizontal = 8.dp)) {
@@ -3139,13 +3382,29 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             }
         else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
         if (lines.isNotEmpty()) SettingToggle("Follow playing line", follow) { follow = it }
+        if (lines.isEmpty() && !editing && media.length() > 0)
+            EmptyMediaState(
+                Glyph.Lyrics,
+                "No lyrics yet",
+                "Find them on LRCLIB using this song's title and artist, or write your own.",
+            ) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Action("Find lyrics", "lyrics-find", title.isNotBlank() && artist.isNotBlank()) {
+                        vm.lyricLookup(media, title, artist)
+                    }
+                    QuietAction("Write or import", Modifier.testTag("lyrics-edit")) { editing = true }
+                }
+            }
         LazyColumn(
             Modifier.weight(1f, fill = false).fillMaxWidth(),
             state = list,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item {
-                if (lines.isNotEmpty())
+                if (lines.isNotEmpty() || editing)
                     SheetAction(
                         text = { Text(if (editing) "Hide editor" else "Edit or find lyrics") },
                         leadingIcon = {
@@ -3254,6 +3513,31 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             }
             itemsIndexed(lines) { index, line ->
                 val current = index == active
+                val ink = MaterialTheme.colorScheme.onSurface
+                val faded = ink.copy(alpha = 0.38f)
+                // Karaoke sweep: the playing line fills with ink as its time passes.
+                val sweep =
+                    if (!current || !matching) null
+                    else {
+                        val at = line.optLong("at_ms")
+                        val next =
+                            lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms")
+                                ?: (at + 4000)
+                        val nowMs = smooth * 1000 - (offset.toLongOrNull() ?: 0)
+                        ((nowMs - at) / (next - at).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                    }
+                val lineStyle =
+                    if (sweep != null && LocalMotion.current.animate)
+                        MaterialTheme.typography.headlineSmall.copy(
+                            brush =
+                                androidx.compose.ui.graphics.Brush.horizontalGradient(
+                                    0f to ink,
+                                    sweep to ink,
+                                    (sweep + 0.06f).coerceAtMost(1f) to faded,
+                                    1f to faded,
+                                )
+                        )
+                    else MaterialTheme.typography.headlineSmall
                 Text(
                     line.optString("text").ifBlank { "♪" },
                     Modifier.fillMaxWidth()
@@ -3267,7 +3551,6 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                             )
                         }
                         .padding(horizontal = 8.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.headlineSmall,
                     color =
                         animateColorAsState(
                             if (current || active < 0) MaterialTheme.colorScheme.onSurface
@@ -3275,8 +3558,29 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                             LocalMotion.current.fade(320),
                             label = "lyric-line",
                         ).value,
+                    style = lineStyle,
                 )
             }
         }
     }
+}
+
+/** Tablet layout test shared by the shell and notices (same 840dp breakpoint). */
+@Composable
+internal fun tabletLayoutOf(): Boolean = LocalConfiguration.current.screenWidthDp >= 840
+
+/** Playback position extrapolated per frame between snapshots while playing. */
+@Composable
+internal fun rememberSmoothPosition(player: PlayerState): Float {
+    var base by remember { mutableStateOf(player.position to android.os.SystemClock.elapsedRealtime()) }
+    LaunchedEffect(player.position) { base = player.position to android.os.SystemClock.elapsedRealtime() }
+    var now by remember { mutableLongStateOf(android.os.SystemClock.elapsedRealtime()) }
+    val animate = LocalMotion.current.animate
+    LaunchedEffect(player.playing, animate) {
+        // An infinite-animation frame loop: paused by test and accessibility animation policies.
+        while (player.playing && animate)
+            withInfiniteAnimationFrameNanos { now = android.os.SystemClock.elapsedRealtime() }
+    }
+    return if (!player.playing) player.position
+    else (base.first + (now - base.second).coerceIn(0, 1500) / 1000f)
 }

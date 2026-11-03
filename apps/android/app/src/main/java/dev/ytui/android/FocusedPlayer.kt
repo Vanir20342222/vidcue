@@ -314,7 +314,15 @@ internal fun FocusedPlayer(
                             PlayerAction(Glyph.Download, "Save", "Save offline", "player-download", compact) {
                                 vm.play(MediaCard(media), download = true)
                             }
-                        PlayerAction(Glyph.Sleep, "Sleep", "Sleep timer", compact = compact, action = onSleep)
+                        val sleepLeft = rememberSleepLeft(player)
+                        PlayerAction(
+                            Glyph.Sleep,
+                            if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
+                            if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
+                            compact = compact,
+                            active = sleepLeft > 0,
+                            action = onSleep,
+                        )
                     }
                     Spacer(Modifier.width(4.dp))
                     MediaIconButton(
@@ -666,9 +674,11 @@ internal fun PlayerAction(
     description: String,
     tag: String = "",
     compact: Boolean = false,
+    active: Boolean = false,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
+    val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     if (compact) {
         // Music: an evenly spaced icon row with small captions, like a transport's second line.
         Column(
@@ -683,12 +693,15 @@ internal fun PlayerAction(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            MediaIcon(glyph, Modifier.size(22.dp))
+            MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
             Text(
                 label,
                 Modifier.clearAndSetSemantics {},
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style =
+                    MaterialTheme.typography.labelSmall.merge(
+                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                    ),
+                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
         }
@@ -713,8 +726,8 @@ internal fun PlayerAction(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            MediaIcon(glyph, Modifier.size(18.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            MediaIcon(glyph, Modifier.size(18.dp), if (active) accent else LocalContentColor.current, filled = active)
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, color = if (active) accent else Color.Unspecified)
         }
     }
 }

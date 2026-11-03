@@ -246,7 +246,7 @@ class CatalogUiTest {
         captureSettled("native-catalog.png")
         compose.onNodeWithTag("media-menu-${cards[0].key}").performClick()
         for (label in
-            listOf("Play now", "Preview", "Add to queue", "Save to library", "Download")) compose
+            listOf("Play now", "Preview", "Add to queue", "Bookmark", "Download")) compose
             .onNodeWithText(label)
             .assertIsDisplayed()
         captureSettled("native-card-menu.png")
@@ -650,6 +650,7 @@ class CatalogUiTest {
                 compose.onNodeWithTag("settings-Appearance").performClick()
                 compose.onNodeWithTag("theme-selector").assertIsDisplayed()
                 captureSettled("$prefix-settings.png")
+                compose.onNodeWithTag("settings-back").performClick()
                 compose.onNodeWithContentDescription("Close").performClick()
             }
         }
@@ -697,6 +698,7 @@ class CatalogUiTest {
             captureSettled("restyle-large-text-theme-dialog.png")
             compose.onNodeWithText("Cancel").performClick()
             captureSettled("restyle-large-text-settings.png")
+            compose.onNodeWithTag("settings-back").performClick()
             compose.onNodeWithContentDescription("Close").performClick()
             scenario.close()
             device.executeShellCommand("wm size 2560x1600")

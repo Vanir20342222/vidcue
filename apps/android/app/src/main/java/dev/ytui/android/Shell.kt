@@ -38,6 +38,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -357,8 +359,43 @@ internal fun PlayerDock(vm: YtuiViewModel) {
             glide.snapTo(target)
         else glide.animateTo(target, tween(900, easing = LinearEasing))
     }
+    // First mini player: show once that it can be swiped (unless gestures are off).
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var hint by remember { mutableStateOf(false) }
+    LaunchedEffect(gestures) {
+        if (!gestures || MediaBridge.offlineUi || !GestureTips.pending(context, "mini")) return@LaunchedEffect
+        kotlinx.coroutines.delay(1200)
+        hint = true
+        GestureTips.done(context, "mini")
+        if (motion.animate) {
+            val nudge = with(density) { 28.dp.toPx() }
+            repeat(2) {
+                sideways.animateTo(-nudge, motion.enter(260))
+                sideways.animateTo(0f, motion.spring())
+            }
+        }
+        kotlinx.coroutines.delay(3600)
+        hint = false
+    }
     val base = lerp(colors.background, colors.surfaceContainerHigh, 0.92f)
     val tint = rememberArtworkTint(media, base, config.optBoolean("thumbnails", true))
+    androidx.compose.animation.AnimatedVisibility(
+        hint,
+        enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(),
+        exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically(),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 2.dp).testTag("mini-hint"),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Swipe sideways to skip · swipe down to close",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant,
+            )
+        }
+    }
     val card = lerp(base, tint, 0.62f)
     val ink = mediaReadableText(colors.onSurface, card)
     val muted = mediaReadableText(colors.onSurfaceVariant, card)
@@ -423,7 +460,7 @@ internal fun PlayerDock(vm: YtuiViewModel) {
             ) {
                 Artwork(
                     media,
-                    Modifier.size(46.dp).clip(MediaTokens.medium),
+                    Modifier.size(46.dp).sharedCover(media.key, !LocalPlayerExpanded.current).clip(MediaTokens.medium),
                     config.optBoolean("thumbnails", true),
                     shape = MediaTokens.medium,
                 )
@@ -435,16 +472,23 @@ internal fun PlayerDock(vm: YtuiViewModel) {
                         style = MaterialTheme.typography.titleSmall,
                         color = ink,
                     )
-                    Text(
-                        media.creator.ifBlank {
-                            if (player.preview) "Muted preview"
-                            else if (media.live) "Live radio" else "Now playing"
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = muted,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            media.creator.ifBlank {
+                                if (player.preview) "Muted preview"
+                                else if (media.live) "Live radio" else "Now playing"
+                            },
+                            Modifier.weight(1f, fill = false),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = muted,
+                        )
+                        SleepBadge(player)
+                    }
                 }
                 val source = remember { MutableInteractionSource() }
                 Box(
@@ -488,7 +532,10 @@ internal fun PlayerDock(vm: YtuiViewModel) {
     }
 }
 
-/** Tablet side panel: the playing item's colour washes down from the top of the card. */
+/**
+ * Tablet side panel: the playing item's colour washes down from the top of the card. Drag its
+ * inner edge to resize it, or fold it into a slim strip with cover and play/pause.
+ */
 @Composable
 internal fun TabletPlayerPanel(
     vm: YtuiViewModel,
@@ -497,26 +544,128 @@ internal fun TabletPlayerPanel(
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    var collapsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    var width by androidx.compose.runtime.saveable.rememberSaveable { mutableFloatStateOf(352f) }
+    val shown by
+        androidx.compose.animation.core.animateDpAsState(
+            if (collapsed) 96.dp else width.dp,
+            motion.spring(),
+            label = "panel-width",
+        )
     val base = colors.surfaceContainerLow
-    val tint = rememberArtworkTint(player.media?.let(::MediaCard), base, config.optBoolean("thumbnails", true))
-    Box(
-        Modifier.width(352.dp)
-            .fillMaxHeight()
-            .testTag("tablet-player-panel")
-            .padding(start = 8.dp, end = 20.dp, bottom = 20.dp)
-            .clip(MediaTokens.dock)
-            .ambientGlow(tint, base, 0.7f)
-    ) {
-        Column(
-            Modifier.verticalScroll(rememberScrollState()).padding(18.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+    val media = player.media?.let(::MediaCard)
+    val tint = rememberArtworkTint(media, base, config.optBoolean("thumbnails", true))
+    Row(Modifier.fillMaxHeight().testTag("tablet-player-panel")) {
+        // Resize grip between the content and the panel.
+        Box(
+            Modifier.width(16.dp)
+                .fillMaxHeight()
+                .padding(bottom = 20.dp)
+                .then(
+                    if (collapsed) Modifier
+                    else
+                        Modifier.pointerInput(Unit) {
+                            detectHorizontalDragGestures { change, amount ->
+                                change.consume()
+                                width = (width - amount / density.density).coerceIn(300f, 480f)
+                            }
+                        }
+                )
+                .semantics { contentDescription = "Resize player panel" },
+            contentAlignment = Alignment.Center,
         ) {
-            Text(
-                "Now playing",
-                style = MaterialTheme.typography.titleLarge,
-                color = colors.onSurface,
-            )
-            content()
+            if (!collapsed)
+                Box(
+                    Modifier.size(width = 4.dp, height = 40.dp)
+                        .background(colors.onSurfaceVariant.copy(alpha = 0.35f), MediaTokens.pill)
+                )
         }
+        Box(
+            Modifier.width(shown)
+                .fillMaxHeight()
+                .padding(end = 20.dp, bottom = 20.dp)
+                .clip(MediaTokens.dock)
+                .ambientGlow(tint, base, 0.7f)
+        ) {
+            if (collapsed)
+                Column(
+                    Modifier.fillMaxSize().padding(vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    RoundIconButton(Glyph.Back, "Expand player panel", Modifier.testTag("panel-expand")) {
+                        collapsed = false
+                    }
+                    if (media != null)
+                        Artwork(
+                            media,
+                            Modifier.size(56.dp).clip(MediaTokens.medium),
+                            config.optBoolean("thumbnails", true),
+                            shape = MediaTokens.medium,
+                        )
+                    PlayDisc(player.playing, size = 52.dp) { vm.command("pause") }
+                    RoundIconButton(Glyph.Next, "Next track") { vm.command("next") }
+                }
+            else
+                Column(
+                    Modifier.verticalScroll(rememberScrollState()).padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Now playing",
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = colors.onSurface,
+                        )
+                        RoundIconButton(
+                            Glyph.Forward,
+                            "Fold player panel",
+                            Modifier.testTag("panel-collapse"),
+                        ) {
+                            collapsed = true
+                        }
+                    }
+                    content()
+                }
+        }
+    }
+}
+
+/** One-time gesture tips, remembered on this device; Settings can show them again. */
+internal object GestureTips {
+    private fun prefs(context: android.content.Context) =
+        context.getSharedPreferences("ytui-tips", android.content.Context.MODE_PRIVATE)
+
+    fun pending(context: android.content.Context, name: String) = !prefs(context).getBoolean(name, false)
+
+    fun done(context: android.content.Context, name: String) = prefs(context).edit().putBoolean(name, true).apply()
+
+    fun reset(context: android.content.Context) = prefs(context).edit().clear().apply()
+}
+
+@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+internal val LocalSharedScope =
+    staticCompositionLocalOf<androidx.compose.animation.SharedTransitionScope?> { null }
+
+/** True while the music player covers the app (the cover then belongs to the full player). */
+internal val LocalPlayerExpanded = compositionLocalOf { false }
+
+/**
+ * The playing cover is one object: it flies between the mini player and the full player instead
+ * of one fading out while another fades in. Each side says when it owns the cover.
+ */
+@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+@Composable
+internal fun Modifier.sharedCover(key: String, visible: Boolean): Modifier {
+    val shared = LocalSharedScope.current ?: return this
+    if (!LocalMotion.current.animate) return this
+    return with(shared) {
+        this@sharedCover.sharedElementWithCallerManagedVisibility(
+            rememberSharedContentState("cover:$key"),
+            visible,
+        )
     }
 }

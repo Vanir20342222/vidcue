@@ -109,8 +109,9 @@ class NativeUiTest {
             compose.onNodeWithTag("theme-selector").performClick()
             compose.onNodeWithTag("theme-$theme").performScrollTo().performClick()
             compose.waitUntil(10_000) {
-                compose.onAllNodesWithText("Theme: $theme").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodes(hasText("Theme") and hasText(themeLabel(theme))).fetchSemanticsNodes().isNotEmpty()
             }
+            compose.onNodeWithTag("settings-back").performClick()
             compose.onNodeWithContentDescription("Close").performClick()
             compose.waitForIdle()
             val dark =

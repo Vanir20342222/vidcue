@@ -241,6 +241,23 @@ impl Engine {
                 Ok(serde_json::to_value(palette)?)
             }
             "themes" => Ok(json!(ytui_core::theme::THEMES)),
+            // Every built-in palette by name, for theme pickers that preview colours.
+            // "system" follows the device: it is reported as the dark/light pair.
+            "palettes" => {
+                let mut palettes = serde_json::Map::new();
+                for name in ytui_core::theme::THEMES {
+                    let value = if *name == "system" {
+                        json!({
+                            "dark": ytui_core::theme::builtin("ytui-dark")?,
+                            "light": ytui_core::theme::builtin("ytui-light")?,
+                        })
+                    } else {
+                        serde_json::to_value(ytui_core::theme::builtin(name)?)?
+                    };
+                    palettes.insert((*name).into(), value);
+                }
+                Ok(Value::Object(palettes))
+            }
             "theme" => {
                 let config = self.config.lock().expect("config").clone();
                 let name = if config.theme == "system" {
@@ -1164,6 +1181,21 @@ mod format_tests {
             );
         }
     }
+    #[tokio::test]
+    async fn palettes_preview_every_built_in_theme() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let palettes = engine.request(json!({"op":"palettes"})).await.unwrap();
+        for name in ytui_core::theme::THEMES {
+            assert!(
+                palettes.get(*name).is_some(),
+                "{name} has no preview palette"
+            );
+        }
+        assert_eq!(palettes["nord"]["accent"], json!([136, 192, 208]));
+        assert_eq!(palettes["system"]["light"]["name"], "ytui-light");
+    }
+
     #[test]
     fn mobile_dark_default_does_not_replace_an_explicit_saved_theme() {
         let temp = tempfile::tempdir().unwrap();

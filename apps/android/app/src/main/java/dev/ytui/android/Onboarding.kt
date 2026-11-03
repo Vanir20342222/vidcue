@@ -597,6 +597,8 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     // loaded (or if loading failed), editing here could replace them with defaults.
     val editable = ready && config.length() > 0
     val selected = config.optString("theme", "system")
+    val palettes by vm.palettes.collectAsState()
+    LaunchedEffect(Unit) { vm.loadPalettes() }
     val choices = listOf("system") + themes.filter { it != "system" }
     PageColumn {
         PageBadge(Glyph.Palette)
@@ -616,7 +618,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (name in choices)
-                    ThemeChip(name, name == selected, editable) {
+                    ThemeChip(name, name == selected, editable, palettes.optJSONObject(name)) {
                         vm.updateConfig(dark) { it.put("theme", name) }
                     }
             }
@@ -637,7 +639,13 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
 }
 
 @Composable
-private fun ThemeChip(name: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun ThemeChip(
+    name: String,
+    selected: Boolean,
+    enabled: Boolean,
+    palette: org.json.JSONObject? = null,
+    onClick: () -> Unit,
+) {
     val reduced = LocalReducedMotion.current
     val colors = MaterialTheme.colorScheme
     val container by colorTween(if (selected) colors.onBackground else colors.surfaceContainerHigh, reduced)
@@ -669,6 +677,10 @@ private fun ThemeChip(name: String, selected: Boolean, enabled: Boolean, onClick
                 MediaIcon(Glyph.Check, Modifier.size(18.dp), label)
                 Spacer(Modifier.width(8.dp))
             }
+        }
+        if (palette != null) {
+            PaletteSwatch(palette, Modifier.size(width = 26.dp, height = 17.dp))
+            Spacer(Modifier.width(8.dp))
         }
         Text(
             themeLabel(name),

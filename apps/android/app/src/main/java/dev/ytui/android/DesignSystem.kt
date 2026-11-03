@@ -54,6 +54,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -83,6 +84,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * The ytui "screening room" design language: the interface recedes so artwork is the light in
@@ -802,6 +804,51 @@ internal fun SheetClose(dismiss: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             MediaIcon(Glyph.Close, Modifier.size(16.dp), MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
+
+/**
+ * A theme in miniature: its page colour, a raised surface line, text and accent. "system" passes
+ * an object with dark and light palettes and is drawn split diagonally.
+ */
+@Composable
+internal fun PaletteSwatch(palette: JSONObject?, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    fun JSONObject.rgb(key: String, fallback: Color): Color =
+        optJSONArray(key)?.let { Color(it.optInt(0), it.optInt(1), it.optInt(2)) } ?: fallback
+    val halves =
+        when {
+            palette == null -> listOf(null)
+            palette.has("dark") -> listOf(palette.optJSONObject("dark"), palette.optJSONObject("light"))
+            else -> listOf(palette)
+        }
+    Canvas(
+        modifier
+            .size(width = 52.dp, height = 34.dp)
+            .clip(MediaTokens.small)
+            .border(1.dp, colors.outlineVariant, MediaTokens.small)
+            .testTag("palette-swatch")
+    ) {
+        halves.forEachIndexed { index, p ->
+            val bg = p?.rgb("background", colors.surfaceContainer) ?: colors.surfaceContainer
+            val surface = p?.rgb("surface", colors.surfaceContainerHigh) ?: colors.surfaceContainerHigh
+            val text = p?.rgb("text", colors.onSurface) ?: colors.onSurface
+            val accent = p?.rgb("accent", colors.primary) ?: colors.primary
+            val clip = androidx.compose.ui.graphics.Path().apply {
+                if (halves.size == 1) addRect(androidx.compose.ui.geometry.Rect(Offset.Zero, size))
+                else if (index == 0) { moveTo(0f, 0f); lineTo(size.width, 0f); lineTo(0f, size.height); close() }
+                else { moveTo(size.width, 0f); lineTo(size.width, size.height); lineTo(0f, size.height); close() }
+            }
+            clipPath(clip) {
+                drawRect(bg)
+                val u = size.height / 34f
+                drawRoundRect(surface, Offset(6 * u, 6 * u), Size(size.width - 12 * u, 10 * u), CornerRadius(3 * u))
+                drawRoundRect(text, Offset(9 * u, 9.5f * u), Size(18 * u, 3 * u), CornerRadius(1.5f * u))
+                drawRoundRect(text.copy(alpha = 0.55f), Offset(6 * u, 21 * u), Size(24 * u, 3 * u), CornerRadius(1.5f * u))
+                drawCircle(accent, 4.5f * u, Offset(size.width - 11 * u, 25 * u))
+            }
         }
     }
 }
