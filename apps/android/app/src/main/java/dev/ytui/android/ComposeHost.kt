@@ -1459,7 +1459,9 @@ internal fun Artwork(
     BoxWithConstraints(
         modifier.clip(shape).background(MaterialTheme.colorScheme.surfaceContainer)
     ) {
-        val pixels = with(LocalDensity.current) { maxWidth.roundToPx().coerceIn(32, 768) }
+        // A shared decode size: a one-pixel width difference between grid columns must not
+        // restart the load or fetch and cache the same cover again.
+        val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
         var bitmap by
@@ -1467,9 +1469,28 @@ internal fun Artwork(
                 mutableStateOf(if (enabled) ArtworkCache.cached(media, pixels) else null)
             }
         LaunchedEffect(media.key, source, pixels, enabled) {
-            if (bitmap != null) return@LaunchedEffect
-            bitmap =
-                if (enabled) runCatching { ArtworkCache.load(media, pixels) }.getOrNull() else null
+            if (bitmap != null || !enabled || !ArtworkCache.hasArtwork(media)) return@LaunchedEffect
+            // load() retries quickly a few times. If the cover is still missing, keep trying with
+            // a growing pause while this card stays composed, so a transient failure never leaves
+            // a permanent placeholder. Leaving the screen cancels the loop.
+            var pause = 1_000L
+            repeat(8) {
+                val loaded =
+                    try {
+                        ArtworkCache.load(media, pixels)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        null
+                    }
+                if (loaded != null) {
+                    bitmap = loaded
+                    return@LaunchedEffect
+                }
+                android.util.Log.w("ytui.artwork", "Cover not loaded; retrying in $pause ms")
+                delay(pause)
+                pause = (pause * 2).coerceAtMost(15_000L)
+            }
         }
         // Cached art paints at once; art that arrives later fades in over the placeholder.
         val motion = LocalMotion.current
