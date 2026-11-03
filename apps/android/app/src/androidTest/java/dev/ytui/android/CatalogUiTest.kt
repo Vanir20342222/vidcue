@@ -96,6 +96,15 @@ class CatalogUiTest {
         }
     }
 
+    /**
+     * Steps back from a settings sub-page. From 960 dp wide the settings show every category
+     * beside the page, so there is no sub-page to leave; the Close that follows still has to work.
+     */
+    private fun leaveSettingsPage() {
+        if (compose.onAllNodesWithTag("settings-back").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithTag("settings-back").performClick()
+    }
+
     private fun populate(tab: Int): List<MediaCard> {
         val titles =
             if (tab == 2)
@@ -329,7 +338,7 @@ class CatalogUiTest {
         compose.onNodeWithTag("settings-Appearance").assertIsDisplayed().performClick()
         compose.onNodeWithTag("theme-selector").assertIsDisplayed()
         captureSettled("native-settings.png")
-        compose.onNodeWithTag("settings-back").performClick()
+        leaveSettingsPage()
         compose.onNodeWithTag("settings-Network").performClick()
         compose
             .onNodeWithTag("proxy-field")
@@ -650,7 +659,7 @@ class CatalogUiTest {
                 compose.onNodeWithTag("settings-Appearance").performClick()
                 compose.onNodeWithTag("theme-selector").assertIsDisplayed()
                 captureSettled("$prefix-settings.png")
-                compose.onNodeWithTag("settings-back").performClick()
+                leaveSettingsPage()
                 compose.onNodeWithContentDescription("Close").performClick()
             }
         }
