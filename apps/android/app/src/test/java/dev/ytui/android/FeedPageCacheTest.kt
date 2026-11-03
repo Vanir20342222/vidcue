@@ -6,6 +6,89 @@ import org.junit.Test
 
 class FeedPageCacheTest {
     @Test
+    fun expiredCategoryIsImmediatelyReadableWhileItRefreshes() = runBlocking {
+        var now = 0L
+        val cache =
+            FeedPageCache<String, String>(this, { now }, { it.length }, retainMs = 1_800_000)
+        cache.load("category") { "previous cards" }
+        now = 60_000
+        assertNull(cache.peek("category"))
+        assertEquals("previous cards", cache.peek("category", allowStale = true))
+        val response = CompletableDeferred<String>()
+        val refreshing = async { cache.load("category") { response.await() } }
+        yield()
+        assertEquals("previous cards", cache.peek("category", allowStale = true))
+        response.complete("fresh cards")
+        assertEquals("fresh cards", refreshing.await())
+        assertEquals("fresh cards", cache.peek("category"))
+    }
+
+    @Test
+    fun failedBackgroundRefreshKeepsLastSuccessfulCards() = runBlocking {
+        supervisorScope {
+            var now = 0L
+            val cache =
+                FeedPageCache<String, String>(this, { now }, { it.length }, retainMs = 1_800_000)
+            cache.load("category") { "previous cards" }
+            now = 60_000
+            try {
+                cache.load("category") { error("temporarily offline") }
+                fail("expected refresh failure")
+            } catch (_: IllegalStateException) {}
+            assertEquals("previous cards", cache.peek("category", allowStale = true))
+            assertNull(cache.peek("category"))
+        }
+    }
+
+    @Test
+    fun readingStalePagesDoesNotExtendRetentionDeadline() = runBlocking {
+        var now = 0L
+        val cache =
+            FeedPageCache<String, String>(this, { now }, { it.length }, retainMs = 1_800_000)
+        cache.load("category") { "cards" }
+        now = 1_799_999
+        assertEquals("cards", cache.peek("category", allowStale = true))
+        now++
+        assertNull(cache.peek("category", allowStale = true))
+    }
+
+    @Test
+    fun stalePagesStillObeyMemoryBudgetAndAccountClearing() = runBlocking {
+        var now = 0L
+        val cache =
+            FeedPageCache<String, String>(
+                this,
+                { now },
+                { it.length },
+                maxBytes = 6,
+                retainMs = 1_800_000,
+            )
+        cache.load("first") { "aaa" }
+        cache.load("second") { "bbb" }
+        now = 60_000
+        assertNull(cache.peek("first"))
+        assertEquals("aaa", cache.peek("first", allowStale = true))
+        cache.load("third") { "ccc" }
+        assertNull(cache.peek("second", allowStale = true))
+        assertEquals("aaa", cache.peek("first", allowStale = true))
+        cache.clear()
+        assertNull(cache.peek("first", allowStale = true))
+        assertNull(cache.peek("third", allowStale = true))
+    }
+
+    @Test
+    fun refreshInvalidatesRetainedCardsToo() = runBlocking {
+        var now = 0L
+        val cache =
+            FeedPageCache<String, String>(this, { now }, { it.length }, retainMs = 1_800_000)
+        cache.load("category") { "old" }
+        now = 60_000
+        cache.invalidate("category")
+        assertNull(cache.peek("category", allowStale = true))
+        assertEquals("fresh", cache.load("category") { "fresh" })
+    }
+
+    @Test
     fun preparedCategoryOpensWithoutAnotherFetchAndExpires() = runBlocking {
         var now = 0L
         var calls = 0
