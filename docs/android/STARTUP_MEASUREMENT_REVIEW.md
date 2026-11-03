@@ -62,3 +62,21 @@ networking assertion is removed.
 Local test-APK compilation and lint precede fresh native qualification. Real
 Tab S9 Best-quality timings remain required for the user's subsecond YouTube goal;
 loopback media and callback timing cannot substitute for that report.
+
+## First independent run
+
+Source `2cc8404`, workflow merge `13fd645`, run
+[41601395656](https://github.com/Vanir20342222/ytui/actions/runs/41601395656)
+completed all 57 cases: 52 pass, four fail and one optional public skip. Rust and
+secret scans passed. Rapid selection/transport feedback and the previously
+aborted socket-recovery test passed. Strict cold-card usable852/window1008 ms
+and prepared indexed no usable start by the deadline remain failures. The
+rejected-FGS test hit the same stale-error race in its own destruction wait;
+that targeted wait now also ignores its expected error while requiring actual
+closure within the unchanged timeout. The service does not crash in this run.
+One catalog cover remained a placeholder despite the integrated retry changes;
+the failure-only native probe decoded it successfully and recorded per-cover
+request counts. That image-loading issue remains open.
+
+Artifacts: shards0–3 `13214532139`, `13215071859`, `13214463054`, `13214552767`;
+APK `13215001069`. These results do not qualify the subsecond goal.
