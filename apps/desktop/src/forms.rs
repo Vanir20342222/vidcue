@@ -33,7 +33,7 @@ impl Field {
     }
 }
 pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
-    ("General", &[54, 15, 16, 17, 34, 56, 38, 50]),
+    ("General", &[54, 15, 16, 17, 34, 56, 57, 38, 50]),
     ("Appearance", &[0, 1, 2, 3, 55]),
     (
         "Downloads",
@@ -315,6 +315,10 @@ impl Form {
                 ytui_core::MUSIC_PLAYER_STYLES,
             ),
             Field::flag("Resume videos where you left off", c.resume_on_play),
+            Field::flag(
+                "Autoplay related videos when the queue ends",
+                c.autoplay_related,
+            ),
         ];
         Self {
             kind: FormKind::Settings(config),
@@ -618,6 +622,7 @@ impl Form {
             .collect();
         c.music_player_style = self.value(55).into();
         c.resume_on_play = self.value(56) == "yes";
+        c.autoplay_related = self.value(57) == "yes";
         c.validate()?;
         Ok(c)
     }

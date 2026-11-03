@@ -28,6 +28,8 @@ pub struct Config {
     pub playback_history: bool,
     /// Start normal playback of a partly watched video from its saved local position.
     pub resume_on_play: bool,
+    /// When the queue runs out, continue with the finished video's related videos.
+    pub autoplay_related: bool,
     pub show_hints: bool,
     pub playback_sponsorblock: String,
     pub playback_sponsor_categories: Vec<String>,
@@ -72,6 +74,7 @@ impl Default for Config {
             reduced_motion: false,
             playback_history: true,
             resume_on_play: true,
+            autoplay_related: true,
             show_hints: true,
             playback_sponsorblock: "skip".into(),
             playback_sponsor_categories: vec!["sponsor".into()],

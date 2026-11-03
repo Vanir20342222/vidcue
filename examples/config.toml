@@ -13,6 +13,7 @@ music_player_style = "classic" # classic, vinyl, vu, orbit; append -fullscreen f
 reduced_motion = false
 playback_history = true
 resume_on_play = true # continue partly watched videos where you left off (needs playback_history)
+autoplay_related = true # when the queue ends, continue with related videos (Android: Related media autoplay)
 show_hints = true
 playback_sponsorblock = "skip"
 playback_sponsor_categories = ["sponsor"]

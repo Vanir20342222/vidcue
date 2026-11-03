@@ -880,6 +880,19 @@ offline playback. Deterministic device regressions exercise the actual stream an
 cache paths; their latest results remain in the Android validation record.
 
 
+### M5/M9: open-PR platform parity (2026-11-03)
+
+The owner asked for the same features on Android and desktop, checking every
+open PR. Android PRs #36 (Up next recommendations) and #34 (onboarding) had no
+desktop counterpart. The desktop now continues with related videos when the
+queue ends (`autoplay_related`, default on like Android), lists them as
+Recommended in the queue popup, and has a skippable first-run setup shown once
+per version (never in demo/offline). #45, #32 and #17 need no counterpart.
+Android still lacks desktop `resume_on_play`; desktop still lacks prefer-offline
+playback, a configurable seek step and next-item preloading (#17). Evidence:
+[PR_PARITY_2026-11-03.md](docs/PR_PARITY_2026-11-03.md). Live related responses
+and a real first launch remain unverified.
+
 ### M9: content-first Android restyle
 
 The owner supplied a detailed YouTube-style visual brief and reference on
