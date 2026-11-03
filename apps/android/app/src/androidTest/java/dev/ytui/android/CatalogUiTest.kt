@@ -801,6 +801,18 @@ class CatalogUiTest {
                 badge.bottom <= cover.bottom,
         )
         compose.onNodeWithTag("media-menu-${cards[0].key}").performClick()
+        // Evidence for CI only: where the sheet's nodes are when the check below runs.
+        compose.waitForIdle()
+        android.util.Log.e(
+            "YTUI-DIAG",
+            "tablet card menu: Preview nodes=" +
+                compose.onAllNodesWithText("Preview").fetchSemanticsNodes().map { it.boundsInRoot } +
+                " Close nodes=" +
+                compose.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().size +
+                " menu0=" +
+                compose.onNodeWithTag("media-menu-${cards[0].key}").fetchSemanticsNode().boundsInRoot,
+        )
+        MediaRuntimeTest.capture("restyle-tablet-search-menu.png")
         compose.onNodeWithText("Preview").assertIsDisplayed()
     }
 
@@ -1401,6 +1413,14 @@ class CatalogUiTest {
             mark("close timer sheet")
             compose.onNodeWithContentDescription("Close").performClick()
             frames(600)
+            android.util.Log.e(
+                "YTUI-DIAG",
+                "timer sheet after Close: Cancel timer nodes=" +
+                    compose.onAllNodesWithText("Cancel timer").fetchSemanticsNodes().map { it.boundsInRoot } +
+                    " Close nodes=" +
+                    compose.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().size,
+            )
+            MediaRuntimeTest.capture("restyle-fidelity-timer-closed.png")
             compose.onNodeWithText("Cancel timer").assertDoesNotExist()
             mark("timer dismissed")
             Assert.assertTrue(
