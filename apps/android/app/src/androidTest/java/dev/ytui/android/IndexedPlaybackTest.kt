@@ -343,7 +343,7 @@ class IndexedPlaybackTest {
                     evidence
                         .append(StartupTimings.report())
                         .append(
-                            "indexed_prefetched_window_ms=$visible usable_ms=$usable observer_requests=${observer.requests} observer_ms=${observer.observationMs}\n"
+                            "indexed_prefetched_window_ms=$visible usable_ms=$usable copy_request_ms=${StartupTimings.elapsed(token, frame.requestedAt)} observer_requests=${observer.requests} observer_ms=${observer.observationMs}\n"
                         )
                     if (!frame.rgb || visible !in 1..999 || usable !in 1..999)
                         MediaRuntimeTest.capture("startup-indexed-prefetched-failed.png")

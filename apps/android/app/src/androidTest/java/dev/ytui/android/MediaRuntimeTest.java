@@ -72,9 +72,14 @@ public final class MediaRuntimeTest {
   }
 
   static void await(String message, Check check) throws Exception {
+    await(message, true, check);
+  }
+
+  static void await(String message, boolean failOnPlaybackError, Check check) throws Exception {
     long deadline = android.os.SystemClock.elapsedRealtime() + 60000;
     while (!check.ready()) {
-      if (!status().isNull("error") || android.os.SystemClock.elapsedRealtime() > deadline) {
+      if ((failOnPlaybackError && !status().isNull("error"))
+          || android.os.SystemClock.elapsedRealtime() > deadline) {
         capture("video-error.png");
         surfaceEvidence();
         throw new AssertionError(
