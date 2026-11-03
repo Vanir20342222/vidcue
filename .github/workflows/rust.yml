@@ -5,25 +5,62 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: never
+  # Debug info is never inspected in CI; dropping it shrinks builds and caches.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
 jobs:
-  linux:
+  lint:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Verify mobile direct-player request budgets and fallback offline
+        env:
+          CARGO_TARGET_DIR: target
+        run: cargo test --manifest-path vendor/yt-dlp-rs/Cargo.toml --locked --test mobile_playback
       - name: Verify CI media setup deadlines and mirror recovery offline
         run: bash tools/test-ci-install-media.sh
       - name: Verify native YouTube JavaScript solver with saved player vectors
         run: tools/test-native-solver.sh
+  media:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: media
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install real-media fixture tools
         timeout-minutes: 10
         run: bash tools/ci-install-media.sh ffmpeg lua5.4 mpv
@@ -53,6 +90,8 @@ jobs:
         run: cargo test -p ytui-services --locked real_mpv_external_playback_ -- --ignored
       - name: Verify native HLS manifest and request identity in mpv
         run: cargo test -p ytui-services --locked real_mpv_native_hls_ -- --ignored
+      - name: Verify audio-reactive meters and live style changes with actual mpv
+        run: cargo test -p ytui-services --locked real_mpv_audio_meter -- --ignored
       - name: Verify live reconnect controls with actual mpv and loopback HTTP
         env:
           NO_PROXY: 127.0.0.1,localhost
@@ -65,4 +104,15 @@ jobs:
         run: cargo test -p ytui --test saved_sleep_ui --locked real_mpv_sleep_timer -- --ignored
       - name: Verify two real yt-dlp playlist entries with FFmpeg and ffprobe
         run: cargo test -p ytui --test downloads --locked real_ytdlp_playlist_ -- --ignored
+  release-build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release --locked

@@ -52,8 +52,8 @@ pub(crate) fn playback_source(info: &VideoInfo, audio: bool) -> Result<Resolved>
 }
 pub fn worker(path: &Path) -> Result<()> {
     let request: WorkerRequest = serde_json::from_slice(&std::fs::read(path)?)?;
-    // Never read the dependency's default shared cache from an isolated worker.
-    yt_dlp_rs::cache::configure(None);
+    // The vendored yt-dlp-rs library keeps no shared on-disk cache (only its CLI does),
+    // so an isolated worker has nothing to disable here.
     let extractor_args = request
         .player_clients
         .as_ref()
@@ -103,9 +103,8 @@ pub fn worker(path: &Path) -> Result<()> {
             }),
             include_translated_subtitles: o.auto_subtitles,
             no_playlist: request.resolve || !o.playlist,
-            mark_watched: false,
-            get_comments: false,
-            ..Default::default()
+            playback_format: None,
+            playback_visitor_data: None,
         },
         HttpOptions {
             cookies,

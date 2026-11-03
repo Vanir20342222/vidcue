@@ -1,9 +1,10 @@
 # ytui
 
-A Rust terminal app for YouTube, YouTube Music, downloads and radio. The interface
-uses Lazygit-style panes, keyboard navigation, inline thumbnails and mpv playback.
-Omarchy + Ghostty + Brave Origin is the current desktop target; CachyOS/Caelestia
-remain historical compatibility targets.
+A Rust monorepo for YouTube, YouTube Music, downloads and radio. The desktop app uses Lazygit-style terminal panes, keyboard navigation, thumbnails and mpv. [Android](docs/android/README.md) uses the shared Rust engine with a native Jetpack Compose UI for phones and tablets.
+
+[Download Android mobile.10](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk) · [UI release and validation](docs/android/MOBILE10_RELEASE.md) · [Player/offline features and validation](docs/android/PLAYER_LIBRARY_VALIDATION_2026-10-29.md) · [Phone/tablet gallery](docs/screenshots/android/README.md)
+
+Omarchy + Ghostty + Brave Origin is the current desktop target; CachyOS/Caelestia remain compatibility targets.
 
 This is the **0.2.0-alpha.12 candidate** ([audit fixes and acceptance](docs/AUDIT_IMPLEMENTATION.md)).
 [Local acceptance](docs/LOCAL_ACCEPTANCE_2026-10-26.md) records verified target-PC
@@ -33,6 +34,7 @@ Pulling source alone does not replace an installed binary: rerun `./install.sh`
 and check `~/.local/bin/ytui --version`. `install-rust.sh` is a compatibility alias.
 
 - `1`–`4`: Downloads, YouTube, Music, Radio. `b`: feeds; `/`: search; `?`: help.
+- `F4` in Music/Radio cycles classic → vinyl → Neon VU → Pulse Orbit (pane/fullscreen for each); `Esc` exits fullscreen. Choose a persistent default in General settings → Appearance → Music player style. The record spins during playback and freezes for pause/buffering; Reduced motion disables rotation.
 - `Enter`: play/open; `v`: short muted mpv preview; `d`: download options.
 - `,`: general settings window; `F2`: searchable Actions; `F1`: toggle bottom hints. PgUp/PgDn changes sections;
   F6 focuses categories; arrows edit choices; Space toggles; Enter saves; Esc cancels.
@@ -40,7 +42,9 @@ and check `~/.local/bin/ytui --version`. `install-rust.sh` is a compatibility al
   anonymous Home may have no recommendations.
 - `F2 → Player`: actual formats, audio/subtitle choices, SponsorBlock status; `F2 → Settings`: setup, thumbnail cache and safe support export.
 - `F2 → Downloads`: full-collection individual jobs, per-entry retry/files and recent destinations.
-- `u`: explicit local playback resume; `p`: playback queue.
+- Videos continue where you left off: playing a partly watched video starts at its
+  locally saved position (toggle in `F2 → Settings → General`; `:player-seek 0` starts over).
+  Music and stations start from the top. `u`: resume list/selected; `p`: playback queue.
 - `S`: save/remove a video or song locally; **Library → Saved locally** opens the shelf and `/` searches it.
 - **o → Set sleep timer** stops playback after e.g. `30m` while keeping the queue; cancel it from the same menu.
 - `ytui --demo`: fictional catalog for UI review; `ytui --offline`: local library.

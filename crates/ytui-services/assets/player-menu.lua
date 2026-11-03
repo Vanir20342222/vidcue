@@ -49,10 +49,48 @@ local function toggle()
 end
 mp.add_key_binding('g','ytui-player-menu',toggle)
 mp.register_script_message('ytui-menu',toggle)
-mp.register_event('file-loaded',function() mp.osd_message('ytui | G: player settings | mouse: playback controls',4) end)
+-- SponsorBlock marks: the OSC seekbar draws a tick per chapter, so each
+-- segment's start/end becomes a chapter merged with the video's own chapters.
+local base_chapters, marks = nil, {}
+local function mark_label(category)
+  local text = tostring(category or 'segment'):gsub('_',' ')
+  return 'SponsorBlock: '..text:sub(1,1):upper()..text:sub(2)
+end
+local function apply_marks()
+  if base_chapters == nil then return end
+  local duration = mp.get_property_number('duration')
+  local list = {}
+  for _,chapter in ipairs(base_chapters) do list[#list+1] = {time=chapter.time,title=chapter.title} end
+  for _,segment in ipairs(marks) do
+    local start, stop = tonumber(type(segment)=='table' and segment.start), tonumber(type(segment)=='table' and segment['end'])
+    if start and stop and stop > start then
+      list[#list+1] = {time=math.max(0,start),title=mark_label(segment.category)}
+      if not duration or stop < duration - 0.5 then
+        -- After the mark the timeline resumes the enclosing original chapter.
+        local resume = ''
+        for _,chapter in ipairs(base_chapters) do
+          if chapter.time <= stop then resume = chapter.title or '' end
+        end
+        list[#list+1] = {time=stop,title=resume}
+      end
+    end
+  end
+  table.sort(list,function(a,b) return a.time < b.time end)
+  mp.set_property_native('chapter-list',list)
+end
+mp.observe_property('user-data/ytui/segments','native',function(_,value)
+  marks = type(value)=='table' and value or {}
+  apply_marks()
+end)
+mp.register_event('file-loaded',function()
+  base_chapters = mp.get_property_native('chapter-list') or {}
+  apply_marks()
+  mp.osd_message('ytui | G: player settings | mouse: playback controls',4)
+end)
 -- A successful process exit also occurs when a window is closed. Report actual
 -- EOF separately so the terminal queue cannot advance on a user quit.
 mp.register_event('end-file',function(event)
+  base_chapters = nil
   if event.reason == 'eof' then msg.warn('YTUI_END_FILE:eof') end
 end)
 mp.observe_property('osd-dimensions','native',render)

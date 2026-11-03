@@ -1,0 +1,648 @@
+package dev.ytui.android;
+
+import static org.junit.Assert.*;
+
+import android.content.*;
+import androidx.test.core.app.ActivityScenario;
+import androidx.test.ext.junit.runners.AndroidJUnit4;
+import androidx.test.platform.app.InstrumentationRegistry;
+import java.io.*;
+import java.net.*;
+import java.nio.charset.StandardCharsets;
+import org.json.*;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+/** Actual Media3 decoder/cache/service checks, using generated local media only. */
+@RunWith(AndroidJUnit4.class)
+@androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
+public final class MediaRuntimeTest {
+
+  @org.junit.Rule
+  public final org.junit.rules.ExternalResource nativeControlPolling =
+      new org.junit.rules.ExternalResource() {
+        private long previous;
+
+        @Override
+        protected void before() {
+          androidx.test.uiautomator.Configurator config =
+              androidx.test.uiautomator.Configurator.getInstance();
+          previous = config.getWaitForIdleTimeout();
+          // The moving time bar never stays idle for the default ten seconds;
+          // a snapshot taken then observes only the already auto-hidden toolbar.
+          config.setWaitForIdleTimeout(100);
+        }
+
+        @Override
+        protected void after() {
+          androidx.test.uiautomator.Configurator.getInstance().setWaitForIdleTimeout(previous);
+        }
+      };
+
+  @org.junit.Rule
+  public androidx.test.rule.GrantPermissionRule notifications =
+      androidx.test.rule.GrantPermissionRule.grant(
+          android.os.Build.VERSION.SDK_INT >= 33
+              ? new String[] {"android.permission.POST_NOTIFICATIONS"}
+              : new String[] {});
+
+  interface Check {
+    boolean ready() throws Exception;
+  }
+
+  static void capture(String filename) {
+    try {
+      android.graphics.Bitmap shot =
+          InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+      if (shot != null) {
+        try (FileOutputStream out =
+            new FileOutputStream(
+                new File(
+                    InstrumentationRegistry.getInstrumentation()
+                        .getTargetContext()
+                        .getExternalFilesDir(null),
+                    filename))) {
+          shot.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+        } finally {
+          shot.recycle();
+        }
+      }
+    } catch (Exception ignored) {
+    }
+  }
+
+  static void await(String message, Check check) throws Exception {
+    long deadline = android.os.SystemClock.elapsedRealtime() + 60000;
+    while (!check.ready()) {
+      if (!status().isNull("error") || android.os.SystemClock.elapsedRealtime() > deadline) {
+        capture("video-error.png");
+        surfaceEvidence();
+        throw new AssertionError(
+            message
+                + ": "
+                + MediaBridge.playerSnapshot
+                + " Main thread: "
+                + java.util.Arrays.toString(
+                    android.os.Looper.getMainLooper().getThread().getStackTrace()));
+      }
+      Thread.sleep(100);
+    }
+  }
+
+  static JSONObject status() throws Exception {
+    return new JSONObject(MediaBridge.playerSnapshot);
+  }
+
+  static boolean fullscreenHasInputFocus() {
+    java.util.concurrent.atomic.AtomicBoolean focused =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    InstrumentationRegistry.getInstrumentation()
+        .runOnMainSync(
+            () -> {
+              for (android.app.Activity activity :
+                  androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                      .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)) {
+                if (activity instanceof FullscreenActivity && activity.hasWindowFocus())
+                  focused.set(true);
+              }
+            });
+    return focused.get();
+  }
+
+  static void acknowledgeSystemFullscreenHint(androidx.test.uiautomator.UiDevice device) {
+    androidx.test.uiautomator.BySelector title =
+        androidx.test.uiautomator.By.res("android:id/immersive_cling_title");
+    if (device.wait(androidx.test.uiautomator.Until.findObject(title), 3000) == null) return;
+    androidx.test.uiautomator.UiObject2 acknowledge =
+        device.findObject(androidx.test.uiautomator.By.res("android:id/ok"));
+    assertNotNull("Android's fullscreen tutorial needs its acknowledgment button", acknowledge);
+    acknowledge.click();
+    assertTrue(
+        "The system tutorial must leave the video touch surface",
+        device.wait(androidx.test.uiautomator.Until.gone(title), 3000));
+  }
+
+  static androidx.test.uiautomator.UiObject2 fullscreenExit(
+      androidx.test.uiautomator.UiDevice device) throws Exception {
+    androidx.test.uiautomator.BySelector hint =
+        androidx.test.uiautomator.By.res("android:id/immersive_cling_title");
+    androidx.test.uiautomator.BySelector button =
+        androidx.test.uiautomator.By.res(
+            java.util.regex.Pattern.compile(".*:id/exo_(minimal_)?fullscreen"));
+    long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
+    long lastTap = 0;
+    while (android.os.SystemClock.elapsedRealtime() < deadline) {
+      // Android can attach its first-use tutorial after the initial app focus
+      // check. Observe it throughout control acquisition, not only at entry.
+      if (device.hasObject(hint)) {
+        acknowledgeSystemFullscreenHint(device);
+        continue;
+      }
+      if (fullscreenHasInputFocus()) {
+        androidx.test.uiautomator.UiObject2 exit = device.findObject(button);
+        if (exit != null) return exit;
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - lastTap >= 1000) {
+          device.click(device.getDisplayWidth() / 4, device.getDisplayHeight() / 3);
+          lastTap = now;
+        }
+      }
+      Thread.sleep(100);
+    }
+    capture("native-video-controls.png");
+    device.dumpWindowHierarchy(
+        new File(MediaBridge.context.getExternalFilesDir(null), "native-video-controls.xml"));
+    throw new AssertionError("The native fullscreen exit button must be reachable");
+  }
+
+  static boolean videoVisible(String filename, boolean landscape) throws IOException {
+    return videoVisible(filename, landscape, false);
+  }
+
+  static boolean videoVisible(String filename, boolean landscape, boolean dimmed)
+      throws IOException {
+    android.graphics.Bitmap frame =
+        InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+    if (frame == null) return false;
+    try {
+      if (landscape && frame.getWidth() <= frame.getHeight()) return false;
+      int red = 0, green = 0, blue = 0;
+      int bright = dimmed ? 70 : 180, dark = dimmed ? 45 : 90;
+      for (int y = 0; y < frame.getHeight(); y += 3)
+        for (int x = 0; x < frame.getWidth(); x += 3) {
+          int pixel = frame.getPixel(x, y);
+          int r = android.graphics.Color.red(pixel);
+          int g = android.graphics.Color.green(pixel);
+          int b = android.graphics.Color.blue(pixel);
+          if (r > bright && g < dark && b < dark) red++;
+          if (g > bright && r < dark && b < dark) green++;
+          if (b > bright && r < dark && g < dark) blue++;
+        }
+      boolean visible = red > 100 && green > 100 && blue > 100;
+      if (visible) {
+        try (FileOutputStream out =
+            new FileOutputStream(
+                new File(MediaBridge.context.getExternalFilesDir(null), filename))) {
+          frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+        }
+      }
+      return visible;
+    } finally {
+      frame.recycle();
+    }
+  }
+
+  static void surfaceEvidence() {
+    if (android.os.Build.VERSION.SDK_INT < 29) return;
+    java.util.concurrent.CountDownLatch recorded = new java.util.concurrent.CountDownLatch(1);
+    MediaBridge.main.post(
+        () -> {
+          try {
+            for (android.view.View root :
+                android.view.inspector.WindowInspector.getGlobalWindowViews()) inspectSurface(root);
+          } finally {
+            recorded.countDown();
+          }
+        });
+    try {
+      recorded.await(5, java.util.concurrent.TimeUnit.SECONDS);
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  static void inspectSurface(android.view.View view) {
+    if (view instanceof androidx.media3.ui.PlayerView) {
+      androidx.media3.ui.PlayerView playerView = (androidx.media3.ui.PlayerView) view;
+      android.view.View surface = playerView.getVideoSurfaceView();
+      android.util.Log.i(
+          "NativeVideoEvidence",
+          "view="
+              + (surface == null ? "none" : surface.getClass().getSimpleName())
+              + " attached="
+              + view.isAttachedToWindow()
+              + " hardware="
+              + view.isHardwareAccelerated()
+              + " size="
+              + view.getWidth()
+              + "x"
+              + view.getHeight()
+              + " bound="
+              + (playerView.getPlayer() != null)
+              + " visible="
+              + view.isShown()
+              + " view_surface_size="
+              + (playerView.getPlayer() == null ? "none" : playerView.getPlayer().getSurfaceSize())
+              + " decoder_surface_size="
+              + (PlaybackService.current == null
+                  ? "none"
+                  : PlaybackService.current.player.getSurfaceSize()));
+      if (PlaybackService.current != null && surface != null) {
+        try {
+          Object decoder = PlaybackService.current.player;
+          java.lang.reflect.Field output = decoder.getClass().getDeclaredField("videoOutput");
+          output.setAccessible(true);
+          Object actual = output.get(decoder);
+          Object expected =
+              surface instanceof android.view.SurfaceView
+                  ? ((android.view.SurfaceView) surface).getHolder().getSurface()
+                  : null;
+          android.util.Log.i(
+              "NativeVideoEvidence",
+              "decoder_output="
+                  + (actual == null ? "none" : actual.getClass().getSimpleName())
+                  + " owns_displayed_surface="
+                  + (expected != null && actual == expected));
+        } catch (ReflectiveOperationException unavailable) {
+          android.util.Log.i("NativeVideoEvidence", "decoder output inspection unavailable");
+        }
+      }
+      if (surface instanceof android.view.TextureView) {
+        android.view.TextureView texture = (android.view.TextureView) surface;
+        android.util.Log.i("NativeVideoEvidence", "texture_available=" + texture.isAvailable());
+        android.graphics.Bitmap frame = texture.getBitmap();
+        if (frame != null) {
+          try (FileOutputStream output =
+              new FileOutputStream(
+                  new File(MediaBridge.context.getExternalFilesDir(null), "video-texture.png"))) {
+            frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output);
+          } catch (IOException ignored) {
+          } finally {
+            frame.recycle();
+          }
+        }
+      }
+      if (surface instanceof android.view.SurfaceView
+          && surface.getWidth() > 0
+          && surface.getHeight() > 0
+          && ((android.view.SurfaceView) surface).getHolder().getSurface().isValid()) {
+        android.view.SurfaceView target = (android.view.SurfaceView) surface;
+        android.util.Log.i(
+            "NativeVideoEvidence", "surface_valid=" + target.getHolder().getSurface().isValid());
+        android.graphics.Bitmap frame =
+            android.graphics.Bitmap.createBitmap(
+                target.getWidth(), target.getHeight(), android.graphics.Bitmap.Config.ARGB_8888);
+        try {
+          android.view.PixelCopy.request(
+              target,
+              frame,
+              result -> {
+                try {
+                  android.util.Log.i("NativeVideoEvidence", "pixel_copy=" + result);
+                  if (result == android.view.PixelCopy.SUCCESS)
+                    try (FileOutputStream out =
+                        new FileOutputStream(
+                            new File(
+                                MediaBridge.context.getExternalFilesDir(null),
+                                "video-surface.png"))) {
+                      frame.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out);
+                    }
+                } catch (IOException ignored) {
+                } finally {
+                  frame.recycle();
+                }
+              },
+              MediaBridge.main);
+        } catch (IllegalArgumentException unavailable) {
+          android.util.Log.i("NativeVideoEvidence", "surface became unavailable during capture");
+          frame.recycle();
+        }
+      }
+    }
+    if (view instanceof android.view.ViewGroup) {
+      android.view.ViewGroup group = (android.view.ViewGroup) view;
+      for (int i = 0; i < group.getChildCount(); i++) inspectSurface(group.getChildAt(i));
+    }
+  }
+
+  static void command(String op) throws Exception {
+    MediaBridge.execute(new JSONObject().put("op", op).toString());
+  }
+
+  @Test
+  public void actualVideoPauseVolumeSwitchDownloadAndOfflinePlayback() throws Exception {
+    Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
+    File media = new File(context.getCacheDir(), "instrumented-fixture.mp4");
+    try (InputStream input =
+            InstrumentationRegistry.getInstrumentation()
+                .getContext()
+                .getAssets()
+                .open("fixture.mp4");
+        FileOutputStream output = new FileOutputStream(media)) {
+      byte[] data = new byte[8192];
+      int n;
+      while ((n = input.read(data)) != -1) output.write(data, 0, n);
+    }
+    long firstGeneration;
+    long cleanShutdowns = RustActivity.shutdowns.get();
+    try (ActivityScenario<RustActivity> scenario = RuntimeTest.launchOffline();
+        LoopbackDownloads loopback = LoopbackDownloads.open()) {
+      JSONObject request =
+          new JSONObject()
+              .put(
+                  "media",
+                  new JSONObject()
+                      .put("url", "https://media.test/video")
+                      .put("title", "Instrumented decoder")
+                      .put("kind", "video"))
+              .put(
+                  "stream", new JSONObject().put("url", android.net.Uri.fromFile(media).toString()))
+              .put("audio", false);
+      long initialFrames = MediaBridge.videoFrames.get();
+      MediaBridge.execute(new JSONObject().put("op", "play").put("request", request).toString());
+      MediaBridge.event("show_player", "");
+      await(
+          "Video decoder never advanced",
+          () -> status().optDouble("position") > 0.2 && status().optBoolean("playing"));
+      await(
+          "Video decoder did not submit a native frame",
+          () -> MediaBridge.videoFrames.get() > initialFrames);
+      AudioTap.enabled = true;
+      await("Decoded audio never produced visualizer levels", () -> AudioTap.levels != 0);
+      // The decoder can start against its placeholder before Compose attaches
+      // the visible view. Keep the short fixture playing until a visible frame
+      // arrives; pausing before attachment can retain only a placeholder frame.
+      command("repeat");
+      await(
+          "Decoded video was not visible in the native Android surface",
+          () -> videoVisible("video-player.png", false));
+      long fullscreenGeneration = PlaybackService.current.generation;
+      long inlineFirstFrameMs = status().getLong("first_frame_ms");
+      assertTrue("The decoder must report its first frame", inlineFirstFrameMs > 0);
+      androidx.test.uiautomator.UiDevice device =
+          androidx.test.uiautomator.UiDevice.getInstance(
+              InstrumentationRegistry.getInstrumentation());
+      androidx.test.uiautomator.UiObject2 fullscreen =
+          device.wait(
+              androidx.test.uiautomator.Until.findObject(
+                  androidx.test.uiautomator.By.desc("Fullscreen video")),
+              5000);
+      assertNotNull("Fullscreen button must be visible", fullscreen);
+      fullscreen.click();
+      await(
+          "Fullscreen did not enter landscape",
+          () -> FullscreenActivity.visible && device.getDisplayWidth() > device.getDisplayHeight());
+      acknowledgeSystemFullscreenHint(device);
+      await(
+          "Fullscreen must receive input after the system hint",
+          MediaRuntimeTest::fullscreenHasInputFocus);
+      assertEquals(
+          "Fullscreen must reuse the prepared decoder",
+          fullscreenGeneration,
+          PlaybackService.current.generation);
+      fullscreenExit(device);
+      await(
+          "Fullscreen must display the decoded RGB fixture",
+          () -> videoVisible("native-video-fullscreen.png", true));
+      androidx.test.uiautomator.UiObject2 exitFullscreen = fullscreenExit(device);
+      await(
+          "Video must remain visible behind the native controls",
+          () -> {
+            fullscreenExit(device);
+            // Media3 dims the video to 40% brightness while its controls are shown.
+            return videoVisible("native-video-controls.png", true, true);
+          });
+      device.dumpWindowHierarchy(
+          new File(context.getExternalFilesDir(null), "native-video-controls.xml"));
+      for (boolean pause : new boolean[] {true, false}) {
+        // The controller auto-hides; re-show it (via the exit-button helper) and
+        // retry rather than racing a single lookup against the hide timer.
+        androidx.test.uiautomator.UiObject2 toggle = null;
+        for (int attempt = 0; attempt < 3 && toggle == null; attempt++) {
+          fullscreenExit(device);
+          toggle =
+              device.wait(
+                  androidx.test.uiautomator.Until.findObject(
+                      androidx.test.uiautomator.By.res(
+                          java.util.regex.Pattern.compile(".*:id/exo_play_pause"))),
+                  5000);
+        }
+        assertNotNull("The native play/pause button must be reachable", toggle);
+        toggle.click();
+        await(
+            "The native play/pause button must control playback",
+            () -> status().optBoolean("paused") == pause);
+        assertEquals(
+            "User pause must also govern reconnect intent",
+            pause,
+            PlaybackService.current.pausedByUser);
+      }
+      exitFullscreen = fullscreenExit(device);
+      exitFullscreen.click();
+      await(
+          "Fullscreen did not return to the focused player",
+          () -> {
+            if (!FullscreenActivity.visible) return true;
+            if (device.hasObject(
+                androidx.test.uiautomator.By.res("android:id/immersive_cling_title"))) {
+              acknowledgeSystemFullscreenHint(device);
+              fullscreenExit(device).click();
+            }
+            return !FullscreenActivity.visible;
+          });
+      assertEquals(fullscreenGeneration, PlaybackService.current.generation);
+      assertEquals(
+          "Surface switches must not overwrite startup latency",
+          inlineFirstFrameMs,
+          status().getLong("first_frame_ms"));
+      fullscreen =
+          device.wait(
+              androidx.test.uiautomator.Until.findObject(
+                  androidx.test.uiautomator.By.desc("Fullscreen video")),
+              5000);
+      assertNotNull("Focused player must return after leaving fullscreen", fullscreen);
+      fullscreen.click();
+      await("Fullscreen must reopen", () -> FullscreenActivity.visible);
+      acknowledgeSystemFullscreenHint(device);
+      await("Reopened fullscreen must receive input", MediaRuntimeTest::fullscreenHasInputFocus);
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+      device.pressBack();
+      await("Android Back must exit fullscreen", () -> !FullscreenActivity.visible);
+      assertEquals(fullscreenGeneration, PlaybackService.current.generation);
+      assertNotNull(
+          "Focused player must return after Android Back",
+          device.wait(
+              androidx.test.uiautomator.Until.findObject(
+                  androidx.test.uiautomator.By.desc("Fullscreen video")),
+              5000));
+      await(
+          "Returning from fullscreen must restore visible inline video",
+          () -> videoVisible("native-video-return.png", false));
+      command("pause");
+      await("Pause was not applied", () -> status().optBoolean("paused"));
+      command("repeat");
+      double position = status().getDouble("position");
+      java.util.concurrent.CountDownLatch replaced = new java.util.concurrent.CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicReference<Exception> replaceError =
+          new java.util.concurrent.atomic.AtomicReference<>();
+      MediaBridge.main.post(
+          () -> {
+            try {
+              PlaybackService service = PlaybackService.current;
+              service.replaceQuality(
+                  service.currentRequest, request.optJSONObject("stream"), "720");
+            } catch (Exception error) {
+              replaceError.set(error);
+            } finally {
+              replaced.countDown();
+            }
+          });
+      assertTrue(replaced.await(5, java.util.concurrent.TimeUnit.SECONDS));
+      if (replaceError.get() != null) throw replaceError.get();
+      await(
+          "Quality switch did not keep pause and position",
+          () ->
+              status().optString("quality").equals("720")
+                  && status().optBoolean("paused")
+                  && Math.abs(status().optDouble("position") - position) < 0.5);
+      MediaBridge.execute("{\"op\":\"volume\",\"value\":0.23}");
+      await("Volume did not change", () -> Math.abs(status().optDouble("volume") - 0.23) < 0.01);
+      request.getJSONObject("media").put("title", "Second stream");
+      MediaBridge.execute(new JSONObject().put("op", "play").put("request", request).toString());
+      await(
+          "Stream switch failed",
+          () ->
+              status().optString("title").equals("Second stream")
+                  && status().optDouble("position") > 0.1);
+      assertEquals(0.23, status().getDouble("volume"), 0.01);
+      assertTrue(status().isNull("error"));
+      JSONObject preview = new JSONObject(request.toString()).put("preview", true);
+      preview.getJSONObject("media").put("title", "Short muted preview");
+      MediaBridge.execute(new JSONObject().put("op", "play").put("request", preview).toString());
+      await(
+          "Preview did not start",
+          () -> status().optBoolean("preview") && status().optBoolean("playing"));
+      MediaBridge.execute("{\"op\":\"volume\",\"value\":0.8}");
+      await("Preview was not muted", () -> status().optDouble("actual_volume", -1) == 0);
+      assertEquals(0.23, status().getDouble("volume"), 0.01);
+      await(
+          "Short preview EOS failed to restore the prior media",
+          () ->
+              !status().optBoolean("preview")
+                  && status().optString("title").equals("Second stream")
+                  && status().optBoolean("playing"));
+      assertEquals(0.23, status().getDouble("actual_volume"), 0.01);
+      try (FixtureServer server = new FixtureServer(media)) {
+        request.getJSONObject("stream").put("url", server.url());
+        request.getJSONObject("media").put("url", server.url()).put("title", "Offline fixture");
+        MediaBridge.execute(
+            new JSONObject().put("op", "download").put("request", request).toString());
+        String id = OfflineStore.id(request);
+        await(
+            "Real HTTP download did not finish",
+            () -> {
+              androidx.media3.exoplayer.offline.Download d =
+                  OfflineStore.manager().getDownloadIndex().getDownload(id);
+              return d != null
+                  && d.state == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED;
+            });
+        server.close();
+        MediaBridge.execute(new JSONObject().put("op", "offline").put("id", id).toString());
+        await(
+            "Cached video could not play without its server",
+            () ->
+                status().optString("title").equals("Offline fixture")
+                    && status().optDouble("position") > 0.2
+                    && status().optBoolean("playing"));
+        assertTrue(status().isNull("error"));
+        MediaBridge.execute(new JSONObject().put("op", "download_remove").put("id", id).toString());
+      }
+      command("stop");
+      firstGeneration = RustActivity.generations.get();
+    } finally {
+      MediaBridge.main.post(
+          () -> {
+            if (PlaybackService.current != null)
+              PlaybackService.current.player.setRepeatMode(
+                  androidx.media3.common.Player.REPEAT_MODE_OFF);
+          });
+      command("stop");
+      AudioTap.enabled = false;
+      media.delete();
+    }
+    await("Android UI did not close", () -> RustActivity.shutdowns.get() > cleanShutdowns);
+    java.util.concurrent.CountDownLatch alive = new java.util.concurrent.CountDownLatch(1);
+    MediaBridge.main.post(alive::countDown);
+    assertTrue(
+        "Activity teardown blocked the Android main looper",
+        alive.await(5, java.util.concurrent.TimeUnit.SECONDS));
+    try (ActivityScenario<RustActivity> reopened = RuntimeTest.launchOffline()) {
+      await(
+          "Android UI did not restart in the existing app process",
+          () -> RustActivity.generations.get() > firstGeneration);
+    }
+    await(
+        "Reopened Android UI did not clean up",
+        () -> RustActivity.shutdowns.get() >= cleanShutdowns + 2);
+    java.util.concurrent.CountDownLatch closedAgain = new java.util.concurrent.CountDownLatch(1);
+    MediaBridge.main.post(closedAgain::countDown);
+    assertTrue(closedAgain.await(5, java.util.concurrent.TimeUnit.SECONDS));
+  }
+
+  static final class FixtureServer implements AutoCloseable {
+    final ServerSocket socket;
+    final byte[] bytes;
+    final Thread thread;
+
+    FixtureServer(File file) throws Exception {
+      bytes = java.nio.file.Files.readAllBytes(file.toPath());
+      socket = new ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"));
+      thread =
+          new Thread(
+              () -> {
+                while (!socket.isClosed()) {
+                  try (Socket client = socket.accept()) {
+                    BufferedReader reader =
+                        new BufferedReader(
+                            new InputStreamReader(
+                                client.getInputStream(), StandardCharsets.US_ASCII));
+                    String line = reader.readLine();
+                    if (line == null) continue;
+                    boolean head = line.startsWith("HEAD");
+                    int start = 0;
+                    while ((line = reader.readLine()) != null && !line.isEmpty()) {
+                      if (line.toLowerCase(java.util.Locale.ROOT).startsWith("range: bytes="))
+                        start = Integer.parseInt(line.substring(13).split("-")[0]);
+                    }
+                    if (start < 0 || start >= bytes.length) start = 0;
+                    OutputStream out = client.getOutputStream();
+                    String headers =
+                        "HTTP/1.1 "
+                            + (start > 0 ? "206 Partial Content" : "200 OK")
+                            + "\r\n"
+                            + "Content-Type: video/mp4\r\n"
+                            + "Accept-Ranges: bytes\r\n"
+                            + "Content-Length: "
+                            + (bytes.length - start)
+                            + "\r\n"
+                            + (start > 0
+                                ? "Content-Range: bytes "
+                                    + start
+                                    + "-"
+                                    + (bytes.length - 1)
+                                    + "/"
+                                    + bytes.length
+                                    + "\r\n"
+                                : "")
+                            + "Connection: close\r\n\r\n";
+                    out.write(headers.getBytes(StandardCharsets.US_ASCII));
+                    if (!head) out.write(bytes, start, bytes.length - start);
+                    out.flush();
+                  } catch (Exception ignored) {
+                  }
+                }
+              },
+              "local-media-fixture");
+      thread.start();
+    }
+
+    String url() {
+      return "http://127.0.0.1:" + socket.getLocalPort() + "/fixture.mp4";
+    }
+
+    public void close() throws Exception {
+      socket.close();
+      thread.join(2000);
+    }
+  }
+}

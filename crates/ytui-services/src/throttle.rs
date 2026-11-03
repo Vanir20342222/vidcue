@@ -58,7 +58,6 @@ mod tests {
             attempt: 1,
             downloaded_bytes: bytes,
             total_bytes: None,
-            total_bytes_estimate: None,
             phase: DownloadPhase::Downloading,
             stream_index: stream,
             stream_count: None,

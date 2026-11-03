@@ -1,0 +1,852 @@
+# Android validation record (M9)
+
+## Category preloading (2026-11-02)
+
+Android's native ViewModel now caches network first pages for 60 seconds, with
+12 entries and a 2 MiB serialized-text estimate. Video and Music use distinct
+keys, including network revision; account changes, account-index changes and
+proxy edits clear cached/private navigation state. Selecting the current source
+again refreshes its UI entry. Local saved items and pagination bypass this cache.
+
+After a 300 ms settling delay, browsing prepares up to three nearby server
+categories, Home for the other media tab, and signed-in playlist/liked sources
+(at most six targets per batch). Only one speculative browse runs at a time;
+tapping a pending target shares its fetch. Cancelled batches do not schedule
+more work. Existing preload/mobile-data preferences apply, active playback
+suppresses new speculative browsing, and errors stop a batch without retries or
+visible error overlays. Category chips remain available while changing filters.
+
+Focused verification: **9 JUnit tests passed**, compiled directly with Kotlin
+2.1.21, kotlinx-coroutines 1.10.2 and JUnit 4.13.2. They exercise reuse/expiry,
+joining a cancelled preload waiter, account clearing and late replies, failed
+fetch recovery, entry/byte eviction, oversize rejection, explicit refresh,
+tab isolation, and rapid navigation without cancelling the visible request.
+Kotlin formatting and `git diff --check` also pass.
+
+This workspace has no Android SDK or Gradle installation/cache. The new cache
+and its tests were compiled in isolation; the complete Android app build,
+instrumentation, physical category-switch latency and live-service behavior
+have **not** been qualified for this change. On an Android-equipped worker run
+`apps/android/gradlew -p apps/android :app:testDebugUnitTest :app:lintDebug`
+and exercise video/Music category switching, refresh, pagination, account
+switch/disconnect, and preload disabled/metered-network settings on a device.
+No APK was built or published; M9's existing physical/live gates remain open.
+
+## Published content-first UI release: mobile.10 (2026-11-01)
+
+[Download, checksum and qualification](MOBILE10_RELEASE.md). Version
+**0.2.0-alpha.12-mobile.10**, code **10**, packages source
+`686e3794b023acee4b7355c437bb84f887a42ac6` and the merged PR #29 restyle.
+Exact-main Android/Rust/secret checks pass: **37 native passes**, one explicit
+public-YouTube skip, zero failures; 367 Rust/media passes and 31 explicit ignores.
+All five actual-window synthetic startup checks remain below 2000 ms. The
+separately signed release passes **20 JVM tests**, lint and source/package/
+version/certificate/both-ABI/16 KiB inspection. The publisher passes, and an
+independent public APK download matches the built hash, size and stable identity.
+Existing saved themes and stable-channel private data remain compatible; physical
+updates, live YouTube and broader M9 gates remain separate.
+
+## Content-first Android restyle (2026-10-30)
+
+[Scope, decisions and retained failures](CONTENT_FIRST_RESTYLE.md), implementation
+and current qualification in [PR #29](https://github.com/Vanir20342222/ytui/pull/29).
+The report separates application, test and documentation changes; current PR
+checks identify the final qualified source. Local debug/instrumentation APK build and lint pass,
+20 JVM tests and 337 workspace tests pass (31 explicit ignores). The first native
+run has 35 passes, one new asynchronous geometry-test failure and one public
+skip; the corrected test preserves its original quarter-width assertion. The
+final PR report supplies actual native results and screenshot artifact links,
+including 13 theme entries × two system modes × phone/tablet × three screens.
+App implementation `debbbd1` passes 36 native tests (one public skip), 367 Rust/media checks (31 explicit ignores), 20 JVM tests and lint. A subsequent screenshot-only follow-up waits for native window transitions and actual decoded cover pixels. All existing 2000ms media deadlines remain. These deterministic results do not
+supersede the separate Tab S9/live-service acceptance boundaries below.
+
+## Published UI release: mobile.9 (2026-10-30)
+
+[Download and complete qualification](MOBILE9_RELEASE.md). App source
+`553fe494b800d472de239285391c6643cc97e246` packages the merged UI refinements as
+version **0.2.0-alpha.12-mobile.9**, code **9**, using the supported release-version
+inputs. Exact-main Android/Rust/Secret scan pass: **33 native passes, one public
+skip, 366 Rust/media passes**, 31 explicit ignores, no app ANR/Rust-panic markers.
+Strict indexed/catalog/HLS window-pixel deadlines pass. The signed release
+passes **19 JVM tests**, lint, package/version/source/certificate, both ABIs,
+16 KiB alignment and notice inventory checks.
+
+[Publication](https://github.com/Vanir20342222/ytui/actions/runs/41079072261)
+passes. Independent public download verifies hash, size, certificate and code 9.
+The same identity updates mobile.4–8 without uninstalling. Temporary APK transfer
+and bearer inputs are deleted; permanent recovery/signing material remain private.
+The successful mobile.8 physical sample below is the existing device baseline;
+new mobile.9 hardware results and broader M9 gates remain separate.
+
+## UI PR #27 integration (2026-10-30)
+
+[Review and qualification](UI_PR27_REVIEW.md) records the merged UI refinements,
+the corrected search constraint order, narrow VU span guard and actual native
+geometry test. PR source passes **33 native tests**, one public skip, all Rust
+and secret checks, plus 19 local JVM tests and lint. Tablet/VU screenshots were
+inspected; strict indexed/catalog/HLS window pixels stay below 2000 ms. This is
+a source merge; the subsequent mobile.9 release above packages its UI changes.
+
+## Physical mobile.8 result: observed two-second target passed
+
+The owner supplied six completed **Best-quality** video attempts from the Tab S9,
+source `bd75363c0098edcdc54840c9cb7c7a65aebc09ef`. All visible-frame and usable-start
+values pass 2000 ms. Five cold usable starts are **1115–1752 ms**; one prepared
+start is **632 ms**. Five use indexed DASH and one uses chunkless HLS. No failed
+or cancelled attempts appear in the supplied report. This qualifies this observed
+video sample; broader service/network/audio/device and M9 gates remain separate.
+[Full physical table and retained earlier failures](MOBILE8_INDEXED_STARTUP.md).
+
+## Indexed-startup implementation: mobile.8 (2026-10-30)
+
+The real mobile.7 Tab S9 report passes prepared frames at 74–828 ms but three
+cold frames fail at 2827–4117 ms. One HLS frame arrives early while readiness
+is late; usable playback requires both frame and active playback. Extraction
+is down to 338–917 ms. [Mobile.8 evidence and design](MOBILE8_INDEXED_STARTUP.md)
+retain all physical failures and add indexed stream loading at unchanged Best
+quality, safe finite CDN ranges and honest usable-start timing. The subsequent
+physical result above passes the observed video target; M9 is not complete.
+
+App source `bd75363c0098edcdc54840c9cb7c7a65aebc09ef` passes exact-main
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41067553848),
+[Rust](https://github.com/Vanir20342222/ytui/actions/runs/41067554096) and
+[Secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41067553908).
+**32 native tests pass**, one public opt-in check skips, no failures or app
+ANR/Rust-panic markers. Indexed usable video is **914 ms**, corroborated by
+actual window pixels at **1585 ms**, with seeking and range/cache checks passing.
+Catalog-tap pixels are **1229/1105 ms** cold/prepared; HLS pixels **738/798 ms**.
+Rust passes **336 workspace + 15 extractor TLS + 15 solver/media checks**
+(366 total, 31 explicit ignores), formatting and strict Clippy. Both signed
+release ABIs, **19 JVM tests**, lint and signature/source/package/version/
+16 KiB alignment/notice inventory checks pass.
+
+[Public mobile.8 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.8/ytui-0.2.0-alpha.12-mobile.8.apk)
+matches the signed build after independent public download and certificate/hash/
+size/code verification. The [publisher](https://github.com/Vanir20342222/ytui/actions/runs/41069978120)
+receives only the finished APK; temporary transfer/input files are removed and
+the stable identity/recovery remain private. These synthetic-media results do
+not by themselves qualify live YouTube speed. The subsequent Tab S9 report
+above passes the observed Best-quality video target. [Checksum, retained failures and qualification](MOBILE8_INDEXED_STARTUP.md).
+
+## Earlier Best-quality startup follow-up: mobile.7 (2026-10-30)
+
+The real Tab S9 mobile.6 report with **Best** quality **failed**: completed
+videos took 6772–11048 ms to visible output, with 118–189 ms player API calls
+but several seconds of extraction/flight waits. Mobile.7 removes serial HLS
+child-playlist enumeration, preserves muxed codec declarations for chunkless
+preparation and preloads a bounded first media/init segment. Quality remains
+Best. [Findings, failed runs and release evidence](MOBILE7_STARTUP_FOLLOWUP.md).
+
+Qualified app source `1a6f9682d5c573f58992ced44aa9b7c6d82788d6` passes exact-main
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41033508507),
+[Rust](https://github.com/Vanir20342222/ytui/actions/runs/41033507062) and
+[Secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41033507060).
+28 native cases pass, one public opt-in case skips, with no app ANR/Rust panic
+markers. Native HLS checks require segment bytes in cache and no repeated first
+segment HTTP request, alongside cold/prepared pixels, native controls/fullscreen,
+offline folders/exports, keyboard/account navigation and all themes.
+
+Generated-media catalog-tap window pixels: **848 ms cold / 996 ms prepared**
+(view-frame events 567/691 ms). HLS service window pixels: **704 / 626 ms**
+(view events 501/379 ms). All pixel deadlines remain 2000 ms. The documented
+Goldfish/Ranchu offline debug renderer avoids invalid host buffer migrations;
+physical devices and release APKs retain Media3's standard renderer. These are
+loopback measurements, **not live YouTube or physical-device speed**.
+
+The signed release passes both ABI builds, 18 JVM tests, lint, stable-certificate,
+package/version/source, ZIP/16 KiB ELF alignment and notices checks. Rust CI
+passes 333 workspace + 14 extractor + 15 solver/media checks (362 total, 31
+explicit ignores), formatting and strict Clippy. The
+[public mobile.7 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.7/ytui-0.2.0-alpha.12-mobile.7.apk)
+was independently downloaded: its size/hash/certificate/version match the signed
+local artifact. The [publisher](https://github.com/Vanir20342222/ytui/actions/runs/41035226126)
+receives only the finished APK. Temporary transfer/input files were removed;
+the private signing identity and encrypted recovery are retained.
+
+The cloud still denies YouTube CONNECT (HTTP 403). The subsequent mobile.7
+physical report is recorded in the mobile.8 follow-up above; three cold starts
+fail. Live two-second acceptance and M9 remain **open**.
+
+## Earlier startup follow-up: mobile.6 (2026-10-29)
+
+The real Tab S9 mobile.5 report **failed** the two-second live target (completed videos 11249/14617 ms). Mobile.6 fixes optional manifest I/O, HTTP pool churn, foreground request contention and inaccurate joined-preload labels. The live target remains open until the owner retests.
+
+Source `97e0b758dfb9e6f4b703a84a029953018d5c596d` passes exact-main [Android](https://github.com/Vanir20342222/ytui/actions/runs/40946992360), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/40946992378) and [Secret scan](https://github.com/Vanir20342222/ytui/actions/runs/40946992269). 27 native cases pass, one public opt-in case skips; no app ANR/Rust panic markers. The real JNI foreground-priority test resolves while all eight background workers are occupied. Generated-media window pixels are confirmed at 1267 ms cold / 840 ms prepared (view events 571/390 ms). These do not establish YouTube speed.
+
+The signed release passes both ABI builds, 18 JVM tests, lint, stable-certificate/package/version/source checks, ZIP/16 KiB ELF alignment and notices. Rust CI passes 331 workspace tests, eleven extractor cases and fifteen solver/media checks (357 pass, 31 explicit ignores). The [public mobile.6 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.6/ytui-0.2.0-alpha.12-mobile.6.apk) was independently downloaded and its hash matches the signed local build. [Checksum, findings and remaining live gate](MOBILE6_STARTUP_FOLLOWUP.md). M9 remains open.
+
+## Earlier startup preview: mobile.5 (2026-10-29)
+
+Source `7d5267af5b360d211fe8f7e33d21e0ec21448e59` passes exact-main [Android](https://github.com/Vanir20342222/ytui/actions/runs/40910296881), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/40910296725) and [Secret scan](https://github.com/Vanir20342222/ytui/actions/runs/40910296780). 26 native runtime cases pass, no failures; one public opt-in case is explicitly skipped. Six alternating service restarts, all themes, keyboard/account navigation, offline folders and native/fullscreen video controls pass. No app ANR or Rust panic markers occur in the successful run.
+
+Exact-main window-copy completion: **1921 ms cold / 712 ms prepared**. Native view-frame events: 446/368 ms. Both pixel deadlines are unchanged at 2000 ms.
+
+[Download mobile.5](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.5/ytui-0.2.0-alpha.12-mobile.5.apk) · [Checksum, failed attempts and physical acceptance instructions](STARTUP_VALIDATION_2026-10-29.md). The public hash matches the private signed build, code 5, both ABIs, the same stable signing identity and package as mobile.4. 16 release JVM checks and lint pass. These are generated-media results; live YouTube latency, audible output and physical-device update acceptance remain open. M9 is not complete.
+
+## Earlier player/library preview: mobile.4 (2026-10-29)
+
+Source `cf8046508b96962f1b5ba9efc3529c4427d64b9f` passes [main Android](https://github.com/Vanir20342222/ytui/actions/runs/40837593351), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/40837593137) and Secret scan. **24 runtime cases pass**, one public opt-in case skips; all 13 themes, visible video behind native controls, fullscreen return, native transports, offline folders/playlists and cover recovery pass. Logs contain zero app ANRs/Rust panic markers. The local signed release passes both ABI builds, 14 JVM tests, lint and signature/alignment/notices inspection.
+
+### Earlier mobile.4 APK
+
+[Download 0.2.0-alpha.12-mobile.4](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.4/ytui-0.2.0-alpha.12-mobile.4.apk) · [Public checksum/inspection](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.4). Package `dev.ytui.android.stable`, launcher **ytui**, code **4**, Android 8+, ARM64/x86-64. Installs separately from old Preview apps; subsequent stable updates retain this signing identity. No GitHub signing secrets are required.
+
+SHA256: `4eeaa2145a0b7b08328d940e84c16e1375e481c859f48ac5127e3598301b05c4`. The public download was independently checked. [Full qualification, fixes and open gates](PLAYER_LIBRARY_VALIDATION_2026-10-29.md) · [Actual screenshots](../screenshots/android/README.md). Live YouTube latency, audible output and physical-device/update acceptance remain open. Earlier sections below are historical checkpoints.
+
+
+Android is a development preview. No physical Nothing Phone (3a) or Galaxy Tab S9
+has been connected. No personal cookies, browser database, VPN or desktop
+appearance settings were used or changed by these tests. Fixture decoding,
+public-provider checks and hardware acceptance are recorded separately.
+
+## Earlier modern media UI checkpoint (2026-10-28): passed
+
+Source **`5f340830c7091aa4546be0e2290560ddbd0bc3ea`**, PR merge revision
+**`bb0aa7be25668696f6f41c74c165946799975c75`**.
+[Android 40712963078](https://github.com/Vanir20342222/ytui/actions/runs/40712963078),
+[Rust 40712962600](https://github.com/Vanir20342222/ytui/actions/runs/40712962600)
+and [Secret scan 40712962670](https://github.com/Vanir20342222/ytui/actions/runs/40712962670)
+passed. The UI now uses sans-serif typography, artwork grids, phone navigation /
+tablet rail, a mini-player and grouped native settings/account/download surfaces.
+
+- **317 offline Rust tests passed**, 0 failed, 31 explicitly ignored; formatting
+  and strict hosted Clippy pass. The hosted Rust media regression workflow passes.
+- **14 Android JVM tests pass**, including AA accent contrast across 381 colours
+  and finite progress with stopped/unknown/invalid telemetry. Debug/release
+  compile, unit tests and lint pass locally; hosted debug build/tests/lint pass.
+- **20 API 35 emulator cases passed**, 0 failures/errors; the separate public
+  YouTube case was explicitly skipped. Continuous logs contain **zero app ANRs
+  and zero Rust panic markers**.
+- Actual keyboard/Unicode input, all 13 theme backgrounds/foregrounds/persistence,
+  account navigation/cancel, native menus/panels, cooldown and URL intent pass.
+- New populated UI checks pass thumbnail HTTP/decode/rendered pixels, responsive
+  video grids and square Music covers, overflow actions, native settings and
+  real Media3 pause/resume/stop through mini-player and expanded transport.
+  The tablet setup cold-launches at 2560×1600; a separate case checks live rotation.
+- Existing visible RGB video, quality/position/pause, persisted volume, preview
+  restoration, cache-only playback, mux/copy/cancel exports alongside playback,
+  queue/EOF/history, ICY metadata, exact isolated challenge vectors, lyrics and
+  encrypted account/tamper/migration/disconnect checks also pass.
+
+[Phone/tablet/player/settings gallery](../screenshots/android/README.md) contains
+unaltered captures from this run; representative catalog, tablet, Music, settings
+and player images were visually reviewed. Generated artwork and catalog entries
+are test-only; no production provider failure is replaced with demo results.
+All theme/keyboard/account captures, JUnit and logs are in the
+[device evidence](https://github.com/Vanir20342222/ytui/actions/runs/40712963078/artifacts/12828725236).
+Emulator software decoding does not establish physical hardware or audible output.
+
+### Earlier direct APK
+
+[Download ytui Preview](https://github.com/Vanir20342222/ytui/releases/download/android-media-preview-2026-10-28/ytui-preview-0.2.0-alpha.12-mobile.3.apk)
+or open the [preview assets/checksum](https://github.com/Vanir20342222/ytui/releases/tag/android-media-preview-2026-10-28).
+Version **`0.2.0-alpha.12-mobile.3`**, code **3**, ARM64/x86-64, Android 8/API 26+.
+Package **`dev.ytui.android.preview`**, launcher **ytui Preview**. It installs
+alongside the old package without uninstalling or changing its private data;
+account/settings/library are separate. The normal release identity is unchanged.
+
+The publisher checks successful Android/Rust/Secret scan runs and the exact APK
+hash, then republishes the existing tested artifact without rebuilding/re-signing.
+Independent inspection verified signing, ZIP / 16 KiB ELF alignment, both native
+ABIs, JNI exports, notices, app label, package and version. SHA256:
+
+```text
+2e184784b3052b3f15b2a66b0ea7636c8b6f46ed58fc0d1772372e45d7ccaf47
+```
+
+This is a development preview. Real Tab S9 / Nothing Phone, live YouTube/account,
+audible output, OEM background behaviour and owner stable signing remain open.
+Public YouTube playback is not qualified by these offline fixtures. See
+[device acceptance](DEVICE_ACCEPTANCE.md), [parity gaps](PARITY.md) and
+[signing/update requirements](SIGNING.md). Original artifacts expire; prerelease
+assets provide a direct download without a GitHub sign-in or ZIP extraction.
+
+## Modern media UI redesign: runtime validation in progress
+
+The user confirmed installation and explicitly requested replacing terminal
+styling with a YouTube/Netflix-inspired mobile design. Source `2c7cca5` adds
+artwork grids, native icon navigation, a mini-player and grouped native panels;
+see [the design and acceptance requirements](MEDIA_UI_REDESIGN.md).
+
+Local debug/release compilation, lint, APK signing/alignment/ABI inspection,
+317 offline Rust tests and 13 Android JVM tests passed. The hosted Rust and
+Secret scan workflows also passed for that source. New populated UI tests use
+original generated artwork over loopback HTTP; they never substitute for real
+provider feeds in the app.
+
+[First redesign Android run 40707245687](https://github.com/Vanir20342222/ytui/actions/runs/40707245687)
+planned 21 cases but the process stopped after two: the Music/settings case
+passed and the player case crashed with `current must not be NaN`. The deferred
+mini-player progress callback read a stopped zero-duration state between layout
+and recomposition. The remaining suite did not run; this APK is not qualified.
+[Failure evidence](https://github.com/Vanir20342222/ytui/actions/runs/40707245687/artifacts/12825705781)
+retains logs, JUnit and screenshots. The fix captures a finite normalized progress
+value, guards unknown telemetry and tests stopping playback with the UI attached.
+The subsequent [Android run 40710108292](https://github.com/Vanir20342222/ytui/actions/runs/40710108292)
+for `9e38ddf` passed **20 cases**, with the public YouTube case explicitly skipped.
+The stop/mini-player regression and all prior video, export, queue, ICY, account,
+solver and native UI cases passed. Fourteen Android unit tests pass in debug and
+release locally; hosted Rust and Secret scan also pass. Rendered warm artwork
+pixels are checked before screenshots. The first 2560×1600 screenshot caught an
+old popup surface during two emulator size/density overrides despite the grid
+geometry checks passing. Tablet screenshot setup now cold-launches the activity
+at the target viewport; the separate live-rotation test remains intact.
+
+Development packaging is being separated as `dev.ytui.android.preview` after an
+actual certificate comparison proved the installed mobile.2 APK and a new CI
+build cannot update each other. Normal release identity stays unchanged. The
+new package and cold-start screenshot setup pass in the current checkpoint above.
+
+The earlier metadata-only `fdd047c` Android run 40682419478 failed while installing
+the emulator system image (`Error on ZipFile unknown archive`), before any device
+tests ran. Bounded system-image download retries are now part of the workflow.
+
+## Previous native UI migration checkpoint: passed emulator checks
+
+Source **`4b2e988`**, PR merge revision **`494627636f39e34b4be5fbb18ee2fa8bd012a616`**.
+[Android run 40668747753](https://github.com/Vanir20342222/ytui/actions/runs/40668747753),
+[Rust run 40668747755](https://github.com/Vanir20342222/ytui/actions/runs/40668747755)
+and [Secret scan 40668747792](https://github.com/Vanir20342222/ytui/actions/runs/40668747792)
+passed. This supersedes the failed native UI development attempts below.
+
+- **317 offline Rust tests passed**, 0 failed, 31 explicitly ignored; formatting
+  and strict workspace Clippy passed. ARM64 JNI cross-target Clippy passed during
+  the native-host migration; both native ABIs rebuilt successfully in this run.
+- **12 Android JVM unit tests passed** in both debug and release configurations.
+  Kotlin/Java compilation, instrumentation assembly, debug/release lint passed.
+- **17 accelerated API 35 emulator checks passed**, 0 failures, 0 errors. The
+  separate public YouTube case was explicitly skipped. Continuous logcat has
+  **zero Rust panic markers and zero app ANRs**.
+- All six native UI checks pass: actual software-keyboard visibility and shell/
+  Unicode text input; all 13 shared themes' painted background, foreground and
+  persistence; account-error navigation, header editing and explicit sign-in
+  cancellation; wide-layout tabs/panels; cooldown prefetch; playlist/Music URL intent.
+- Generated video is visibly rendered in the full screenshot, with actual RGB
+  pixels. Pause, quality replacement/position, volume across stream changes,
+  muted preview restoration and cache-only playback pass. Concurrent export now
+  preserves the media session and playback notification; muxed output decodes
+  with PCM, audio copies byte-for-byte and cancellation leaves no output file.
+- EOF/manual queue/history/controller navigation, ICY metadata/session titles,
+  JNI bounds, isolated original n/signature challenge vectors, lyrics and
+  Keystore tamper/migration/disconnect checks pass again.
+
+The [device evidence](https://github.com/Vanir20342222/ytui/actions/runs/40668747753/artifacts/12808525396)
+contains JUnit results, logs, a visible generated-video screenshot and 16 native
+UI screenshots (13 themes, keyboard input, account controls and wide layout).
+Representative keyboard, dark/light theme, account, wide-layout and video images
+were visually inspected; all 13 palettes also have automated color checks.
+Offline debug emulator video uses Android's real
+software codec to avoid Goldfish's host-FFmpeg buffer bridge; this does not prove
+physical hardware decoding or audible output. The instrumentation re-invocation
+used an unknown About build marker; functional source/version matches the APK.
+The workflow now carries the source marker across all Gradle steps to prevent
+that metadata-only difference in subsequent runs.
+
+### Tested development APK
+
+[Download the APK directly](https://github.com/Vanir20342222/ytui/releases/download/android-native-preview-2026-10-28/ytui-android-0.2.0-alpha.12-mobile.2.apk)
+or open the [preview assets and checksum](https://github.com/Vanir20342222/ytui/releases/tag/android-native-preview-2026-10-28).
+No GitHub sign-in or ZIP extraction is needed. The preview publisher verifies
+the checkpoint's Android/Rust/Secret scan successes and exact SHA256, then
+publishes the existing APK without rebuilding or re-signing it.
+The [original artifact and reports](https://github.com/Vanir20342222/ytui/actions/runs/40668747753/artifacts/12807657622)
+remain available to signed-in GitHub users; extract
+`outputs/apk/debug/app-debug.apk` from that ZIP. Version is
+**`0.2.0-alpha.12-mobile.2`**, code **2**, with ARM64/x86-64 and Android 8/API 26+.
+Local independent inspection verified signing, ZIP and 16 KiB ELF alignment,
+both Rust ABIs, required JNI exports and notices. APK SHA256:
+
+```text
+2587c533994e69a340730fbe7ba6400cbf80f6216844dfa46ad3bd711fd84791
+```
+
+This is an emulator-checked development preview, not a stable signed release.
+Artifacts expire after 30 days. Different debug signing identities cannot update
+each other in place; follow [installation/update guidance](README.md#install-an-apk)
+and preserve wanted app data before replacing an installation.
+
+**Still required:** [Tab S9/phone acceptance](DEVICE_ACCEPTANCE.md), real YouTube/
+account/network and audible output checks, hardware/OEM background behavior,
+remaining capability gaps and stable owner signing. Public playback is not
+qualified by these generated fixtures. At that checkpoint PR #20 was draft; it has since been merged by the owner.
+M9 remains a development preview while the physical/live/signing gates are open.
+
+## Physical UI failure and native migration (2026-10-28)
+
+The user installed the earlier development APK on a Galaxy Tab S9 and reported
+unusable text fields, theme choices with no visible effect, and protected-feed
+errors offering only desktop F2/CLI instructions. This **failed physical UI
+acceptance** supersedes earlier impressions from headless renders and backend
+checks. The old APK below is a historical backend checkpoint, not a recommended
+UI-qualified build.
+
+Production Android presentation now uses Jetpack Compose/ComponentActivity and a
+native Media3 PlayerView. The shared Rust engine, private paths and data formats
+are preserved. Native text/IME, all-theme painted-pixel/persistence, account-error
+navigation/sign-in cancellation and wide-layout panel tests are added. Their
+emulator results and a physical Tab S9 re-test must pass before qualification.
+
+Local complete ARM64/x86-64 builds, Kotlin/Java compilation, instrumentation APK
+assembly, **9 Java unit tests**, Android lint and APK signing/16 KiB alignment
+inspection passed. The full Rust workspace passed **315 tests, 0 failed, 31
+explicitly ignored**, formatting and strict host/ARM64 Clippy. Native UI emulator
+results will be recorded after the new suite runs. Earlier test counts below describe
+their specific Rust/legacy UI/backend checkpoints only.
+
+### First native UI emulator run
+
+[Run 40655604212](https://github.com/Vanir20342222/ytui/actions/runs/40655604212)
+at `a0d448f` passed **14 cases**, including all four new native keyboard/theme/
+account/wide-layout checks. One generated-video visibility check failed, and the
+separate public YouTube case was explicitly skipped. This is not a qualified APK.
+
+Actual shell/IME text entry and Unicode editing worked, every shared theme's
+preference persisted and non-system palettes matched painted pixels, the
+protected-feed account action opened native sign-in/import controls, Cancel did
+not connect an account, and landscape tabs/panels stayed reachable.
+
+The decoder produced frames/PCM, but the screenshot lacked visible RGB video.
+The follow-up uses a native TextureView inside Compose's layered player dialog;
+the regression now pauses on a decoded frame before screenshot synchronization
+can outlast the eight-second fixture, retains screenshot evidence even on
+failure, and checks actual colored pixels. Full media/preview/volume/offline
+regressions must pass after this change. This does not qualify public YouTube.
+
+Review also found that a zero-delay transient feed error lost its retryability,
+and scroll prefetch could restart a failed continuation during its cooldown.
+The follow-up retains an explicit retryable flag, bounded backoff, a no-prefetch
+error guard and continuation-specific retry while preserving loaded cards. It
+adds Rust, Kotlin and native UI regressions. Theme/import updates are serialized;
+seek gestures retain their draft position, SponsorBlock marks/replay remain
+reachable, and visualizer sampling/animation runs only while visible/playing.
+
+### Second run: graphics/launcher failure and text contrast review
+
+[Run 40658107009](https://github.com/Vanir20342222/ytui/actions/runs/40658107009)
+at `743cd00` passed **14 cases**, failed video visibility and keyboard visibility,
+and explicitly skipped the public case. The new continuation-cooldown guard
+passed. Screenshots revealed a **Pixel Launcher ANR dialog covering the app**;
+logcat places the launcher ANR before the test app started. The emulator's
+Goldfish host-FFmpeg AVC bridge also reported invalid color-buffer IDs. This run
+is not qualified and its development APK is not recommended.
+
+The follow-up uses current SwiftShader mode with cold snapshots disabled, stops
+only the unused Pixel Launcher before disposable-emulator tests, explicitly
+allows its software keyboard with a virtual hardware keyboard, and fails on any
+app ANR. Generated offline video fixtures on Goldfish/Ranchu debug emulators use
+Android's real `c2.android`/`OMX.google` software codec, avoiding the invalid
+host-FFmpeg buffer bridge. Normal app/device codec selection is unchanged.
+Emulator decoding therefore does **not** establish physical hardware decoding.
+
+Visual review also exposed a genuine root text-color bug: MaterialTheme did not
+supply LocalContentColor for a plain root Column, leaving headings/body black on
+dark palettes. The root now supplies the shared foreground color explicitly.
+Theme checks now verify foreground text layout color and painted background for
+all 13 entries, including System, and reject a covering system ANR dialog.
+Visible video keeps the screen awake only while playing; in-flight feed replies
+retain the user's current scroll index. The full rerun remains required.
+
+### Third run: all native UI regressions pass; video fixture timing remains
+
+[Run 40660857974](https://github.com/Vanir20342222/ytui/actions/runs/40660857974)
+at `7319021` passed **15 cases**, including all five native UI cases and all 13
+background/foreground theme checks, with no covering launcher dialog. Video
+visibility still failed; the public case was explicitly skipped. The trace
+confirms Android's `c2.android.avc.decoder` was selected, and shows pause at
+0.671 seconds before the visible TextureView was attached. The fixture now keeps
+playing/repeating until the full screenshot contains actual RGB video pixels,
+then tests pause/position/quality. Failures additionally save native view/texture
+diagnostics. No visibility assertion is removed or replaced by decoder counters.
+
+The follow-up also repairs pasted/saved playlist browse IDs (`VL`), preserves
+Music/audio intent from the Downloads tab, keeps watch links with `list=` as
+single items, and avoids treating another host's `/playlist` path as YouTube.
+Successful empty-feed notices now translate desktop F2 instructions as well as
+errors. Save toggles report removal accurately and refresh an open saved shelf.
+Offline URL/notice regressions cover these changes; full runtime qualification
+remains pending. Release Kotlin/Java compilation, 11 release JVM tests and release
+lint also passed for the native UI; no signing identity was loaded for that check.
+
+### Fourth run: visible video passes; concurrent export exposes a notification collision
+
+[Run 40665889912](https://github.com/Vanir20342222/ytui/actions/runs/40665889912)
+at `2c2d3a7` passed **16 cases**, including actual RGB video, pause/quality/position,
+volume persistence, preview restoration, offline playback, all six native UI
+checks, radio metadata, crypto and challenge vectors. One concurrent-export
+playback case failed; the public case was explicitly skipped. The retained
+screenshot now shows the generated color-bar video inside the native player.
+
+The export worker used notification ID **4**, the same ID as playback. Publishing
+and removing its non-media foreground notification replaced the MediaStyle entry;
+System UI destroyed the active media session. Job notifications now have separate
+preparation/export namespaces, away from playback/download IDs; the preparing
+playback fallback also verifies its notification channel. A JVM regression and
+an active-session/channel assertion extend the existing real export/decode test.
+Debug/release JVM tests and lint pass locally; the full device rerun remains
+required. This failure is retained, not dismissed as an emulator-only issue.
+
+The full local workspace at this source passed **317 tests, 0 failures, 31
+explicitly ignored**; strict Clippy passed. The six native UI cases are keyboard/
+Unicode editing, all-theme background/foreground/persistence, protected-account
+navigation/cancel, wide-layout panels, cooldown prefetch, and pasted URL intent.
+
+## Passed historical backend checks
+
+- Qualified Keystore/navigation checkpoint: **311 passed, 0 failed, 31 explicitly ignored**.
+  Formatting and strict all-target workspace Clippy passed. ARM64 Android-specific
+  JNI/GLES code also passed strict cross-target Clippy.
+- Mobile checks cover all 13 theme entries at 360×800, 412×915 and 1280×800 logical
+  layouts; four tabs and overlays; touch navigation; Back overlay order; three
+  music styles, pause/reduced motion; settings/download draft cancellation;
+  malformed Unicode palettes; stale playback/account replies; feed cooldown;
+  bounded requests/images; scoped synthetic sessions; durable saved/queue/resume;
+  failed-write rollback; native format selection and SponsorBlock-off privacy.
+  These are headless Rust UI checks, not hardware performance measurements.
+- Desktop saved-player Node challenge vectors: **2 passed**. Hosted
+  [Rust run 40641207981](https://github.com/Vanir20342222/ytui/actions/runs/40641207981)
+  passed desktop/shared checks, real FFmpeg/mpv/local-playlist checks and release
+  build after the monorepo move. Desktop launchers/state paths are unchanged.
+- Complete local Android build: ARM64 and x86-64 native libraries, dependency
+  notices, Gradle wrapper, debug/instrumentation APK assembly, **8 Java unit tests**
+  and Android Lint with **0 errors**. APK inspection passed signing, ZIP and
+  **16 KiB ELF** alignment, both ABIs, JNI/GameActivity symbols and bundled notices.
+- Accelerated API 35
+  [Android run 40641208084](https://github.com/Vanir20342222/ytui/actions/runs/40641208084)
+  passed **10 device tests, 0 failures, zero Rust panics**. The separate opt-in public YouTube case
+  was explicitly skipped in this default, account-free run. Passed device checks:
+  - Generated MP4 actually decodes into the Rust GLES surface and produces PCM
+    levels; pause and volume persistence across stream changes work.
+  - Short muted preview restores the previous media/position/preferences on EOS.
+  - Actual loopback HTTP download plays from private offline cache after its
+    server is closed.
+  - Separate video/audio tracks export from cache into a playable MP4 with both
+    tracks and decoded PCM. Foreground M4A export is byte-for-byte identical;
+    cancellation does not create an output file.
+  - Closing/reopening the Rust UI in the same process recreates the UI and leaves
+    Android's main loop responsive.
+  - JNI contracts/direct-buffer bounds and empty audio EOS input are checked.
+  - Android's isolated JavaScript runtime has no browser/network/cookie APIs;
+    original saved YouTube n/signature vectors return the exact expected maps.
+  - Actual EOF album continuation, remote Previous/Next and pause/resume,
+    history navigation, manual queue priority and failed-item retention pass.
+  - JNI lyric save/load retains exact timestamps/Unicode and rejects invalid edits.
+  - Actual Android Keystore encryption uses fresh nonces and rejects tampering.
+    Rust/JNI import stores ciphertext, migrates a synthetic plaintext account,
+    fails closed on a damaged envelope, recovers and removes it on disconnect.
+
+The run's device-evidence artifact contains JUnit results, continuous logcat,
+exit information and an actual 1080×2400 player screenshot. Visual inspection
+confirmed system-bar separation and visible sliders/clock labels. It is generated
+local test media, not evidence of public YouTube playback or audible output.
+
+## Historical development APK (failed physical UI acceptance)
+
+Qualified checkpoint: source `59675e0` (PR merge revision `b5c48f3`).
+[APK and inspection reports](https://github.com/Vanir20342222/ytui/actions/runs/40641208084/artifacts/12795433805).
+The ZIP contains `outputs/apk/debug/app-debug.apk` and `SHA256-and-checks.txt`.
+The APK's SHA256 is:
+
+```text
+fc2654bcca9e7e845968200286bcd7c3cf6bdede83e0a2047eb8299d15c0d4ab
+```
+
+Artifacts expire after 30 days. This debug APK is not a stable signed release;
+different CI signing identities cannot update each other in place. Read
+[installation instructions](README.md#install-an-apk) before replacing an install.
+
+## Public YouTube acceptance
+
+The explicit, cookie-free
+[public run 40543378151](https://github.com/Vanir20342222/ytui/actions/runs/40543378151)
+failed before network access because the test sent `kind: Video` rather than
+the Rust API's lowercase `video`. Both media test fixtures now use the actual
+contract. [Corrected run 40546258421](https://github.com/Vanir20342222/ytui/actions/runs/40546258421)
+reached the native extractor and failed with **“All player responses are invalid.
+Your IP is likely being blocked by Youtube”** for
+`https://www.youtube.com/watch?v=jNQXAC9IVRw`. Its other five tests passed.
+Public Android playback remains unqualified on this hosted runner; no fixture or
+saved-player success is substituted for it. The workflow's `public_url` input
+makes this check reproducible on another network without an account.
+
+## Reproduced runtime bugs fixed during acceptance
+
+Earlier accelerated runs exposed real failures; their first APKs are not accepted:
+
+- `40519913127`: playback foreground-service deadline. Explicitly register the
+  MediaSession and post a preparing notification before decoder readiness.
+- `40528348716`: empty EOS audio input copied the shared empty ByteBuffer into
+  itself. Return before copying empty input; device regression now passes.
+- The same run found Activity teardown blocking in GameActivity termination.
+  Documented Android-only winit Destroy/loop-recreation patch fixes shutdown;
+  close/reopen/main-loop responsiveness now pass in the same app process.
+- `40532272312`: offline foreground service used string-resource ID zero. Use a
+  real channel-name resource; actual download/offline decoding now pass.
+- `40536947562`: four of five passed; saved-player test incorrectly expected
+  response `type` to equal `n`/`sig` rather than EJS's `result`. Corrected the
+  envelope assertion while retaining exact key-count/solution-map validation;
+  both challenge vectors passed in the subsequent green run.
+- Reviewing `40543256859` logcat exposed caught Rust shutdown panics despite
+  passing assertions: eframe's exit path unwrapped a window already removed on
+  Android Suspended, skipping application cleanup. A documented eframe 0.33.3
+  patch saves with an optional window and restores a surfaceless EGL context for
+  deletion where supported. The test now requires the Rust exit hook to complete
+  twice; the device runner also fails on Rust panic logs. Cross-target Clippy
+  passes; run `40547062980` subsequently passed both cleanup assertions and the
+  zero-panic gate.
+
+## Offline export follow-up
+
+Rust UI now offers Export file on completed downloads. The Android storage
+adapter copies original containers or muxes compatible separate tracks from
+cache, writes via the document picker, and runs a cancellable foreground worker.
+Queued song/station classification now uses the lowercase Rust JSON contract;
+the previous uppercase comparison incorrectly requested video for Music queues.
+Five Java unit tests/lint, instrumentation assembly and focused Rust/Clippy checks
+pass locally. The added device test downloads separate generated tracks, closes
+both source servers, muxes and actually decodes an exported file, verifies a
+foreground audio export is byte-for-byte identical, and checks cancellation.
+Run `40579287370` passed this entire export regression after the fix below.
+The first export run (`40576469530`) exposed AAC priming samples with negative
+timestamps: the mux loop treated them as EOS and wrote zero audio samples.
+It now identifies EOS by track index, shifts every track by the same time origin
+and rejects an output with any empty track. The device regression retains both
+track checks and additionally requires decoded PCM from the exported file.
+
+Android's platform MP4 writer does not accept Opus. Normal capped video modes
+therefore prefer H.264/AAC, retaining bounded codec fallbacks; unrestricted Best
+and audio-only keep their existing best-format behavior. Selector tests include
+both AAC and higher-ranked Opus, and verify that missing AAC still resolves.
+Unsupported export combinations are rejected before the document picker.
+
+The vendored player fixtures' public client keys are sanitized. Both exact Node
+challenge vectors still pass. Secret scanning now checks all fetched history;
+see [the provenance/security review](../SECURITY_REVIEW_2026-10-27.md) for the
+specific legacy public-fixture baseline and the API permission limit on closing
+GitHub's historical alerts.
+
+## Navigation and queue follow-up
+
+Back now restores per-tab pages and scroll positions; older evicted pages reload
+automatically, and account changes clear private navigation history. Each tab's
+history is bounded to twelve steps and 2 MiB of page data. Late replies cannot
+overwrite a restored feed. The virtualized queue has touch reorder buttons,
+durable edits and identity checks that prevent a stale remove/reorder action from
+changing the wrong entry after the decoder consumes an item. Failed writes leave
+the engine and UI queue unchanged; dismissed loading queues stay closed.
+
+The full local and hosted checkpoint passed **297 tests, 0 failures, 31 ignored**.
+The focused mobile suite at that checkpoint passed **23 tests** and strict Clippy.
+Safe-area contracts also include left/right display cutouts for phone landscape;
+headless geometry checks cover all four edges. Physical rotation acceptance
+remains separate.
+
+## Playback continuation/history follow-up
+
+Finite Music albums/playlists and cliamp track libraries now prepare their full
+remaining collection in the background after the first decoder start. Manual
+queue entries take priority. A new selection, disconnect or stopped service
+invalidates obsolete collection work; pause/preview/reconnect cannot reset a
+prepared tail. The derived context is not persisted after process death; explicit
+queue entries and local playback history remain durable.
+
+Previous/forward history commits only after playback starts, and writes stay in
+decoder order across service/Activity recreation. Failed candidates stay queued.
+The recently-played window can replay entries or clear history/resume positions
+without deleting saved items or queued tracks. Android MediaSession navigation
+forwards to these same controls.
+
+New core tests cover manual priority, cached collection continuation, stale
+responses, failed navigation, private context clearing and durable history. The
+focused suite passes **27 tests**. Java compilation/unit tests/lint also pass.
+The added emulator case exercises actual EOF continuation, MediaController
+Previous/Next, forward history, manual priority and unavailable-track retention;
+its result must pass before runtime qualification. Fixture activities now launch
+with a debug-only offline UI flag to suppress ambient feed requests. Only the
+explicit public test invokes real YouTube extraction.
+
+Run `40586469283` passed EOF continuation and the initial controller Previous, but
+controller Next disappeared after the source changed. A basic ForwardingPlayer
+forwarded ExoPlayer's unmodified command-change events, overriding the augmented
+getter. The adapter now uses Media3's ForwardingSimpleBasePlayer, which keeps
+state and listener events consistent; the full controller regression remains.
+
+Run `40588666075` passed the complete EOF/controller/history test. The stream
+switch test then exposed an older notification race: each Play replaced the
+active MediaStyle notification with a non-media preparing placeholder. System UI
+removed the session and sent Stop after the new stream started. The provider is
+now configured once; foreground entry reuses an existing notification or creates
+a MediaStyle placeholder with the session token. Remote pause/resume also updates
+the application's user intent, and remote Stop clears pending continuation.
+These changes must pass the full device suite before qualification.
+
+Run `40590717413` passed remote pause/resume, EOF, history and all other cases,
+but rapid preview entry still triggered the System UI Stop race. Already-ongoing
+playback now leaves Media3's foreground notification untouched; the deadline
+placeholder is used only when the service is not already in foreground playback.
+Run `40640008655` passed the entire regression, including rapid preview entry,
+stream switches, remote pause/resume/Previous/Next and EOF continuation.
+
+The cloud host lacks `/dev/kvm`; its software emulator was unreliable and an
+earlier instrumentation attempt crashed. Those attempts are not counted as
+passes. The accelerated hosted emulator supplied the successful runtime evidence.
+
+## Acceptance still required
+
+### Timed lyrics follow-up
+
+The Rust lyric window replaces the old plain popup. It supports reviewed LRCLIB
+title/artist lookup, version selection, virtualized timed follow and line seeking,
+UTF-8 LRC/text import, text editing and per-media timing adjustment. A different
+playing URL suspends timing/seeks; dismissed/superseded requests and imports
+cannot reopen or overwrite another view. Local documents are limited to 512 KiB,
+100 songs / 8 MiB total, and use a separate atomic private file so queue/resume
+writes do not serialize the lyric library. No automatic lyric/history lookup is
+sent. Tests cover Unicode/timestamps, offsets, all themes at phone/tablet sizes,
+late replies, invalid edits, persistence rollback and library capacity. Android
+document tests reject malformed/truncated UTF-8, excessive bytes and stuck streams.
+An added JNI device case checks exact timings and failed-edit rollback. Its
+emulator case passed in `40640008655`; live LRCLIB/device keyboard acceptance
+remains separate.
+
+### Keystore follow-up
+
+Account storage now seals sessions before atomic persistence with Android
+Keystore AES-GCM, fresh 96-bit nonces, authenticated app/version context and a
+non-exportable 256-bit key. Legacy private files migrate; a failed cleanup is
+reported. A bad/missing key fails closed without deleting the saved envelope or
+breaking offline library access. Document parsing no longer needs a plaintext
+temporary file. Focused Rust tests cover corrupt-account recovery and cookie
+file bounds/pipes. New Android cases exercise actual Keystore randomization,
+tamper rejection, Rust/JNI encrypted import, plaintext migration, damaged-envelope
+recovery and disconnect using a disposable synthetic account only. They skip
+instead of overwriting an existing account. Run `40641208084` passed both added
+cases, the other eight device tests and the zero-panic gate. Only the public
+YouTube test was skipped; the account tests ran against synthetic data.
+
+Account actions also carry a monotonically increasing intent checked under the
+commit lock. A delayed import cannot reconnect after a newer disconnect; stale
+startup/import UI replies cannot overwrite the current account status.
+
+### Signing and in-memory native auth follow-up (qualification pending)
+
+The manual main-only signed-build workflow requires prior successful checks for
+the same source revision and owner-supplied Environment secrets. Gradle rejects
+missing signing material even through aggregate assemble tasks, validates version
+metadata and never falls back to debug signing. A disposable local identity is
+used to check the build path; it is not an owner release identity. About shows
+version/code and source revision. No release/tag is published by this workflow.
+The local signed build passed both Rust ABIs, eight release Java unit tests,
+release lint, signature/16 KiB inspection, expected version metadata and the
+non-debuggable-manifest check. Direct and aggregate release builds without a key
+failed as expected; invalid version fields were rejected and normal debug builds
+still configure without signing secrets. The disposable private key/password
+were removed after verification; only public reports remain. The hosted signing
+workflow still requires the owner's environment setup and is not yet exercised.
+
+Mobile native extraction now builds its scoped cookie jar directly in memory,
+removing the old transient Netscape export step. Startup removes only recognized
+regular files in its own old staging directory, preserves unrelated files and
+refuses symlinked staging directories. Host tests cover HTTPS/domain/path scope
+and selective cleanup; a new full APK/runtime qualification remains required.
+
+### Radio metadata and download follow-up (device qualification pending)
+
+Live ICY song titles now update the player and notification while preserving the
+station's library/history identity. Titles are bounded and strip control codes;
+Unicode code points are not split. A generated MP3 with two actual HTTP/ICY title
+updates is the new device regression; no external radio service is used.
+The first run (`40645113719`) decoded audio but left the fixed station title in
+place. MediaItem's metadata takes priority over timed ICY data. The adapter now
+consumes `onMetadata` IcyInfo entries and overlays the live title in session state
+without replacing/restarting the source. The regression also checks the session
+title and ensures metadata-only tracks are not mislabeled as selectable video.
+
+Download requests now retain their selected quality through asynchronous replies,
+playlist preparation and failed-stream refresh. Download-index data drops unused
+format/caption catalogs to reduce repeated parsing during library polling. Existing
+offline requests skip external caption sources that were never cached; embedded
+tracks remain available. The export device case checks metadata compaction,
+retained quality and real cache-only decoding with legacy uncached captions.
+
+### Physical/live release gates
+
+On both requested physical devices: install/update signing identity, soft keyboard,
+rotation, tablet split layout, gesture/system insets, accessibility, every
+settings/modal screen, all themes/player styles, real video and Music playback,
+codec/quality/track/caption selection, HTTP/HTTPS stations, SponsorBlock timing,
+account expiry/disconnect, multi-page feeds/playlists, paired offline media,
+network loss/VPN handoff/reconnect/rate-limit cooldown, process death, screen lock,
+audio focus/headset/Bluetooth, notifications, background limits, measured
+memory/CPU/frame latency and human audible confirmation. Advanced capability gaps
+remain explicit in [PARITY.md](PARITY.md). M9 remains open.
+
+
+## M9 startup latency work, 2026-10-29
+
+[Research and implementation](TWO_SECOND_STARTUP.md) and [mobile.5 qualification](STARTUP_VALIDATION_2026-10-29.md) distinguish the successful offline/native checks from the still-open physical Tab S9 / live YouTube two-second gate. Failed and infrastructure-contaminated attempts are preserved in those records.
+
+## CI layout change, 2026-11-02 (M9)
+
+The Android workflow now builds once (`apk` job: both ABIs, JVM tests, lint, instrumentation APK) and runs the emulator suite as four parallel AndroidJUnitRunner shards (`device` job) against those exact uploaded APKs via `adb`/`am instrument`, instead of a Gradle connected run. Each shard uploads its own evidence and raw instrumentation output. Local runs without `YTUI_ANDROID_TEST_APKS` still use the Gradle connected path. This is a CI speed change only; it adds no new device or live acceptance evidence.
+
+## Local re-verification of main b6a76a2, 2026-11-02 (M9)
+
+Environment: Linux container, 4 cores, no KVM, emulator or device. The workspace
+declares `rust-version = "1.99"`, so the container's rustc 1.97.0 was updated to
+1.99.1 first. Node.js 22.23.4 and FFmpeg were installed; mpv, Lua 5.4 and yt-dlp
+were not. Android SDK platform/build-tools 35 and NDK 27.2.12479018 were
+installed outside the repository.
+
+| Check | Result |
+| --- | --- |
+| `cargo fmt --all -- --check` | clean |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | clean |
+| `cargo test --workspace --locked` | 337 passed, 0 failed, 31 explicit ignores |
+| Vendored `mobile_playback` test, `tools/test-ci-install-media.sh`, `tools/test-native-solver.sh` | pass |
+| `tools/android/build.sh` (debug): both Rust ABIs, `assembleDebug`, JVM tests, lint | pass; 21 JVM tests, lint 0 errors / 39 warnings |
+| `tools/android/inspect-apk.sh` | pass: signature, ZIP alignment, both ABIs, 16 KiB ELF segments, notices |
+| `cargo machete` | found four unused `ytui-services` dependencies (`directories`, `httpdate`, `image`, `sha1`); removed, then clean. Each is still declared by `ytui-providers`, and `ytui-mobile` does not depend on `ytui-services`. Fmt, clippy and tests were re-run afterwards with identical totals |
+
+The debug APK is `dev.ytui.android.preview` ("ytui Preview"), default version
+metadata (code 8), debuggable, and signed with a debug key generated in that
+container. It cannot update an install signed with another debug key, such as a
+CI artifact; do not uninstall such an install just to bypass this.
+
+Not run here: the CI `media` job (needs mpv, Lua 5.4 and yt-dlp) and the
+emulator suite. GitHub's runs for the same commit cover both and succeeded:
+[Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249) (APK job
+plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222).
+Maven Central answered the first Gradle attempts with HTTP 429; a retry completed
+without any change. No screenshot, physical-device or live-service acceptance was
+added by this re-verification.
+
+## Motion and gesture follow-up, 2026-11-02 (M9, qualification pending)
+
+Implemented (Android UI only; desktop and shared palettes unchanged):
+
+- Motion settings under Settings → Appearance → Motion: animation style
+  (smooth/snappy/bouncy/gentle), animation speed (50–200 %), animated cards and
+  haptic feedback. All Compose transitions read `Motion` (`Motion.kt`); the shared
+  "Reduced motion" setting still turns every animation into an instant change.
+- Smoother transitions: finger-following drag-to-minimize for the music player,
+  direction-aware feed slide when swiping tabs/categories, player open/close with
+  slide+scale, staggered card entry, press-in card feedback, artwork fade-in,
+  animated play/pause glyph and a mini-player progress bar that glides between
+  position snapshots (seeks and track changes still jump).
+- New gestures, each with its own toggle under Settings → Appearance → Gestures
+  (behind the existing "Swipe gestures" master switch): mini player swipe
+  (sideways next/previous, up to open, down to stop); swipe music artwork for
+  next/previous; double-tap music artwork to pause; video double-tap centre to
+  pause (left/right still seek); press-and-hold for temporary fast playback
+  (`speed_hold`, never saved as the user's speed; rate selectable 1.25–3×);
+  video vertical swipe for brightness (left) and media volume (right), restoring
+  system brightness when the video view leaves; pinch to zoom/fit video.
+- The native video surface is never moved by a Compose graphics layer; video
+  minimize recognises the swipe without following the finger.
+
+Checks: JVM unit tests `MotionTest` cover speed/style scaling, clamping and
+reduced-motion snapping. No Android SDK was available in the authoring
+container, so compilation and emulator/physical-device behaviour of the new
+gestures (especially brightness/volume, hold-speed and pinch on a real Galaxy
+Tab S9) are not yet qualified and must be checked before release.

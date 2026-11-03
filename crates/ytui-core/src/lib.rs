@@ -4,6 +4,7 @@ pub mod saved;
 pub use chapters::Chapter;
 pub mod history;
 pub mod media;
+pub mod offline;
 pub mod playback_history;
 pub mod queue;
 pub mod schedule;
@@ -20,3 +21,5 @@ pub fn clean_text(value: &str) -> String {
         .filter(|c| !c.is_control() || *c == '\n')
         .collect()
 }
+
+pub mod theme;

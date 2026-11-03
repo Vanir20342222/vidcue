@@ -1,5 +1,79 @@
 # ytui Rust rewrite plan
 
+M9 category loading (2026-11-02): Android prepares nearby video/Music category
+pages and the other media tab's Home in the background, reuses in-flight work,
+and retains first pages for one minute within bounded memory. Existing preload
+and metered-data preferences apply. Nine focused offline Kotlin cache tests pass;
+Android build/device latency remains unqualified in this SDK-less workspace.
+See [validation](docs/android/VALIDATION.md#category-preloading-2026-11-02).
+
+M9 UX overhaul: [the follow-up pass](docs/android/UX_OVERHAUL.md) applies the
+restyle brief to the remaining Downloads, player, options, account, lyrics and
+settings surfaces, and fixes search focus re-entry. It is merged on main
+(`b6a76a2`, PR #33). The [Android](https://github.com/Vanir20342222/ytui/actions/runs/41491689249)
+(APK job plus four emulator shards), [Rust](https://github.com/Vanir20342222/ytui/actions/runs/41491689176)
+and [secret scan](https://github.com/Vanir20342222/ytui/actions/runs/41491689222)
+runs for that exact commit succeeded. Screenshot review and physical-device
+acceptance of this UI remain pending; see
+[the 2026-11-02 local re-verification](docs/android/VALIDATION.md#local-re-verification-of-main-b6a76a2-2026-11-02-m9).
+
+M9 UI fidelity follow-up: the owner requested iterative comparison with an
+independent judge at every revision. [Findings, evidence boundary and rubric](docs/android/UI_FIDELITY_REVIEW.md)
+track the mobile.10 baseline and current work. Original reference screenshots
+remain missing, so a literal 1:1 or perfection claim is not an acceptance result.
+
+M9 release: [published mobile.10](docs/android/MOBILE10_RELEASE.md) packages the
+merged content-first Android restyle from source `686e379` as release code 10.
+Exact-main Android/Rust/secret checks pass: 37 native passes, one public skip,
+367 Rust/media passes, 31 explicit ignores. The signed release passes 20 JVM
+tests and APK identity/alignment inspection. The public download's hash, size,
+version and existing stable certificate are independently verified. This release
+does not close physical/live-service or feature-parity gates.
+
+M9 UI review: [PR #27 integration](docs/android/UI_PR27_REVIEW.md) merges the
+artwork/VU/chip/About refinements with a corrected tablet search-width cap and
+portrait/landscape geometry regression. Pre-merge qualification passes 33 native
+tests plus one public skip and retains strict startup deadlines. Broader M9
+acceptance remains open. [Published mobile.9](docs/android/MOBILE9_RELEASE.md)
+packages the reviewed UI from qualified source `553fe49` using release code 9
+and the permanent identity. Its public APK hash/certificate/version are verified.
+
+M9 physical startup result: the owner's mobile.8 report with Best passes all
+six supplied video attempts: five cold usable starts 1115–1752 ms, one prepared
+632 ms. [Physical evidence](docs/android/MOBILE8_INDEXED_STARTUP.md) qualifies
+this observed video sample; broader service/device gates and M9 remain open.
+
+Earlier M9 startup baseline: the Tab S9 mobile.7 report improves prepared frames to
+74–828 ms but three cold starts still fail at 2827–4117 ms. Extraction is now
+338–917 ms. [Mobile.8 indexed preparation](docs/android/MOBILE8_INDEXED_STARTUP.md)
+preserves selected quality and adds byte-range DASH preparation plus honest
+active-playback/usable-start timings. The signed/publicly verified APK records
+32 native passes plus one public skip, 366 Rust/media checks and 19 release JVM
+tests. Exact-main synthetic indexed video is usable at 914 ms (window pixels
+1585 ms). The subsequent physical result above passes the observed video target;
+fixtures alone do not establish YouTube speed.
+
+M9 player/library follow-up (2026-10-29): **mobile.4** is published with private stable signing. Scoped prefetch, direct native video/frame controls, non-scrolling music styles, gestures/settings and offline playlists/folders pass 24 emulator cases (one opt-in public skip), 328 offline Rust tests and 14 release JVM tests. Main release/signature/alignment checks pass; [qualification and source](docs/android/PLAYER_LIBRARY_VALIDATION_2026-10-29.md) record live YouTube/device limits. M9 remains a preview; physical/live acceptance is distinct from source implementation.
+
+M9 mobile design follow-up (2026-10-28): the user rejected terminal styling on
+Android after confirming installation. A modern native media UI with responsive
+artwork grids, readable settings and a compact player passes 20 emulator cases,
+14 Android JVM tests and 317 offline Rust tests. Debug builds install separately
+as ytui Preview to preserve the existing app after a measured signing mismatch.
+[Design and acceptance](docs/android/MEDIA_UI_REDESIGN.md) and
+[actual screenshots](docs/screenshots/android/README.md) record the change;
+physical/live/signing gates remain separate.
+
+M5/M6/M7/M8 audio-reactive views (2026-10-27): Neon VU and Pulse Orbit add
+pane/fullscreen styles, optional mpv astats telemetry, paused/reduced-motion
+freeze and a real stereo-tone/player-switch fixture. See the audio-reactive
+section in [the player guide](docs/VINYL_PLAYER.md).
+
+M5/M6/M7/M8 vinyl player follow-up (2026-10-27): selectable sleeve/record views
+for Music and Cliamp/Radio, pane/full-terminal layouts, remappable F4, cached
+playing artwork and pause/buffer/reduced-motion-aware rotation. See
+[vinyl player usage and validation](docs/VINYL_PLAYER.md).
+
 M2/M5/M6/M8 local-acceptance follow-up: preserve `ebbae44` and the target-PC
 report, then repair rate-limit retry/fallback policy, live EOF recovery, explicit
 backend retention, outage-time controls and archived-broadcast classification.
@@ -495,6 +569,10 @@ See [the usage guide](docs/RUST.md) and [remaining parity](docs/PARITY.md).
 - Explicit local resume on `u` / `:resume`, bounded private positions, offline
   catalog and startup mode, and early-window-close handling. The user selected
   local resume actions, no automatic playback or YouTube history write-back.
+  On 2026-11-02 the user requested instant continue: `resume_on_play`
+  (default on, Settings → General) makes normal video playback start at the
+  saved local position. It never starts playback by itself; music/stations and
+  finished videos start from the top. Android parity for this option is open.
 - Recurring collection watches with a complete initial baseline, duplicate checks,
   persistence, resource limits/backoff and account/generation invalidation.
 - State format 2 adds a SQLite version-1 backup before upgrade; stale owned
@@ -667,6 +745,16 @@ startup is shown as loading and is not disguised by these UI targets.
   playlists. Preserve existing SponsorBlock download settings in the parity review;
   new optional features must not delay basic reliability.
 
+### M8: deterministic fake-executable recovery fixtures
+
+The download-recovery integration fixtures serialize their temporary executable
+lifetimes after reproducing Linux ETXTBSY during parallel fixture creation/spawn.
+Worker/event/cancellation concurrency and all assertions/deadlines stay intact;
+production download/process behavior is unchanged. The actual corrected binary
+passes 1,000 full 11-case runs with eight test threads. See
+[reproduction and evidence](docs/DOWNLOAD_TEST_FIXTURE_RACE.md); this diagnostic
+follow-up is independent from the Android restyle and live-service gates.
+
 ## Research and attribution
 
 Primary sources inspected on 2026-10-21; verify upstream revisions before reuse.
@@ -746,3 +834,78 @@ item, shares in-flight resolution and expires signed streams in memory. Runtime
 shim discovery, account expiry, cancellation and cooldown retention have focused
 regressions. See [the startup repair report](docs/PLAYBACK_STARTUP_2026-10-26.md)
 for final measured evidence and the separate remaining release gates.
+
+### M9: Android and monorepo (in progress)
+
+**Current Android UI decision (2026-10-28):** the user's Tab S9 acceptance found
+broken text input, theme switching and desktop-only account instructions. The
+user authorized changing the stack. Keep the Rust engine and use native Jetpack
+Compose for Android screens, retaining terminal styling/themes and private state.
+This supersedes the initial Rust-UI choice below. See
+[native UI migration](docs/android/NATIVE_UI_MIGRATION.md) and require new actual
+input/theme/account tests before recommending its APK.
+
+The user chose a Rust engine **and Rust UI**, with APK sideloading, targeting
+Nothing Phone (3a) and Samsung Galaxy Tab S9. Desktop lives in `apps/desktop`;
+portable providers/themes are shared with the new Rust mobile engine/egui UI.
+Android platform adapters supply decoding/background media, downloads, input,
+notifications and file access. No Python subprocess runs on Android.
+See [Android implementation plan](docs/android/PLAN.md),
+[actual parity gaps](docs/android/PARITY.md), [build/use](docs/android/README.md)
+and [validation evidence](docs/android/VALIDATION.md). M9 is not complete until
+live/mobile/device gates and remaining capability gaps are addressed.
+
+The mobile acceptance suite exercises actual JNI, saved-player challenges in
+Android's isolated runtime, synthetic media decoding/PCM, preview restoration,
+offline downloads and repeated UI teardown/recreation. Device logs are checked
+for Rust panics as well as JUnit failures. Original upstream source/licenses and
+documented narrow Android adapters are retained in `vendor/{yt-dlp-rs,winit,eframe}`.
+Public YouTube is an explicit separate workflow input; no account or live-service
+success is inferred from the deterministic checks.
+
+Finite Music/radio collection continuation, local recent/previous/forward history,
+and MediaSession navigation are implemented with decoder-start commits and manual
+queue priority. Timed lyrics now have reviewed online lookup, local LRC import,
+follow/seek, edits and per-song timing adjustment. Their bounded private store is
+separate from queue/resume state to keep playback writes small. Runtime follow-up
+and notification race evidence remain tracked in `docs/android/VALIDATION.md`;
+these additions do not close the physical-device, live-service or signing gates.
+
+Android session persistence now uses Keystore AES-GCM envelopes and private legacy
+migration. Unreadable credentials fail closed while keeping offline libraries
+usable. Imports parse in memory and superseded account actions cannot reconnect
+after logout. Actual encryption/migration/tamper device checks are tracked
+separately from host tests in the Android validation record.
+
+The signed-APK path now validates release versions and requires a private owner
+identity, including through aggregate Gradle tasks. Main-only signing requires
+prior successful checks for the same revision; Rust builds before signing secrets
+are loaded. A disposable local release build passed packaging/signature checks,
+and its private fixture identity was removed. Owner key setup and device update
+acceptance remain open. Mobile native cookies now stay in an in-memory jar.
+
+The next follow-up wires live ICY song metadata without changing station identity,
+retains requested download quality through retry/preparation, removes unused
+catalogs from download records, and prevents uncached external captions breaking
+offline playback. Deterministic device regressions exercise the actual stream and
+cache paths; their latest results remain in the Android validation record.
+
+
+### M9: content-first Android restyle
+
+The owner supplied a detailed YouTube-style visual brief and reference on
+2026-10-30, kept the YouTube label and explicitly chose a neutral dark default.
+The current Android app now has full-bleed video art, a compact brand bar,
+unified pill filters, quiet navigation, native player chrome, action sheets,
+full-page settings, theme selection in a radio dialog and adaptive wide search rows. Existing
+styles/actions/state, Rust extraction/networking and strict startup deadlines
+remain. Fresh mobile configuration defaults to ytui-dark without replacing saved
+choices; desktop palette rendering is unchanged.
+
+[Implementation/report](docs/android/CONTENT_FIRST_RESTYLE.md) and
+[PR #29 qualification/artifacts](https://github.com/Vanir20342222/ytui/pull/29)
+record 20 passing local JVM tests, APK/lint and 337 workspace passes (31 ignores),
+new native theme/geometry/large-text/touch-seek coverage, retained initial failures
+and final native results. The named old screenshot ZIP was not attached; retained
+mobile.9 native captures provide the baseline. This visual work does not close
+M9's physical/live and feature-parity gates.

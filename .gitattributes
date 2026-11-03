@@ -1,0 +1,4 @@
+# Preserve upstream source and challenge fixture bytes when vendoring.
+vendor/** whitespace=-blank-at-eol,-blank-at-eof
+# Preserve generated Windows launcher CRLF bytes without text normalization.
+*.bat -text whitespace=cr-at-eol

@@ -2,6 +2,16 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
 
+pub const MUSIC_PLAYER_STYLES: &[&str] = &[
+    "classic",
+    "vinyl",
+    "vinyl-fullscreen",
+    "vu",
+    "vu-fullscreen",
+    "orbit",
+    "orbit-fullscreen",
+];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -13,8 +23,11 @@ pub struct Config {
     pub theme_provider: String,
     pub image_protocol: String,
     pub thumbnails: bool,
+    pub music_player_style: String,
     pub reduced_motion: bool,
     pub playback_history: bool,
+    /// Start normal playback of a partly watched video from its saved local position.
+    pub resume_on_play: bool,
     pub show_hints: bool,
     pub playback_sponsorblock: String,
     pub playback_sponsor_categories: Vec<String>,
@@ -55,8 +68,10 @@ impl Default for Config {
             theme_provider: "auto".into(),
             image_protocol: "auto".into(),
             thumbnails: true,
+            music_player_style: "classic".into(),
             reduced_motion: false,
             playback_history: true,
+            resume_on_play: true,
             show_hints: true,
             playback_sponsorblock: "skip".into(),
             playback_sponsor_categories: vec!["sponsor".into()],
@@ -91,6 +106,10 @@ impl Default for Config {
 }
 impl Config {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            MUSIC_PLAYER_STYLES.contains(&self.music_player_style.as_str()),
+            "Unknown music player style"
+        );
         ensure!(
             ["en", "de", "system"].contains(&self.language.as_str()),
             "language must be en, de or system"

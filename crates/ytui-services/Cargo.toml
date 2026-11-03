@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 [dependencies]
+ytui-providers = { path = "../ytui-providers" }
 ytui-core = { path = "../ytui-core" }
 anyhow.workspace = true
 serde.workspace = true
@@ -12,21 +13,17 @@ serde_json.workspace = true
 toml.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["native-tls", "blocking"] }
 uuid.workspace = true
 url.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 fs2 = "0.4"
-directories = "6"
-sha1 = "0.10"
 sha2 = "0.10"
 hex = "0.4"
-httpdate = "1"
 keyring = { version = "3", features = ["sync-secret-service", "vendored"] }
 rookie = { version = "0.5.6", default-features = false }
 libc = "0.2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
-yt-dlp-rs = { git = "https://github.com/aagedal/yt-dlp-rs", rev = "93d561be519b2e46189ede4a8441a143892fd35b" }
+yt-dlp-rs = { git = "https://github.com/aagedal/yt-dlp-rs", rev = "f67d96bdf98c5b821d0c9bf6175d328a0fa8ceab" }

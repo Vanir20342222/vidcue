@@ -1,5 +1,24 @@
 # Validation record
 
+## Audio-reactive players — 2026-10-27 (M5/M6/M7/M8)
+
+Neon VU and Pulse Orbit add pane/fullscreen presentations using optional real
+mpv level telemetry. 273 workspace tests pass (31 opt-in excluded); strict
+Clippy, formatting and workflow syntax pass. An actual mpv/FFmpeg stereo-tone
+fixture verifies level separation, pause, meter removal/re-enabling and resume
+without a second player launch. CI includes that fixture. All built-in themes
+and four terminal sizes are covered; four WQHD PTY captures use fictional demo
+levels. [Details and limits](VINYL_PLAYER.md#audio-reactive-views--2026-10-27).
+
+## Vinyl music player — 2026-10-27 (M5/M6/M7/M8)
+
+[Usage, captures and scope](VINYL_PLAYER.md): 270 workspace tests pass (30 opt-in
+excluded), including six new rotation/UI/config/cache regressions. All built-in
+themes and four terminal sizes render the new pane/fullscreen modes; formatting
+and strict Clippy pass. Two WQHD native PTY captures use fictional demo artwork.
+This is presentation validation; no fresh public-media or target-PC acceptance
+is claimed.
+
 ## Recovery after local acceptance — 2026-10-26 (M2/M5/M6/M8)
 
 [Recovery fixes](RECOVERY_FIXES_2026-10-26.md) add ten deterministic regressions
@@ -357,6 +376,11 @@ YTUI_TEST_MPV=/usr/bin/mpv cargo test -p ytui-services --locked real_mpv_ -- --i
 ```
 
 Reproduce the Lua check with `lua5.4 crates/ytui-services/tests/player_menu.lua`.
+On 2026-11-02 it also covered SponsorBlock seekbar marks (segment start/end merged
+into `chapter-list`, original chapters restored when segments clear), run through
+Lua 5.4 via `lupa`; `sponsor_segments_are_published_once_to_the_mpv_timeline`
+covers the IPC push on a loopback socket. Neither is a real mpv OSC render check,
+and the Android seek-slider marks were not compiled or device-checked here.
 Locally it was executed through installed liblua5.4 with the same synthetic API;
 no production Python dependency was added. Re-run failed live checks explicitly:
 `cargo test -p ytui --test live_youtube --locked -- --ignored --nocapture`.
@@ -382,6 +406,10 @@ Coverage includes:
   fixture bytes. The loopback API verifies that no Cookie header is sent.
 - Local resume excludes preview/live positions, never starts at launch, passes a
   saved start time to fake mpv, and does not treat an early window close as EOF.
+- M5 `resume_on_play` (default on): ordinary playback of a partly watched video
+  sends `PlayAt` with the saved position; songs, finished videos and the disabled
+  setting send plain `Play`; the settings field round-trips. Unit-level only; not
+  yet checked against live mpv in Ghostty on the target machine.
 - Offline catalog skips missing/sidecar files and remote thumbnails; offline mode
   holds remote jobs and rejects remote playback/provider navigation.
 - Watch baseline/new-item/duplicate behavior, failed-poll backoff, and stale-result

@@ -72,6 +72,7 @@ pub enum PlayerCommand {
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerStatus {
+    pub audio_levels: Option<crate::visualizer::AudioLevels>,
     pub video_height: Option<u64>,
     pub video_codec: Option<String>,
     pub audio_codec: Option<String>,
@@ -108,6 +109,9 @@ pub struct Player {
 }
 struct Active {
     progress_at: tokio::time::Instant,
+    meter_enabled: Option<bool>,
+    /// SponsorBlock marks last published to this mpv window's timeline.
+    marks: Option<Vec<crate::sponsorblock::Segment>>,
     last_position: Option<f64>,
     cancel: CancellationToken,
     task: JoinHandle<Result<ProcessResult>>,
@@ -194,6 +198,7 @@ const PROPERTY_NAMES: &[&str] = &[
     "video-params",
     "video-codec",
     "audio-codec",
+    "af-metadata/ytui-meter",
 ];
 async fn properties(path: &Path) -> Result<Value> {
     tokio::time::timeout(Duration::from_millis(90), async {
@@ -540,6 +545,8 @@ async fn start_prepared(
     });
     Ok(Active {
         progress_at: tokio::time::Instant::now(),
+        meter_enabled: None,
+        marks: None,
         last_position: None,
         cancel,
         task,
@@ -1397,6 +1404,41 @@ impl Actor {
         if let Some(p) = &mut self.full
             && let Ok(v) = properties(&p.socket).await
         {
+            let metering = self.playing.as_ref().is_some_and(|(_, audio, _)| *audio)
+                && matches!(
+                    self.config
+                        .music_player_style
+                        .trim_end_matches("-fullscreen"),
+                    "vu" | "orbit"
+                );
+            if metering && p.meter_enabled.is_none() {
+                p.meter_enabled = Some(
+                    p.command(json!(["af", "add", crate::visualizer::FILTER]))
+                        .await
+                        .is_ok(),
+                );
+            } else if !metering && p.meter_enabled.is_some() {
+                if p.meter_enabled == Some(true) {
+                    let _ = p.command(json!(["af", "remove", "@ytui-meter"])).await;
+                }
+                p.meter_enabled = None;
+            }
+            self.state.audio_levels = if metering && p.meter_enabled == Some(true) {
+                crate::visualizer::levels(&v["af-metadata/ytui-meter"])
+            } else {
+                None
+            };
+            if p.marks.as_ref() != Some(&self.state.segments)
+                && p.command(json!([
+                    "set_property",
+                    "user-data/ytui/segments",
+                    self.state.segments
+                ]))
+                .await
+                .is_ok()
+            {
+                p.marks = Some(self.state.segments.clone());
+            }
             if let Some(action) = v["user-data/ytui/action"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -1796,6 +1838,8 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         let stopping = token.clone();
         let full = Active {
             progress_at: tokio::time::Instant::now(),
+            meter_enabled: None,
+            marks: None,
             last_position: None,
             cancel: token,
             task: tokio::spawn(async move {
@@ -2224,6 +2268,8 @@ sleep 30
                 session: None,
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now(),
+                    meter_enabled: None,
+                    marks: None,
                     last_position: None,
                     cancel: CancellationToken::new(),
                     task,
@@ -2372,6 +2418,8 @@ mod responsiveness_tests {
                 session: None,
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now() - Duration::from_secs(91),
+                    meter_enabled: None,
+                    marks: None,
                     last_position: position,
                     cancel,
                     task,
@@ -2454,6 +2502,8 @@ mod responsiveness_tests {
             drop(sender);
             actor.full = Some(Active {
                 progress_at: tokio::time::Instant::now(),
+                meter_enabled: None,
+                marks: None,
                 last_position: None,
                 cancel: CancellationToken::new(),
                 task: tokio::spawn(async {
@@ -2548,6 +2598,8 @@ mod responsiveness_tests {
             full: None,
             preview: Some(Active {
                 progress_at: tokio::time::Instant::now(),
+                meter_enabled: None,
+                marks: None,
                 last_position: None,
                 cancel,
                 task: tokio::spawn(async move {
@@ -3665,3 +3717,7 @@ mod real_mpv_tests {
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "visualizer_tests.rs"]
+mod visualizer_tests;
