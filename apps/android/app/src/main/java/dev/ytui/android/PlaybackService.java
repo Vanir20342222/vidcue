@@ -106,10 +106,42 @@ public final class PlaybackService extends MediaSessionService {
         new ExoPlayer.Builder(
                 this,
                 new DefaultRenderersFactory(this) {
-                  // SurfaceView owns a compositor layer. The former Goldfish/TextureView
-                  // workaround disabled placeholder/detached surfaces and forced codec
-                  // recreation on every handoff. Keep Media3's SurfaceView lifecycle so
-                  // codec initialization can overlap the first native layout.
+                  @Override
+                  protected void buildVideoRenderers(
+                      android.content.Context ctx,
+                      int extensionMode,
+                      androidx.media3.exoplayer.mediacodec.MediaCodecSelector selector,
+                      boolean fallback,
+                      Handler events,
+                      androidx.media3.exoplayer.video.VideoRendererEventListener listener,
+                      long joiningMs,
+                      java.util.ArrayList<Renderer> renderers) {
+                    if (!emulatorFixture()) {
+                      super.buildVideoRenderers(ctx, extensionMode, selector, fallback,
+                          events, listener, joiningMs, renderers);
+                      return;
+                    }
+                    // Goldfish's software codec can hand a black placeholder buffer
+                    // to a real surface. Initialize against the early attached view,
+                    // but allow Media3 to reuse the codec across SurfaceView changes.
+                    // The old TextureView workaround forced recreation on every bind.
+                    renderers.add(
+                        new androidx.media3.exoplayer.video.MediaCodecVideoRenderer(
+                            ctx, selector, joiningMs, fallback, events, listener, 50) {
+                          @Override
+                          protected boolean shouldUsePlaceholderSurface(
+                              androidx.media3.exoplayer.mediacodec.MediaCodecInfo codec) {
+                            return false;
+                          }
+
+                          @Override
+                          protected boolean shouldUseDetachedSurface(
+                              androidx.media3.exoplayer.mediacodec.MediaCodecInfo codec) {
+                            return false;
+                          }
+                        });
+                  }
+
                   @Override
                   protected androidx.media3.exoplayer.audio.AudioSink buildAudioSink(
                       android.content.Context ctx, boolean floating, boolean playbackParams) {
