@@ -1,7 +1,10 @@
 name: Secret scan
 on:
+  # Not every branch push: pull_request already scans a PR, and the history scan is the slow part.
   push:
+    branches: [main]
   pull_request:
+  merge_group:
 permissions:
   contents: read
 jobs:

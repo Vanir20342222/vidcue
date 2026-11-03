@@ -194,7 +194,7 @@ class IndexedPlaybackTest {
                     compose.waitUntil(10000) { StartupTimings.usable(token) > 0 }
                     Assert.assertTrue(
                         "Indexed usable start: ${StartupTimings.usable(token)}\n${StartupTimings.report()}",
-                        StartupTimings.usable(token) <= 2000,
+                        StartupTimings.usable(token) <= StartupBudget.ms(),
                     )
                     var rgb = false
                     var observed = -1L
@@ -203,7 +203,7 @@ class IndexedPlaybackTest {
                             StartupTimings.elapsed(
                                 token,
                                 android.os.SystemClock.elapsedRealtime(),
-                            ) > 2000
+                            ) > StartupBudget.ms()
                         )
                             break
                         val sample = VisibleVideoProbe.capture(scene, token, "startup-indexed.png")
@@ -211,7 +211,7 @@ class IndexedPlaybackTest {
                         observed = StartupTimings.elapsed(token, sample.capturedAt)
                         if (!rgb) Thread.sleep(16)
                     } while (!rgb)
-                    Assert.assertTrue("Indexed pixels: $observed", rgb && observed in 0..2000)
+                    Assert.assertTrue("Indexed pixels: $observed", rgb && observed in 0..StartupBudget.ms())
                     val requests = synchronized(cdn.requests) { cdn.requests.toList() }
                     Assert.assertTrue(requests.isNotEmpty())
                     Assert.assertFalse(

@@ -1,0 +1,28 @@
+name: PR hygiene
+# Seconds, no build. Checks title, description sections, change note, and that the PR does not
+# edit shared evidence docs, CI files or versions without the owner's label.
+# Rules: docs/AGENT_PR_RULES.md. Required check name: "PR hygiene".
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review, labeled, unlabeled]
+  merge_group:
+permissions:
+  contents: read
+concurrency:
+  group: pr-hygiene-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  hygiene:
+    name: PR hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Offline checks of the checker and the CI path filter
+        run: |
+          python3 -I -m unittest discover -s tools/ci -p 'test_*.py'
+          bash tools/ci/test-should-run.sh
+      - name: Check the pull request
+        run: python3 -I tools/ci/check_pr.py
