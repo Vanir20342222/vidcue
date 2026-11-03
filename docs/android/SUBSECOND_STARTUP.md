@@ -367,3 +367,27 @@ notification while idle, followed by cleanup. The blocked-resolution UI test
 requires the first actual card tap to reuse the activity's prepared native view,
 then retains its existing rapid-selection/handoff checks. Local and fresh native
 qualification must establish this candidate; it is not yet a speed result.
+
+
+## Revision 8 qualification
+
+Source `017c240`, merge `c394278`, run
+[41502679721](https://github.com/Vanir20342222/ytui/actions/runs/41502679721)
+finished all **57 declared cases: 52 pass, four fail, one optional public skip**.
+The direct rejected-FGS and bridge-preflight checks pass without the prior crash;
+all three preparation/cancellation/failure-cleanup tests pass, including the case
+aborted by the previous crash. Rust checks, secret scans and APK inspection pass.
+
+Strict misses remain: prepared indexed usable715/window1000 ms (one observer
+request,271 ms), cold card usable799/window1001 ms. Original two-second gates
+remain separate. Two catalog cases also failed the 15-second decoded-cover
+check: supplemental sheets and music motion. Failure pixels show an actual
+placeholder among decoded neighboring covers, not merely a screenshot timing
+assumption. The cause is still open. Failure-only synthetic-server per-cover
+request counts and a bounded native decode probe now retain further diagnostics;
+they execute after the failed assertion and cannot qualify or retry it.
+
+Artifacts for shards0–3 are `13170227451`, `13170326828`, `13169278343` and
+`13169178642`; APK `13170925283`. The later idle-view candidate passed local APK
+builds, lint and 23 JVM tests but still needs exact-source native and physical
+qualification. No live subsecond claim follows from these results.

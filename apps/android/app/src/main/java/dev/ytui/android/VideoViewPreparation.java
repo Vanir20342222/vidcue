@@ -14,14 +14,14 @@ final class VideoViewPreparation {
   private final RustActivity owner;
   private MessageQueue.IdleHandler pending;
   private volatile PlayerView prepared;
-  private boolean attempted;
+  private boolean claimed;
 
   VideoViewPreparation(RustActivity owner) {
     this.owner = owner;
   }
 
   void schedule() {
-    if (attempted || pending != null) return;
+    if (claimed || prepared != null || pending != null) return;
     pending =
         () -> {
           pending = null;
@@ -31,7 +31,6 @@ final class VideoViewPreparation {
                   .getLifecycle()
                   .getCurrentState()
                   .isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return false;
-          attempted = true;
           try {
             // No window attachment, player binding, SurfaceTexture, decoder,
             // source preparation, notification, history or network request.
@@ -73,7 +72,7 @@ final class VideoViewPreparation {
     while (candidate instanceof ContextWrapper) {
       if (candidate instanceof RustActivity) {
         VideoViewPreparation preparation = ((RustActivity) candidate).videoViews;
-        preparation.attempted = true;
+        preparation.claimed = true;
         PlayerView view = preparation.prepared;
         preparation.clear();
         if (view != null && view.getParent() == null) return view;

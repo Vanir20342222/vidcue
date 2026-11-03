@@ -1520,7 +1520,8 @@ class CatalogUiTest {
                         }
                         .onFailure {
                             decoded = false
-                            checks += "capture=${it.javaClass.simpleName}"
+                            checks +=
+                                "cover_index=${cards.indexOf(media)} capture=${it.javaClass.simpleName}:${it.message?.take(240)}"
                         }
                 }
                 diagnostics = checks
@@ -1528,7 +1529,36 @@ class CatalogUiTest {
             }
         } catch (error: Throwable) {
             captureSettled("restyle-fidelity-cover-failed.png")
-            android.util.Log.i("CoverEvidence", diagnostics.joinToString("; "))
+            android.util.Log.i(
+                "CoverEvidence",
+                diagnostics.joinToString("; ") + " requests=" + covers.requestCounts(),
+            )
+            // Failure-only probes use this test's synthetic loopback artwork.
+            // Never retry the assertion or turn an initial failed cover into a pass.
+            for ((index, media) in cards.withIndex()) {
+                runCatching {
+                        if (!compose.onNodeWithTag("media-card-${media.key}").isDisplayed())
+                            return@runCatching
+                        if (
+                            compose
+                                .onAllNodesWithTag("artwork-${media.key}", useUnmergedTree = true)
+                                .fetchSemanticsNodes()
+                                .isNotEmpty()
+                        )
+                            return@runCatching
+                        val data = NativeBridge.thumbnail(media.value.toString(), 384)
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "missing_index=$index native_probe=${data?.let { "${it[0]}x${it[1]}" } ?: "unavailable"} requests=${covers.requestCounts()}",
+                        )
+                    }
+                    .onFailure {
+                        android.util.Log.i(
+                            "CoverEvidence",
+                            "probe_index=$index failed=${it.javaClass.simpleName}",
+                        )
+                    }
+            }
             throw error
         }
     }
@@ -1548,6 +1578,10 @@ class CatalogUiTest {
     private class CoverServer : AutoCloseable {
         private val socket = ServerSocket(0, 16, java.net.InetAddress.getByName("127.0.0.1"))
         val requests = AtomicInteger()
+        private val byIndex = java.util.concurrent.atomic.AtomicIntegerArray(6)
+
+        fun requestCounts() = (0..5).map { byIndex.get(it) }
+
         val failures = AtomicInteger()
         @Volatile var failFirstCover = false
         private val images = (0..5).map(::cover)
@@ -1569,6 +1603,7 @@ class CatalogUiTest {
                                     ?.toIntOrNull() ?: 0
                             val bytes = images[index.coerceIn(0, 5)]
                             requests.incrementAndGet()
+                            byIndex.incrementAndGet(index.coerceIn(0, 5))
                             if (index == 0 && failFirstCover) {
                                 failFirstCover = false
                                 failures.incrementAndGet()

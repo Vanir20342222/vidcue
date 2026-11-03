@@ -104,6 +104,7 @@ public final class RustActivity extends ComponentActivity {
     // unused view rather than attach stale configuration after rotation/scaling.
     videoViews.clear();
     super.onConfigurationChanged(configuration);
+    videoViews.schedule();
   }
 
   @Override

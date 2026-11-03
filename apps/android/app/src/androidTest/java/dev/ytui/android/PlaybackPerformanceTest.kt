@@ -96,6 +96,22 @@ class PlaybackPerformanceTest {
                     manager.activeNotifications.none { n -> n.id == NotificationIds.PLAYBACK },
                 )
             }
+            val previousOwner = owner.get()
+            val previousView = previousOwner.videoViews.peek()
+            scene.recreate()
+            scene.onActivity { owner.set(it) }
+            MediaRuntimeTest.await("Recreated browsing activity should prepare its own view") {
+                owner.get().videoViews.ready()
+            }
+            Assert.assertFalse(
+                "Destroyed activity must discard its view",
+                previousOwner.videoViews.ready(),
+            )
+            scene.onActivity {
+                Assert.assertNotSame(previousView, it.videoViews.peek())
+                Assert.assertSame(it, it.videoViews.peek()!!.context)
+                Assert.assertNull(it.videoViews.peek()!!.player)
+            }
         }
         MediaRuntimeTest.await("Leaving an idle app must release player infrastructure") {
             PlaybackService.current == null
