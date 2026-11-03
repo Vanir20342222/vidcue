@@ -23,6 +23,8 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   static volatile PlaybackService current;
+  /** Matches desktop resume: positions under 5 s start from the beginning. */
+  static final long AUTO_RESUME_MIN_MS = 5000;
   ExoPlayer player;
   private volatile boolean initialized;
   private int lastStartId;
@@ -846,10 +848,13 @@ public final class PlaybackService extends MediaSessionService {
               JSONObject value =
                   rpc(new JSONObject().put("op", "position").put("url", media.optString("url")));
               long ms = value.optLong("milliseconds");
-              handler.post(
-                  () -> {
-                    if (version == generation) player.seekTo(ms);
-                  });
+              // Automatic resume (desktop parity) ignores positions near the start;
+              // finished items were reset to 0 at their end.
+              if (!request.optBoolean("auto_resume") || ms >= AUTO_RESUME_MIN_MS)
+                handler.post(
+                    () -> {
+                      if (version == generation) player.seekTo(ms);
+                    });
             }
             if (request.optBoolean("offline") || request.optBoolean("local")) return;
             JSONArray marks = rpcArray(new JSONObject().put("op", "sponsor").put("media", media));
@@ -1516,8 +1521,12 @@ public final class PlaybackService extends MediaSessionService {
                     : request
                         .getJSONObject("stream")
                         .optString("resolution_route", "direct-media"));
+            boolean autoResume =
+                !audio && !media.optBoolean("live") && MobileSettings.enabled("resume_on_play");
             request
                 .put("startup_token", timing)
+                .put("resume", autoResume)
+                .put("auto_resume", autoResume)
                 .put("quality", quality)
                 .put("queued", queued)
                 .put("history_index", historyIndex)

@@ -223,6 +223,15 @@ class NativeUiTest {
         compose.onNodeWithTag("cookie-header-field").assertIsFocused()
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithTag("account-sign-in").performScrollTo().performClick()
+        // The native account card comes first; Continue opens the provider page.
+        compose.waitUntil(10_000) {
+            compose
+                .onAllNodesWithTag("sign-in-continue")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false)
+                .isNotEmpty()
+        }
+        compose.onNodeWithTag("sign-in-card").assertIsDisplayed()
+        compose.onNodeWithTag("sign-in-continue").performScrollTo().performClick()
         compose.waitUntil(10_000) {
             compose
                 .onAllNodesWithTag("sign-in-complete")
