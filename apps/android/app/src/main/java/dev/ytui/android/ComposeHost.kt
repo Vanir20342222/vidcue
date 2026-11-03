@@ -835,9 +835,21 @@ internal fun Panel(
             )
         }
     } else {
-        val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        val scope = rememberCoroutineScope()
         val reduced = LocalReducedMotion.current
+        val density = LocalDensity.current
+        // Reduced motion must expose the sheet in its first layout, rather than waiting
+        // below the window for ModalBottomSheet's asynchronous entrance to run.
+        val state =
+            if (reduced)
+                remember(density) {
+                    SheetState(
+                        skipPartiallyExpanded = true,
+                        density = density,
+                        initialValue = SheetValue.Expanded,
+                    )
+                }
+            else rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val scope = rememberCoroutineScope()
         ModalBottomSheet(
             onDismissRequest = close,
             sheetState = state,

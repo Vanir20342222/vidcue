@@ -11,7 +11,9 @@
 The browse pane owns an open card action sheet instead of a recyclable grid item.
 Opening the sheet releases search focus and dismisses the keyboard. Grid and shelf
 relayout can therefore recycle the originating card without discarding its menu.
-The same ownership applies to tablet search rows.
+The same ownership applies to tablet search rows. Reduced-motion bottom sheets
+start expanded in their first layout instead of starting hidden and waiting for
+Material's asynchronous entrance. Ordinary animated entrances are unchanged.
 
 Artwork producers are keyed by the exact remembered bitmap state they fill, so a
 replacement state cell starts its own producer. Debug builds log load, detach and
@@ -31,6 +33,13 @@ No assertion, timeout, recording duration, retry count or workflow is changed.
 The existing large-text, decoded-cover, tablet-search and motion tests are the
 emulator regression checks for this change. Local app and instrumentation-test Kotlin compilation passed. All 80 JVM tests
 passed with no failures, errors or skips. `:app:lintDebug` passed. Emulator verification is pending.
+
+Run 41715596023 for `a46aea8` passed the APK job and emulator shards 0, 1 and 3
+(19 and 13 cases in the two previously failing shards). Shard 2 passed its motion
+recording but retained the tablet-search Preview visibility failure. The
+reduced-motion sheet initialization addresses that remaining entrance race;
+the correction again passed app/test compilation, all 80 JVM tests and lint.
+Exact-source emulator verification is pending.
 
 ## Not verified and limits
 
