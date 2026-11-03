@@ -627,7 +627,16 @@ state snapshot (`setup_version`). Details and the per-PR matrix are in
   in `related.rs` (4) and `setup.rs` (3). Fixtures route HTTP to a closed local
   proxy; no public service is contacted.
 - Not run: live related-video responses, continued mpv playback in Ghostty, or a
-  real first launch on the target PC. No Android code changed.
+  real first launch on the target PC.
+
+Follow-up, same day: the gaps on main were fixed. Desktop gained `prefer_offline`
+(`PlayerCommand::PlayLocal`), `preload_next` (`PlayerCommand::Prepare` into the
+existing stream cache), `seek_seconds` and `[card_info]`; Android gained
+`resume_on_play`. `cargo test --workspace`: 369 passed, 0 failed, 31 ignores;
+fmt and clippy clean. New: `tests/android_parity.rs` (6), a fake-mpv player test
+for saved copies, and a `media.rs` unit test. The Android change was **not
+compiled**: the SDK could not be installed here. `javac` reported no Java syntax
+errors; Kotlin, JVM tests, lint and emulator runs are left to Android CI.
 
 ### Remaining release acceptance
 

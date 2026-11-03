@@ -342,7 +342,12 @@ pub struct App {
     pub related: Option<crate::related::RelatedNext>,
     related_generation: u64,
     related_cancel: CancellationToken,
+    /// (current URL, next URL) last sent to the player for background preparation.
+    prepared: Option<(String, String)>,
 }
+/// Seconds before the end of the current item at which the next one is prepared.
+/// Shorter than the player's stream-cache lifetime, so the result is still fresh.
+pub const PRELOAD_WINDOW: f64 = 90.0;
 impl App {
     fn pending_text(&mut self, title: &str) -> uuid::Uuid {
         let id = uuid::Uuid::new_v4();
@@ -665,6 +670,7 @@ impl App {
             related: None,
             related_generation: 0,
             related_cancel: CancellationToken::new(),
+            prepared: None,
         };
         if demo {
             app.load_demo();
@@ -3079,10 +3085,12 @@ impl App {
                 }
             }
             Action::SeekForward => {
-                let _ = self.player.try_send(PlayerCommand::Seek(5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(step));
             }
             Action::SeekBack => {
-                let _ = self.player.try_send(PlayerCommand::Seek(-5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(-step));
             }
             Action::VolumeUp => {
                 let _ = self.player.try_send(PlayerCommand::Volume(5.0));
@@ -3389,7 +3397,11 @@ impl App {
             .positions
             .resumable()
             .into_iter()
-            .filter(|p| !self.offline || http_url(&p.media.url).is_err())
+            .filter(|p| {
+                !self.offline
+                    || http_url(&p.media.url).is_err()
+                    || self.offline_copy(&p.media).is_some()
+            })
             .collect()
     }
     pub fn resume_position(&mut self, position: ytui_core::playback_history::Position) {
@@ -3397,7 +3409,8 @@ impl App {
             self.status = "Updating player account · retry resume shortly".into();
             return;
         }
-        if self.offline && http_url(&position.media.url).is_ok() {
+        let saved = self.offline_copy(&position.media);
+        if self.offline && http_url(&position.media.url).is_ok() && saved.is_none() {
             self.status = "Resume this online video after restarting without --offline".into();
             return;
         }
@@ -3406,10 +3419,18 @@ impl App {
             return;
         }
         let audio = position.media.kind == MediaKind::Song;
-        let command = PlayerCommand::PlayAt {
-            media: position.media.clone(),
-            audio,
-            seconds: position.seconds,
+        let command = match saved {
+            Some(path) => PlayerCommand::PlayLocal {
+                media: position.media.clone(),
+                audio,
+                path,
+                seconds: Some(position.seconds),
+            },
+            None => PlayerCommand::PlayAt {
+                media: position.media.clone(),
+                audio,
+                seconds: position.seconds,
+            },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; try resume again".into();
@@ -3451,7 +3472,69 @@ impl App {
         }
         self.player_status = status;
         self.ensure_related(false);
+        self.prepare_next();
         self.redraw = true;
+    }
+    /// What automatic advance plays after the current item: the next queue entry,
+    /// the first entry again for repeat-all, or the first recommendation.
+    pub fn next_up(&self) -> Option<Media> {
+        let queue = &self.snapshot.playback;
+        let related = self.up_next_related();
+        let index = crate::related::plays_next(
+            queue,
+            related.map_or(0, |r| r.items.len()),
+            self.config.autoplay_related,
+        )?;
+        match queue.items.get(index) {
+            Some(media) => Some(media.clone()),
+            None => related?.items.get(index - queue.items.len()).cloned(),
+        }
+    }
+    /// Asks the player to resolve the next item in the background once the current
+    /// one is within [`PRELOAD_WINDOW`] of its end (Android: "Preload the next item").
+    fn prepare_next(&mut self) {
+        if !self.config.preload_next || self.offline || self.demo {
+            return;
+        }
+        let status = &self.player_status;
+        if !status.active || status.preview {
+            return;
+        }
+        let Some(duration) = status.duration.filter(|d| d.is_finite() && *d > 0.0) else {
+            return;
+        };
+        if duration - status.position > PRELOAD_WINDOW {
+            return;
+        }
+        let queue = &self.snapshot.playback;
+        let Some(current) = queue.current.and_then(|i| queue.items.get(i)) else {
+            return;
+        };
+        let Some(next) = self.next_up() else {
+            return;
+        };
+        let key = (current.url.clone(), next.url.clone());
+        if self.prepared.as_ref() == Some(&key) {
+            return;
+        }
+        self.prepared = Some(key);
+        // Saved copies, local files and live streams need no preparation.
+        if next.live
+            || next.kind == MediaKind::Station
+            || http_url(&next.url).is_err()
+            || self.offline_copy(&next).is_some()
+        {
+            return;
+        }
+        let audio = matches!(next.kind, MediaKind::Song | MediaKind::Station);
+        if self
+            .player
+            .try_send(PlayerCommand::Prepare { media: next, audio })
+            .is_err()
+        {
+            // Busy channel: try again on the next status update.
+            self.prepared = None;
+        }
     }
     /// Opens the first-run setup (also used to replay it from the action menu).
     pub fn open_setup(&mut self) {
@@ -3647,7 +3730,8 @@ impl App {
             self.status = "Updating player account · retry playback shortly".into();
             return false;
         }
-        if self.offline && http_url(&media.url).is_ok() {
+        let saved = self.offline_copy(&media);
+        if self.offline && http_url(&media.url).is_ok() && saved.is_none() {
             self.status = "Queued online media waits for online mode".into();
             return false;
         }
@@ -3664,17 +3748,27 @@ impl App {
             && media.kind == MediaKind::Video)
             .then(|| self.snapshot.positions.for_media(&media).map(|p| p.seconds))
             .flatten();
-        let command = match resume_at {
-            Some(seconds) => PlayerCommand::PlayAt {
+        let command = match (saved.clone(), resume_at) {
+            // The queue, history and resume keep the original item; mpv opens the file.
+            (Some(path), seconds) => PlayerCommand::PlayLocal {
+                media,
+                audio,
+                path,
+                seconds,
+            },
+            (None, Some(seconds)) => PlayerCommand::PlayAt {
                 media,
                 audio,
                 seconds,
             },
-            None => PlayerCommand::Play { media, audio },
+            (None, None) => PlayerCommand::Play { media, audio },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; retry playback".into();
             return false;
+        }
+        if saved.is_some() && resume_at.is_none() {
+            self.status = "Playing your saved offline copy".into();
         }
         if let Some(seconds) = resume_at {
             let seconds = seconds as u64;
@@ -3685,6 +3779,33 @@ impl App {
             );
         }
         true
+    }
+    /// A completed single-file download of `media` in the same mode (audio or
+    /// video), used instead of streaming when `prefer_offline` is on. Copies with
+    /// removed segments or split chapters are skipped: their timeline differs.
+    pub fn offline_copy(&self, media: &Media) -> Option<PathBuf> {
+        if !self.config.prefer_offline || media.live || http_url(&media.url).is_err() {
+            return None;
+        }
+        let audio = matches!(media.kind, MediaKind::Song | MediaKind::Station);
+        let id = crate::related::video_id(media);
+        self.snapshot
+            .downloads
+            .jobs
+            .iter()
+            .rev()
+            .filter(|job| {
+                job.state == JobState::Done
+                    && job.options.audio == audio
+                    && job.outputs.len() == 1
+                    && !job.options.playlist
+                    && !job.options.sponsorblock_remove
+                    && !job.options.split_chapters
+                    && (job.media.url == media.url
+                        || id.is_some() && crate::related::video_id(&job.media) == id)
+            })
+            .find_map(|job| ytui_services::library::completed_file(job, &job.outputs[0]))
+            .map(|copy| PathBuf::from(copy.url))
     }
     pub fn sleep_label(&self) -> Option<String> {
         if self.sleep_timer.stopping() {
@@ -3742,7 +3863,8 @@ impl App {
                 .current
                 .and_then(|index| self.snapshot.playback.items.get(index))
                 .is_some_and(|current| current.url == media.url)
-            && (self.offline && http_url(&media.url).is_ok() || !self.play_existing(media.clone()))
+            && (self.offline && http_url(&media.url).is_ok() && self.offline_copy(&media).is_none()
+                || !self.play_existing(media.clone()))
         {
             self.pending_auto_play = Some(media);
         }
