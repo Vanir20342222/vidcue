@@ -29,6 +29,7 @@ Measured from the repository history and the Actions runs of 2-3 November 2026.
 | Startup timing budgets advisory on PRs, enforced by a nightly run (03:17 UTC) and on demand (`timing: enforce`) | A 2001 ms frame on a shared runner no longer blocks a merge; hangs still fail (6 s ceiling). Measured times stay in the evidence files |
 | Rust CI no longer runs on branch pushes; secret scan only on `main` pushes, PRs and the merge queue | Fewer duplicate runs competing for runners |
 | `merge_group` trigger on Android, Rust, secret scan and hygiene | Ready for a merge queue (see below) |
+| Removed `android-preview.yml` (one-off publish with a hard-coded commit, run id and artifact id from 28 Oct) and `native-playback.yml` (ran only for branch `fix/native-playback`) | Fewer confusing workflows. Nothing referenced them; `git revert` restores them |
 
 Not verified here: the workflow edits and the Kotlin test change were not run on GitHub or an
 emulator from this environment. The first PR that carries them is their test. `should-run.sh`, the
@@ -89,9 +90,6 @@ Unchanged mechanics, fewer steps in the way:
 
 ## Not done, worth considering
 
-- `android-preview.yml` ("Publish tested Android preview") is a one-off with a hard-coded commit,
-  run id and artifact id from 28 October, and `native-playback.yml` only runs for `fix/native-playback`.
-  Deleting them would remove confusion; I left them because they were not asked for.
 - The four emulator shards are unbalanced (2:44 to 6:33 in one run). Re-balancing by measured test
   duration could save 2-3 minutes per run. It needs per-test timings from the evidence files.
 - `main` re-runs the full Android build for a commit the PR already tested. It is needed today because
