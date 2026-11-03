@@ -56,6 +56,7 @@ public final class FullscreenActivity extends ComponentActivity {
         });
     frames = new VisibleFrameTracker(view);
     VideoGestures.attach(view);
+    PlayerChrome.trackSponsorMarks(view);
     setContentView(view);
   }
 

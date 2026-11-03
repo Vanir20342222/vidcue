@@ -55,6 +55,8 @@ internal object MediaTokens {
     val videoInk = Color.White
     val videoScrim = Color.Black.copy(alpha = 0.72f)
     val videoDisc = Color.Black.copy(alpha = 0.48f)
+    /** SponsorBlock ticks on the video timebar; amber reads over video and every accent. */
+    val sponsorMark = Color(0xffffc107)
     val transparent = Color.Transparent
     val typography =
         Typography(

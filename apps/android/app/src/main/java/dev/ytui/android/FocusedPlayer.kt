@@ -54,6 +54,7 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    PlayerChrome.trackSponsorMarks(this)
                 }
         },
         modifier = modifier.background(Color.Black).testTag("native-video-surface"),
@@ -63,6 +64,7 @@ internal fun VideoSurface(modifier: Modifier = Modifier, onCollapse: (() -> Unit
             )
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
+            PlayerChrome.showSponsorMarks(view)
             view.findViewById<android.view.View>(R.id.ytui_collapse)?.apply {
                 tag = "panel-close" // Native View tag; Compose tag remains on music/modal chrome.
                 visibility =

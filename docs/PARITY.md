@@ -64,7 +64,8 @@ yt-dlp executable is retained as the previously requested explicit fallback.
 - Read-only playback SponsorBlock provides marks, configurable skip and undo without
   cutting source media. Direct extraction does not run the website ad player.
   Segments are shown on the terminal timeline, as labelled chapter ticks on the
-  mpv window's OSC seekbar (merged with the video's own chapters) and as coloured
-  ranges on the Android seek slider.
+  mpv window's OSC seekbar (merged with the video's own chapters), as coloured
+  ranges on the Android seek slider and as amber start/end ticks on the Android
+  video controller's timebar (inline and fullscreen).
 - Current live and desktop acceptance boundaries are in VALIDATION.md; no claim of
   full YouTube website/player parity or all bugs fixed is made.

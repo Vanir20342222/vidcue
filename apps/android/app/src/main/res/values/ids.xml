@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- View tag key: SponsorBlock marker times last applied to a PlayerView timebar. -->
+  <item name="ytui_sponsor_marks" type="id" />
+</resources>
