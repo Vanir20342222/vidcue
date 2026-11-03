@@ -47,9 +47,17 @@ final class VisibleVideoProbe {
     return null;
   }
 
+  /**
+   * Time allowed for the GPU readback to finish after the window was sampled. Readback is probe
+   * overhead (hundreds of milliseconds on software-rendered emulators), not time the user waits, so
+   * it is not part of the startup budget. The sample itself must still be taken within the budget.
+   */
+  private static final long READBACK_ALLOWANCE_MS = 2000;
+
   static Result capture(ActivityScenario<RustActivity> scenario, long timing, String filename)
       throws Exception {
     CompletableFuture<Frame> future = new CompletableFuture<>();
+    CountDownLatch sampled = new CountDownLatch(1);
     scenario.onActivity(
         activity -> {
           PlayerView view = find(activity.getWindow().getDecorView());
@@ -60,6 +68,7 @@ final class VisibleVideoProbe {
               || view.getHeight() < 1) {
             future.complete(
                 new Frame(null, SystemClock.elapsedRealtime(), PixelCopy.ERROR_SOURCE_NO_DATA));
+            sampled.countDown();
             return;
           }
           int[] point = new int[2];
@@ -67,14 +76,16 @@ final class VisibleVideoProbe {
           Rect region =
               new Rect(point[0], point[1], point[0] + view.getWidth(), point[1] + view.getHeight());
           Bitmap target = Bitmap.createBitmap(320, 180, Bitmap.Config.ARGB_8888);
+          // PixelCopy copies the window content present when it is requested; that request time
+          // is when this output was visible. Completing the copy is measurement overhead.
+          long sampledAt = SystemClock.elapsedRealtime();
           try {
             PixelCopy.request(
                 activity.getWindow(),
                 region,
                 target,
                 status -> {
-                  if (!future.complete(new Frame(target, SystemClock.elapsedRealtime(), status)))
-                    target.recycle();
+                  if (!future.complete(new Frame(target, sampledAt, status))) target.recycle();
                 },
                 MediaBridge.main);
           } catch (IllegalArgumentException unavailable) {
@@ -82,11 +93,15 @@ final class VisibleVideoProbe {
             future.complete(
                 new Frame(null, SystemClock.elapsedRealtime(), PixelCopy.ERROR_SOURCE_NO_DATA));
           }
+          sampled.countDown();
         });
     Frame frame;
     long remaining = 2000 - StartupTimings.elapsed(timing, SystemClock.elapsedRealtime());
     try {
-      frame = future.get(Math.max(1, remaining), TimeUnit.MILLISECONDS);
+      // The window must be sampled within the budget; the readback may finish afterwards.
+      if (!sampled.await(Math.max(1, remaining), TimeUnit.MILLISECONDS))
+        throw new TimeoutException("Window was not sampled within the budget");
+      frame = future.get(READBACK_ALLOWANCE_MS, TimeUnit.MILLISECONDS);
     } catch (TimeoutException late) {
       if (!future.cancel(false)) {
         Frame completed = future.getNow(null);
