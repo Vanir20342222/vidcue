@@ -94,6 +94,30 @@ class SpectrumMathTest {
         assertTrue(levels.overall > 0f && levels.overall < 1f)
     }
 
+    @Test
+    fun quietTrebleBandsAreAutoGainedToTheirOwnPeak() {
+        val levels = LiquidLevels()
+        // Treble at 10% of full scale, steady: its bar still reaches near the top.
+        val quiet = IntArray(SPECTRUM_BANDS) { if (it >= 18) 6553 else 0 }
+        repeat(60) { levels.step(quiet, 0.016f) }
+        assertTrue(levels.bands[20] > 0.8f)
+        assertEquals(0f, levels.bands[2], 0.0001f)
+    }
+
+    @Test
+    fun aBassHitStartsAKickAndARippleThatFade() {
+        val levels = LiquidLevels()
+        repeat(40) { levels.step(bands(3000), 0.016f) }
+        assertEquals(0f, levels.kick, 0.0001f)
+        assertTrue(levels.ripples.all { it >= RIPPLE_SECONDS })
+        levels.step(IntArray(SPECTRUM_BANDS) { if (it < 6) 60000 else 3000 }, 0.016f)
+        assertEquals(1f, levels.kick, 0.0001f)
+        assertEquals(1, levels.ripples.count { it < RIPPLE_SECONDS })
+        repeat(120) { levels.step(bands(3000), 0.016f) }
+        assertTrue(levels.kick < 0.01f)
+        assertTrue(levels.ripples.all { it >= RIPPLE_SECONDS })
+    }
+
     private companion object {
         const val TWO_PI = 6.2831855f
     }

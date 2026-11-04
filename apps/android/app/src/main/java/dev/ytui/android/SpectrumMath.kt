@@ -14,6 +14,11 @@ private const val BANDS_PER_GROUP = SPECTRUM_BANDS / LIQUID_GROUPS
 private const val TAU = 6.2831855f
 private const val LEVEL_ATTACK = 0.06f
 private const val LEVEL_RELEASE = 0.32f
+private const val PEAK_DECAY = 2.5f
+private const val PEAK_FLOOR = 0.06f
+private const val KICK_DECAY = 0.16f
+internal const val RIPPLE_COUNT = 4
+internal const val RIPPLE_SECONDS = 1.2f
 private const val BAR_ATTACK = 0.03f
 private const val BAR_RELEASE = 0.18f
 
@@ -71,8 +76,26 @@ internal class LiquidLevels {
     /** Smoothed energy per group, 0..1: bass, low-mid, high-mid, treble. */
     val groups = FloatArray(LIQUID_GROUPS)
 
-    /** Smoothed energy per band, 0..1, for spectrum bars. Quicker than the groups. */
+    /**
+     * Smoothed energy per band, 0..1, for spectrum bars. Each band is scaled by its own recent
+     * peak (auto-gain), so quiet treble bands move as visibly as the bass instead of staying flat.
+     */
     val bands = FloatArray(SPECTRUM_BANDS)
+
+    /** Recent peak per band, decaying over a few seconds; the auto-gain reference. */
+    private val peaks = FloatArray(SPECTRUM_BANDS)
+
+    /** Slow bass average that a beat must clearly exceed. */
+    private var bassAverage = 0f
+    private var sinceBeat = 1f
+
+    /** 1 right after a bass beat, easing back to 0: drives the cover's pulse. */
+    var kick = 0f
+        private set
+
+    /** Seconds since each recent beat ripple started; values past [RIPPLE_SECONDS] are idle. */
+    val ripples = FloatArray(RIPPLE_COUNT) { RIPPLE_SECONDS }
+    private var nextRipple = 0
 
     /** Mean group energy, 0..1. Drives the tank's height and the ring's size. */
     val overall: Float
@@ -86,15 +109,25 @@ internal class LiquidLevels {
     fun step(spectrum: IntArray, elapsedSeconds: Float) {
         val step = elapsedSeconds.coerceIn(0f, MAX_STEP)
         if (step == 0f) return
+        val peakFade = exp(-step / PEAK_DECAY)
         for (band in 0 until SPECTRUM_BANDS) {
-            bands[band] =
-                followLevel(
-                    bands[band],
-                    (spectrum.getOrElse(band) { 0 } / 65535f).coerceIn(0f, 1f),
-                    step,
-                    BAR_ATTACK,
-                    BAR_RELEASE,
-                )
+            val raw = (spectrum.getOrElse(band) { 0 } / 65535f).coerceIn(0f, 1f)
+            peaks[band] = maxOf(raw, peaks[band] * peakFade)
+            val scaled = (raw / maxOf(peaks[band], PEAK_FLOOR)).coerceIn(0f, 1f)
+            // A gentle curve keeps quiet passages low and lets peaks reach out.
+            bands[band] = followLevel(bands[band], scaled * scaled, step, BAR_ATTACK, BAR_RELEASE)
+        }
+        // Beats: bass well above its own recent average, at most about four a second.
+        val bass = liquidGroupAverage(spectrum, 0)
+        bassAverage = followLevel(bassAverage, bass, step, 0.25f, 0.25f)
+        sinceBeat += step
+        kick *= exp(-step / KICK_DECAY)
+        for (i in ripples.indices) ripples[i] = (ripples[i] + step).coerceAtMost(RIPPLE_SECONDS)
+        if (bass > 0.12f && bass > bassAverage * 1.3f && sinceBeat > 0.24f) {
+            sinceBeat = 0f
+            kick = 1f
+            ripples[nextRipple] = 0f
+            nextRipple = (nextRipple + 1) % RIPPLE_COUNT
         }
         for (group in 0 until LIQUID_GROUPS) {
             groups[group] =
