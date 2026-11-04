@@ -20,7 +20,13 @@ internal const val PEAK_HOLD = 0.5f
 /** Full-scale units per second squared: a marker at the top falls in about 0.75 s. */
 private const val PEAK_GRAVITY = 3.5f
 private const val PEAK_FLOOR = 0.06f
-private const val KICK_DECAY = 0.16f
+private const val KICK_DECAY = 0.2f
+private const val BASS_BANDS = 6
+private const val WARM_UP = 0.3f
+private const val MIN_BEAT_GAP = 0.18f
+private const val FLUX_FLOOR = 0.06f
+private const val FLUX_SPREAD = 1.6f
+private const val FLUX_WINDOW = 0.6f
 internal const val RIPPLE_COUNT = 4
 internal const val RIPPLE_SECONDS = 1.2f
 private const val BAR_ATTACK = 0.03f
@@ -97,12 +103,35 @@ internal class LiquidLevels {
     /** Recent peak per band, decaying over a few seconds; the auto-gain reference. */
     private val peaks = FloatArray(SPECTRUM_BANDS)
 
-    /** Slow bass average that a beat must clearly exceed. */
-    private var bassAverage = 0f
+    /** Previous auto-gained level per band, for spectral flux. */
+    private val previous = FloatArray(SPECTRUM_BANDS)
+    private var warmUp = 0f
+    private var fluxAverage = 0f
+    private var fluxDeviation = 0f
     private var sinceBeat = 1f
 
-    /** 1 right after a bass beat, easing back to 0: drives the cover's pulse. */
+    /**
+     * Strength of the latest beat (0.35..1) right after it, easing back to 0. Beats are onsets in
+     * spectral flux (the sum of rising band levels, weighted to the bass) above an adaptive
+     * threshold, so quiet piano and loud EDM both find their own beat.
+     */
     var kick = 0f
+        private set
+
+    /** Counts detected beats; a view emits particles when it changes. */
+    var beats = 0
+        private set
+
+    /** Strength of the most recent beat, 0.35..1. */
+    var beatStrength = 0f
+        private set
+
+    /** Overall loudness after auto-gain, 0..1, quick to rise and slow to fall. */
+    var energy = 0f
+        private set
+
+    /** Accumulated ring rotation in radians: idles slowly and speeds up with energy and beats. */
+    var spin = 0f
         private set
 
     /** Seconds since each recent beat ripple started; values past [RIPPLE_SECONDS] are idle. */
@@ -122,12 +151,20 @@ internal class LiquidLevels {
         val step = elapsedSeconds.coerceIn(0f, MAX_STEP)
         if (step == 0f) return
         val peakFade = exp(-step / PEAK_DECAY)
+        var flux = 0f
+        var weights = 0f
+        var loudness = 0f
         for (band in 0 until SPECTRUM_BANDS) {
             val raw = (spectrum.getOrElse(band) { 0 } / 65535f).coerceIn(0f, 1f)
             peaks[band] = maxOf(raw, peaks[band] * peakFade)
             val scaled = (raw / maxOf(peaks[band], PEAK_FLOOR)).coerceIn(0f, 1f)
+            val weight = if (band < BASS_BANDS) 1f else 0.35f
+            flux += maxOf(0f, scaled - previous[band]) * weight
+            weights += weight
+            previous[band] = scaled
             // A gentle curve keeps quiet passages low and lets peaks reach out.
             bands[band] = followLevel(bands[band], scaled * scaled, step, BAR_ATTACK, BAR_RELEASE)
+            loudness += bands[band]
             if (bands[band] >= held[band]) {
                 held[band] = bands[band]
                 heldAge[band] = 0f
@@ -140,18 +177,26 @@ internal class LiquidLevels {
                 }
             }
         }
-        // Beats: bass well above its own recent average, at most about four a second.
-        val bass = liquidGroupAverage(spectrum, 0)
-        bassAverage = followLevel(bassAverage, bass, step, 0.25f, 0.25f)
+        flux /= weights
+        energy = followLevel(energy, loudness / SPECTRUM_BANDS, step, 0.05f, 0.45f)
+        // Beats: a flux onset clearly above the song's own recent flux, at most ~5 a second.
+        warmUp += step
         sinceBeat += step
         kick *= exp(-step / KICK_DECAY)
         for (i in ripples.indices) ripples[i] = (ripples[i] + step).coerceAtMost(RIPPLE_SECONDS)
-        if (bass > 0.12f && bass > bassAverage * 1.3f && sinceBeat > 0.24f) {
+        val threshold = fluxAverage + FLUX_SPREAD * fluxDeviation + FLUX_FLOOR
+        if (warmUp > WARM_UP && flux > threshold && sinceBeat > MIN_BEAT_GAP) {
             sinceBeat = 0f
-            kick = 1f
+            beatStrength = ((flux - fluxAverage) / (fluxDeviation * 2f + 0.05f)).coerceIn(0.35f, 1f)
+            kick = maxOf(kick, beatStrength)
+            beats++
             ripples[nextRipple] = 0f
             nextRipple = (nextRipple + 1) % RIPPLE_COUNT
         }
+        val adapt = 1f - exp(-step / FLUX_WINDOW)
+        fluxAverage += (flux - fluxAverage) * adapt
+        fluxDeviation += (kotlin.math.abs(flux - fluxAverage) - fluxDeviation) * adapt
+        spin += step * (0.25f + 1.6f * energy + 2.5f * kick)
         for (group in 0 until LIQUID_GROUPS) {
             groups[group] =
                 followLevel(
@@ -162,5 +207,46 @@ internal class LiquidLevels {
                     LEVEL_RELEASE,
                 )
         }
+    }
+}
+
+/**
+ * Sparks thrown outwards from the orbit ring: a burst on every beat (bigger for stronger beats)
+ * and a light stream that follows the music's energy. Plain arrays, stepped with the levels.
+ */
+internal class OrbParticles(private val capacity: Int = 120, seed: Int = 7) {
+    private val random = kotlin.random.Random(seed)
+    /** Distance travelled from the ring outwards, 0..1; values >= 1 are free slots. */
+    val progress = FloatArray(capacity) { 1f }
+    val angle = FloatArray(capacity)
+    val speed = FloatArray(capacity)
+    val size = FloatArray(capacity)
+    /** Position on the cover's palette, 0..1. */
+    val tone = FloatArray(capacity)
+    private var seenBeats = 0
+    private var stream = 0f
+
+    fun step(levels: LiquidLevels, elapsedSeconds: Float) {
+        val step = elapsedSeconds.coerceIn(0f, 0.1f)
+        if (step == 0f) return
+        for (i in 0 until capacity) if (progress[i] < 1f) progress[i] += speed[i] * step
+        if (levels.beats != seenBeats) {
+            seenBeats = levels.beats
+            repeat((10 + 26 * levels.beatStrength).toInt()) { emit(0.9f + 1.3f * levels.beatStrength) }
+        }
+        stream += step * 16f * levels.energy
+        while (stream >= 1f) {
+            stream -= 1f
+            emit(0.35f + 0.5f * levels.energy)
+        }
+    }
+
+    private fun emit(velocity: Float) {
+        val slot = (0 until capacity).firstOrNull { progress[it] >= 1f } ?: return
+        progress[slot] = 0f
+        angle[slot] = random.nextFloat() * 6.2831855f
+        speed[slot] = velocity * (0.6f + 0.8f * random.nextFloat())
+        size[slot] = 0.6f + random.nextFloat()
+        tone[slot] = random.nextFloat()
     }
 }

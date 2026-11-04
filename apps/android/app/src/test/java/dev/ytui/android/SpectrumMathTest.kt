@@ -133,6 +133,28 @@ class SpectrumMathTest {
         assertEquals(levels.bands[3], levels.held[3], 0.0001f)
     }
 
+    @Test
+    fun quietPianoNotesAreBeatsButSteadyNoiseIsNot() {
+        // Notes at ~3% of full scale every 0.6 s: far below the old fixed bass threshold.
+        val piano = LiquidLevels()
+        val sparks = OrbParticles()
+        var notes = 0
+        repeat(600) { frame ->
+            val time = frame * 0.016f
+            val since = time % 0.6f
+            if (since < 0.016f && time > 0.5f) notes++
+            val level = (2000 * kotlin.math.exp(-since / 0.25f)).toInt() + 150
+            piano.step(IntArray(SPECTRUM_BANDS) { if (it < 10) level else level / 3 }, 0.016f)
+            sparks.step(piano, 0.016f)
+        }
+        assertTrue("beats=${piano.beats} notes=$notes", piano.beats >= notes * 0.8 && piano.beats <= notes + 2)
+        assertTrue(sparks.progress.any { it < 1f })
+        val noise = LiquidLevels()
+        val random = kotlin.random.Random(3)
+        repeat(600) { noise.step(IntArray(SPECTRUM_BANDS) { 40000 + random.nextInt(3000) }, 0.016f) }
+        assertTrue("noise beats=${noise.beats}", noise.beats <= 3)
+    }
+
     private companion object {
         const val TWO_PI = 6.2831855f
     }

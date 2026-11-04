@@ -2377,6 +2377,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     // The liquid keeps its own clock. It is read only while drawing, so the animation never
     // recomposes this screen.
     val levels = remember(style) { LiquidLevels() }
+    val particles = remember(style) { OrbParticles() }
     var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
         if (player.playing && !reduced && style != "classic" && visible) {
@@ -2387,6 +2388,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 previous = now
                 if (style.startsWith("vu") || style.startsWith("orbit")) {
                     levels.step(AudioTap.spectrum, elapsed)
+                    if (style.startsWith("orbit")) particles.step(levels, elapsed)
                     liquidTime += elapsed
                 }
             }
@@ -2403,10 +2405,8 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onBackground
     val media = player.media?.let(::MediaCard) ?: return
-    // Bars and strings take the cover's colour, as the player backdrop does.
-    val background = MaterialTheme.colorScheme.background
-    val artTint = rememberArtworkTint(media, background, config.optBoolean("thumbnails", true))
-    val art = artTint.takeUnless { it == background }
+    // Bars, strings and sparks take the cover's own dominant colours.
+    val swatches = rememberArtworkSwatches(media, config.optBoolean("thumbnails", true))
     val cornerRadius = if (style == "classic") 20.dp else 4.dp
     BoxWithConstraints(
         modifier
@@ -2474,7 +2474,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else if (style.startsWith("vu")) {
             // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
-                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), art)
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches)
                 Artwork(
                     media,
                     Modifier.fillMaxWidth(0.6f)
@@ -2491,7 +2491,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else {
             // A glow, a ring of spectrum bars and two liquid layers around a large round cover
             // that swells slightly on the beat.
-            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), art)
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches, particles)
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.56f)

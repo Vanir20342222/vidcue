@@ -8,12 +8,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import kotlin.math.cos
 import kotlin.math.min
@@ -21,26 +20,35 @@ import kotlin.math.sin
 
 private const val TAU = 6.2831855f
 
-/** Tonal liquid colours from the theme: the accent, and a lighter tint towards the foreground. */
-internal class LiquidPalette(accent: Color, ink: Color) {
-    val deep: Color = accent
-    val light: Color = lerp(accent, ink, 0.3f)
+/**
+ * Visualiser colours. With cover swatches (see [artworkSwatches]) the visualiser blends between
+ * the cover's own dominant colours; without them it uses the theme accent and a lighter tint.
+ */
+internal class LiquidPalette(swatches: List<Color>) {
+    constructor(accent: Color, ink: Color) : this(listOf(accent, lerp(accent, ink, 0.3f)))
+
+    private val colours = swatches.ifEmpty { listOf(Color.White) }
+    val deep: Color = colours.first()
+    val light: Color = lerp(deep, Color.White, 0.4f)
+
+    /** The palette around a loop: 0 and 1 are the dominant colour, blending through the rest. */
+    fun at(position: Float): Color {
+        if (colours.size == 1) return deep
+        val scaled = ((position % 1f + 1f) % 1f) * colours.size
+        val index = scaled.toInt().coerceIn(0, colours.size - 1)
+        return lerp(colours[index], colours[(index + 1) % colours.size], scaled - index)
+    }
 }
 
-/**
- * Visualiser colours taken from the cover, as Plexamp does: the artwork's tint pushed to a
- * vivid, light-enough hue so it reads on the dark player. Falls back to the theme accent while
- * no artwork colour is known.
- */
-internal fun artPalette(art: Color?, accent: Color, ink: Color): LiquidPalette {
-    if (art == null) return LiquidPalette(accent, ink)
-    val hsv = FloatArray(3)
-    android.graphics.Color.colorToHSV(art.toArgb(), hsv)
-    // Near-grey covers keep the theme accent rather than turning the visualiser grey.
-    if (hsv[1] < 0.12f) return LiquidPalette(accent, ink)
-    hsv[1] = hsv[1].coerceIn(0.5f, 0.85f)
-    hsv[2] = hsv[2].coerceAtLeast(0.88f)
-    return LiquidPalette(Color(android.graphics.Color.HSVToColor(hsv)), ink)
+/** Cover swatches when known, otherwise the theme accent. */
+internal fun artPalette(swatches: List<Color>?, accent: Color, ink: Color): LiquidPalette =
+    if (swatches.isNullOrEmpty()) LiquidPalette(accent, ink) else LiquidPalette(swatches)
+
+/** A small shake on strong beats, in a fresh direction for each beat (golden-angle steps). */
+internal fun beatShake(levels: LiquidLevels, amount: Float): Offset {
+    val strength = levels.kick * levels.kick * amount
+    val direction = levels.beats * 2.3999631f
+    return Offset(cos(direction) * strength, sin(direction) * strength)
 }
 
 /**
@@ -54,11 +62,14 @@ internal fun LiquidTank(
     accent: Color,
     ink: Color,
     modifier: Modifier = Modifier,
-    art: Color? = null,
+    swatches: List<Color>? = null,
 ) {
     val path = remember { Path() }
-    val palette = remember(art, accent, ink) { artPalette(art, accent, ink) }
-    Canvas(modifier) { drawStrings(clock(), levels, palette, path) }
+    val palette = remember(swatches, accent, ink) { artPalette(swatches, accent, ink) }
+    Canvas(modifier) {
+        clock()
+        drawStrings(levels, palette, path)
+    }
 }
 
 /**
@@ -67,9 +78,13 @@ internal fun LiquidTank(
  */
 internal fun Modifier.beat(levels: LiquidLevels, clock: () -> Float): Modifier = graphicsLayer {
     clock()
-    val swell = 1f + 0.035f * levels.kick
+    // The cover thumps on every beat, a little harder for strong ones, and breathes with energy.
+    val swell = 1f + 0.08f * levels.kick + 0.02f * levels.energy
     scaleX = swell
     scaleY = swell
+    val shake = beatShake(levels, 4.dp.toPx())
+    translationX = shake.x
+    translationY = shake.y
 }
 
 /** Pulse Orbit: a radial spectrum around the circular cover. */
@@ -80,78 +95,95 @@ internal fun LiquidOrb(
     accent: Color,
     ink: Color,
     modifier: Modifier = Modifier,
-    art: Color? = null,
+    swatches: List<Color>? = null,
+    particles: OrbParticles? = null,
 ) {
-    val path = remember { Path() }
-    val palette = remember(art, accent, ink) { artPalette(art, accent, ink) }
-    Canvas(modifier) { drawLiquidOrb(clock(), levels, palette, path) }
+    val palette = remember(swatches, accent, ink) { artPalette(swatches, accent, ink) }
+    Canvas(modifier) {
+        clock()
+        drawLiquidOrb(levels, palette, particles)
+    }
 }
 
-internal fun DrawScope.drawLiquidOrb(
-    time: Float,
-    levels: LiquidLevels,
-    palette: LiquidPalette,
-    path: Path,
-) {
-    // A radial spectrum analyser after audioMotion-analyzer's radial mode: rounded bars whose
-    // opacity follows their level, peak-hold markers that fall back under gravity, a slow spin,
-    // and the cover's own colours.
+internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalette, particles: OrbParticles?) {
+    // A radial analyser after audioMotion-analyzer's radial mode, driven hard by the beat as
+    // music-channel visualisers are: the ring jumps out and flashes on each beat, the stage shakes
+    // a little on strong ones, sparks fly out, and the ring spins faster when the music is loud.
     val minDimension = min(size.width, size.height)
-    val center = Offset(size.width / 2f, size.height / 2f)
+    val center = Offset(size.width / 2f, size.height / 2f) + beatShake(levels, 4.dp.toPx())
+    val kick = levels.kick
+    val energy = levels.energy
     val cover = minDimension * 0.28f
-    val outer = minDimension * 0.495f
-    val overall = levels.overall
+    val outer = minDimension * 0.5f
+    // The cover itself swells by up to 8%; the ring stays just outside it.
+    val inner = cover * (1f + 0.08f * kick + 0.05f * energy) + 8.dp.toPx()
+    val reach = outer - inner - 2.dp.toPx()
     drawCircle(
         Brush.radialGradient(
-            listOf(palette.deep.copy(alpha = 0.22f + 0.2f * overall), palette.deep.copy(alpha = 0f)),
+            listOf(
+                palette.at(0f).copy(alpha = (0.18f + 0.3f * energy + 0.35f * kick).coerceAtMost(0.8f)),
+                palette.at(0.5f).copy(alpha = 0.08f + 0.12f * kick),
+                Color.Transparent,
+            ),
             center = center,
-            radius = outer * (0.94f + 0.06f * levels.kick),
+            radius = outer * (0.9f + 0.12f * kick),
         ),
-        radius = outer,
+        radius = outer * 1.02f,
         center = center,
     )
-    // One soft ripple per beat, kept faint so the bars stay the subject.
-    for (age in levels.ripples) {
+    for ((index, age) in levels.ripples.withIndex()) {
         if (age >= RIPPLE_SECONDS) continue
         val t = age / RIPPLE_SECONDS
         drawCircle(
-            palette.light.copy(alpha = 0.22f * (1f - t)),
-            radius = cover + (outer - cover) * (1f - (1f - t) * (1f - t)),
+            palette.at(index / RIPPLE_COUNT.toFloat()).copy(alpha = 0.45f * (1f - t) * (1f - t)),
+            radius = inner + (outer * 1.05f - inner) * (1f - (1f - t) * (1f - t)),
             center = center,
-            style = Stroke(width = 1.5f.dp.toPx()),
+            style = Stroke(width = (3f - 2f * t).dp.toPx()),
         )
     }
+    particles?.let { sparks ->
+        for (i in sparks.progress.indices) {
+            val p = sparks.progress[i]
+            if (p >= 1f) continue
+            val eased = 1f - (1f - p) * (1f - p)
+            val distance = inner + (outer * 1.08f - inner) * eased
+            val direction = Offset(cos(sparks.angle[i]), sin(sparks.angle[i]))
+            drawCircle(
+                lerp(palette.at(sparks.tone[i]), Color.White, 0.25f).copy(alpha = (1f - p) * 0.9f),
+                radius = sparks.size[i] * (2.2f - 1.2f * p).dp.toPx(),
+                center = center + direction * distance,
+            )
+        }
+    }
     val bars = 72
-    val inner = cover + 8.dp.toPx()
-    val reach = outer - inner - 4.dp.toPx()
-    // About 10% of each slot is space, as in audioMotion's default bar spacing.
-    val stroke = (TAU * inner / bars) * 0.62f
-    val spin = time * TAU / 60f * 2f // two turns a minute
+    val stroke = (TAU * inner / bars) * 0.6f
     for (i in 0 until bars) {
-        val angle = TAU / 4f + i.toFloat() / bars * TAU + spin
+        val angle = TAU / 4f + i.toFloat() / bars * TAU + levels.spin
         val height = if (i <= bars / 2) i / (bars / 2f) else (bars - i) / (bars / 2f)
         val level = sampleBands(levels.bands, height)
         val peak = sampleBands(levels.held, height)
         val direction = Offset(cos(angle), sin(angle))
-        val length = stroke + (reach - stroke) * level
+        // Beats push every bar outwards on top of its own level.
+        val reached = (level * (0.85f + 0.3f * kick) + 0.12f * kick).coerceAtMost(1f)
+        val length = stroke + (reach - stroke) * reached
+        val colour = lerp(palette.at(i.toFloat() / bars), Color.White, 0.15f * level + 0.35f * kick)
         drawLine(
-            lerp(palette.deep, palette.light, level).copy(alpha = 0.35f + 0.65f * level),
+            colour.copy(alpha = (0.4f + 0.6f * reached).coerceAtMost(1f)),
             center + direction * inner,
             center + direction * (inner + length),
             stroke,
             StrokeCap.Round,
         )
-        // Peak-hold cap: a small dot just past the bar's recent high.
         if (peak > level + 0.02f) {
             val at = inner + stroke + (reach - stroke) * peak + stroke * 0.6f
-            drawCircle(palette.light.copy(alpha = 0.85f), stroke * 0.42f, center + direction * at)
+            drawCircle(lerp(colour, Color.White, 0.5f).copy(alpha = 0.85f), stroke * 0.42f, center + direction * at)
         }
     }
     drawCircle(
-        palette.light.copy(alpha = 0.55f),
-        radius = cover + (2.5f + 2.5f * levels.kick).dp.toPx(),
+        lerp(palette.at(0.5f), Color.White, 0.3f * kick).copy(alpha = 0.55f + 0.4f * kick),
+        radius = inner - 4.dp.toPx(),
         center = center,
-        style = Stroke(width = 1.5f.dp.toPx()),
+        style = Stroke(width = (1.5f + 2.5f * kick).dp.toPx()),
     )
 }
 
@@ -169,20 +201,22 @@ internal fun sampleBands(values: FloatArray, position: Float): Float {
  * treble, each plucked by its band's level and tapered to rest at both ends. Drawn behind the
  * cover across the whole stage, in the cover's colours.
  */
-internal fun DrawScope.drawStrings(time: Float, levels: LiquidLevels, palette: LiquidPalette, path: Path) {
+internal fun DrawScope.drawStrings(levels: LiquidLevels, palette: LiquidPalette, path: Path) {
     val strings = 14
     val samples = 72
     val centre = size.height / 2f
-    val amplitudeMax = size.height * 0.36f
+    val amplitudeMax = size.height * 0.4f
     val width = size.width
+    val kick = levels.kick
     for (s in 0 until strings) {
         val position = s / (strings - 1f)
         val level = sampleBands(levels.bands, position)
-        // Bass strings swing wide and slow; treble strings are finer and quicker.
+        // Bass strings swing wide and slow; treble strings are finer and quicker. A beat plucks
+        // every string at once, hardest in the bass. Their motion speeds up with the music.
         val cycles = 1f + position * 3.5f
-        val speed = 0.6f + position * 2.2f
-        val amplitude = amplitudeMax * (0.04f + 0.96f * level) * (1f - 0.35f * position)
-        val phase = time * speed + s * 0.9f
+        val pluck = 1f + kick * (0.9f - 0.5f * position)
+        val amplitude = amplitudeMax * (0.05f + 0.95f * level) * (1f - 0.35f * position) * pluck
+        val phase = levels.spin * (1.2f + position * 3f) + s * 0.9f
         path.reset()
         for (i in 0..samples) {
             val u = i.toFloat() / samples
@@ -190,10 +224,14 @@ internal fun DrawScope.drawStrings(time: Float, levels: LiquidLevels, palette: L
             val y = centre + amplitude * taper * sin(TAU * cycles * u + phase)
             if (i == 0) path.moveTo(0f, y) else path.lineTo(u * width, y)
         }
+        val colour = lerp(palette.at(position), Color.White, 0.3f * kick)
+        val core = (2.6f - 1.2f * position).dp.toPx()
+        // A soft glow under each string, then the string itself.
+        drawPath(path, colour.copy(alpha = 0.12f + 0.2f * level), style = Stroke(width = core * 4f, cap = StrokeCap.Round))
         drawPath(
             path,
-            lerp(palette.deep, palette.light, position).copy(alpha = 0.28f + 0.6f * level),
-            style = Stroke(width = (2.4f - 1.2f * position).dp.toPx(), cap = StrokeCap.Round),
+            colour.copy(alpha = (0.4f + 0.55f * level + 0.2f * kick).coerceAtMost(1f)),
+            style = Stroke(width = core, cap = StrokeCap.Round),
         )
     }
 }
