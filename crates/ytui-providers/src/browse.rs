@@ -502,7 +502,16 @@ impl Browser {
             BrowseRequest::Collection(id) => {
                 ("browse", json!({"browseId":id}), "Collection".into())
             }
-            BrowseRequest::Related(id) => ("next", json!({"videoId":id}), "Related".into()),
+            BrowseRequest::Related(id) => (
+                "next",
+                if music {
+                    // WEB_REMIX returns a song radio queue for this generated mix.
+                    json!({"videoId":id,"playlistId":format!("RDAMVM{id}"),"isAudioOnly":true})
+                } else {
+                    json!({"videoId":id})
+                },
+                "Related".into(),
+            ),
             BrowseRequest::Continue(token) => {
                 let (endpoint, token) = token.split_once(':').unwrap_or(("browse", token.as_str()));
                 ensure!(
@@ -857,6 +866,11 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
     })
 }
 fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
+    if r.get("unplayableText").is_some()
+        || r.get("isPlayable").and_then(Value::as_bool) == Some(false)
+    {
+        return None;
+    }
     let mut title = r
         .get("title")
         .or_else(|| r.get("headline"))
@@ -1060,11 +1074,18 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                             item.section = section.into();
                             page.items.push(item);
                         }
+                    } else if name == "playlistPanelVideoWrapperRenderer" {
+                        // Music can offer a video counterpart for the same song.
+                        // It is a playback-mode alternative, not another queue row.
+                        if let Some(primary) = v.get("primaryRenderer") {
+                            walk(primary, music, page, seen, section);
+                        }
                     } else if [
                         "videoRenderer",
                         "gridVideoRenderer",
                         "compactVideoRenderer",
                         "playlistVideoRenderer",
+                        "playlistPanelVideoRenderer",
                         "playlistRenderer",
                         "gridPlaylistRenderer",
                         "channelRenderer",
@@ -1191,6 +1212,54 @@ mod request_tests {
             .timeout(std::time::Duration::from_secs(2))
             .build()
             .unwrap()
+    }
+    #[tokio::test]
+    async fn music_related_requests_a_song_mix_and_parses_its_playlist_panel() {
+        let (base, task) = crate::test_http::serve_request(|request| {
+            let data = if request.starts_with("GET") {
+                return (200, String::new(), br#"ytcfg.set({"INNERTUBE_CLIENT_VERSION":"fixture"});"#.to_vec());
+            } else {
+                assert!(request.starts_with("POST /youtubei/v1/next?"));
+                let body: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+                let music = body.pointer("/context/client/clientName").unwrap() == "WEB_REMIX";
+                assert_eq!(body["videoId"], "aaaaaaaaaaa");
+                if music {
+                    assert_eq!(body["playlistId"], "RDAMVMaaaaaaaaaaa");
+                    assert_eq!(body["isAudioOnly"], true);
+                    json!({"contents":{"singleColumnMusicWatchNextResultsRenderer":{"tabbedRenderer":{"watchNextTabbedResultsRenderer":{"tabs":[{"tabRenderer":{"content":{"musicQueueRenderer":{"content":{"playlistPanelRenderer":{"contents":[
+                        {"playlistPanelVideoRenderer":{"videoId":"aaaaaaaaaaa","title":{"runs":[{"text":"Current song"}]}}},
+                        {"playlistPanelVideoWrapperRenderer":{"counterpart":[{"counterpartRenderer":{"playlistPanelVideoRenderer":{"videoId":"eeeeeeeeeee","title":{"simpleText":"Alternative video for this same song"}}}}],"primaryRenderer":{"playlistPanelVideoRenderer":{"videoId":"bbbbbbbbbbb","title":{"runs":[{"text":"Next song"}]},"longBylineText":{"runs":[{"text":"Fixture artist"}]},"lengthText":{"simpleText":"3:21"},"menu":{"videoRenderer":{"videoId":"menu-action","title":{"simpleText":"Not a song"}}}}}}},
+                        {"playlistPanelVideoRenderer":{"videoId":"ccccccccccc","title":{"simpleText":"Unavailable"},"unplayableText":{"simpleText":"Unavailable"}}},
+                        {"playlistPanelVideoRenderer":{"videoId":"ddddddddddd","title":{"simpleText":"Deleted"},"isPlayable":false}},
+                        {"playlistPanelVideoRenderer":{"videoId":"bbbbbbbbbbb","title":{"simpleText":"Duplicate"}}}
+                    ]}}}}}}]}}}}})
+                } else {
+                    assert!(body.get("playlistId").is_none());
+                    assert!(body.get("isAudioOnly").is_none());
+                    json!({"contents":[{"compactVideoRenderer":{"videoId":"bbbbbbbbbbb","title":{"simpleText":"Next video"}}}]})
+                }
+            };
+            (200, String::new(), data.to_string().into_bytes())
+        }).await;
+        let mut browser = Browser::new(client(), None, 0);
+        browser.origins = [base.clone(), base];
+        let query = BrowseRequest::Related("aaaaaaaaaaa".into());
+        let music = browser.fetch(true, &query).await.unwrap();
+        assert_eq!(
+            music.items.len(),
+            2,
+            "ignore unavailable, duplicate and menu entries"
+        );
+        let next = &music.items[1];
+        assert_eq!(next.id, "bbbbbbbbbbb");
+        assert_eq!(next.title, "Next song");
+        assert_eq!(next.creator, "Fixture artist");
+        assert_eq!(next.duration, Some(201));
+        assert_eq!(next.kind, MediaKind::Song);
+        let video = browser.fetch(false, &query).await.unwrap();
+        assert_eq!(video.items.len(), 1);
+        assert_eq!(video.items[0].kind, MediaKind::Video);
+        task.abort();
     }
     #[tokio::test]
     async fn repeated_and_concurrent_searches_share_one_request_per_provider() {
