@@ -273,6 +273,15 @@ internal object ArtworkCache {
         return null
     }
 
+    /** The latest cover decoded for each item, at any size or source. */
+    private val recentByItem = LruCache<String, Bitmap>(48)
+
+    /**
+     * Something to paint for [media] while its exact size or source loads: the last cover decoded
+     * for the same item. Never decodes or fetches.
+     */
+    fun recent(media: MediaCard): Bitmap? = recentByItem.get(media.key)
+
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
         if (!hasArtwork(media)) return null
         val size = decodeSize(pixels)
@@ -281,7 +290,20 @@ internal object ArtworkCache {
             return it
         }
         return loader.load(key) fetch@{
-            val data = NativeBridge.thumbnail(media.artwork.toString(), size) ?: return@fetch null
+            // YouTube's standard image exists for every video; a listed cover (for example a
+            // max-resolution one) may not. Fall back to it rather than leaving the cover empty.
+            val standard =
+                youtubeArtworkFallback(media.url, if (media.kind == "song") "song" else "video")
+                    ?.takeIf { it != media.artwork.optString("thumbnail") }
+            val data =
+                NativeBridge.thumbnail(media.artwork.toString(), size)
+                    ?: standard?.let {
+                        NativeBridge.thumbnail(
+                            media.artwork.copyJson().put("thumbnail", it).put("thumbnails", JSONArray()).toString(),
+                            size,
+                        )
+                    }
+                    ?: return@fetch null
             if (
                 data.size < 3 ||
                     data[0] !in 1..768 ||
@@ -291,6 +313,7 @@ internal object ArtworkCache {
                 return@fetch null
             Bitmap.createBitmap(data, 2, data[0], data[0], data[1], Bitmap.Config.ARGB_8888).also {
                 it.prepareToDraw()
+                recentByItem.put(media.key, it)
             }
         }
     }

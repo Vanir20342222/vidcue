@@ -1638,11 +1638,15 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 pause = (pause * 2).coerceAtMost(15_000L)
             }
         }
+        // While the exact size or a new source loads, keep painting the last cover of the same
+        // item (for example after Next, or a larger size for the full player) instead of
+        // flashing the placeholder.
+        val shown = bitmap ?: if (enabled) ArtworkCache.recent(media) else null
         // Cached art paints at once; art that arrives later fades in over the placeholder.
         val motion = LocalMotion.current
         val reveal =
             remember(media.key, source, pixels, enabled) {
-                Animatable(if (bitmap != null || !motion.animate) 1f else 0f)
+                Animatable(if (shown != null || !motion.animate) 1f else 0f)
             }
         LaunchedEffect(reveal, bitmap, motion) {
             if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
@@ -1651,7 +1655,7 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
         // and briefly exposing a different background as soon as the image arrives.
         Box(
             Modifier.fillMaxSize()
-                .graphicsLayer { alpha = if (bitmap == null) 1f else 1f - reveal.value }
+                .graphicsLayer { alpha = if (shown == null) 1f else 1f - reveal.value }
                 .background(MaterialTheme.colorScheme.surfaceContainer),
             contentAlignment = Alignment.Center,
         ) {
@@ -1661,14 +1665,18 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
             )
         }
-        if (bitmap != null)
+        if (shown != null)
             Image(
-                bitmap!!.asImageBitmap(),
+                shown.asImageBitmap(),
                 media.title,
                 Modifier.fillMaxSize()
                     .graphicsLayer { alpha = reveal.value }
-                    .testTag("artwork-${media.key}")
-                    .semantics { stateDescription = "Ready" },
+                    .then(
+                        // Only the exact cover counts as ready; a stand-in is just painted.
+                        if (bitmap != null)
+                            Modifier.testTag("artwork-${media.key}").semantics { stateDescription = "Ready" }
+                        else Modifier
+                    ),
                 contentScale = ContentScale.Crop,
                 // Crop from the leading edge so captions composed near the left of
                 // wide artwork survive inside a squarer container instead of being
@@ -2380,6 +2388,19 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val particles = remember(style) { OrbParticles() }
     var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
+        if (!player.playing && !reduced && visible && (style.startsWith("vu") || style.startsWith("orbit"))) {
+            // Paused: let the bars, beat thump and shake ease out instead of freezing mid-beat.
+            val silence = IntArray(SPECTRUM_BANDS)
+            var previous = 0L
+            val until = System.nanoTime() + 900_000_000L
+            while (System.nanoTime() < until) withInfiniteAnimationFrameNanos { now ->
+                val elapsed = if (previous == 0L) 0f else (now - previous) / 1_000_000_000f
+                previous = now
+                levels.step(silence, elapsed)
+                particles.step(levels, elapsed)
+                liquidTime += elapsed
+            }
+        }
         if (player.playing && !reduced && style != "classic" && visible) {
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
@@ -2482,8 +2503,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                         .align(Alignment.Center)
                         .beat(levels) { liquidTime }
                         .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
-                        .clip(RoundedCornerShape(16.dp))
-                        .sharedCover(media.key, LocalPlayerExpanded.current),
+                        .clip(RoundedCornerShape(16.dp)),
                     config.optBoolean("thumbnails", true),
                     shape = RoundedCornerShape(16.dp),
                 )
@@ -2499,8 +2519,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                     .align(Alignment.Center)
                     .beat(levels) { liquidTime }
                     .shadow(16.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
-                    .clip(CircleShape)
-                    .sharedCover(media.key, LocalPlayerExpanded.current),
+                    .clip(CircleShape),
                 config.optBoolean("thumbnails", true),
                 shape = CircleShape,
             )
