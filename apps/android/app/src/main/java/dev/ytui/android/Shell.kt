@@ -65,6 +65,13 @@ private val DESTINATIONS =
         Triple(0, "Downloads", Glyph.Download),
     )
 
+/**
+ * Height of the floating mini player and navigation dock over the bottom of the page. Scrolling
+ * content pads its end by this much, so it passes visibly under the dock but can still scroll
+ * clear of it.
+ */
+internal val LocalBottomOverlay = compositionLocalOf { 0.dp }
+
 /** The destination beside [tab] in display order ([forward] = +1 or -1), or null at an end. */
 internal fun neighbourTab(tab: Int, forward: Int): Int? {
     val at = DESTINATIONS.indexOfFirst { it.first == tab }
@@ -101,26 +108,18 @@ internal fun PageTitle(title: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** Round account button; a small accent dot says a session is connected. */
+/**
+ * Round account button. Being signed in is not marked with a badge: a dot on this button read as
+ * an unread notification. The accessible name still says which state applies.
+ */
 @Composable
 internal fun AccountButton(connected: Boolean, open: () -> Unit) {
-    Box(contentAlignment = Alignment.Center) {
-        RoundIconButton(
-            Glyph.Account,
-            if (connected) "Your account" else "Sign in",
-            Modifier.testTag("account-button"),
-            action = open,
-        )
-        if (connected)
-            Box(
-                Modifier.align(Alignment.TopEnd)
-                    .padding(top = 11.dp, end = 11.dp)
-                    .size(9.dp)
-                    .background(MaterialTheme.colorScheme.background, CircleShape)
-                    .padding(1.5.dp)
-                    .background(MaterialTheme.colorScheme.primary, CircleShape)
-            )
-    }
+    RoundIconButton(
+        Glyph.Account,
+        if (connected) "Your account" else "Sign in",
+        Modifier.testTag("account-button"),
+        action = open,
+    )
 }
 
 /**
@@ -213,13 +212,29 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
                 motion.fade(200),
                 label = "nav-icon",
             )
+        // Downloads catches covers flying in from Save, and bounces when one lands.
+        val bounce = remember { Animatable(1f) }
+        if (index == 0)
+            LaunchedEffect(DownloadFlight.landed) {
+                if (DownloadFlight.landed > 0 && motion.animate) {
+                    bounce.snapTo(1.25f)
+                    bounce.animateTo(1f, spring(0.4f, Spring.StiffnessMediumLow))
+                }
+            }
         Box(
             modifier
                 .selectable(selected, source, indication = null, role = Role.Tab) { choose(index) }
+                .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
                 .testTag("tab-$index"),
             contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.pressScale(source, 0.9f), contentAlignment = Alignment.Center) {
+            Box(
+                Modifier.pressScale(source, 0.9f).graphicsLayer {
+                    scaleX = bounce.value
+                    scaleY = bounce.value
+                },
+                contentAlignment = Alignment.Center,
+            ) {
                 if (sideways)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

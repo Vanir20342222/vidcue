@@ -62,7 +62,7 @@ internal object Notices {
 private val CONFIRMATIONS =
     mapOf(
         "queue" to (Glyph.Queue to "Added to queue"),
-        "download" to (Glyph.Download to "Download queued"),
+        // "download" flies the cover into the Downloads tab instead (DownloadFlight).
         "saved" to (Glyph.Save to "Saved locally"),
         "unsaved" to (Glyph.Save to "Removed from saved items"),
         "lyrics" to (Glyph.Lyrics to "Lyrics saved locally"),

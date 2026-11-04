@@ -312,10 +312,21 @@ internal fun FocusedPlayer(
                         PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
-                        if (canSave && media != null)
-                            PlayerAction(Glyph.Download, "Save", "Save offline", "player-download", compact) {
-                                vm.play(MediaCard(media), download = true)
+                        if (canSave && media != null) {
+                            var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                            PlayerAction(
+                                Glyph.Download,
+                                "Save",
+                                "Save offline",
+                                "player-download",
+                                compact,
+                                modifier = Modifier.trackCentre { saveCentre = it },
+                            ) {
+                                val card = MediaCard(media)
+                                DownloadFlight.launch(card, saveCentre)
+                                vm.play(card, download = true)
                             }
+                        }
                         val sleepLeft = rememberSleepLeft(player)
                         PlayerAction(
                             Glyph.Sleep,
@@ -683,6 +694,7 @@ internal fun PlayerAction(
     tag: String = "",
     compact: Boolean = false,
     active: Boolean = false,
+    modifier: Modifier = Modifier,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
@@ -690,7 +702,7 @@ internal fun PlayerAction(
     if (compact) {
         // Music: an evenly spaced icon row with small captions, like a transport's second line.
         Column(
-            Modifier.testTag(tag)
+            modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
                 .heightIn(min = 56.dp)
@@ -716,7 +728,7 @@ internal fun PlayerAction(
         return
     }
     Row(
-        Modifier.testTag(tag)
+        modifier.testTag(tag)
             .pressScale(source, 0.94f)
             .heightIn(min = 48.dp)
             .clip(MediaTokens.pill)

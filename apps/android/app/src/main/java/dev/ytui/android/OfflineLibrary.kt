@@ -103,7 +103,13 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = MediaTokens.textInset, vertical = 4.dp),
+            contentPadding =
+                PaddingValues(
+                    start = MediaTokens.textInset,
+                    end = MediaTokens.textInset,
+                    top = 4.dp,
+                    bottom = 4.dp + LocalBottomOverlay.current,
+                ),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             when (section) {

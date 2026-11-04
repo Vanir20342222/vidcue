@@ -48,6 +48,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.asImageBitmap
@@ -479,8 +482,16 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                         }
                         if (!tabletLayout) Toolbar()
+                        // Phones: the mini player and navigation float over the page instead of
+                        // taking a band of their own, so artwork stays visible around them.
+                        val bottomDock = !tabletLayout && !imeVisible
+                        var dockHeight by remember { mutableIntStateOf(0) }
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             val tablet = tabletLayout
+                            CompositionLocalProvider(
+                                LocalBottomOverlay provides
+                                    if (bottomDock) with(LocalDensity.current) { dockHeight.toDp() } else 0.dp
+                            ) {
                             Row(Modifier.fillMaxSize()) {
                                 if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
                                 Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -525,12 +536,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     }
                                 }
                             }
-                        }
-                        if (!tabletLayout) {
-                            if (!imeVisible) {
-                                PlayerDock(vm)
-                                AppNavigation(tab, ::selectTab)
                             }
+                            if (bottomDock)
+                                Column(
+                                    Modifier.align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .onSizeChanged { dockHeight = it.height }
+                                        .testTag("bottom-dock")
+                                ) {
+                                    PlayerDock(vm)
+                                    AppNavigation(tab, ::selectTab)
+                                }
                         }
                     }
                 }
@@ -668,6 +684,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             }
                         }
                 }
+                if (!onboarding && !fullscreen) DownloadFlightHost(config.optBoolean("thumbnails", true))
                 if (!onboarding && !fullscreen)
                     NoticeHost(
                         vm,
@@ -1013,7 +1030,28 @@ private fun BrowsePane(
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
     val initialScrollToTop = remember { scrollToTop }
+    // The search bar and filters slide away while scrolling down through results and come
+    // back on any upward scroll, at the top, or while the field is in use.
+    var headerShown by remember(tab) { mutableStateOf(true) }
+    val headerTravel = with(density) { 28.dp.toPx() }
+    val headerScroll =
+        remember(headerTravel) {
+            object : NestedScrollConnection {
+                var travel = 0f
+
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    val dy = available.y
+                    if (dy == 0f) return Offset.Zero
+                    if ((dy < 0f) != (travel < 0f)) travel = 0f
+                    travel += dy
+                    if (travel < -headerTravel) headerShown = false
+                    else if (travel > headerTravel) headerShown = true
+                    return Offset.Zero
+                }
+            }
+        }
     LaunchedEffect(scrollToTop) {
+        headerShown = true
         if (scrollToTop != initialScrollToTop) {
             if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
         }
@@ -1022,6 +1060,11 @@ private fun BrowsePane(
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { vm.rememberScroll(tab, it) }
+    }
+    LaunchedEffect(grid) {
+        snapshotFlow { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
+            .distinctUntilChanged()
+            .collect { top -> if (top) headerShown = true }
     }
     val focused by vm.playerOpen.collectAsState()
     val playingUrl by
@@ -1103,6 +1146,16 @@ private fun BrowsePane(
         Modifier.fillMaxSize().testTag("browse-pane"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        AnimatedVisibility(
+            headerShown || searchActive,
+            enter =
+                if (!motion.animate) EnterTransition.None
+                else fadeIn(motion.fade(160)) + expandVertically(motion.enter(240), expandFrom = Alignment.Top),
+            exit =
+                if (!motion.animate) ExitTransition.None
+                else fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(220), shrinkTowards = Alignment.Top),
+        ) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
             Modifier.align(Alignment.CenterHorizontally)
                 .padding(horizontal = MediaTokens.textInset)
@@ -1182,11 +1235,13 @@ private fun BrowsePane(
                     }
                 }
             }
+        }
+        }
         // Pull to refresh reuses the overflow menu's "Refresh feed" request.
         var refreshing by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
         val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(headerScroll)) {
         PullToRefreshBox(
             refreshing && feed.loading,
             onRefresh = {
@@ -1249,7 +1304,7 @@ private fun BrowsePane(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
                         top = 4.dp,
-                        bottom = 24.dp,
+                        bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
@@ -1740,10 +1795,19 @@ private fun MediaCardMenu(
             QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
                 execute { vm.enqueue(media) }
             }
-            if (!media.live)
-                QuickTile(Glyph.Download, "Download", Modifier.weight(1f)) {
-                    execute { vm.play(media, download = true) }
+            if (!media.live) {
+                var tileCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                QuickTile(
+                    Glyph.Download,
+                    "Download",
+                    Modifier.weight(1f).trackCentre { tileCentre = it },
+                ) {
+                    execute {
+                        DownloadFlight.launch(media, tileCentre)
+                        vm.play(media, download = true)
+                    }
                 }
+            }
             if (!media.collection && !media.live)
                 QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
                     execute { vm.play(media, preview = true) }
