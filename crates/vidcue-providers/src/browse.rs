@@ -10,6 +10,8 @@ use std::{
 use tokio::sync::Mutex;
 use vidcue_core::{BrowseRequest, Media, MediaKind, Page, clean_text};
 
+const MEMBERS_ONLY_NOTICE: &str = "Members-only videos are hidden.";
+
 /// Only transient transport/service failures may trigger automatic feed recovery.
 #[derive(Debug)]
 pub struct FeedRetry {
@@ -406,11 +408,14 @@ impl Browser {
         // Some feeds (Music categories such as Podcasts, especially when signed in) send only a
         // shell whose first shelves sit behind a continuation. Follow it here, so the app never
         // shows an empty page that it would only fill after the user scrolled.
+        // Membership filtering can also empty Home/continuation pages. Follow
+        // those within the same budget without overriding service notices.
         let mut follow = 0;
         while page.items.is_empty()
-            && page.notice.is_none()
+            && (page.notice.is_none() || page.notice.as_deref() == Some(MEMBERS_ONLY_NOTICE))
             && follow < 2
-            && !matches!(request, BrowseRequest::Home | BrowseRequest::Continue(_))
+            && (page.notice.as_deref() == Some(MEMBERS_ONLY_NOTICE)
+                || !matches!(request, BrowseRequest::Home | BrowseRequest::Continue(_)))
             && let Some(token) = page.continuation.clone()
         {
             follow += 1;
@@ -890,6 +895,82 @@ fn channel_avatar(value: &Value) -> String {
         .map(thumb)
         .unwrap_or_default()
 }
+
+/// Inspect content badges, not titles/creator text, verification badges or
+/// membership buttons in menus. Classic and lockup cards use different styles.
+fn members_only(value: &Value) -> bool {
+    fn badge(value: &Value) -> bool {
+        if ["style", "badgeStyle"].iter().any(|field| {
+            matches!(
+                value.get(field).and_then(Value::as_str),
+                Some(
+                    "BADGE_STYLE_TYPE_MEMBERS_ONLY"
+                        | "BADGE_MEMBERS_ONLY"
+                        | "THUMBNAIL_OVERLAY_BADGE_STYLE_MEMBERS_ONLY"
+                )
+            )
+        }) {
+            return true;
+        }
+        [
+            "label",
+            "tooltip",
+            "iconTooltip",
+            "text",
+            "accessibilityLabel",
+        ]
+        .into_iter()
+        .filter_map(|field| value.get(field))
+        .chain(value.pointer("/accessibilityData/label"))
+        .chain(value.pointer("/accessibility/accessibilityData/label"))
+        .any(|label| {
+            let label = label
+                .get("content")
+                .map(text)
+                .unwrap_or_else(|| text(label))
+                .to_lowercase()
+                .replace(['-', '\u{2010}', '\u{2011}'], " ");
+            let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+            matches!(
+                label.as_str(),
+                "members only" | "member only" | "nur für mitglieder"
+            )
+        })
+    }
+    match value {
+        Value::Object(map) => map.iter().any(|(name, child)| {
+            if matches!(
+                name.as_str(),
+                "metadataBadgeRenderer"
+                    | "badgeViewModel"
+                    | "thumbnailBadgeViewModel"
+                    | "musicInlineBadgeRenderer"
+            ) && badge(child)
+            {
+                return true;
+            }
+            !matches!(
+                name.as_str(),
+                "title"
+                    | "headline"
+                    | "description"
+                    | "descriptionSnippet"
+                    | "menu"
+                    | "ownerBadges"
+                    | "avatar"
+                    | "avatarViewModel"
+                    | "navigationEndpoint"
+                    | "onTap"
+                    | "onLongPress"
+                    | "trackingParams"
+                    | "loggingDirectives"
+            ) && members_only(child)
+        }),
+        Value::Array(items) => items.iter().any(members_only),
+        _ => false,
+    }
+}
+
 fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
     let id = r.get("contentId")?.as_str()?;
     let metadata = r.pointer("/metadata/lockupMetadataViewModel")?;
@@ -1104,11 +1185,50 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
 pub fn parse_page(data: &Value, music: bool) -> Page {
     let mut page = Page::default();
     let mut seen = HashSet::new();
+    let mut hidden = HashSet::new();
+    fn push(
+        item: Option<Media>,
+        renderer: &Value,
+        page: &mut Page,
+        seen: &mut HashSet<String>,
+        hidden: &mut HashSet<String>,
+        section: &str,
+    ) {
+        let video_id = match item.as_ref() {
+            Some(item) => {
+                matches!(item.kind, MediaKind::Video | MediaKind::Song).then_some(item.id.as_str())
+            }
+            // Locked cards may omit titles or explicitly set isPlayable=false.
+            // Still record their ID so an unmarked duplicate cannot reappear.
+            None => renderer
+                .get("videoId")
+                .or_else(|| renderer.pointer("/playlistItemData/videoId"))
+                .or_else(|| {
+                    (renderer["contentType"] == "LOCKUP_CONTENT_TYPE_VIDEO")
+                        .then(|| renderer.get("contentId"))
+                        .flatten()
+                })
+                .and_then(Value::as_str),
+        };
+        if let Some(id) = video_id
+            && members_only(renderer)
+        {
+            hidden.insert(id.to_owned());
+            return;
+        }
+        if let Some(mut item) = item
+            && seen.insert(item.id.clone())
+        {
+            item.section = section.into();
+            page.items.push(item);
+        }
+    }
     fn walk(
         value: &Value,
         music: bool,
         page: &mut Page,
         seen: &mut HashSet<String>,
+        hidden: &mut HashSet<String>,
         section: &str,
     ) {
         match value {
@@ -1130,7 +1250,7 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                             .map(text)
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| section.into());
-                        walk(v, music, page, seen, &title);
+                        walk(v, music, page, seen, hidden, &title);
                     } else if [
                         "chipCloudChipRenderer",
                         "musicNavigationButtonRenderer",
@@ -1171,17 +1291,12 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                             });
                         }
                     } else if name == "lockupViewModel" {
-                        if let Some(mut item) = parse_lockup(v, music)
-                            && seen.insert(item.id.clone())
-                        {
-                            item.section = section.into();
-                            page.items.push(item);
-                        }
+                        push(parse_lockup(v, music), v, page, seen, hidden, section);
                     } else if name == "playlistPanelVideoWrapperRenderer" {
                         // Music can offer a video counterpart for the same song.
                         // It is a playback-mode alternative, not another queue row.
                         if let Some(primary) = v.get("primaryRenderer") {
-                            walk(primary, music, page, seen, section);
+                            walk(primary, music, page, seen, hidden, section);
                         }
                     } else if [
                         "videoRenderer",
@@ -1198,12 +1313,14 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                     ]
                     .contains(&name.as_str())
                     {
-                        if let Some(mut item) = parse_renderer(name, v, music)
-                            && seen.insert(item.id.clone())
-                        {
-                            item.section = section.into();
-                            page.items.push(item);
-                        }
+                        push(
+                            parse_renderer(name, v, music),
+                            v,
+                            page,
+                            seen,
+                            hidden,
+                            section,
+                        );
                         // Do not recurse into menus/overlays and mistake their actions for cards.
                     } else if name == "continuationCommand" || name == "nextContinuationData" {
                         if page.continuation.is_none() {
@@ -1223,19 +1340,27 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                             page.notice = Some(message);
                         }
                     } else if name != "menu" && name != "trackingParams" {
-                        walk(v, music, page, seen, section);
+                        walk(v, music, page, seen, hidden, section);
                     }
                 }
             }
             Value::Array(items) => {
                 for item in items {
-                    walk(item, music, page, seen, section);
+                    walk(item, music, page, seen, hidden, section);
                 }
             }
             _ => {}
         }
     }
-    walk(data, music, &mut page, &mut seen, "");
+    walk(data, music, &mut page, &mut seen, &mut hidden, "");
+    // A duplicate elsewhere on this page may omit the badge. A positive
+    // membership marker wins regardless of the order the cards were returned.
+    page.items.retain(|item| {
+        !matches!(item.kind, MediaKind::Video | MediaKind::Song) || !hidden.contains(&item.id)
+    });
+    if page.items.is_empty() && !hidden.is_empty() && page.notice.is_none() {
+        page.notice = Some(MEMBERS_ONLY_NOTICE.into());
+    }
     page
 }
 #[cfg(test)]
@@ -2049,3 +2174,7 @@ mod category_tests {
 #[cfg(test)]
 #[path = "collection_tests.rs"]
 mod collection_tests;
+
+#[cfg(test)]
+#[path = "membership_tests.rs"]
+mod membership_tests;

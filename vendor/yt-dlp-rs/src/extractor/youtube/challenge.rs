@@ -221,6 +221,10 @@ pub(super) struct Runtime {
 }
 
 impl Runtime {
+    pub(super) fn is_embedded(&self) -> bool {
+        self.path == std::path::Path::new("ytui-android-js")
+    }
+
     pub(super) fn new(path: std::path::PathBuf) -> Self {
         Self {
             path,

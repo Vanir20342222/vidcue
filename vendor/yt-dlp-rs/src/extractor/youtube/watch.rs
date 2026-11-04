@@ -400,6 +400,68 @@ pub(super) struct Acquired {
     pub player_url: Option<String>,
 }
 
+/// Extra native clients are a bounded, lazy recovery for playback only. Honor
+/// an explicit extractor client list (including exclusions) without adding any.
+pub(super) fn playback_fallback_clients() -> &'static [&'static str] {
+    if crate::manifest_args::configuration_arg("youtube", "player_client", false).is_some() {
+        &[]
+    } else {
+        &["web_embedded", "web_safari"]
+    }
+}
+
+/// Reuse the watch page, visitor and player script URL. Only the candidate's
+/// streaming response is parsed, so unrelated failed challenges from earlier
+/// clients cannot poison recovery. Keep original metadata/captions intact.
+pub(super) fn acquire_playback_fallback(
+    client: &Client,
+    video_id: &str,
+    name: &str,
+    acquired: &mut Acquired,
+) -> Result<bool> {
+    let config = innertube::client(name).expect("known playback fallback client");
+    let ytcfg = extract_ytcfg(&acquired.webpage);
+    let cfg_value = Value::Object(ytcfg.clone());
+    let visitor_sources: Vec<_> = std::iter::once(&cfg_value)
+        .chain(acquired.player_responses.iter())
+        .collect();
+    let visitor = visitor_data(&visitor_sources);
+    let response = match player_response(
+        client,
+        config,
+        video_id,
+        &ytcfg,
+        &Map::new(),
+        acquired.player_url.as_deref(),
+        visitor.as_deref(),
+    ) {
+        Ok(response) => response,
+        Err(error) if rate_limited(&error) => return Err(error),
+        Err(_) => return Ok(false),
+    };
+    if response
+        .pointer("/videoDetails/videoId")
+        .and_then(Value::as_str)
+        != Some(video_id)
+        || response
+            .pointer("/playabilityStatus/status")
+            .and_then(Value::as_str)
+            != Some("OK")
+    {
+        return Ok(false);
+    }
+    acquired.player_responses.push(response.clone());
+    acquired.responses = vec![streams::ClientResponse {
+        client: config.name,
+        response,
+        player_token_provided: false,
+        available_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs() as i64),
+    }];
+    Ok(true)
+}
+
 /// `_initial_extract` for an anonymous session.
 pub(super) fn acquire(
     client: &Client,
@@ -432,6 +494,7 @@ pub(super) fn acquire(
     let clients = requested_clients(runtime.is_some());
 
     let mut player_responses: Vec<Value> = Vec::new();
+    let mut rejected_responses: Vec<Value> = Vec::new();
     let mut responses: Vec<streams::ClientResponse> = Vec::new();
     let valid = |response: &Value| {
         response
@@ -446,6 +509,8 @@ pub(super) fn acquire(
             object.insert("streamingData".into(), Value::Null);
         }
         player_responses.push(stripped);
+    } else if let Some(initial) = initial_pr.as_ref() {
+        rejected_responses.push(initial.clone());
     }
     let mut player_url_found: Option<String> = None;
     let mut tried_iframe_fallback = false;
@@ -513,6 +578,11 @@ pub(super) fn acquire(
             .and_then(Value::as_str)
             .map(str::to_owned);
         if id.as_deref() != Some(video_id) {
+            // Denied videos often omit videoDetails completely. Keep just
+            // enough evidence to distinguish access restrictions from bad IDs.
+            if id.is_none() {
+                rejected_responses.push(response);
+            }
             skipped.push((name, id.unwrap_or_else(|| "None".into())));
             continue;
         }
@@ -539,6 +609,11 @@ pub(super) fn acquire(
                 status.as_deref().unwrap_or("None")
             ));
         }
+    }
+    if player_responses.is_empty()
+        && let Some(error) = super::playability_error(&rejected_responses)
+    {
+        return Err(error);
     }
     if !skipped.is_empty() {
         let clients: Vec<&str> = skipped.iter().map(|(client, _)| *client).collect();
