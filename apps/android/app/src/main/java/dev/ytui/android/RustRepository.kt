@@ -821,36 +821,14 @@ internal class YtuiViewModel(
             ?.let { navigate(request = json("CliampTracks" to it)) }
     }
 
-    private fun videoId(media: MediaCard): String? =
-        media.value.optString("id").takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-            ?: Uri.parse(media.url)
-                .let { uri ->
-                    uri.getQueryParameter("v")
-                        ?: if (uri.host == "youtu.be") uri.lastPathSegment else null
-                }
-                ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-
-    private fun context(media: MediaCard, forceRelated: Boolean = false): JSONObject? {
-        if (media.live || media.collection) return null
-        val feed = feeds[tab.value].value
-        val request = feed.request as? JSONObject
-        val finite =
-            !forceRelated &&
-                request != null &&
-                listOf("Collection", "Details", "CliampTracks").any(request::has)
-        val id = videoId(media)
-        if (!finite && (!mobile.value.optBoolean("autoplay_related", true) || id == null))
-            return null
-        return json(
-                "op" to "prepare_context",
-                "context_id" to UUID.randomUUID().toString(),
-                "request" to if (finite) request else json("Related" to id),
-                "source_url" to media.url,
-                "source_id" to id,
-                "music" to (tab.value == 2 || media.musicSource),
-            )
-            .apply { if (finite) put("items", JSONArray(feed.cards.take(500).map { it.value })) }
-    }
+    private fun context(media: MediaCard, forceRelated: Boolean = false): JSONObject? =
+        PlaybackContexts.create(
+            media,
+            feeds[tab.value].value,
+            tab.value,
+            mobile.value.optBoolean("autoplay_related", true),
+            forceRelated,
+        )
 
     fun playCollection(media: MediaCard) {
         if (media.collection)
@@ -1262,7 +1240,7 @@ internal class YtuiViewModel(
                         player.value.value.optBoolean("offline")
                 )
                     return@launch
-                val videoId = videoId(media) ?: return@launch
+                val videoId = PlaybackContexts.videoId(media) ?: return@launch
                 val cached = shownRelated?.takeIf { it.first == media.url }?.second
                 val related =
                     cached

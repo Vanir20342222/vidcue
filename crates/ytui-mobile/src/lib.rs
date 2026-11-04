@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 use tokio_util::sync::CancellationToken;
-use ytui_core::{BrowseRequest, Config, Media, Page};
+use ytui_core::{BrowseRequest, Config, Media, MediaKind, Page};
 use ytui_providers::{
     auth::Session, browse::Browser, images::ImageCache, paths::atomic_write, radio::Radio,
 };
@@ -759,12 +759,13 @@ impl Engine {
                 self.resolver.clear();
                 Ok(json!({"cleared":true}))
             }
-            "seed_context" | "offline_context" => {
+            "seed_context" | "offline_context" | "radio_context" => {
                 let id = r["context_id"]
                     .as_str()
                     .context("Missing playback context")?;
                 let items: Vec<Media> = serde_json::from_value(r["items"].clone())?;
                 let offline = r["op"].as_str() == Some("offline_context");
+                let radio = r["op"].as_str() == Some("radio_context");
                 if offline {
                     ytui_core::offline::OfflinePlaylist {
                         id: uuid::Uuid::new_v4().to_string(),
@@ -780,11 +781,21 @@ impl Engine {
                     "Playback seed exceeds budget"
                 );
                 let source = r["source_url"].as_str().unwrap_or("");
+                if radio {
+                    ensure!(
+                        items.iter().any(|m| m.url == source),
+                        "Selected station or track is no longer present in the radio list"
+                    );
+                }
                 let offset = items
                     .iter()
                     .position(|m| m.url == source)
                     .map_or(0, |i| i + 1);
                 let mut active = self.playback_context.lock().expect("playback context");
+                if radio && let Some(context) = active.as_ref().filter(|c| c.id == id && c.prepared)
+                {
+                    return Ok(json!({"prepared":true,"count":context.items.len()}));
+                }
                 if let Some(context) = active
                     .as_mut()
                     .filter(|c| c.id == id && !c.prepared && c.items.is_empty())
@@ -793,13 +804,13 @@ impl Engine {
                         .into_iter()
                         .skip(offset)
                         .filter(|m| {
-                            !m.live
+                            (!m.live || radio && m.kind == MediaKind::Station)
                                 && !m.collection()
                                 && m.url != source
                                 && !context.consumed.contains(&m.url)
                         })
                         .collect();
-                    context.prepared = offline;
+                    context.prepared = offline || radio;
                     Ok(json!({"prepared":true,"count":context.items.len()}))
                 } else {
                     Ok(json!({"prepared":false}))
@@ -1243,6 +1254,73 @@ mod format_tests {
         .unwrap();
         let restored = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
         assert_eq!(restored.config.lock().unwrap().theme, "catppuccin-latte");
+    }
+
+    #[tokio::test]
+    async fn radio_context_keeps_live_stations_prioritizes_manual_queue_and_rejects_stale_lists() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        engine.activate_context(Some("radio".into()));
+        let descriptor = json!({"op":"radio_context","context_id":"radio","source_url":"https://radio.test/current","items":[
+            {"url":"https://radio.test/current","kind":"station","live":true},
+            {"url":"https://radio.test/next","kind":"station","live":true},
+            {"url":"https://radio.test/live-video","kind":"video","live":true},
+            {"url":"https://radio.test/collection","kind":"playlist"},
+            {"url":"https://radio.test/track","kind":"song"}
+        ]});
+        assert_eq!(
+            engine.request(descriptor.clone()).await.unwrap()["count"],
+            2
+        );
+        let view = engine.request(json!({"op":"up_next"})).await.unwrap();
+        assert_eq!(view["context"]["prepared"], true);
+        assert_eq!(view["context"]["items"][0]["live"], true);
+        engine
+            .request(
+                json!({"op":"enqueue","media":{"url":"https://radio.test/manual","kind":"song"}}),
+            )
+            .await
+            .unwrap();
+        let peek = json!({"op":"queue_peek","context_id":"radio"});
+        assert_eq!(
+            engine.request(peek.clone()).await.unwrap()["url"],
+            "https://radio.test/manual"
+        );
+        engine
+            .request(json!({"op":"queue_commit","url":"https://radio.test/manual"}))
+            .await
+            .unwrap();
+        // Repeated reads or a failed decoder do not consume the next station.
+        for _ in 0..2 {
+            assert_eq!(
+                engine.request(peek.clone()).await.unwrap()["url"],
+                "https://radio.test/next"
+            );
+        }
+        engine.request(json!({"op":"queue_commit","context_id":"radio","context_entry":true,"url":"https://radio.test/next"})).await.unwrap();
+        assert_eq!(
+            engine.request(peek.clone()).await.unwrap()["url"],
+            "https://radio.test/track"
+        );
+        // A repeated preparation cannot restore a consumed station.
+        assert_eq!(
+            engine.request(descriptor.clone()).await.unwrap()["prepared"],
+            true
+        );
+        assert_eq!(
+            engine.request(peek).await.unwrap()["url"],
+            "https://radio.test/track"
+        );
+        engine.activate_context(Some("new-selection".into()));
+        assert_eq!(engine.request(descriptor).await.unwrap()["prepared"], false);
+        assert_eq!(
+            engine
+                .request(json!({"op":"queue_peek","context_id":"new-selection"}))
+                .await
+                .unwrap(),
+            json!({})
+        );
+        assert!(engine.request(json!({"op":"radio_context","context_id":"new-selection","source_url":"https://radio.test/missing","items":[]})).await.is_err());
     }
 
     #[tokio::test]

@@ -942,7 +942,8 @@ public final class PlaybackService extends MediaSessionService {
           contextJobs.add(requestId);
           try {
             JSONObject collection = new JSONObject(descriptor.toString());
-            if ("offline_context".equals(collection.optString("op"))) {
+            if ("offline_context".equals(collection.optString("op"))
+                || "radio_context".equals(collection.optString("op"))) {
               collection.put("request_id", requestId);
               JSONObject response = rpc(collection);
               if (response.optBoolean("prepared"))
@@ -998,6 +999,7 @@ public final class PlaybackService extends MediaSessionService {
     refreshPrefetch();
     if (waitingForContext
         || (!navigationPending
+            && !isLive()
             && player.getPlaybackState() == Player.STATE_ENDED
             && !pausedByUser)) {
       waitingForContext = false;
@@ -1633,6 +1635,10 @@ public final class PlaybackService extends MediaSessionService {
               handler.post(
                   () -> {
                     if (version != generation || current != this) return;
+                    // A failed context fetch leaves its descriptor available for
+                    // an explicit Next retry, including Music song-radio queues.
+                    if (!previous && !contextReady && !contextPreparing)
+                      prepareContext(currentRequest.optJSONObject("context"));
                     if (!previous && contextPreparing) {
                       waitingForContext = true;
                       publish();
