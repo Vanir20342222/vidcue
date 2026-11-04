@@ -345,6 +345,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         remember(mobile, config.optBoolean("reduced_motion")) {
             Motion.from(mobile, config.optBoolean("reduced_motion"))
         }
+    // Once the music player has finished opening it covers the whole window, so the page
+    // underneath stops drawing (it stays composed). Dragging the player down or closing it shows
+    // the page again at once.
+    var musicPlayerCovers by remember { mutableStateOf(false) }
+    LaunchedEffect(playerOpen, videoPlayer, motion) {
+        musicPlayerCovers = false
+        if (playerOpen && !videoPlayer) {
+            delay(motion.millis(400).toLong() + 100)
+            musicPlayerCovers = true
+        }
+    }
     MaterialTheme(
         colorScheme = colors,
         typography = typography,
@@ -377,7 +388,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .background(background)
                         // The video panel is opaque. Keep browse state/artwork
                         // attached, but skip drawing the covered content.
-                        .graphicsLayer { alpha = if (playerOpen && videoPlayer) 0f else 1f }
+                        .graphicsLayer {
+                            alpha =
+                                if (playerOpen && (videoPlayer || (musicPlayerCovers && !PanelPull.active.value))) 0f
+                                else 1f
+                        }
                         .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
@@ -742,6 +757,11 @@ internal fun Panel(
 ) {
     // Full-screen panels follow a downward drag and fly off when released past the threshold.
     val drag = remember { Animatable(0f) }
+    // Tell the app shell while a full panel is pulled away, so the page behind can show.
+    if (full) {
+        LaunchedEffect(drag) { snapshotFlow { drag.value != 0f }.collect { PanelPull.active.value = it } }
+        DisposableEffect(Unit) { onDispose { PanelPull.active.value = false } }
+    }
     val motion = LocalMotion.current
     val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dismissThreshold = with(LocalDensity.current) { 96.dp.toPx() }
@@ -923,6 +943,11 @@ internal fun Panel(
             )
         }
     }
+}
+
+/** True while a full-screen panel is being dragged or flung away. */
+internal object PanelPull {
+    val active = mutableStateOf(false)
 }
 
 /** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
