@@ -118,6 +118,21 @@ class SpectrumMathTest {
         assertTrue(levels.ripples.all { it >= RIPPLE_SECONDS })
     }
 
+    @Test
+    fun peakMarkersHoldThenFallUnderGravity() {
+        val levels = LiquidLevels()
+        repeat(30) { levels.step(bands(65535), 0.016f) }
+        val top = levels.held[3]
+        assertTrue(top > 0.9f)
+        // Silence: the bar drops at once, the marker holds for the hold time…
+        repeat(20) { levels.step(bands(0), 0.016f) }
+        assertEquals(top, levels.held[3], 0.0001f)
+        assertTrue(levels.bands[3] < levels.held[3])
+        // …then falls to the bar within about a second.
+        repeat(80) { levels.step(bands(0), 0.016f) }
+        assertEquals(levels.bands[3], levels.held[3], 0.0001f)
+    }
+
     private companion object {
         const val TWO_PI = 6.2831855f
     }

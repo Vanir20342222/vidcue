@@ -15,6 +15,10 @@ private const val TAU = 6.2831855f
 private const val LEVEL_ATTACK = 0.06f
 private const val LEVEL_RELEASE = 0.32f
 private const val PEAK_DECAY = 2.5f
+/** Peak markers hold this long (audioMotion-analyzer's default is 500 ms) before falling. */
+internal const val PEAK_HOLD = 0.5f
+/** Full-scale units per second squared: a marker at the top falls in about 0.75 s. */
+private const val PEAK_GRAVITY = 3.5f
 private const val PEAK_FLOOR = 0.06f
 private const val KICK_DECAY = 0.16f
 internal const val RIPPLE_COUNT = 4
@@ -82,6 +86,14 @@ internal class LiquidLevels {
      */
     val bands = FloatArray(SPECTRUM_BANDS)
 
+    /**
+     * Peak-hold marker per band, as on a hardware analyser: it jumps to a new high, holds for
+     * [PEAK_HOLD] seconds, then falls under constant gravity.
+     */
+    val held = FloatArray(SPECTRUM_BANDS)
+    private val heldAge = FloatArray(SPECTRUM_BANDS)
+    private val heldSpeed = FloatArray(SPECTRUM_BANDS)
+
     /** Recent peak per band, decaying over a few seconds; the auto-gain reference. */
     private val peaks = FloatArray(SPECTRUM_BANDS)
 
@@ -116,6 +128,17 @@ internal class LiquidLevels {
             val scaled = (raw / maxOf(peaks[band], PEAK_FLOOR)).coerceIn(0f, 1f)
             // A gentle curve keeps quiet passages low and lets peaks reach out.
             bands[band] = followLevel(bands[band], scaled * scaled, step, BAR_ATTACK, BAR_RELEASE)
+            if (bands[band] >= held[band]) {
+                held[band] = bands[band]
+                heldAge[band] = 0f
+                heldSpeed[band] = 0f
+            } else {
+                heldAge[band] += step
+                if (heldAge[band] > PEAK_HOLD) {
+                    heldSpeed[band] += PEAK_GRAVITY * step
+                    held[band] = maxOf(bands[band], held[band] - heldSpeed[band] * step)
+                }
+            }
         }
         // Beats: bass well above its own recent average, at most about four a second.
         val bass = liquidGroupAverage(spectrum, 0)

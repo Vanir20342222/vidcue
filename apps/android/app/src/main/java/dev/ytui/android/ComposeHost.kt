@@ -2334,9 +2334,17 @@ internal fun PlayerPane(
 /** Width/height of the music artwork area for a player style: square except the vinyl deck. */
 internal fun visualizerRatio(style: String): Float = if (style.startsWith("vinyl")) 1.35f else 1f
 
+/**
+ * The style Android shows. The "-fullscreen" variants stay valid in the shared settings (the
+ * desktop app uses them), but Android no longer offers or acts on them: each one shows as its
+ * normal counterpart.
+ */
+internal fun androidPlayerStyle(config: JSONObject): String =
+    config.optString("music_player_style", "classic").removeSuffix("-fullscreen")
+
 @Composable
 internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modifier = Modifier) {
-    val style = config.optString("music_player_style", "classic")
+    val style = androidPlayerStyle(config)
     val reduced = config.optBoolean("reduced_motion")
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
@@ -2370,6 +2378,10 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onBackground
     val media = player.media?.let(::MediaCard) ?: return
+    // Bars and strings take the cover's colour, as the player backdrop does.
+    val background = MaterialTheme.colorScheme.background
+    val artTint = rememberArtworkTint(media, background, config.optBoolean("thumbnails", true))
+    val art = artTint.takeUnless { it == background }
     val cornerRadius = if (style == "classic") 20.dp else 4.dp
     BoxWithConstraints(
         modifier
@@ -2437,13 +2449,12 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else if (style.startsWith("vu")) {
             // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
-                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), art)
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.66f)
+                    Modifier.fillMaxWidth(0.6f)
                         .aspectRatio(1f)
                         .align(Alignment.Center)
-                        .offset(y = (-10).dp)
                         .beat(levels) { liquidTime }
                         .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
                         .clip(RoundedCornerShape(16.dp))
@@ -2455,7 +2466,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else {
             // A glow, a ring of spectrum bars and two liquid layers around a large round cover
             // that swells slightly on the beat.
-            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), art)
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.56f)
@@ -2657,16 +2668,9 @@ private fun SettingsPanel(
                 }
                 Choice(
                     "Music player",
-                    config.optString("music_player_style", "classic"),
-                    listOf(
-                        "classic",
-                        "vinyl",
-                        "vinyl-fullscreen",
-                        "vu",
-                        "vu-fullscreen",
-                        "orbit",
-                        "orbit-fullscreen",
-                    ),
+                    androidPlayerStyle(config),
+                    listOf("classic", "vinyl", "vu", "orbit"),
+                    label = { PLAYER_STYLE_LABELS[it] ?: choiceLabel(it) },
                 ) { value ->
                     vm.updateConfig(dark) { it.put("music_player_style", value) }
                 }
@@ -3042,19 +3046,29 @@ private fun SettingToggle(
     }
 }
 
+/** Names for the music player styles; the stored ids stay as they are. */
+private val PLAYER_STYLE_LABELS =
+    mapOf("classic" to "Cover", "vinyl" to "Vinyl", "vu" to "Strings", "orbit" to "Pulse orbit")
+
 private fun choiceLabel(value: String) =
     value.replace("-fullscreen", " · Full screen").replace('-', ' ').replaceFirstChar(Char::titlecase)
 
 @Composable
-private fun Choice(title: String, value: String, values: List<String>, changed: (String) -> Unit) {
+private fun Choice(
+    title: String,
+    value: String,
+    values: List<String>,
+    label: (String) -> String = ::choiceLabel,
+    changed: (String) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
-        ValueRow(title, value = choiceLabel(value)) { open = true }
+        ValueRow(title, value = label(value)) { open = true }
         if (open)
             Panel(title, { open = false }) {
                 values.forEach { item ->
                     SheetAction(
-                        text = { Text(choiceLabel(item)) },
+                        text = { Text(label(item)) },
                         leadingIcon = { ChoiceMark(item == value) },
                         modifier = Modifier.semantics { selected = item == value },
                         onClick = {

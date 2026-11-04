@@ -1058,13 +1058,9 @@ internal class YtuiViewModel(
                         )
                 }
                 handedOff = true
-                if (
-                    !download &&
-                        !prepareSurface &&
-                        (!audio ||
-                            config.value.optString("music_player_style").endsWith("-fullscreen"))
-                )
-                    playerOpen.value = true
+                // Videos open the player; music stays in the mini player (the full-screen music
+                // styles are not offered on Android).
+                if (!download && !prepareSurface && !audio) playerOpen.value = true
                 status.value = if (download) "Download queued" else "Starting playback"
                 if (download) confirm("download")
             } finally {

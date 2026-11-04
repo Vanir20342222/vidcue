@@ -538,7 +538,7 @@ internal fun FocusedPlayer(
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
                 } else {
-                    val ratio = visualizerRatio(config.optString("music_player_style", "classic"))
+                    val ratio = visualizerRatio(androidPlayerStyle(config))
                     // The cover eases back while paused and steps forward when playing.
                     val rest by
                         animateFloatAsState(
