@@ -378,7 +378,13 @@ internal fun FocusedPlayer(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            if (player.video) ChannelAvatar(creator, 32.dp)
+                            if (player.video)
+                                ChannelAvatar(
+                                    creator,
+                                    32.dp,
+                                    imageUrl = player.media?.optString("channel_thumbnail").orEmpty(),
+                                    loadImage = config.optBoolean("thumbnails", true),
+                                )
                             Text(
                                 creator,
                                 style =

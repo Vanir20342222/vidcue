@@ -3,6 +3,7 @@ package dev.ytui.android
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
@@ -15,7 +16,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -26,6 +29,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -43,6 +49,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import org.json.JSONObject
 
 internal val LocalReducedMotion = staticCompositionLocalOf { false }
 
@@ -716,9 +725,18 @@ internal fun EmptyMediaState(
     }
 }
 
-/** Initial in a circle whose colour is derived from the name, so channels are recognisable. */
+/**
+ * The creator's picture when the provider advertised one, drawn over an initial in a circle whose
+ * colour is derived from the name. The initial stays visible until the picture loads, and it is
+ * the only thing shown when there is no URL, the thumbnails setting is off, or loading fails.
+ */
 @Composable
-internal fun ChannelAvatar(creator: String, size: androidx.compose.ui.unit.Dp) {
+internal fun ChannelAvatar(
+    creator: String,
+    size: androidx.compose.ui.unit.Dp,
+    imageUrl: String = "",
+    loadImage: Boolean = true,
+) {
     val name = creator.trim()
     val colors = MaterialTheme.colorScheme
     val hue = (name.hashCode() and 0x7fffffff) % 360
@@ -743,6 +761,57 @@ internal fun ChannelAvatar(creator: String, size: androidx.compose.ui.unit.Dp) {
                     fontFamily = YtuiType.title,
                     fontSize = (size.value * 0.42f).sp,
                 ),
+        )
+        if (loadImage && imageUrl.isNotBlank()) ChannelPicture(imageUrl, size)
+    }
+}
+
+/**
+ * Artwork-only card for a channel picture. Its key is derived from the avatar URL, so it never
+ * shares a cache entry with video artwork.
+ */
+internal fun channelPictureCard(imageUrl: String): MediaCard =
+    MediaCard(
+        JSONObject()
+            .put("kind", "channel")
+            .put("url", "channel-avatar:$imageUrl")
+            .put("thumbnail", imageUrl)
+    )
+
+/**
+ * Channel picture through the shared artwork cache. A failed load keeps the initial underneath.
+ */
+@Composable
+internal fun ChannelPicture(imageUrl: String, size: androidx.compose.ui.unit.Dp) {
+    val card = remember(imageUrl) { channelPictureCard(imageUrl) }
+    val pixels = with(LocalDensity.current) { size.roundToPx() }
+    val bitmapState = remember(card, pixels) { mutableStateOf(ArtworkCache.cached(card, pixels)) }
+    val bitmap by bitmapState
+    LaunchedEffect(card, pixels) {
+        if (bitmapState.value != null) return@LaunchedEffect
+        // Retry transient network failures a few times, then leave the initial in place.
+        repeat(3) { attempt ->
+            val loaded =
+                try {
+                    ArtworkCache.load(card, pixels)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    null
+                }
+            if (loaded != null) {
+                bitmapState.value = loaded
+                return@LaunchedEffect
+            }
+            delay(1_500L * (attempt + 1))
+        }
+    }
+    bitmap?.let {
+        Image(
+            it.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(size).clip(CircleShape),
         )
     }
 }

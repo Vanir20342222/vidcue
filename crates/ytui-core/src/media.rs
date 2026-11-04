@@ -32,6 +32,9 @@ pub struct Media {
     pub url: String,
     pub thumbnail: String,
     pub thumbnails: Vec<Thumbnail>,
+    /// Creator avatar advertised by the provider; empty when it was not in the response.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub channel_thumbnail: String,
     pub section: String,
     pub duration: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -63,6 +66,7 @@ impl Media {
             + self.creator.len()
             + self.url.len()
             + self.thumbnail.len()
+            + self.channel_thumbnail.len()
             + self.section.len()
             + self.description.len()
             + self.views_text.len()
