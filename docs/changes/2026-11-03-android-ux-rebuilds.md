@@ -111,9 +111,13 @@ departs from "never weaken a test" in `docs/AGENT_PR_RULES.md`; the owner's inst
   PR; the sheet rendered correctly in the local preview and in the one run where the test waited
   for the UI to settle. The phone card-menu tests still open and check the same sheet. The wide-row
   and duration-badge checks remain. The tablet card sheet therefore has no emulator assertion now.
-- **`largeTextKeepsSettingsSearchAndCardMenuReachable`**: not reduced. The test now waits for the UI
-  to settle after the Back key and before opening the card menu, because a late Back could dismiss
-  the sheet. Without emulator evidence yet.
+- **`largeTextKeepsSettingsSearchAndCardMenuReachable`** (renamed
+  `largeTextKeepsNavigationSearchAndSettingsReachable`): the step that opened the first card's menu
+  at 2x text and looked for `Download` is removed. After the Back key was made to settle it still
+  failed (the menu did not appear), so it was cut at the owner's request. The 48 dp navigation
+  height, label fit, search and settings checks remain. A possible real cause worth a follow-up:
+  after a search the first result's menu button can sit partly under the chip row (seen in the CI
+  tablet screenshot, where its visible height was 12 px), so a tap may miss it.
 - Not changed: workflows and shard count (a workflow edit needs the owner's `ci-change` label).
   Fewer shards or a smaller emulator matrix would cut wall time further.
 
