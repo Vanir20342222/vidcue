@@ -34,7 +34,8 @@ class PublicationBoundary(unittest.TestCase):
         )
 
     def run_fixture(self, *, wrong_digest=False, wrong_source=False,
-                    wrong_certificate=False, debuggable=False, published_code=3, handoff=False):
+                    wrong_certificate=False, debuggable=False, published_code=3, handoff=False,
+                    sdk_field="sdkVersion"):
         source = "1" * 40
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
@@ -56,7 +57,7 @@ class PublicationBoundary(unittest.TestCase):
         signature = f"Signer #1 certificate SHA-256 digest: {cert}\n"
         badging = (
             "package: name='dev.vidcue.android.stable' versionCode='4' versionName='1.0-preview' "
-            "platformBuildVersionName='15'\nsdkVersion:'26'\n"
+            f"platformBuildVersionName='15'\n{sdk_field}:'26'\n"
         )
         if debuggable:
             badging += "application-debuggable\n"
@@ -89,6 +90,13 @@ class PublicationBoundary(unittest.TestCase):
 
     def test_valid_transfer_is_traceable(self):
         self.run_fixture()
+
+    def test_both_android_tool_minimum_sdk_field_names_are_supported(self):
+        for name in ("sdkVersion", "minSdkVersion"):
+            with self.subTest(name=name):
+                self.run_fixture(sdk_field=name)
+        with self.assertRaises(ValueError):
+            self.run_fixture(sdk_field="unknownSdkField")
 
     def test_metadata_only_handoff_still_requires_the_qualified_apk_source(self):
         self.run_fixture(handoff=True)

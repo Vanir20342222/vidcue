@@ -87,7 +87,7 @@ def main():
     )
     if not badging.startswith(expected + " ") or re.search(r"^application-debuggable", badging, re.M):
         raise ValueError("APK package/version/release mode mismatch")
-    min_sdk = re.search(r"^sdkVersion:'([0-9]+)'$", badging, re.M)
+    min_sdk = re.search(r"^(?:minSdkVersion|sdkVersion):'([0-9]+)'$", badging, re.M)
     if not min_sdk:
         raise ValueError("APK minimum SDK missing")
     update_marker = release_channel.marker(
