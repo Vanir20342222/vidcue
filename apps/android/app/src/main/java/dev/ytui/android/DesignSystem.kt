@@ -729,6 +729,7 @@ internal fun MediaProgressBar(
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.primary,
     track: Color = MaterialTheme.colorScheme.outlineVariant,
+    thickness: Dp = 4.dp,
 ) {
     val motion = LocalMotion.current
     val sweep =
@@ -736,7 +737,7 @@ internal fun MediaProgressBar(
         else
             rememberInfiniteTransition(label = "progress")
                 .animateFloat(-0.3f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing)), label = "sweep")
-    Canvas(modifier.fillMaxWidth().height(4.dp)) {
+    Canvas(modifier.fillMaxWidth().height(thickness)) {
         val r = CornerRadius(size.height / 2)
         drawRoundRect(track, cornerRadius = r)
         if (progress != null)
