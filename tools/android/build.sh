@@ -39,7 +39,14 @@ for abi in $abis; do
     "$bin/llvm-strip" --strip-unneeded "$root/target/$target/release/libvidcue_mobile.so" -o "$root/target/android-jni/$abi/libvidcue_mobile.so"
     # Optional on small build machines: the packaged JNI copy is all Gradle needs.
     if [[ "${YTUI_ANDROID_PRUNE_TARGETS:-0}" == 1 ]]; then
-        cargo clean --target "$target"
+        python3 - "$root/target/$target" <<'PY'
+from pathlib import Path
+import shutil, sys
+cache = Path(sys.argv[1])
+if cache.name not in {"aarch64-linux-android", "x86_64-linux-android"} or cache.parent.name != "target" or cache.is_symlink():
+    raise SystemExit("Refusing an unexpected compiler-cache path")
+shutil.rmtree(cache)
+PY
     fi
 done
 [[ "${YTUI_ANDROID_RUST_ONLY:-0}" != 1 ]] || exit 0
