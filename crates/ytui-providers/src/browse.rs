@@ -403,6 +403,27 @@ impl Browser {
                 .into());
             }
         }
+        // Some feeds (Music categories such as Podcasts, especially when signed in) send only a
+        // shell whose first shelves sit behind a continuation. Follow it here, so the app never
+        // shows an empty page that it would only fill after the user scrolled.
+        let mut follow = 0;
+        while page.items.is_empty()
+            && page.notice.is_none()
+            && follow < 2
+            && !matches!(request, BrowseRequest::Home | BrowseRequest::Continue(_))
+            && let Some(token) = page.continuation.clone()
+        {
+            follow += 1;
+            let next = self
+                .fetch_once(music, &BrowseRequest::Continue(token))
+                .await?;
+            page.items = next.items;
+            page.continuation = next.continuation;
+            page.notice = next.notice;
+            if page.categories.is_empty() {
+                page.categories = next.categories;
+            }
+        }
         if page.items.is_empty() && page.notice.is_none() {
             page.notice = Some(if matches!(request, BrowseRequest::Home) && self.session.is_none() {
                 "No anonymous Home recommendations were returned. Press / to search, or F2 → Account → Connect browser to import your signed-in browser profile."
@@ -1534,6 +1555,49 @@ mod request_tests {
             assert_eq!(page.items.len(), 1);
         }
         assert_eq!(bootstraps.load(Ordering::SeqCst), 4);
+        task.abort();
+        let _ = task.await;
+    }
+    #[tokio::test]
+    async fn empty_category_shell_follows_its_continuation() {
+        let (base, task) = crate::test_http::serve_request(move |request| {
+            let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+            let target = headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
+            if target.starts_with("/music?") {
+                return (302, "Location: /music-ready\r\n".into(), vec![]);
+            }
+            if target.ends_with("-ready") {
+                let config = json!({"INNERTUBE_CONTEXT":{"client":{"clientVersion":"music-fixture","visitorData":"synthetic-visitor"}},"INNERTUBE_API_KEY":"synthetic-key"});
+                return (200, String::new(), format!("<script>ytcfg.set({config});</script>").into_bytes());
+            }
+            let body: Value = serde_json::from_str(body).unwrap();
+            let data = if body.get("continuation").is_some() {
+                assert_eq!(body["continuation"], "shelves");
+                json!({"contents":[{"musicMultiRowListItemRenderer":{
+                    "title":{"runs":[{"text":"Episode"}]},
+                    "onTap":{"watchEndpoint":{"videoId":"episode0001"}}}}]})
+            } else {
+                assert_eq!(body["params"], "podcasts");
+                json!({"contents":{"sectionListRenderer":{"continuations":[{"nextContinuationData":{"continuation":"shelves"}}]}}})
+            };
+            (200, "Content-Type: application/json\r\n".into(), data.to_string().into_bytes())
+        })
+        .await;
+        let mut browser = Browser::new(client(), None, 0);
+        browser.origins = [format!("{base}/web"), format!("{base}/music")];
+        let page = browser
+            .fetch(
+                true,
+                &BrowseRequest::Category {
+                    endpoint: "browse".into(),
+                    payload: json!({"browseId":"FEmusic_home","params":"podcasts"}),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, "episode0001");
+        assert!(page.notice.is_none());
         task.abort();
         let _ = task.await;
     }

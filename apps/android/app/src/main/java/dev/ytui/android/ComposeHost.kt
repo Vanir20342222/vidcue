@@ -1125,6 +1125,21 @@ private fun BrowsePane(
     val pageItemCount =
         (shelves?.let { it.size * 2 } ?: feed.cards.size) +
             (if (showFeedBack) 1 else 0) + (if (feed.notice != null) 1 else 0)
+    // A page that arrived empty but says more exists (a shell whose shelves load separately)
+    // fetches its next part once, instead of waiting for a scroll that cannot happen.
+    var emptyFollowed by remember(tab, feed.request) { mutableStateOf(false) }
+    LaunchedEffect(feed.cards.isEmpty(), feed.continuation, feed.loading, feed.error) {
+        if (
+            feed.cards.isEmpty() &&
+                feed.continuation != null &&
+                !feed.loading &&
+                feed.error == null &&
+                !emptyFollowed
+        ) {
+            emptyFollowed = true
+            vm.more()
+        }
+    }
     LaunchedEffect(grid, feed.continuation, feed.loading, feed.error, feed.cards.size, pageItemCount) {
         if (
             feed.cards.isNotEmpty() &&
