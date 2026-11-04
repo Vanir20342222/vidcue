@@ -2201,9 +2201,10 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
     var phase by remember { mutableFloatStateOf(0f) }
-    // Smoothing state stays out of Compose snapshots; `frame` is the only redraw trigger.
-    val spectrum = remember(style) { SpectrumSmoother() }
-    var frame by remember(style) { mutableLongStateOf(0L) }
+    // The liquid keeps its own clock. It is read only while drawing, so the animation never
+    // recomposes this screen.
+    val levels = remember(style) { LiquidLevels() }
+    var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
         if (player.playing && !reduced && style != "classic" && visible) {
             var previous = 0L
@@ -2212,8 +2213,8 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 if (previous != 0L) phase = (phase + elapsed * 90) % 360
                 previous = now
                 if (style.startsWith("vu") || style.startsWith("orbit")) {
-                    spectrum.step(AudioTap.spectrum, AudioTap.levels, elapsed)
-                    frame++
+                    levels.step(AudioTap.spectrum, elapsed)
+                    liquidTime += elapsed
                 }
             }
         }
@@ -2228,7 +2229,6 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     }
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onBackground
-    val tints = remember(accent, ink) { spectrumTints(accent, ink) }
     val media = player.media?.let(::MediaCard) ?: return
     val cornerRadius = if (style == "classic") 20.dp else 4.dp
     BoxWithConstraints(
@@ -2295,31 +2295,17 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 config.optBoolean("thumbnails", true),
             )
         } else if (style.startsWith("vu")) {
-            Column(Modifier.fillMaxSize()) {
+            // The liquid fills the container below the cover, which stays on top.
+            Box(Modifier.fillMaxSize()) {
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.45f)
-                        .aspectRatio(1f)
-                        .align(Alignment.CenterHorizontally),
+                    Modifier.fillMaxWidth(0.45f).aspectRatio(1f).align(Alignment.TopCenter),
                     config.optBoolean("thumbnails", true),
                 )
-                // Keep the meter in the artwork's visual group instead of
-                // stranding it at the bottom of the container.
-                Spacer(Modifier.height(24.dp))
-                // Band bars and stereo meters share the artwork's corner inset, so the rounded
-                // clip never cuts into the outer bars.
-                Canvas(Modifier.weight(1f).fillMaxWidth().padding(horizontal = cornerRadius)) {
-                    drawNeonSpectrum(frame, spectrum, tints, ink)
-                }
-                Spacer(Modifier.height(10.dp))
-                Canvas(Modifier.fillMaxWidth().height(12.dp).padding(horizontal = cornerRadius)) {
-                    drawStereoMeter(frame, spectrum, tints, ink)
-                }
             }
         } else {
-            Canvas(Modifier.fillMaxSize()) {
-                drawPulseOrbit(frame, spectrum, tints, ink, phase)
-            }
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.32f)

@@ -1,171 +1,185 @@
 package dev.ytui.android
 
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.foundation.Canvas
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
-import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
 import kotlin.math.sin
 
-/**
- * One colour per band, rotated from the theme accent so every palette keeps its identity.
- * Neutral accents, which have no hue to rotate, fade towards [ink] across the bands instead.
- */
-internal fun spectrumTints(accent: Color, ink: Color): Array<Color> =
-    Array(SPECTRUM_BANDS) { band ->
-        val rgb = spectrumBandRgb(accent.red, accent.green, accent.blue, band)
-        if (rgb != null) Color(rgb[0], rgb[1], rgb[2])
-        else lerp(accent, ink, 0.6f * band / (SPECTRUM_BANDS - 1f))
-    }
+private const val TANK_SAMPLES = 64
+private const val ORBIT_SAMPLES = 72
+private const val TAU = 6.2831855f
 
-/**
- * Neon bars rising from a shared floor, each with a glow, a faint reflection and a falling
- * peak cap. [generation] is read only so that Compose redraws on every smoothing tick.
- */
-internal fun DrawScope.drawNeonSpectrum(
-    @Suppress("UNUSED_PARAMETER") generation: Long,
-    smoother: SpectrumSmoother,
-    tints: Array<Color>,
-    ink: Color,
-) {
-    val slot = size.width / SPECTRUM_BANDS
-    val barWidth = slot * 0.62f
-    val inset = (slot - barWidth) / 2f
-    val floor = size.height * 0.8f
-    val radius = min(barWidth / 2f, 4.dp.toPx())
-    val glow = 3.dp.toPx()
-    val capHeight = 3.dp.toPx()
-    drawLine(
-        ink.copy(alpha = 0.14f),
-        Offset(0f, floor),
-        Offset(size.width, floor),
-        strokeWidth = 1.dp.toPx(),
-    )
-    for (band in 0 until SPECTRUM_BANDS) {
-        val level = smoother.bands[band]
-        val tint = tints[band]
-        val x = band * slot + inset
-        val height = level * floor
-        if (height > 0.5f) {
-            drawRoundRect(
-                tint.copy(alpha = 0.12f + 0.16f * level),
-                Offset(x - glow, floor - height - glow),
-                Size(barWidth + glow * 2, height + glow * 2),
-                CornerRadius(radius + glow),
-            )
-            drawRoundRect(
-                lerp(tint, ink, 0.25f * level),
-                Offset(x, floor - height),
-                Size(barWidth, height),
-                CornerRadius(radius),
-            )
-            val reflection = min(height * 0.4f, size.height - floor - 2.dp.toPx())
-            if (reflection > 0.5f) {
-                drawRoundRect(
-                    tint.copy(alpha = 0.14f),
-                    Offset(x, floor + 2.dp.toPx()),
-                    Size(barWidth, reflection),
-                    CornerRadius(radius),
-                )
-            }
-        }
-        val cap = smoother.caps[band]
-        if (cap > 0.01f) {
-            drawRoundRect(
-                ink.copy(alpha = 0.85f),
-                Offset(x, floor - cap * floor - capHeight / 2f),
-                Size(barWidth, capHeight),
-                CornerRadius(capHeight / 2f),
-            )
-        }
-    }
+/** Tonal liquid colours from the theme: the accent, and a lighter tint towards the foreground. */
+internal class LiquidPalette(accent: Color, ink: Color) {
+    val deep: Color = accent
+    val light: Color = lerp(accent, ink, 0.3f)
 }
 
 /**
- * Stereo L/R meters under the spectrum. Each row fills from the left in the band tints, with a
- * peak tick, so balance and loudness read without a second numeric display.
+ * Neon VU as a liquid tank under the cover. The surface is read from the band groups, so the
+ * wave shape follows the music while the flow stays smooth. [clock] is read only while drawing.
  */
-internal fun DrawScope.drawStereoMeter(
-    @Suppress("UNUSED_PARAMETER") generation: Long,
-    smoother: SpectrumSmoother,
-    tints: Array<Color>,
+@Composable
+internal fun LiquidTank(
+    levels: LiquidLevels,
+    clock: () -> Float,
+    accent: Color,
     ink: Color,
+    modifier: Modifier = Modifier,
 ) {
-    val gap = 3.dp.toPx()
-    val rowHeight = (size.height - gap) / 2f
-    val corner = CornerRadius(rowHeight / 2f)
-    val low = tints.first()
-    val high = tints.last()
-    for ((row, level) in listOf(smoother.left, smoother.right).withIndex()) {
-        val top = row * (rowHeight + gap)
-        drawRoundRect(
-            ink.copy(alpha = 0.08f),
-            Offset(0f, top),
-            Size(size.width, rowHeight),
-            corner,
-        )
-        val fill = size.width * level.coerceIn(0f, 1f)
-        if (fill > 0.5f) {
-            drawRoundRect(
-                lerp(low, high, level),
-                Offset(0f, top),
-                Size(fill, rowHeight),
-                corner,
-            )
-        }
-    }
-    val tick = size.width * smoother.peak.coerceIn(0f, 1f)
-    drawRoundRect(
-        ink.copy(alpha = 0.85f),
-        Offset(tick - 1.dp.toPx(), 0f),
-        Size(2.dp.toPx(), size.height),
-        CornerRadius(1.dp.toPx()),
+    val path = remember { Path() }
+    val palette = remember(accent, ink) { LiquidPalette(accent, ink) }
+    Canvas(modifier) { drawLiquidTank(clock(), levels, palette, path) }
+}
+
+/** Pulse Orbit as a liquid ring around the circular cover. */
+@Composable
+internal fun LiquidOrb(
+    levels: LiquidLevels,
+    clock: () -> Float,
+    accent: Color,
+    ink: Color,
+    modifier: Modifier = Modifier,
+) {
+    val path = remember { Path() }
+    val palette = remember(accent, ink) { LiquidPalette(accent, ink) }
+    Canvas(modifier) { drawLiquidOrb(clock(), levels, palette, path) }
+}
+
+internal fun DrawScope.drawLiquidTank(
+    time: Float,
+    levels: LiquidLevels,
+    palette: LiquidPalette,
+    path: Path,
+) {
+    val height = size.height
+    val overall = levels.overall
+    val baseline = height * (0.74f - 0.1f * overall)
+    val amplitude = height * (0.05f + 0.1f * overall)
+    // The back layer sits lower, trails the front in phase and reads as depth.
+    liquidLayer(
+        path,
+        baseline + height * 0.04f,
+        amplitude * 0.8f,
+        time,
+        levels.groups,
+        phaseShift = 1.6f,
+        fill = Brush.verticalGradient(
+            listOf(palette.deep.copy(alpha = 0.35f), palette.deep.copy(alpha = 0.2f)),
+            startY = baseline,
+            endY = height,
+        ),
+        crest = null,
+    )
+    liquidLayer(
+        path,
+        baseline,
+        amplitude,
+        time,
+        levels.groups,
+        phaseShift = 0f,
+        fill = Brush.verticalGradient(
+            listOf(palette.light.copy(alpha = 0.55f), palette.deep.copy(alpha = 0.5f)),
+            startY = baseline,
+            endY = height,
+        ),
+        crest = palette.light.copy(alpha = 0.7f),
     )
 }
 
-/**
- * Dots fixed around the artwork, one per band, so each stays on its frequency. A breathing
- * ring follows the bass bands, and a peak highlight rotates on its own clock.
- */
-internal fun DrawScope.drawPulseOrbit(
-    @Suppress("UNUSED_PARAMETER") generation: Long,
-    smoother: SpectrumSmoother,
-    tints: Array<Color>,
-    ink: Color,
-    phaseDegrees: Float,
+/** One wave layer: an optional crest line, then the liquid body down to the bottom edge. */
+private fun DrawScope.liquidLayer(
+    path: Path,
+    baseline: Float,
+    amplitude: Float,
+    time: Float,
+    groups: FloatArray,
+    phaseShift: Float,
+    fill: Brush,
+    crest: Color?,
+) {
+    val width = size.width
+    path.reset()
+    for (i in 0..TANK_SAMPLES) {
+        val u = i.toFloat() / TANK_SAMPLES
+        val y = baseline + amplitude * surfaceOffset(u, time + phaseShift, groups)
+        if (i == 0) path.moveTo(0f, y) else path.lineTo(u * width, y)
+    }
+    if (crest != null) drawPath(path, crest, style = Stroke(width = 1.5f.dp.toPx()))
+    path.lineTo(width, size.height)
+    path.lineTo(0f, size.height)
+    path.close()
+    drawPath(path, brush = fill)
+}
+
+internal fun DrawScope.drawLiquidOrb(
+    time: Float,
+    levels: LiquidLevels,
+    palette: LiquidPalette,
+    path: Path,
 ) {
     val minDimension = min(size.width, size.height)
     val center = Offset(size.width / 2f, size.height / 2f)
-    // Full-level dots and their glow stay inside the square, so the container never clips them.
-    val base = minDimension * 0.31f
-    val reach = minDimension * 0.12f
-    val bass = (smoother.bands[0] + smoother.bands[1] + smoother.bands[2] + smoother.bands[3]) / 4f
-    drawCircle(
-        ink.copy(alpha = 0.08f + 0.2f * bass),
-        radius = base * (1f + 0.06f * bass),
-        center = center,
-        style = Stroke(width = 1.5f.dp.toPx()),
+    // The inner edge keeps clear of the cover (radius 0.16 of the width) even at full swell.
+    val radius = minDimension * 0.33f
+    orbLayer(
+        path,
+        center,
+        radius * 0.9f,
+        amplitude = 0.3f,
+        time = time,
+        groups = levels.groups,
+        phaseShift = 1.9f,
+        color = palette.light,
+        alpha = 0.22f,
+        stroke = null,
     )
-    for (band in 0 until SPECTRUM_BANDS) {
-        val level = smoother.bands[band]
-        val angle = (-PI / 2 + band * 2 * PI / SPECTRUM_BANDS).toFloat()
-        val distance = base + level * reach
-        val position = center + Offset(cos(angle) * distance, sin(angle) * distance)
-        val dot = minDimension * 0.014f + level * minDimension * 0.018f
-        drawCircle(tints[band].copy(alpha = 0.12f + 0.25f * level), dot * 2f, position)
-        drawCircle(lerp(tints[band], ink, 0.25f * level), dot, position)
+    orbLayer(
+        path,
+        center,
+        radius,
+        amplitude = 0.3f,
+        time = time,
+        groups = levels.groups,
+        phaseShift = 0f,
+        color = palette.deep,
+        alpha = 0.28f,
+        stroke = palette.light.copy(alpha = 0.6f),
+    )
+}
+
+private fun DrawScope.orbLayer(
+    path: Path,
+    center: Offset,
+    radius: Float,
+    amplitude: Float,
+    time: Float,
+    groups: FloatArray,
+    phaseShift: Float,
+    color: Color,
+    alpha: Float,
+    stroke: Color?,
+) {
+    path.reset()
+    for (i in 0..ORBIT_SAMPLES) {
+        val angle = i.toFloat() / ORBIT_SAMPLES * TAU
+        val distance = radius * (1f + amplitude * orbitOffset(angle, time + phaseShift, groups))
+        val x = center.x + cos(angle) * distance
+        val y = center.y + sin(angle) * distance
+        if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
     }
-    val peakAngle = (phaseDegrees * PI / 180.0).toFloat()
-    val peakDistance = base + smoother.peak * reach * 1.15f
-    drawCircle(
-        ink,
-        minDimension * 0.016f,
-        center + Offset(cos(peakAngle) * peakDistance, sin(peakAngle) * peakDistance),
-    )
+    path.close()
+    drawPath(path, color, alpha)
+    if (stroke != null) drawPath(path, stroke, style = Stroke(width = 1.5f.dp.toPx()))
 }
