@@ -42,7 +42,7 @@ def notes(version, revision, runs, base, changes):
         f"Android **development Preview** `{version}`, built by GitHub Actions from `main` at "
         f"`{revision[:12]}`.\n\n"
         "**This is a CI debug-signed build, not the stable channel.** It installs as "
-        "**ytui Preview** (`dev.ytui.android.preview`) next to the stable **ytui** app "
+        "**vidcue Preview** (`dev.ytui.android.preview`) next to the stable **vidcue** app "
         "(`dev.ytui.android.stable`). It does not update the stable app and keeps its own "
         "settings, account and library, so sign in and choose folders again. Every CI build "
         "uses its own debug certificate, so Android will normally refuse to install one "
@@ -83,9 +83,9 @@ def prepare(tested, output, revision, runs, version, base="unknown", changes="")
         raise ValueError("APK does not match its CI inspection")
     with zipfile.ZipFile(apk) as archive:
         for abi in ("arm64-v8a", "x86_64"):
-            archive.getinfo(f"lib/{abi}/libytui_mobile.so")
+            archive.getinfo(f"lib/{abi}/libvidcue_mobile.so")
         archive.getinfo("assets/notices/inventory.json")
-        archive.getinfo("assets/ytui-LICENSE")
+        archive.getinfo("assets/vidcue-LICENSE")
         dex = [
             archive.read(name)
             for name in archive.namelist()
@@ -97,7 +97,7 @@ def prepare(tested, output, revision, runs, version, base="unknown", changes="")
     if not any(version.encode() in data for data in dex):
         raise ValueError("APK version differs from the requested Preview version")
     output.mkdir()
-    name = f"ytui-preview-{version}.apk"
+    name = f"vidcue-preview-{version}.apk"
     shutil.copyfile(apk, output / name)
     (output / "SHA256SUMS.txt").write_text(f"{digest}  {name}\n")
     (output / "APK-inspection.txt").write_text(f"Source revision: {revision}\n" + report)

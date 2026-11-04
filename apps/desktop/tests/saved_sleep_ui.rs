@@ -4,12 +4,12 @@ use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, Modal, RuntimeHandles},
     ui,
 };
-use ytui_core::{Config, Media, Page, shortcuts::Action};
-use ytui_services::{paths::Paths, player::PlayerCommand, store::Snapshot};
+use vidcue_core::{Config, Media, Page, shortcuts::Action};
+use vidcue_services::{paths::Paths, player::PlayerCommand, store::Snapshot};
 
 fn fixture() -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir) {
     let temp = tempfile::tempdir().unwrap();
@@ -30,7 +30,7 @@ fn fixture() -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir) {
         Config {
             auth_store: "file".into(),
             notifications: false,
-            theme: "ytui-dark".into(),
+            theme: "vidcue-dark".into(),
             ..Default::default()
         },
         paths,
@@ -205,13 +205,13 @@ async fn cancel_timer_allows_queue_advance_and_invalid_duration_keeps_the_draft(
     let (mut app, mut rx, _temp) = fixture();
     app.offline = false;
     app.command("sleep 30m").unwrap();
-    let index = ytui::actions::ENTRIES
+    let index = vidcue::actions::ENTRIES
         .iter()
         .position(|e| e.title == "Set sleep timer")
         .unwrap();
     app.open_action(index);
     if let Some(Modal::Form(form)) = &mut app.modal {
-        form.fields[0].value = ytui::editor::Editor::new("25h");
+        form.fields[0].value = vidcue::editor::Editor::new("25h");
     }
     app.key(KeyCode::Enter.into());
     assert!(matches!(&app.modal,Some(Modal::Form(form)) if form.error.is_some()));
@@ -244,14 +244,14 @@ async fn a_closed_player_reports_failure_without_claiming_a_successful_stop() {
 async fn saved_and_sleep_panels_render_across_themes_languages_and_sizes() {
     let (mut app, _rx, _temp) = fixture();
     app.snapshot.saved_media.toggle(media()).unwrap();
-    let arm = ytui::actions::ENTRIES
+    let arm = vidcue::actions::ENTRIES
         .iter()
         .position(|e| e.title == "Set sleep timer")
         .unwrap();
     for language in ["en", "de"] {
         app.config.language = language.into();
-        for theme in ytui_services::theme::THEMES {
-            app.palette = ytui_services::theme::builtin(theme).unwrap();
+        for theme in vidcue_services::theme::THEMES {
+            app.palette = vidcue_services::theme::builtin(theme).unwrap();
             for (w, h) in [(212, 58), (160, 45), (100, 30), (60, 20), (35, 12)] {
                 app.modal = None;
                 app.command("saved").unwrap();
@@ -289,7 +289,7 @@ async fn saved_and_sleep_panels_render_across_themes_languages_and_sizes() {
 #[ignore = "requires installed mpv and FFmpeg; synthetic local audio and null outputs only"]
 async fn real_mpv_sleep_timer_stops_audio_without_advancing_the_queue() {
     use std::os::unix::fs::PermissionsExt;
-    use ytui_services::player::Player;
+    use vidcue_services::player::Player;
     let (mut app, rx, temp) = fixture();
     drop(rx);
     let source = temp.path().join("tone.wav");
@@ -331,7 +331,7 @@ async fn real_mpv_sleep_timer_stops_audio_without_advancing_the_queue() {
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         app.play(Media {
             url: source.to_string_lossy().into(),
-            kind: ytui_core::MediaKind::Song,
+            kind: vidcue_core::MediaKind::Song,
             ..media()
         });
         loop {
@@ -377,7 +377,7 @@ async fn saved_video_keeps_video_intent_even_when_the_music_tab_is_visible() {
     let (mut app, mut rx, _temp) = fixture();
     app.offline = false;
     app.tab = 2;
-    app.tabs[2].request = Some(ytui_core::BrowseRequest::SavedMedia {
+    app.tabs[2].request = Some(vidcue_core::BrowseRequest::SavedMedia {
         query: String::new(),
     });
     app.play(media());
@@ -386,7 +386,7 @@ async fn saved_video_keeps_video_intent_even_when_the_music_tab_is_visible() {
         PlayerCommand::Play { audio: false, .. }
     ));
     let mut song = media();
-    song.kind = ytui_core::MediaKind::Song;
+    song.kind = vidcue_core::MediaKind::Song;
     app.play(song);
     assert!(matches!(
         rx.try_recv().unwrap(),
@@ -400,7 +400,7 @@ async fn saved_intent_is_shared_by_enqueue_download_recent_folders_and_explicit_
     let (mut app, mut rx, temp) = fixture();
     app.offline = false;
     app.tab = 2;
-    app.tabs[2].request = Some(ytui_core::BrowseRequest::SavedMedia {
+    app.tabs[2].request = Some(vidcue_core::BrowseRequest::SavedMedia {
         query: String::new(),
     });
     app.tabs[2].page = Page {
@@ -410,17 +410,17 @@ async fn saved_intent_is_shared_by_enqueue_download_recent_folders_and_explicit_
     app.action(Action::Enqueue);
     assert_eq!(
         app.snapshot.playback.items[0].kind,
-        ytui_core::MediaKind::Video
+        vidcue_core::MediaKind::Video
     );
     app.action(Action::Download);
     assert!(
-        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,ytui::forms::FormKind::Download(_,o) if !o.audio))
+        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,vidcue::forms::FormKind::Download(_,o) if !o.audio))
     );
     app.snapshot.recent_destinations.push(temp.path().into());
     app.modal = Some(Modal::Destinations(0));
     app.key(KeyCode::Enter.into());
     assert!(
-        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,ytui::forms::FormKind::Download(_,o) if !o.audio))
+        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,vidcue::forms::FormKind::Download(_,o) if !o.audio))
     );
     app.modal = None;
     app.action(Action::Fallback);
@@ -429,18 +429,18 @@ async fn saved_intent_is_shared_by_enqueue_download_recent_folders_and_explicit_
         PlayerCommand::PlayFallback { audio: false, .. }
     ));
     app.tab = 1;
-    app.tabs[1].request = Some(ytui_core::BrowseRequest::SavedMedia {
+    app.tabs[1].request = Some(vidcue_core::BrowseRequest::SavedMedia {
         query: String::new(),
     });
     let mut song = media();
-    song.kind = ytui_core::MediaKind::Song;
+    song.kind = vidcue_core::MediaKind::Song;
     app.tabs[1].page = Page {
         items: vec![song],
         ..Default::default()
     };
     app.action(Action::Download);
     assert!(
-        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,ytui::forms::FormKind::Download(_,o) if o.audio))
+        matches!(&app.modal,Some(Modal::Form(f)) if matches!(&f.kind,vidcue::forms::FormKind::Download(_,o) if o.audio))
     );
     app.shutdown().await;
 }

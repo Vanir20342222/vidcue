@@ -34,16 +34,16 @@ for abi in $abis; do
     cc_key="CC_${target//-/_}"; ar_key="AR_${target//-/_}"; cxx_key="CXX_${target//-/_}"
     env "$linker_key=$bin/${prefix}26-clang" "$cc_key=$bin/${prefix}26-clang" "$ar_key=$bin/llvm-ar" "$cxx_key=$bin/${prefix}26-clang++" \
         "$flags_key=-C link-arg=-Wl,-z,max-page-size=16384" \
-        cargo build -p ytui-mobile --target "$target" --release --locked -j "${YTUI_BUILD_JOBS:-2}"
+        cargo build -p vidcue-mobile --target "$target" --release --locked -j "${YTUI_BUILD_JOBS:-2}"
     mkdir -p "$root/target/android-jni/$abi"
-    "$bin/llvm-strip" --strip-unneeded "$root/target/$target/release/libytui_mobile.so" -o "$root/target/android-jni/$abi/libytui_mobile.so"
+    "$bin/llvm-strip" --strip-unneeded "$root/target/$target/release/libvidcue_mobile.so" -o "$root/target/android-jni/$abi/libvidcue_mobile.so"
 done
 [[ "${YTUI_ANDROID_RUST_ONLY:-0}" != 1 ]] || exit 0
 cargo metadata --locked --format-version 1 > "$root/target/android-dependencies.json"
 notices_stage="$(mktemp -d "$root/target/android-notices.XXXXXX")"
-cargo run -p ytui-mobile --example mobile_license_bundle --locked -- "$root/target/android-dependencies.json" "$notices_stage/notices"
+cargo run -p vidcue-mobile --example mobile_license_bundle --locked -- "$root/target/android-dependencies.json" "$notices_stage/notices"
 mkdir -p "$root/target/android-assets/notices"
 cp -R -- "$notices_stage/notices/." "$root/target/android-assets/notices/"
-cp -- "$root/LICENSE" "$root/target/android-assets/ytui-LICENSE"
+cp -- "$root/LICENSE" "$root/target/android-assets/vidcue-LICENSE"
 
 "$root/apps/android/gradlew" -p "$root/apps/android" --no-daemon ":app:assemble$gradle_variant" ":app:test${gradle_variant}UnitTest" ":app:lint$gradle_variant"

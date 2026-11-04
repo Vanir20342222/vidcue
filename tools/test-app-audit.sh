@@ -9,4 +9,4 @@ case "${1:-}" in
   --real) audit_flags+=(--include-ignored) ;;
   *) echo 'Usage: tools/test-app-audit.sh [--real]' >&2; exit 2 ;;
 esac
-exec cargo test -p ytui --test audit_regressions --locked -- "${audit_flags[@]}" --nocapture
+exec cargo test -p vidcue --test audit_regressions --locked -- "${audit_flags[@]}" --nocapture

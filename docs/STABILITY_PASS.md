@@ -58,10 +58,10 @@ retry policy, preference isolation, stderr bounds, UI guidance and CLI exit stat
 Optional real-tool checks:
 
 ```sh
-cargo test -p ytui-services --locked real_mpv_ -- --ignored
-cargo test -p ytui --test downloads --locked real_ffmpeg_native_audio_ -- --ignored
-cargo test -p ytui --test downloads --locked real_mpv_playback_check_ -- --ignored
-cargo test -p ytui --test downloads --locked real_ytdlp_playlist_ -- --ignored
+cargo test -p vidcue-services --locked real_mpv_ -- --ignored
+cargo test -p vidcue --test downloads --locked real_ffmpeg_native_audio_ -- --ignored
+cargo test -p vidcue --test downloads --locked real_mpv_playback_check_ -- --ignored
+cargo test -p vidcue --test downloads --locked real_ytdlp_playlist_ -- --ignored
 ```
 
 Use `YTUI_TEST_MPV` / `YTUI_TEST_YT_DLP` for nonstandard tool paths. The ordinary

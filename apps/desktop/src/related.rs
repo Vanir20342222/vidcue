@@ -1,11 +1,11 @@
 //! Related-video continuation for the playback queue (M5/M9 parity with Android's
 //! "Related media autoplay" and its watch-page Up next list).
 //!
-//! When the item that ends the queue is a YouTube video or song, ytui fetches its
+//! When the item that ends the queue is a YouTube video or song, vidcue fetches its
 //! related list. Automatic advance (and Next) continue with the first entry once the
 //! queue is exhausted; the Queue popup lists the entries as "Recommended". Nothing
 //! here is persisted: the queue only grows by the entries that actually play.
-use ytui_core::{Media, MediaKind, PlaybackQueue, Repeat};
+use vidcue_core::{Media, MediaKind, PlaybackQueue, Repeat};
 
 /// At most this many related entries are kept for one source video.
 pub const LIMIT: usize = 25;

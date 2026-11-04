@@ -177,7 +177,7 @@ object ComposeHost {
 }
 
 internal fun JSONObject.color(key: String, fallback: Color, neutralPreset: Boolean = true): Color {
-    if (neutralPreset && optString("name") == "ytui-dark")
+    if (neutralPreset && optString("name") == "vidcue-dark")
         when (key) {
             "background" -> return MediaTokens.neutralBackground
             "surface" -> return MediaTokens.neutralSurface
@@ -679,13 +679,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     "sleep" ->
                         Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
                     "about" ->
-                        Panel("About ytui", { dialog = "" }) {
+                        Panel("About Vidcue", { dialog = "" }) {
                             Text(
                                 "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nRust engine · native Android UI\nSource ${BuildConfig.SOURCE_REVISION}"
                             )
                             Text(
                                 "All provider, extraction, account and library operations use the shared Rust engine. Android supplies touch, keyboard, video and background media. Development preview. Device playback, network and update checks are tracked in the validation report."
                             )
+                            AppUpdateSettings()
                             ValueRow("Radio artwork credits", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
@@ -711,6 +712,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 WindowInsets.safeDrawing.getBottom(this).toDp()
                             } + if (playerOpen || tabletLayoutOf()) 24.dp else if (hasPlayer) 156.dp else 92.dp,
                     )
+                if (!onboarding && !fullscreen) AppUpdateHost()
                 val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,
@@ -872,7 +874,7 @@ internal fun Panel(
                 }
             }
         }
-    } else if (title == "About ytui") {
+    } else if (title == "About Vidcue") {
         MediaDialog(
             close,
             title,
@@ -2610,7 +2612,7 @@ private fun SettingsPanel(
                 }
             }
             Text(
-                "ytui ${BuildConfig.VERSION_NAME}",
+                "Vidcue ${BuildConfig.VERSION_NAME}",
                 Modifier.fillMaxWidth().padding(vertical = 20.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2689,7 +2691,7 @@ private fun SettingsPanel(
                 ValueRow(
                     "Import a palette",
                     glyph = Glyph.Edit,
-                    subtitle = "Caelestia, Omarchy or ytui palette files",
+                    subtitle = "Caelestia, Omarchy or Vidcue palette files",
                     chevron = false,
                 ) {
                     vm.effect("pick", "kind" to "theme")
@@ -2769,7 +2771,7 @@ private fun SettingsPanel(
                             as android.content.ClipboardManager
                     clipboard.setPrimaryClip(
                         android.content.ClipData.newPlainText(
-                            "ytui startup timings",
+                            "Vidcue startup timings",
                             BuildConfig.VERSION_NAME +
                                 "\n" +
                                 BuildConfig.SOURCE_REVISION +

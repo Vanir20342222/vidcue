@@ -12,8 +12,8 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::UnixStream,
 };
-use ytui_core::{Config, Media};
-use ytui_services::{
+use vidcue_core::{Config, Media};
+use vidcue_services::{
     paths::Paths,
     player::{Player, PlayerCommand, PlayerEvent, PlayerStatus},
 };
@@ -61,7 +61,7 @@ impl Fixture {
         let launches = root.join("launches");
         let fault = root.join("fault");
         let wrapper = root.join("mpv");
-        let mpv = ytui_services::paths::executable("mpv").context("mpv is required")?;
+        let mpv = vidcue_services::paths::executable("mpv").context("mpv is required")?;
         // Only IPC paths and preview/mute flags are recorded, never stream URLs.
         let quote = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
         let script = format!(
@@ -182,7 +182,7 @@ async fn wait(
         loop {
             let state = player.status.borrow_and_update().clone();
             if let Some(error) = &state.error {
-                bail!("{}", ytui_services::process::diagnostic(error));
+                bail!("{}", vidcue_services::process::diagnostic(error));
             }
             if predicate(&state) {
                 return Ok(state);
@@ -323,7 +323,7 @@ async fn scenario(f: &Fixture, player: &mut Player, case: &str) -> Result<Value>
                     if let Some(error) = player.status.borrow().error.clone() {
                         bail!(
                             "preview failed: {}",
-                            ytui_services::process::diagnostic(&error)
+                            vidcue_services::process::diagnostic(&error)
                         );
                     }
                     if f.property(true, "time-pos").await.is_ok() {
@@ -551,7 +551,7 @@ async fn main() -> Result<()> {
     let arguments: Vec<String> = std::env::args().collect();
     if arguments.get(1).is_some_and(|a| a == "__native-worker") {
         let request = PathBuf::from(arguments.get(2).context("missing worker request")?);
-        return tokio::task::spawn_blocking(move || ytui_services::native::worker(&request))
+        return tokio::task::spawn_blocking(move || vidcue_services::native::worker(&request))
             .await?;
     }
     let args = Args::parse();
@@ -580,7 +580,7 @@ async fn main() -> Result<()> {
                 failures += 1;
                 println!(
                     "{}",
-                    json!({"case":case,"backend":args.backend,"passed":false,"error":ytui_services::process::diagnostic(&format!("{error:#}"))})
+                    json!({"case":case,"backend":args.backend,"passed":false,"error":vidcue_services::process::diagnostic(&format!("{error:#}"))})
                 );
             }
         }

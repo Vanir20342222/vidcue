@@ -14,17 +14,17 @@ bundled by install.sh or its install-rust.sh compatibility alias.
   are MIT; fontdue 0.9.5 is MIT OR Apache-2.0 OR Zlib. The capture command reads
   an installed monospaced font; font files are not bundled in the repository.
 - youtui / ytmapi-rs, ytmusic-tui and youtube-tui: API/UX research references;
-  ytui uses its own provider and UI implementation rather than vendoring these apps.
+  vidcue uses its own provider and UI implementation rather than vendoring these apps.
 - Bricolage Grotesque and Instrument Sans: SIL Open Font License 1.1. The Android
   app bundles both variable fonts (`apps/android/app/src/main/res/font`) with their
   licence texts in `apps/android/app/src/main/assets/licenses`.
 - Doto (Óliver Lalan), Geist and Geist Mono (The Geist Project Authors): SIL Open Font
   License 1.1, from the google/fonts repository. Android bundles the variable fonts for the
   Nothing-styled themes, with licence texts in `apps/android/app/src/main/assets/licenses`.
-  ytui does not bundle Nothing's proprietary Ndot, NType or Lettera faces; the theme is an
+  vidcue does not bundle Nothing's proprietary Ndot, NType or Lettera faces; the theme is an
   independent tribute and is not affiliated with Nothing Technology.
 - cliamp: MIT, referenced for service behavior. cliamp is an optional external
-  application; ytui's radio tab is native Rust.
+  application; vidcue's radio tab is native Rust.
 - yt-dlp, mpv, FFmpeg, Node.js and Deno: optional/required system tools according to the
   selected features; not distributed as part of this repository's Rust binary.
 

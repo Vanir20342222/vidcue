@@ -7,7 +7,7 @@ gates and [the PR review](PR_REVIEW_2026-10-24.md) for the final integration che
 
 ## Update this candidate
 
-Close existing ytui processes first. Review the new source, then:
+Close existing vidcue processes first. Review the new source, then:
 
 ```sh
 git fetch origin
@@ -15,9 +15,9 @@ git switch main
 git pull --ff-only
 ./install-rust.sh
 hash -r
-ytui --version
-ytui-rs --version
-ytui doctor
+vidcue --version
+vidcue --version
+vidcue doctor
 ```
 
 `--version` now includes the build revision. Both launchers must agree. A source
@@ -25,14 +25,14 @@ archive without Git metadata reports `unknown`, unless the packager explicitly
 sets `YTUI_BUILD_REVISION` to the reviewed full revision. Default installation
 follows main; an alpha merge does not publish a tagged stable release.
 
-A changed existing regular launcher is saved as `~/.local/bin/ytui.previous`.
+A changed existing regular launcher is saved as `~/.local/bin/vidcue.previous`.
 Reinstalling the identical binary preserves that previous snapshot. Legacy
 symlink targets are not overwritten. To roll back the executable explicitly:
 
 ```sh
 tools/rollback-install.sh
 hash -r
-ytui --version
+vidcue --version
 ```
 
 The rollback script swaps the two binaries, so a second invocation rolls forward.
@@ -50,8 +50,8 @@ rollback of the user's real old data still requires a copied-data acceptance run
 On a clean reviewed checkout with the desired Rust compiler installed:
 
 ```sh
-tools/package-release.sh /tmp/ytui-candidate-dist
-cd /tmp/ytui-candidate-dist
+tools/package-release.sh /tmp/vidcue-candidate-dist
+cd /tmp/vidcue-candidate-dist
 sha256sum -c *.sha256
 ```
 

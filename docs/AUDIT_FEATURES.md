@@ -9,7 +9,7 @@ be reviewed/remapped in Keyboard bindings. No bottom command line is needed.
   connection. These entries survive restart/account disconnect.
 - **o → Set sleep timer** accepts `30m`, `1h` or `90s`, up to 24 hours. Its countdown
   appears in the player strip. Status/cancel actions share that menu; expiry stops
-  playback and queue advance, retaining the queue and keeping ytui open. It resets
+  playback and queue advance, retaining the queue and keeping vidcue open. It resets
   after restarting the app. See [research and verification](FEATURE_RESEARCH_2026-10-24.md).
 
 - **Account → Connect browser** discovers profile directories, then opens a review
@@ -44,7 +44,7 @@ be reviewed/remapped in Keyboard bindings. No bottom command line is needed.
   owned cache files. Transient images retry automatically; unavailable images have
   a bounded state. **F5** retries images without defeating a provider cooldown.
 - **Setup & tool capabilities** checks installed executables with deadlines.
-  **Export safe support report**, or `ytui support --output NEW.json`, writes only
+  **Export safe support report**, or `vidcue support --output NEW.json`, writes only
   an allowlisted report and refuses to overwrite an existing file. Version output
   includes the build SHA and `-dirty` when compiled from modified source.
 - MPRIS media controls operate the current app/queue. A missing session bus leaves

@@ -8,7 +8,7 @@ use std::{
 fn executable(path: &Path, content: &str) {
     // Replace the inode just as the installer does: some kernels still reject
     // truncating a recently executed binary after its process has been reaped.
-    ytui_services::paths::atomic_write(path, content.as_bytes()).unwrap();
+    vidcue_services::paths::atomic_write(path, content.as_bytes()).unwrap();
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 #[test]
@@ -25,7 +25,7 @@ fn rust_installation_replaces_launchers_and_preserves_legacy_targets_and_failed_
     let original = "#!/bin/sh\nprintf legacy\n";
     executable(&legacy, original);
     symlink(&legacy, bin.join("ytui")).unwrap();
-    fs::copy(env!("CARGO_BIN_EXE_ytui"), build.join("release/ytui")).unwrap();
+    fs::copy(env!("CARGO_BIN_EXE_vidcue"), build.join("release/vidcue")).unwrap();
     let cargo = fake.join("cargo");
     executable(&cargo, "#!/bin/sh\nexit 17\n");
     let run = |script: &str| {
@@ -57,7 +57,7 @@ fn rust_installation_replaces_launchers_and_preserves_legacy_targets_and_failed_
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        for name in ["ytui", "ytui-rs"] {
+        for name in ["vidcue", "ytui", "ytui-rs"] {
             assert!(
                 !fs::symlink_metadata(bin.join(name))
                     .unwrap()
@@ -73,17 +73,30 @@ fn rust_installation_replaces_launchers_and_preserves_legacy_targets_and_failed_
         }
     }
     assert_eq!(fs::read_to_string(&legacy).unwrap(), original);
-    let old = "#!/bin/sh\nprintf 'ytui 0.1.0-fixture\\n'\n";
-    executable(&bin.join("ytui"), old);
+    let old = "#!/bin/sh\nprintf 'vidcue 0.1.0-fixture\\n'\n";
+    executable(&bin.join("vidcue"), old);
     assert!(run("install.sh").status.success());
-    assert_eq!(fs::read_to_string(bin.join("ytui.previous")).unwrap(), old);
+    assert_eq!(
+        fs::read_to_string(bin.join("vidcue.previous")).unwrap(),
+        old
+    );
     assert!(run("tools/rollback-install.sh").status.success());
-    for name in ["ytui", "ytui-rs"] {
+    for name in ["vidcue", "ytui", "ytui-rs"] {
         assert_eq!(fs::read_to_string(bin.join(name)).unwrap(), old);
     }
     assert!(run("tools/rollback-install.sh").status.success());
+    // Upgrading from before the rename snapshots the old ytui executable.
+    fs::remove_file(bin.join("vidcue")).unwrap();
+    fs::remove_file(bin.join("vidcue.previous")).unwrap();
+    let renamed = "#!/bin/sh\nprintf 'ytui 0.2.0-fixture\\n'\n";
+    executable(&bin.join("ytui"), renamed);
+    assert!(run("install.sh").status.success());
+    assert_eq!(
+        fs::read_to_string(bin.join("vidcue.previous")).unwrap(),
+        renamed
+    );
     assert!(
-        Command::new(bin.join("ytui"))
+        Command::new(bin.join("vidcue"))
             .arg("--version")
             .output()
             .unwrap()

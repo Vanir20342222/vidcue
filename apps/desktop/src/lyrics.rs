@@ -1,5 +1,5 @@
 use tokio_util::sync::CancellationToken;
-use ytui_services::lyrics::Track;
+use vidcue_services::lyrics::Track;
 
 pub struct View {
     pub id: uuid::Uuid,

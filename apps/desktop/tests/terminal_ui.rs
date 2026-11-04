@@ -7,7 +7,8 @@ use support::terminal::Capture;
 #[test]
 fn real_terminal_opens_every_popup_edits_settings_resizes_and_restores_flags() {
     let temp = tempfile::tempdir().unwrap();
-    let mut term = Capture::new(Path::new(env!("CARGO_BIN_EXE_ytui")), temp.path(), false).unwrap();
+    let mut term =
+        Capture::new(Path::new(env!("CARGO_BIN_EXE_vidcue")), temp.path(), false).unwrap();
     for tab in ["1", "2", "3", "4"] {
         term.send(tab).unwrap();
         assert!(term.text().contains("Workspaces"));
@@ -25,7 +26,7 @@ fn real_terminal_opens_every_popup_edits_settings_resizes_and_restores_flags() {
         ("downloads failed", "Downloads · failed"),
         ("groups", "Download groups"),
         ("log", "Diagnostics"),
-        ("update", "Update ytui"),
+        ("update", "Update vidcue"),
         ("feeds", "Browse feeds"),
         (
             "add https://www.youtube.com/watch?v=fixture1234",
@@ -76,7 +77,7 @@ fn real_terminal_opens_every_popup_edits_settings_resizes_and_restores_flags() {
 fn real_terminal_uses_german_search_settings_and_offline_lyrics() {
     let temp = tempfile::tempdir().unwrap();
     let mut term = Capture::with_language(
-        Path::new(env!("CARGO_BIN_EXE_ytui")),
+        Path::new(env!("CARGO_BIN_EXE_vidcue")),
         temp.path(),
         false,
         "de",
@@ -112,11 +113,11 @@ fn real_terminal_opens_sleep_timer_and_local_saved_shelf_offline() {
     let temp = tempfile::tempdir().unwrap();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let store = ytui_services::store::Store::open(&temp.path().join("state")).unwrap();
-        let mut snapshot = ytui_services::store::Snapshot::default();
+        let store = vidcue_services::store::Store::open(&temp.path().join("state")).unwrap();
+        let mut snapshot = vidcue_services::store::Snapshot::default();
         snapshot
             .saved_media
-            .toggle(ytui_core::Media {
+            .toggle(vidcue_core::Media {
                 url: "https://youtu.be/abcdefghijk".into(),
                 title: "PTY saved fixture".into(),
                 ..Default::default()
@@ -125,7 +126,8 @@ fn real_terminal_opens_sleep_timer_and_local_saved_shelf_offline() {
         store.save(snapshot).await.unwrap();
         store.close().await.unwrap();
     });
-    let mut term = Capture::new(Path::new(env!("CARGO_BIN_EXE_ytui")), temp.path(), true).unwrap();
+    let mut term =
+        Capture::new(Path::new(env!("CARGO_BIN_EXE_vidcue")), temp.path(), true).unwrap();
     term.command("saved", "PTY saved fixture").unwrap();
     term.send("S").unwrap();
     term.wait_for("Removed from saved shelf").unwrap();
@@ -135,7 +137,7 @@ fn real_terminal_opens_sleep_timer_and_local_saved_shelf_offline() {
     term.command("sleep off", "Sleep timer cancelled").unwrap();
     term.close().unwrap();
     runtime.block_on(async {
-        let store = ytui_services::store::Store::open(&temp.path().join("state")).unwrap();
+        let store = vidcue_services::store::Store::open(&temp.path().join("state")).unwrap();
         assert!(store.load().await.unwrap().saved_media.entries.is_empty());
         store.close().await.unwrap();
     });

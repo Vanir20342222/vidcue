@@ -40,7 +40,7 @@ class ContrastUiTest {
         }
         val original = PlaybackService.rpc(json("op" to "settings"))
         try {
-            for (theme in listOf("ytui-dark", "ytui-light")) {
+            for (theme in listOf("vidcue-dark", "vidcue-light")) {
                 PlaybackService.rpc(
                     json(
                         "op" to "save_settings",
@@ -48,7 +48,7 @@ class ContrastUiTest {
                     )
                 )
                 val palette =
-                    PlaybackService.rpc(json("op" to "theme", "dark" to (theme == "ytui-dark")))
+                    PlaybackService.rpc(json("op" to "theme", "dark" to (theme == "vidcue-dark")))
                 val expectedAccent = palette.color("accent", Color.White)
                 val initialFrames = MediaBridge.videoFrames.get()
                 RuntimeTest.launchOffline().use { scenario ->

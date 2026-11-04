@@ -3,19 +3,19 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 matrix_urls="${1:-tools/native-playback-urls.txt}"
-matrix_binary="${YTUI_TEST_BINARY:-target/debug/ytui}"
+matrix_binary="${YTUI_TEST_BINARY:-target/debug/vidcue}"
 matrix_output="${YTUI_MATRIX_OUTPUT:-playback-matrix-$(date -u +%Y%m%dT%H%M%SZ)}"
-[[ -f "$matrix_urls" && -x "$matrix_binary" ]] || { echo 'Build ytui and provide a public URL corpus.' >&2; exit 2; }
+[[ -f "$matrix_urls" && -x "$matrix_binary" ]] || { echo 'Build vidcue and provide a public URL corpus.' >&2; exit 2; }
 # A new output directory is mandatory; never replace an earlier acceptance run.
 mkdir -- "$matrix_output"
 matrix_output="$(cd -- "$matrix_output" && pwd)"
 matrix_mpv="$(command -v "${YTUI_TEST_MPV:-mpv}")"
-matrix_root="$(mktemp -d "${TMPDIR:-/tmp}/ytui-matrix.XXXXXX")"
+matrix_root="$(mktemp -d "${TMPDIR:-/tmp}/vidcue-matrix.XXXXXX")"
 trap 'rm -rf -- "$matrix_root"' EXIT
 printf '#!/usr/bin/env bash\nexec %q --vo=null --ao=null "$@"\n' "$matrix_mpv" > "$matrix_root/mpv"
 chmod 700 "$matrix_root/mpv"
 cat > "$matrix_root/config.toml" <<EOF
-theme = 'ytui-dark'
+theme = 'vidcue-dark'
 auth_store = 'file'
 notifications = false
 playback_backend = 'native'

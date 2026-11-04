@@ -35,7 +35,7 @@ impl Capture {
         std::fs::write(
             &config,
             format!(
-                "theme='ytui-dark'\nimage_protocol='halfblocks'\nauth_store='file'\nnotifications=false\nlanguage='{language}'\n"
+                "theme='vidcue-dark'\nimage_protocol='halfblocks'\nauth_store='file'\nnotifications=false\nlanguage='{language}'\n"
             ),
         )?;
         let pair = native_pty_system().openpty(PtySize {
@@ -120,7 +120,7 @@ impl Capture {
         Ok(())
     }
     pub fn command(&mut self, command: &str, expected: &str) -> Result<()> {
-        let entries = ytui::actions::ENTRIES;
+        let entries = vidcue::actions::ENTRIES;
         let entry = entries
             .iter()
             .filter(|entry| {
@@ -138,7 +138,7 @@ impl Capture {
         self.send(":")?;
         self.send(entry.title)?;
         // Prefer the exact title when its words also match a longer neighboring action.
-        let matches = ytui::actions::matching(entry.title);
+        let matches = vidcue::actions::matching(entry.title);
         let selected = matches
             .iter()
             .position(|index| entries[*index].title == entry.title)

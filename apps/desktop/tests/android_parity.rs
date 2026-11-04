@@ -5,14 +5,14 @@ use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use std::path::{Path, PathBuf};
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, RuntimeHandles},
     ui,
 };
-use ytui_core::{
+use vidcue_core::{
     Config, DownloadOptions, Job, JobState, Media, MediaKind, Page, shortcuts::Action,
 };
-use ytui_services::{
+use vidcue_services::{
     paths::Paths,
     player::{PlayerCommand, PlayerStatus},
     store::Snapshot,
@@ -32,7 +32,7 @@ fn fixture(demo: bool) -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir
     };
     paths.create().unwrap();
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         image_protocol: "none".into(),
@@ -275,7 +275,7 @@ async fn the_first_recommendation_is_prepared_when_the_queue_ends() {
     let only = video("sssssssssss");
     app.snapshot.playback.play(only.clone());
     app.ensure_related(false);
-    app.apply(ytui::app::UiEvent::Related {
+    app.apply(vidcue::app::UiEvent::Related {
         generation: app.related_generation(),
         result: Ok(Page {
             items: vec![video("rrrrrrrrrr1")],

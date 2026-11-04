@@ -3,7 +3,7 @@ package dev.ytui.android;
 /** Shared Rust engine contract; Android presentation uses native Compose controls. */
 public final class NativeBridge {
   static {
-    System.loadLibrary("ytui_mobile");
+    System.loadLibrary("vidcue_mobile");
   }
 
   private NativeBridge() {}

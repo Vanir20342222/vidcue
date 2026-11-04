@@ -147,7 +147,7 @@ jobs:
       - name: Upload sideloadable development APK and reports
         uses: actions/upload-artifact@v4
         with:
-          name: ytui-android-${{ github.sha }}
+          name: vidcue-android-${{ github.sha }}
           path: |
             apps/android/app/build/outputs/apk/debug/app-debug.apk
             apps/android/app/build/outputs/apk/debug/SHA256-and-checks.txt
@@ -156,7 +156,7 @@ jobs:
       - name: Hand the exact tested APKs to the emulator shards
         uses: actions/upload-artifact@v4
         with:
-          name: ytui-android-test-apks-${{ github.sha }}
+          name: vidcue-android-test-apks-${{ github.sha }}
           path: |
             apps/android/app/build/outputs/apk/debug/app-debug.apk
             apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
@@ -214,7 +214,7 @@ jobs:
       - name: Download the APKs built by the apk job
         uses: actions/download-artifact@v4
         with:
-          name: ytui-android-test-apks-${{ github.sha }}
+          name: vidcue-android-test-apks-${{ github.sha }}
           path: test-apks
           merge-multiple: true
       - name: Run actual JNI, isolated solver and media instrumentation (shard ${{ matrix.shard }}/4)

@@ -32,6 +32,7 @@ def main():
     if identity.is_relative_to(root):
         raise ValueError("Keep the signing identity outside the repository")
     private_path(identity, directory=True)
+    # Existing recovery archives keep their original filename after the app rename.
     keystore = identity / "ytui-stable.jks"
     credentials = identity / "credentials.json"
     private_path(keystore)

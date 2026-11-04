@@ -437,7 +437,7 @@ the mode in their timing evidence and in logcat (`SubsecondTarget`). Actual
 RGB pixels and active playback within the existing 2000 ms gate remain hard
 assertions, as do the cache-reuse and continued-playback checks. Setting
 `YTUI_ANDROID_SUBSECOND=enforce` for `tools/android/run-device-tests.sh`
-(instrumentation argument `ytui_subsecond=enforce`) restores the hard 1000 ms
+(instrumentation argument `vidcue_subsecond=enforce`) restores the hard 1000 ms
 assertion, for example on a physical device.
 
 This decision does not establish subsecond startup. No emulator, physical

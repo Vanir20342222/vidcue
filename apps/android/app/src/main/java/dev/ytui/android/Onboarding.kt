@@ -167,7 +167,7 @@ internal fun themeLabel(id: String): String =
     id.split('-', '_', ' ')
         .filter { it.isNotEmpty() }
         .joinToString(" ") { word ->
-            if (word.equals("ytui", ignoreCase = true)) "ytui"
+            if (word.equals("vidcue", ignoreCase = true)) "Vidcue"
             else word.replaceFirstChar(Char::titlecase)
         }
         .ifEmpty { id }
@@ -513,7 +513,7 @@ private fun WelcomeText(center: Boolean) {
     ) {
         Staggered(3) {
             Text(
-                "ytui",
+                "Vidcue",
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = align,

@@ -23,9 +23,9 @@ expect() { # expect <android> <rust> <path>...
     fi
 }
 expect false false docs/android/VALIDATION.md docs/changes/2026-11-03-x.md README.md
-expect false true  apps/desktop/src/app.rs crates/ytui-services/src/lib.rs
+expect false true  apps/desktop/src/app.rs crates/vidcue-services/src/lib.rs
 expect true  false apps/android/app/src/main/java/dev/ytui/android/ComposeHost.kt tools/android/build.sh
-expect true  true  crates/ytui-providers/src/lib.rs
+expect true  true  crates/vidcue-providers/src/lib.rs
 expect true  true  Cargo.lock
 expect true  true  vendor/yt-dlp-rs/src/lib.rs
 expect true  true  tools/ci-install-media.sh

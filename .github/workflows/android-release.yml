@@ -32,10 +32,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/ytui-checks.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/vidcue-checks.json"
           python3 - <<'PY'
           import json, os, pathlib
-          runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'ytui-checks.json').read_text())['workflow_runs']
+          runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'vidcue-checks.json').read_text())['workflow_runs']
           required = {'Android', 'Rust', 'Secret scan'}
           passed = {r['name'] for r in runs if r['head_sha'] == os.environ['GITHUB_SHA'] and r['head_branch'] == 'main' and r['status'] == 'completed' and r['conclusion'] == 'success'}
           missing = required - passed
@@ -65,7 +65,7 @@ jobs:
           YTUI_ANDROID_STORE_PASSWORD: ${{ secrets.YTUI_ANDROID_STORE_PASSWORD }}
           YTUI_ANDROID_KEY_PASSWORD: ${{ secrets.YTUI_ANDROID_KEY_PASSWORD }}
         run: |
-          export YTUI_ANDROID_KEYSTORE="$RUNNER_TEMP/ytui-android-release.jks"
+          export YTUI_ANDROID_KEYSTORE="$RUNNER_TEMP/vidcue-android-release.jks"
           trap 'rm -f -- "$YTUI_ANDROID_KEYSTORE"' EXIT
           python3 - <<'PY'
           import base64, os, pathlib
@@ -89,15 +89,15 @@ jobs:
           apk=apps/android/app/build/outputs/apk/release/app-release.apk
           tools/android/inspect-apk.sh "$apk" > apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" >> apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt
-          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/ytui-release-badging.txt"
-          if rg -q '^application-debuggable' "$RUNNER_TEMP/ytui-release-badging.txt"; then
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/vidcue-release-badging.txt"
+          if rg -q '^application-debuggable' "$RUNNER_TEMP/vidcue-release-badging.txt"; then
             echo 'Release APK must not be debuggable.' >&2
             exit 1
           fi
           printf '%s\n' "Source revision: $GITHUB_SHA" >> apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: ytui-android-signed-${{ inputs.version_code }}-${{ github.sha }}
+          name: vidcue-android-signed-${{ inputs.version_code }}-${{ github.sha }}
           path: |
             apps/android/app/build/outputs/apk/release/app-release.apk
             apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt

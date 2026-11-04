@@ -100,7 +100,7 @@ public final class PlaybackService extends MediaSessionService {
         getSystemService(android.app.NotificationManager.class);
     notifications.createNotificationChannel(
         new android.app.NotificationChannel(
-            "ytui-playback", "ytui playback", android.app.NotificationManager.IMPORTANCE_LOW));
+            "ytui-playback", "Vidcue playback", android.app.NotificationManager.IMPORTANCE_LOW));
     setMediaNotificationProvider(
         new DefaultMediaNotificationProvider.Builder(this)
             .setNotificationId(NotificationIds.PLAYBACK)

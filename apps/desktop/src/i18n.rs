@@ -50,7 +50,7 @@ mod tests {
     }
     #[test]
     fn all_settings_action_titles_and_shortcut_descriptions_have_catalog_entries() {
-        for field in crate::forms::Form::settings(ytui_core::Config::default()).fields {
+        for field in crate::forms::Form::settings(vidcue_core::Config::default()).fields {
             assert!(
                 german().contains_key(field.label),
                 "Missing setting: {}",
@@ -69,7 +69,7 @@ mod tests {
                 entry.group
             );
         }
-        for (_, _, _, description) in ytui_core::shortcuts::REGISTRY {
+        for (_, _, _, description) in vidcue_core::shortcuts::REGISTRY {
             assert!(
                 german().contains_key(*description),
                 "Missing shortcut: {description}"

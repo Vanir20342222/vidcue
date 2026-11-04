@@ -105,7 +105,7 @@ The first [PR native run](https://github.com/Vanir20342222/ytui/actions/runs/410
 failed the indexed startup case and a subsequent existing video case. The indexed
 failure is a real integration bug: Media3's DASH CMCD handling calls hierarchical
 URI APIs on the opaque `data:` manifest URI. It now uses a bounded request-local
-byte-array source with hierarchical `ytui-memory://` URIs. No manifest network
+byte-array source with hierarchical `vidcue-memory://` URIs. No manifest network
 request is added; resources/subtitles keep the normal source and cache. Failed
 test playback is stopped in `finally` to avoid contaminating later cases. A fresh
 full native qualification is required; neither deadline nor pixel checks changed.

@@ -3,17 +3,17 @@
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 native_urls="${1:-tools/native-playback-urls.txt}"
-native_binary="${YTUI_TEST_BINARY:-target/debug/ytui}"
+native_binary="${YTUI_TEST_BINARY:-target/debug/vidcue}"
 [[ -f "$native_urls" ]] || { echo 'Provide a text file containing one public video URL per line.' >&2; exit 2; }
-[[ -x "$native_binary" ]] || { echo 'Build first: cargo build -p ytui --locked' >&2; exit 2; }
+[[ -x "$native_binary" ]] || { echo 'Build first: cargo build -p vidcue --locked' >&2; exit 2; }
 native_mpv="$(command -v "${YTUI_TEST_MPV:-mpv}")"
-native_root="$(mktemp -d "${TMPDIR:-/tmp}/ytui-native.XXXXXX")"
+native_root="$(mktemp -d "${TMPDIR:-/tmp}/vidcue-native.XXXXXX")"
 trap 'rm -rf -- "$native_root"' EXIT
 chmod 700 "$native_root"
 printf '#!/usr/bin/env bash\nexec %q --vo=null --ao=null "$@"\n' "$native_mpv" > "$native_root/mpv"
 chmod 700 "$native_root/mpv"
 cat > "$native_root/config.toml" <<EOF
-theme = 'ytui-dark'
+theme = 'vidcue-dark'
 auth_store = 'file'
 notifications = false
 download_backend = 'native'

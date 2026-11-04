@@ -11,6 +11,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import release_channel  # noqa: E402
+
 STABLE_CERT = "b3e9f1a70dd6597884d1dbba09eafad3d4d73ea62c4074a9b8cec1ac1e034848"
 LIMIT = 100 * 1024 * 1024
 
@@ -42,10 +45,13 @@ def main():
         raise ValueError("Invalid version code")
     if not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Invalid checksum or source revision")
+    # Every published APK must install over every earlier one, the beta included.
+    published = release_channel.load_releases(os.environ["YTUI_PUBLISHED_RELEASES"])
+    release_channel.require_update(published, code)
     url = transfer_url(os.environ["YTUI_APK_URL"])
     output = Path("publish")
     output.mkdir(exist_ok=True)
-    apk = output / f"ytui-{version}.apk"
+    apk = output / f"vidcue-{version}.apk"
     opener = urllib.request.build_opener(SecureRedirect())
     total = 0
     checksum = hashlib.sha256()
@@ -76,17 +82,32 @@ def main():
     badging = subprocess.check_output(
         [str(tools / "aapt2"), "dump", "badging", str(apk)], text=True
     )
-    expected = f"package: name='dev.ytui.android.stable' versionCode='{code}' versionName='{version}'"
+    expected = (
+        f"package: name='{release_channel.PACKAGE}' versionCode='{code}' versionName='{version}'"
+    )
     if not badging.startswith(expected + " ") or re.search(r"^application-debuggable", badging, re.M):
         raise ValueError("APK package/version/release mode mismatch")
+    min_sdk = re.search(r"^sdkVersion:'([0-9]+)'$", badging, re.M)
+    if not min_sdk:
+        raise ValueError("APK minimum SDK missing")
+    update_marker = release_channel.marker(
+        version_name=version,
+        version_code=code,
+        apk=apk.name,
+        sha256=digest,
+        cert_sha256=STABLE_CERT,
+        min_sdk=min_sdk.group(1),
+    )
     (output / "APK-inspection.txt").write_text(f"Source revision: {revision}\n" + signature)
     (output / "SHA256SUMS.txt").write_text(f"{digest}  {apk.name}\n")
     (output / "notes.md").write_text(
-        f"Android development preview **{version}**, code **{code}**. Android 8+, ARM64/x86-64.\n\n"
-        "Download the APK below and open it from Files. Installs as **ytui** "
-        "(`dev.ytui.android.stable`) alongside older Preview apps. No uninstall is needed. "
-        "Account/settings/library are separate; sign in and choose folders once. "
-        "Subsequent stable builds use this same signing identity.\n\n"
+        f"Vidcue for Android **{version}**, code **{code}**. Android 8+, ARM64/x86-64.\n\n"
+        "Upgrading from an alpha? Download this APK and open it from Files to update the "
+        "owner-signed stable app, keeping its account, settings and library. Starting with "
+        "beta.1, About → Check for updates offers future signed releases in the app.\n\n"
+        "New install: download the APK below and open it from Files. It installs as **Vidcue** "
+        "(`dev.ytui.android.stable`) alongside older Preview apps; no uninstall is needed. "
+        "Every later release uses this same package and signing key, so it updates in place.\n\n"
         f"Source `{revision}` passed Android, Rust and Secret scan workflows. "
         "The APK is signed privately, checksum/certificate/ABI/alignment inspected, "
         "and published without rebuilding or re-signing.\n\n"
@@ -94,13 +115,17 @@ def main():
         "OEM background behavior and physical in-place update acceptance remain "
         "separate from offline emulator qualification.\n\n"
         f"[Validation](https://github.com/Vanir20342222/ytui/blob/{revision}/docs/android/VALIDATION.md)"
-        f" · [Changes](https://github.com/Vanir20342222/ytui/blob/{revision}/docs/android/PLAYER_LIBRARY_PLAN.md)\n"
+        f" · [Changes](https://github.com/Vanir20342222/ytui/blob/{revision}/docs/android/PLAYER_LIBRARY_PLAN.md)\n\n"
+        f"{update_marker}\n"
     )
 
 
 if __name__ == "__main__":
     try:
         main()
+    except release_channel.UpdateOrderError as error:
+        # Contains only version numbers, never the transfer URL.
+        sys.exit(f"{error}; no release published.")
     except Exception:
         # Transfer failures must not print the temporary signed URL or query token.
         sys.exit("APK verification failed; no release published. Check checksum, identity, version and source.")

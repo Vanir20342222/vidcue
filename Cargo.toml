@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ytui-core", "crates/ytui-services", "crates/ytui-providers", "crates/ytui-mobile", "apps/desktop"]
+members = ["crates/vidcue-core", "crates/vidcue-services", "crates/vidcue-providers", "crates/vidcue-mobile", "apps/desktop"]
 resolver = "2"
 exclude = ["vendor/yt-dlp-rs", "vendor/winit", "vendor/eframe"]
 
