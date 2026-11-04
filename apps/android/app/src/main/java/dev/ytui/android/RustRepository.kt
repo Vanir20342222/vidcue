@@ -315,6 +315,12 @@ internal class YtuiViewModel(
     val config = MutableStateFlow(JSONObject())
     val palette = MutableStateFlow(JSONObject())
     val themes = MutableStateFlow<List<String>>(emptyList())
+    /** Built-in palettes by theme name, loaded on demand for theme previews. */
+    val palettes = MutableStateFlow(JSONObject())
+
+    fun loadPalettes() = task {
+        if (palettes.value.length() == 0) palettes.value = RustRpc.objectCall("palettes")
+    }
     val account = MutableStateFlow(JSONObject())
     val player = MutableStateFlow(PlayerState())
     val downloads = MutableStateFlow<List<JSONObject>>(emptyList())
@@ -326,6 +332,12 @@ internal class YtuiViewModel(
     val recent = MutableStateFlow<List<MediaCard>>(emptyList())
     val status = MutableStateFlow("Ready")
     val actionError = MutableStateFlow<String?>(null)
+    /** Completed actions as (sequence, kind) so the UI can confirm them without text. */
+    val confirmed = MutableStateFlow(0L to "")
+
+    fun confirm(kind: String) {
+        confirmed.update { (it.first + 1) to kind }
+    }
     val ready = MutableStateFlow(false)
     val playerOpen = MutableStateFlow(false)
     val sharedQuery = MutableStateFlow("")
@@ -448,6 +460,7 @@ internal class YtuiViewModel(
                                         RustRpc.objectCall("import_theme", "text" to text)
                                     config.value = RustRpc.objectCall("settings")
                                     status.value = "Palette applied"
+                                    confirm("palette")
                                 }
                             }
                         "cookie_file" -> {
@@ -747,7 +760,10 @@ internal class YtuiViewModel(
         if (query.startsWith("https://") || query.startsWith("http://")) {
             runCatching { linked(query) }
                 .onSuccess { play(it) }
-                .onFailure { status.value = "Enter a valid HTTP(S) video or playlist URL" }
+                .onFailure {
+                    status.value = "Enter a valid HTTP(S) video or playlist URL"
+                    actionError.value = status.value
+                }
         } else navigate(request = json((if (tab.value == 3) "RadioSearch" else "Search") to query))
     }
 
@@ -894,6 +910,7 @@ internal class YtuiViewModel(
                 download && config.value.optJSONObject("download")?.optBoolean("audio") == true
         if (download && media.live) {
             status.value = "Live recording is not available"
+            actionError.value = status.value
             return
         }
         if (media.collection) {
@@ -1033,6 +1050,7 @@ internal class YtuiViewModel(
                 )
                     playerOpen.value = true
                 status.value = if (download) "Download queued" else "Starting playback"
+                if (download) confirm("download")
             } finally {
                 if (!handedOff && prepareSurface) {
                     StartupTimings.ended(
@@ -1107,6 +1125,7 @@ internal class YtuiViewModel(
         val result = RustRpc.objectCall("save_media", "media" to media.value)
         status.value =
             if (result.optBoolean("saved")) "Saved locally" else "Removed from saved items"
+        confirm(if (result.optBoolean("saved")) "saved" else "unsaved")
         if (feeds[tab.value].value.request == "Favorites")
             navigate(request = "Favorites", remember = false)
     }
@@ -1123,6 +1142,7 @@ internal class YtuiViewModel(
         loadQueue()
         effect("queue_changed")
         status.value = "Added to queue"
+        confirm("queue")
     }
 
     fun loadOfflinePlaylists() = task {
@@ -1270,6 +1290,33 @@ internal class YtuiViewModel(
         effect("queue_changed")
     }
 
+    /** Undo a removal: append the item again, then move it back to where it was. */
+    fun restoreQueue(index: Int, media: MediaCard) = task {
+        RustRpc.call(json("op" to "enqueue", "media" to media.value, "music" to media.musicSource))
+        val items = RustRpc.arrayCall("queue").objects()
+        val last = items.lastIndex
+        if (last >= 0 && index in 0 until last)
+            RustRpc.objectCall("queue_move", "from" to last, "to" to index, "url" to media.url)
+        loadQueue()
+        effect("queue_changed")
+    }
+
+    /** Undo a clear: queue the items again in their original order. */
+    fun requeue(items: List<MediaCard>) = task {
+        for (media in items)
+            RustRpc.call(json("op" to "enqueue", "media" to media.value, "music" to media.musicSource))
+        loadQueue()
+        effect("queue_changed")
+    }
+
+    /** Remove every queued item, newest first so indexes stay valid. */
+    fun clearQueue(items: List<MediaCard>) = task {
+        for (index in items.indices.reversed())
+            RustRpc.objectCall("queue_remove", "index" to index, "url" to items[index].url)
+        queue.value = emptyList()
+        effect("queue_changed")
+    }
+
     fun loadHistory() = task {
         recent.value = RustRpc.arrayCall("history_list").objects().map(::MediaCard)
     }
@@ -1404,6 +1451,7 @@ internal class YtuiViewModel(
             )
         if (token == lyricToken && revision == lyricRevision) lyricData.value = result
         status.value = "Lyrics saved locally"
+        confirm("lyrics")
     }
 
     fun lyricRemove(media: JSONObject) = task {

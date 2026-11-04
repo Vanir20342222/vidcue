@@ -3,7 +3,13 @@ package dev.ytui.android
 import android.content.Intent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -15,6 +21,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -273,6 +280,59 @@ internal fun FocusedPlayer(
                 }
                 return
             }
+            @Composable
+            fun ActionRow() {
+                // Labelled pill actions under the title (YouTube watch-page pattern), with
+                // More pinned to the trailing edge. Every entry maps to an existing action;
+                // fullscreen lives on the video itself. Narrow columns scroll the pills.
+                val media = player.media
+                val canSave =
+                    media != null &&
+                        !player.value.optBoolean("offline") &&
+                        !media.optBoolean("live") &&
+                        !player.preview
+                Row(
+                    Modifier.fillMaxWidth().testTag("player-actions"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        Modifier.weight(1f)
+                            .then(
+                                if (player.video) Modifier.horizontalScroll(rememberScrollState())
+                                else Modifier
+                            ),
+                        horizontalArrangement =
+                            if (player.video) Arrangement.spacedBy(8.dp)
+                            else Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val compact = !player.video
+                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
+                        if (!player.video)
+                            PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
+                        if (canSave && media != null)
+                            PlayerAction(Glyph.Download, "Save", "Save offline", "player-download", compact) {
+                                vm.play(MediaCard(media), download = true)
+                            }
+                        val sleepLeft = rememberSleepLeft(player)
+                        PlayerAction(
+                            Glyph.Sleep,
+                            if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
+                            if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
+                            compact = compact,
+                            active = sleepLeft > 0,
+                            action = onSleep,
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    MediaIconButton(
+                        Glyph.More,
+                        "Playback options",
+                        "player-options",
+                        action = onMore,
+                    )
+                }
+            }
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
@@ -294,8 +354,9 @@ internal fun FocusedPlayer(
                 ) {
                     Text(
                         player.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
+                        style =
+                            if (player.video) MaterialTheme.typography.titleLarge
+                            else MaterialTheme.typography.headlineSmall,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -320,7 +381,7 @@ internal fun FocusedPlayer(
                                 creator,
                                 style =
                                     if (player.video) MaterialTheme.typography.titleSmall
-                                    else MaterialTheme.typography.bodyMedium,
+                                    else MaterialTheme.typography.bodyLarge,
                                 fontWeight = if (player.video) FontWeight.Medium else null,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -334,41 +395,7 @@ internal fun FocusedPlayer(
                     .optString("error")
                     .takeUnless { it.isBlank() || it == "null" }
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                // Labelled pill actions under the title (YouTube watch-page pattern), with
-                // More pinned to the trailing edge. Every entry maps to an existing action;
-                // fullscreen lives on the video itself. Narrow columns scroll the pills.
-                val media = player.media
-                val canSave =
-                    media != null &&
-                        !player.value.optBoolean("offline") &&
-                        !media.optBoolean("live") &&
-                        !player.preview
-                Row(
-                    Modifier.fillMaxWidth().testTag("player-actions"),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", action = onQueue)
-                        if (!player.video)
-                            PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", action = onLyrics)
-                        if (canSave && media != null)
-                            PlayerAction(Glyph.Download, "Save", "Save offline", "player-download") {
-                                vm.play(MediaCard(media), download = true)
-                            }
-                        PlayerAction(Glyph.Sleep, "Sleep", "Sleep timer", action = onSleep)
-                    }
-                    Spacer(Modifier.width(4.dp))
-                    MediaIconButton(
-                        Glyph.More,
-                        "Playback options",
-                        "player-options",
-                        action = onMore,
-                    )
-                }
+                if (player.video) ActionRow()
                 if (!player.video) PlayerSeek(vm, player)
                 if (!player.video)
                     Row(
@@ -384,21 +411,9 @@ internal fun FocusedPlayer(
                         ) {
                             vm.command("shuffle")
                         }
-                        MediaIconButton(Glyph.Previous, "Previous track") { vm.command("previous") }
-                        FilledIconButton(
-                            { vm.command("pause") },
-                            Modifier.size(64.dp).testTag("player-pause").semantics {
-                                contentDescription = if (player.playing) "Pause" else "Play"
-                            },
-                            colors =
-                                IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.onBackground,
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                ),
-                        ) {
-                            PlayPauseIcon(player.playing, Modifier.size(32.dp))
-                        }
-                        MediaIconButton(Glyph.Next, "Next track", "player-next") {
+                        TransportButton(Glyph.Previous, "Previous track") { vm.command("previous") }
+                        PlayDisc(player.playing, Modifier.testTag("player-pause")) { vm.command("pause") }
+                        TransportButton(Glyph.Next, "Next track", Modifier.testTag("player-next")) {
                             vm.command("next")
                         }
                         MediaModeButton(
@@ -410,6 +425,10 @@ internal fun FocusedPlayer(
                             vm.command("repeat")
                         }
                     }
+                if (!player.video) {
+                    Spacer(Modifier.height(4.dp))
+                    ActionRow()
+                }
             }
         }
         @Composable
@@ -455,7 +474,7 @@ internal fun FocusedPlayer(
                                         }
                                     }
                                 )
-                                CircularProgressIndicator()
+                                MediaSpinner(Modifier.size(36.dp), MediaTokens.videoInk)
                                 Box(Modifier.align(Alignment.TopStart).padding(4.dp)) {
                                     CompositionLocalProvider(
                                         LocalContentColor provides MediaTokens.videoInk
@@ -479,12 +498,21 @@ internal fun FocusedPlayer(
                     val ratio =
                         if (config.optString("music_player_style", "classic") == "classic") 1f
                         else 1.35f
+                    // The cover eases back while paused and steps forward when playing.
+                    val rest by
+                        animateFloatAsState(
+                            if (player.playing || !motion.animate) 1f else 0.86f,
+                            motion.spring(),
+                            label = "cover-rest",
+                        )
                     Visualizer(
                         player,
                         config,
                         Modifier.width(minOf(maxWidth, maxHeight * ratio))
                             .aspectRatio(ratio)
                             .graphicsLayer {
+                                scaleX = rest
+                                scaleY = rest
                                 translationX = trackShift.value
                                 val away = (abs(trackShift.value) / trackWidth).coerceIn(0f, 1f)
                                 alpha = 1f - away * 0.7f
@@ -526,7 +554,7 @@ internal fun FocusedPlayer(
             }
         else
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Art(Modifier.weight(1f).fillMaxWidth())
+                Art(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp))
                 Controls(Modifier.fillMaxWidth().padding(bottom = 8.dp))
             }
     }
@@ -559,17 +587,12 @@ internal fun UpNext(
                 ?: state.context.firstOrNull { it.url != playingUrl }.takeIf { state.autoplay }
     val contextLabel = if (state.related) "Recommended" else "From this playlist"
     Column(modifier.fillMaxWidth().testTag("up-next")) {
-        if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (showHeader)
             Row(
                 Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    "Up next",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
+                Text("Up next", style = MaterialTheme.typography.titleLarge)
                 // With no manual queue the context list is all there is: name its source in
                 // the header instead of stacking a second heading above the first row.
                 Text(
@@ -581,16 +604,7 @@ internal fun UpNext(
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (queue.isNotEmpty() && onManage != null)
-                    TextButton(
-                        onManage,
-                        Modifier.heightIn(min = 48.dp),
-                        colors =
-                            ButtonDefaults.textButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                    ) {
-                        Text("Edit queue")
-                    }
+                    Pill("Edit queue", style = PillStyle.Quiet, onClick = onManage)
             }
         if (queue.isEmpty() && state.context.isEmpty())
             Text(
@@ -652,37 +666,96 @@ internal fun UpNext(
     }
 }
 
-/** Labelled pill for the watch-page action row; [description] stays the accessible name. */
+/** Labelled pill for the player action row; [description] stays the accessible name. */
 @Composable
 internal fun PlayerAction(
     glyph: Glyph,
     label: String,
     description: String,
     tag: String = "",
+    compact: Boolean = false,
+    active: Boolean = false,
     action: () -> Unit,
 ) {
-    Surface(
-        onClick = action,
-        modifier =
-            Modifier.testTag(tag).semantics {
-                contentDescription = description
-                role = Role.Button
-            },
-        shape = MediaTokens.pill,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+    val source = remember { MutableInteractionSource() }
+    val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
+    if (compact) {
+        // Music: an evenly spaced icon row with small captions, like a transport's second line.
+        Column(
+            Modifier.testTag(tag)
+                .pressScale(source, 0.9f)
+                .widthIn(min = 56.dp)
+                .heightIn(min = 56.dp)
+                .clip(MediaTokens.medium)
+                .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+                .semantics { contentDescription = description }
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
+            Text(
+                label,
+                Modifier.clearAndSetSemantics {},
+                style =
+                    MaterialTheme.typography.labelSmall.merge(
+                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                    ),
+                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        return
+    }
+    Row(
+        Modifier.testTag(tag)
+            .pressScale(source, 0.94f)
+            .heightIn(min = 48.dp)
+            .clip(MediaTokens.pill)
+            .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+            .semantics { contentDescription = description },
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
             // The visible label repeats the description; keep one accessible name.
-            Modifier.padding(start = 12.dp, end = 16.dp).heightIn(min = 36.dp).clearAndSetSemantics {},
+            Modifier.clip(MediaTokens.pill)
+                .background(LocalContentColor.current.copy(alpha = 0.09f))
+                .padding(start = 12.dp, end = 16.dp)
+                .heightIn(min = 38.dp)
+                .clearAndSetSemantics {},
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            MediaIcon(glyph, Modifier.size(20.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            MediaIcon(glyph, Modifier.size(18.dp), if (active) accent else LocalContentColor.current, filled = active)
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, color = if (active) accent else Color.Unspecified)
         }
     }
 }
+
+/** The main play/pause control: a large ink disc whose glyph morphs between states. */
+@Composable
+internal fun PlayDisc(playing: Boolean, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 72.dp, action: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val ink = MaterialTheme.colorScheme.onBackground
+    Box(
+        modifier
+            .size(size)
+            .pressScale(source, 0.9f)
+            .shadow(10.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(CircleShape)
+            .background(ink)
+            .clickable(source, null, role = Role.Button, onClick = action)
+            .semantics { contentDescription = if (playing) "Pause" else "Play" },
+        contentAlignment = Alignment.Center,
+    ) {
+        PlayPauseIcon(playing, Modifier.size(size * 0.42f), MaterialTheme.colorScheme.background)
+    }
+}
+
+/** Previous/next: larger glyphs than toolbar icons, the same soft press. */
+@Composable
+internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = Modifier, action: () -> Unit) =
+    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 30.dp, action = action)
 
 @Composable
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
@@ -709,8 +782,16 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                 marks = player.sponsorMarks(),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(time(drag ?: player.position), style = MaterialTheme.typography.labelMedium)
-                Text(time(player.duration), style = MaterialTheme.typography.labelMedium)
+                val numbers =
+                    MaterialTheme.typography.labelMedium.merge(
+                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                    )
+                Text(time(drag ?: player.position), style = numbers, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "-" + time((player.duration - (drag ?: player.position)).coerceAtLeast(0f)),
+                    style = numbers,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -738,34 +819,41 @@ internal fun MediaSeekSlider(
     modifier: Modifier = Modifier,
     marks: List<Pair<Float, Float>> = emptyList(),
 ) {
-    val accent = MaterialTheme.colorScheme.primary
-    val track = MaterialTheme.colorScheme.outlineVariant
-    val markColor = MaterialTheme.colorScheme.tertiary
+    val accent = MaterialTheme.colorScheme.onBackground
+    val track = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.16f)
+    val markColor = MediaTokens.sponsorMark
+    val source = remember { MutableInteractionSource() }
+    val dragging by source.collectIsDraggedAsState()
+    val pressing by source.collectIsPressedAsState()
+    val active = dragging || pressing
+    val motion = LocalMotion.current
+    val thickness by animateDpAsState(if (active) 8.dp else 4.dp, motion.spring(), label = "seek-track")
+    val knob by animateDpAsState(if (active) 18.dp else 12.dp, motion.spring(), label = "seek-knob")
     Slider(
         value,
         onValueChange,
         modifier.heightIn(min = 48.dp),
         valueRange = valueRange,
         onValueChangeFinished = onValueChangeFinished,
-        thumb = { Box(Modifier.size(12.dp).clip(CircleShape).background(accent)) },
+        interactionSource = source,
+        thumb = {
+            Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(knob).shadow(3.dp, CircleShape).clip(CircleShape).background(accent))
+            }
+        },
         track = { state ->
-            Canvas(Modifier.fillMaxWidth().height(3.dp)) {
+            Canvas(Modifier.fillMaxWidth().height(thickness)) {
                 val fraction =
                     mediaProgress(
                         state.value - state.valueRange.start,
                         state.valueRange.endInclusive - state.valueRange.start,
                     )
-                drawLine(
-                    track,
-                    androidx.compose.ui.geometry.Offset(0f, size.height / 2),
-                    androidx.compose.ui.geometry.Offset(size.width, size.height / 2),
-                    size.height,
-                )
-                drawLine(
+                val radius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                drawRoundRect(track, cornerRadius = radius)
+                drawRoundRect(
                     accent,
-                    androidx.compose.ui.geometry.Offset(0f, size.height / 2),
-                    androidx.compose.ui.geometry.Offset(size.width * fraction, size.height / 2),
-                    size.height,
+                    size = androidx.compose.ui.geometry.Size(size.width * fraction, size.height),
+                    cornerRadius = radius,
                 )
                 val span = state.valueRange.endInclusive - state.valueRange.start
                 if (span > 0f) {
@@ -786,4 +874,27 @@ internal fun MediaSeekSlider(
             }
         },
     )
+}
+
+/** Labelled seek jump ("−10" / "+10") with the same round press as other transport keys. */
+@Composable
+internal fun SeekJump(label: String, description: String, action: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    Box(
+        Modifier.size(52.dp)
+            .pressScale(source, 0.9f)
+            .clip(CircleShape)
+            .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style =
+                MaterialTheme.typography.titleSmall.merge(
+                    androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                ),
+            modifier = Modifier.clearAndSetSemantics {},
+        )
+    }
 }

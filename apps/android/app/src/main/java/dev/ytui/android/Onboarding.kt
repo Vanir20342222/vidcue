@@ -58,9 +58,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -271,13 +269,7 @@ private fun TopBar(step: Int, background: Color, onBack: () -> Unit, onFinish: (
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { StepDots(step) }
         Box(Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
             if (OnboardingSteps.showSkip(step))
-                TextButton(onFinish, Modifier.heightIn(min = 48.dp).testTag("onboarding-skip")) {
-                    Text(
-                        "Skip",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                QuietAction("Skip", Modifier.testTag("onboarding-skip"), action = onFinish)
         }
     }
 }
@@ -326,12 +318,14 @@ private fun BottomBar(step: Int, vm: YtuiViewModel, onNext: () -> Unit, onFinish
             contentAlignment = Alignment.Center,
         ) {
             when {
-                OnboardingSteps.isLast(step) -> Action("Start watching", "onboarding-finish", true, onFinish)
-                step == OnboardingSteps.WELCOME -> Action("Get started", "onboarding-next", true, onNext)
+                OnboardingSteps.isLast(step) ->
+                    Pill("Start watching", Modifier.testTag("onboarding-finish"), PillStyle.Primary, fill = true, onClick = onFinish)
+                step == OnboardingSteps.WELCOME ->
+                    Pill("Get started", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
                 // Not signed in: sign-in is the page's primary action, so advancing is quiet.
                 step == OnboardingSteps.ACCOUNT && !account.optBoolean("connected") ->
                     QuietAction("Maybe later", Modifier.testTag("onboarding-next"), action = onNext)
-                else -> Action("Continue", "onboarding-next", true, onNext)
+                else -> Pill("Continue", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
             }
         }
     }
@@ -478,7 +472,7 @@ private fun SettingSwitchRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Switch(checked, null, enabled = enabled)
+        MediaSwitch(checked, enabled)
     }
 }
 
@@ -603,6 +597,8 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     // loaded (or if loading failed), editing here could replace them with defaults.
     val editable = ready && config.length() > 0
     val selected = config.optString("theme", "system")
+    val palettes by vm.palettes.collectAsState()
+    LaunchedEffect(Unit) { vm.loadPalettes() }
     val choices = listOf("system") + themes.filter { it != "system" }
     PageColumn {
         PageBadge(Glyph.Palette)
@@ -622,7 +618,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 for (name in choices)
-                    ThemeChip(name, name == selected, editable) {
+                    ThemeChip(name, name == selected, editable, palettes.optJSONObject(name)) {
                         vm.updateConfig(dark) { it.put("theme", name) }
                     }
             }
@@ -643,7 +639,13 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
 }
 
 @Composable
-private fun ThemeChip(name: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun ThemeChip(
+    name: String,
+    selected: Boolean,
+    enabled: Boolean,
+    palette: org.json.JSONObject? = null,
+    onClick: () -> Unit,
+) {
     val reduced = LocalReducedMotion.current
     val colors = MaterialTheme.colorScheme
     val container by colorTween(if (selected) colors.onBackground else colors.surfaceContainerHigh, reduced)
@@ -675,6 +677,10 @@ private fun ThemeChip(name: String, selected: Boolean, enabled: Boolean, onClick
                 MediaIcon(Glyph.Check, Modifier.size(18.dp), label)
                 Spacer(Modifier.width(8.dp))
             }
+        }
+        if (palette != null) {
+            PaletteSwatch(palette, Modifier.size(width = 26.dp, height = 17.dp))
+            Spacer(Modifier.width(8.dp))
         }
         Text(
             themeLabel(name),
