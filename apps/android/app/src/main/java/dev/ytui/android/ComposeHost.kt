@@ -49,6 +49,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -311,7 +312,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     }
     SideEffect {
         activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
-        activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        // The root and every panel paint this same background up to the gesture bar. An opaque
+        // bar in that colour keeps the system from drawing its own contrast scrim or theme
+        // colour there, which showed as a dark band under the player's action row.
+        activity.window.navigationBarColor = background.toArgb()
         WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
             isAppearanceLightStatusBars = light
             isAppearanceLightNavigationBars = light
