@@ -1,114 +1,80 @@
-name: Publish locally signed Android APK
-on:
-  create:
-  workflow_dispatch:
-    inputs:
-      apk_url:
-        description: 'Temporary HTTPS file-service URL of the already signed APK (never a key/archive)'
-        required: true
-        type: string
-      sha256:
-        description: 'SHA256 of that APK'
-        required: true
-        type: string
-      version_code:
-        description: 'Expected Android version code'
-        required: true
-        type: string
-      version_name:
-        description: 'Expected version name'
-        required: true
-        type: string
+name: Export qualified Android native inputs
+on: create
 permissions:
   contents: read
   actions: read
-concurrency:
-  group: android-local-release
-  cancel-in-progress: false
 jobs:
-  publish:
-    if: github.repository == 'Vanir20342222/ytui' && (github.ref == 'refs/heads/main' || (github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'publish-android-')))
+  export:
+    if: github.repository == 'Vanir20342222/ytui' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'native-export-beta1-')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
       actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      YTUI_APK_SHA256: ${{ inputs.sha256 }}
-      YTUI_VERSION_CODE: ${{ inputs.version_code }}
-      YTUI_VERSION_NAME: ${{ inputs.version_name }}
-      YTUI_RELEASE_SOURCE: ${{ github.sha }}
     steps:
-      - name: Mask the temporary transfer link before any environment logging
+      - name: Require the qualified main Android build
         uses: actions/github-script@v7
         with:
           script: |
-            if (context.eventName !== 'workflow_dispatch') return;
-            const fs = require('fs');
-            const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-            core.setSecret(event.inputs.apk_url);
-            core.exportVariable('YTUI_APK_URL', event.inputs.apk_url);
-      - uses: actions/checkout@v4
+            for (let attempt = 0; attempt < 60; attempt++) {
+              const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: 41925468337});
+              if (run.head_sha !== '042fd66b2c1c716c3d8b2c493376e5ae7e34cc59' || run.head_branch !== 'main' || run.event !== 'push') throw new Error('Wrong source run');
+              if (run.status === 'completed') { if (run.conclusion !== 'success') throw new Error('Source build failed'); return; }
+              await new Promise(resolve => setTimeout(resolve, 10000));
+            }
+            throw new Error('Source build is not complete');
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
-      - name: Load the temporary APK handoff (keys are never transferred)
-        if: github.event_name == 'create'
-        env:
-          HANDOFF_BRANCH: ${{ github.event.ref }}
+          github-token: ${{ github.token }}
+          run-id: 41925468337
+          name: vidcue-android-042fd66b2c1c716c3d8b2c493376e5ae7e34cc59
+          path: tested
+      - name: Split the exact tested APK into native packaging inputs
         run: |
-          python3 tools/android/publish_request.py read-branch "$HANDOFF_BRANCH"
-      - name: Use the verified source checkout
-        if: github.event_name == 'create'
-        run: git checkout --detach "$YTUI_RELEASE_SOURCE"
-      - name: Require successful exact-source main checks
-        run: |
-          [[ "$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)" == "$YTUI_RELEASE_SOURCE" ]] ||
-            { echo 'Main moved; qualify and sign the current main revision.' >&2; exit 1; }
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$YTUI_RELEASE_SOURCE&per_page=100" > "$RUNNER_TEMP/checks.json"
           python3 - <<'PY'
-          import json, os, pathlib
-          runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'checks.json').read_text())['workflow_runs']
-          passed = {r['name'] for r in runs if r['head_sha'] == os.environ['YTUI_RELEASE_SOURCE'] and r['head_branch'] == 'main' and r['event'] == 'push' and r['status'] == 'completed' and r['conclusion'] == 'success'}
-          missing = {'Android', 'Rust', 'Secret scan'} - passed
-          if missing:
-              raise SystemExit('Wait for successful main checks: ' + ', '.join(sorted(missing)))
+          from pathlib import Path
+          import hashlib,json,re,zipfile
+          source='042fd66b2c1c716c3d8b2c493376e5ae7e34cc59'
+          apks=list(Path('tested').rglob('app-debug.apk'))
+          assert len(apks)==1
+          apk=apks[0]
+          digest=hashlib.sha256(apk.read_bytes()).hexdigest()
+          with zipfile.ZipFile(apk) as archive:
+              assert any(source.encode() in archive.read(n) for n in archive.namelist() if re.fullmatch(r'classes[0-9]*\.dex',n))
+              for abi in ('arm64-v8a','x86_64'):
+                  directory=Path('export')/abi;directory.mkdir(parents=True)
+                  data=archive.read('lib/'+abi+'/libvidcue_mobile.so')
+                  (directory/'libvidcue_mobile.so').write_bytes(data)
+                  (directory/'provenance.json').write_text(json.dumps(dict(source=source,run=41925468337,apk_sha256=digest,abi=abi,native_sha256=hashlib.sha256(data).hexdigest())))
+              assets=Path('export/assets');assets.mkdir(parents=True)
+              for name in archive.namelist():
+                  if name.startswith('assets/notices/') or name=='assets/vidcue-LICENSE':
+                      relative=Path(name).relative_to('assets');assert '..' not in relative.parts
+                      if not name.endswith('/'):
+                          target=assets/relative;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(archive.read(name))
+              assert (assets/'notices/inventory.json').is_file()
+              (assets/'provenance.json').write_text(json.dumps(dict(source=source,run=41925468337,apk_sha256=digest)))
           PY
-      - uses: actions/setup-java@v4
+      - uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: '21'
-      - uses: android-actions/setup-android@v3
+          name: qualified-native-arm64-042fd66
+          path: export/arm64-v8a/
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
         with:
-          packages: platform-tools
-      - name: Install pinned inspection tools
-        run: sdkmanager 'build-tools;35.0.0' 'ndk;27.2.12479018'
-      - name: List published releases (version codes must keep increasing)
-        run: gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
-      - name: Download, verify and inspect the signed APK
-        run: |
-          export YTUI_PUBLISHED_RELEASES="$RUNNER_TEMP/releases.json"
-          python3 tools/android/verify-local-release.py
-          apk="publish/vidcue-$YTUI_VERSION_NAME.apk"
-          tools/android/inspect-apk.sh "$apk" >> publish/APK-inspection.txt
-      - name: Publish the verified APK without rebuilding or signing
-        run: |
-          tag="android-$YTUI_VERSION_NAME"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo 'A release already exists for this version; use an increasing version.' >&2
-            exit 1
-          fi
-          gh release create "$tag" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt --repo "$GITHUB_REPOSITORY" --target "$YTUI_RELEASE_SOURCE" --title "Vidcue Android $YTUI_VERSION_NAME" --notes-file publish/notes.md --draft --prerelease --latest=false
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
-      - name: Remove the temporary handoff branch
-        if: always() && github.event_name == 'create'
+          name: qualified-native-x86-042fd66
+          path: export/x86_64/
+          retention-days: 1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-android-assets-042fd66
+          path: export/assets/
+          retention-days: 1
+      - name: Delete only this temporary export branch
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
             const branch = context.payload.ref;
-            if (!/^publish-android-[A-Za-z0-9.+_-]+-[0-9a-f]{12}$/.test(branch)) return;
-            try {
-              await github.rest.git.deleteRef({...context.repo, ref: `heads/${branch}`});
-            } catch (error) {
-              if (error.status !== 404) throw error;
-            }
+            if (!/^native-export-beta1-[a-z0-9-]+$/.test(branch)) return;
+            try { await github.rest.git.deleteRef({...context.repo, ref: `heads/${branch}`}); } catch (e) { if (e.status !== 404) throw e; }
