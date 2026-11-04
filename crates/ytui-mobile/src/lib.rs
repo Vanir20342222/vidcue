@@ -678,6 +678,43 @@ impl Engine {
                     ytui_providers::lyrics::lookup(proxy.as_deref(), title, artist).await?;
                 Ok(serde_json::to_value(tracks)?)
             }
+            "lyrics_auto" => {
+                // Opening lyrics for a song: YouTube Music's own lyrics by video ID, then LRCLIB
+                // by the song's title and artist. Neither request carries the account session.
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                let proxy = self.config.lock().expect("config").proxy.clone();
+                let mut tracks = Vec::new();
+                if let Some(video) = ytui_providers::music_lyrics::video_id(&media.id, &media.url)
+                    && let Ok(Some(track)) = ytui_providers::music_lyrics::lookup(
+                        proxy.as_deref(),
+                        &video,
+                        &media.title,
+                        &media.creator,
+                    )
+                    .await
+                {
+                    tracks.push(track);
+                }
+                // Timed LRCLIB lines are worth adding when YouTube Music had only plain text.
+                if (tracks.iter().all(|t| !t.synced()))
+                    && !media.title.trim().is_empty()
+                    && !media.creator.trim().is_empty()
+                    && let Ok(found) = ytui_providers::lyrics::lookup(
+                        proxy.as_deref(),
+                        &media.title,
+                        media.creator.trim_end_matches(" - Topic"),
+                    )
+                    .await
+                {
+                    let synced: Vec<_> = found.iter().filter(|t| t.synced()).cloned().collect();
+                    if !synced.is_empty() {
+                        tracks.splice(0..0, synced.into_iter().take(3));
+                    } else if tracks.is_empty() {
+                        tracks.extend(found.into_iter().take(3));
+                    }
+                }
+                Ok(serde_json::to_value(tracks)?)
+            }
             "lyrics_get" | "lyrics_save" | "lyrics_remove" => self.local_lyrics(r),
             "import_cookie_file" => {
                 let _commit = self.settings_commit.lock().expect("settings commit");

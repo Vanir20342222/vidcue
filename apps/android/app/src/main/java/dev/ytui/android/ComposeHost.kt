@@ -48,6 +48,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.asImageBitmap
@@ -58,6 +61,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -312,10 +316,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     }
     SideEffect {
         activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
-        // The root and every panel paint this same background up to the gesture bar. An opaque
-        // bar in that colour keeps the system from drawing its own contrast scrim or theme
-        // colour there, which showed as a dark band under the player's action row.
-        activity.window.navigationBarColor = background.toArgb()
+        // The app draws behind the gesture bar itself: the root paints the page colour and the
+        // music player continues its cover-coloured backdrop there. An opaque bar colour (or the
+        // system's contrast scrim) showed as a dark band under the player's action row.
+        activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) activity.window.isNavigationBarContrastEnforced = false
         WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
             isAppearanceLightStatusBars = light
             isAppearanceLightNavigationBars = light
@@ -478,13 +483,27 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                         }
                         if (!tabletLayout) Toolbar()
+                        // Phones: the mini player and navigation float over the page instead of
+                        // taking a band of their own, so artwork stays visible around them.
+                        val bottomDock = !tabletLayout && !imeVisible
+                        var dockHeight by remember { mutableIntStateOf(0) }
                         Box(Modifier.weight(1f).fillMaxWidth()) {
                             val tablet = tabletLayout
+                            CompositionLocalProvider(
+                                LocalBottomOverlay provides
+                                    if (bottomDock) with(LocalDensity.current) { dockHeight.toDp() } else 0.dp
+                            ) {
                             Row(Modifier.fillMaxSize()) {
                                 if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
                                 Column(Modifier.weight(1f).fillMaxHeight()) {
                                 if (tablet) Toolbar()
-                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                                Box(
+                                    Modifier.weight(1f)
+                                        .fillMaxWidth()
+                                        .tabSwipe(tab, enabled = mobile.gesture("gesture_swipe_tabs") && !searchMode) {
+                                            vm.chooseTab(it)
+                                        }
+                                ) {
                                     if (tab == 0) OfflineLibrary(vm)
                                     else
                                         key(tab) {
@@ -518,12 +537,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     }
                                 }
                             }
-                        }
-                        if (!tabletLayout) {
-                            if (!imeVisible) {
-                                PlayerDock(vm)
-                                AppNavigation(tab, ::selectTab)
                             }
+                            if (bottomDock)
+                                Column(
+                                    Modifier.align(Alignment.BottomCenter)
+                                        .fillMaxWidth()
+                                        .onSizeChanged { dockHeight = it.height }
+                                        .testTag("bottom-dock")
+                                ) {
+                                    PlayerDock(vm)
+                                    AppNavigation(tab, ::selectTab)
+                                }
                         }
                     }
                 }
@@ -661,6 +685,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             }
                         }
                 }
+                if (!onboarding && !fullscreen) DownloadFlightHost(config.optBoolean("thumbnails", true))
                 if (!onboarding && !fullscreen)
                     NoticeHost(
                         vm,
@@ -811,8 +836,6 @@ internal fun Panel(
                         }
                     else Modifier
                 )
-                .safeDrawingPadding()
-                .imePadding()
                 .semantics { paneTitle = title },
             color = MaterialTheme.colorScheme.background,
         ) {
@@ -820,7 +843,11 @@ internal fun Panel(
                 LocalPanelDrag provides
                     if (full && swipeToClose) PanelDrag(drag, flyOff) else null
             ) {
-                Body(Modifier.fillMaxSize().then(backdrop))
+                // The backdrop fills the whole window, under the status and gesture bars too;
+                // only the content keeps clear of them.
+                Box(Modifier.fillMaxSize().then(backdrop)) {
+                    Body(Modifier.fillMaxSize().safeDrawingPadding().imePadding())
+                }
             }
         }
     } else if (title == "About ytui") {
@@ -900,6 +927,41 @@ internal fun Panel(
 /** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
 private var pendingTabEntry = 0
 
+/**
+ * Sideways swipes anywhere on the page move between the bottom destinations in their display
+ * order (Home, Music, Radio, Downloads). The page follows the finger; rows that scroll sideways
+ * themselves (filter chips, shelves) keep their own drags.
+ */
+@Composable
+private fun Modifier.tabSwipe(tab: Int, enabled: Boolean, choose: (Int) -> Unit): Modifier {
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    val width = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val pull = remember { Animatable(0f) }
+    val current by rememberUpdatedState(tab)
+    val select by rememberUpdatedState(choose)
+    return this.swipeAxis(
+            enabled = enabled,
+            horizontal = true,
+            offset = pull,
+            threshold = with(density) { 96.dp.toPx() },
+            // Dragging left (negative) moves forward.
+            allow = { neighbourTab(current, -it) != null },
+            onSwipe = { direction ->
+                val next = neighbourTab(current, -direction) ?: return@swipeAxis
+                pull.animateTo(direction * width * 0.35f, motion.exit(160))
+                pendingTabEntry = -direction
+                select(next)
+                pull.snapTo(0f)
+            },
+        )
+        .graphicsLayer {
+            val dragged = (abs(pull.value) / width).coerceIn(0f, 1f)
+            translationX = pull.value * 0.6f
+            alpha = 1f - dragged * 0.6f
+        }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BrowsePane(
@@ -932,16 +994,14 @@ private fun BrowsePane(
             (feed.request as? JSONObject)?.has("Search") == true
     val motion = LocalMotion.current
     val density = LocalDensity.current
-    val paneWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    // Feed content follows a horizontal drag; a committed swipe slides the next tab or
-    // category in from the side it was pulled from.
-    val pull = remember { Animatable(0f) }
+    // A committed tab swipe (handled around the whole content area) slides the next tab in
+    // from the side it was pulled from.
     val entry = remember { Animatable(if (motion.animate && !feed.instantContent) 0f else 1f) }
     // A tab swipe recreates this pane (key(tab)); the direction is handed over once.
     var enterFrom by remember { mutableIntStateOf(pendingTabEntry.also { pendingTabEntry = 0 }) }
     LaunchedEffect(tab, feed.request, reduced, feed.instantContent) {
-        // Plain feed changes are animated by the cards themselves (appearance); only a tab or
-        // category swipe slides the whole grid, so the grid is not faded a second time.
+        // Plain feed changes are animated by the cards themselves (appearance); only a tab
+        // swipe slides the whole grid, so the grid is not faded a second time.
         if (!motion.animate || enterFrom == 0 || feed.instantContent) entry.snapTo(1f)
         else {
             entry.snapTo(0f)
@@ -949,40 +1009,9 @@ private fun BrowsePane(
         }
         enterFrom = 0
     }
-    // +1 = forward (next tab/category), -1 = back; null when nothing lies that way.
-    fun swipeTarget(forward: Int): (() -> Unit)? {
-        if (feed.categories.isEmpty()) {
-            val next = (tab + forward).coerceIn(1, 3)
-            return if (next == tab) null else ({ vm.chooseTab(next) })
-        }
-        val at =
-            feed.categories.indexOfFirst {
-                it.opt("request")?.toString() == feed.request.toString()
-            }
-        val next = (at + forward).coerceIn(0, feed.categories.lastIndex)
-        return if (next == at) null
-        else ({ vm.navigate(tab, feed.categories[next].get("request")) })
-    }
-    val swipe =
-        Modifier.swipeAxis(
-            enabled = mobile.gesture("gesture_swipe_tabs"),
-            horizontal = true,
-            offset = pull,
-            threshold = with(density) { 96.dp.toPx() },
-            // Dragging left (negative) moves forward.
-            allow = { swipeTarget(-it) != null },
-            onSwipe = { direction ->
-                val go = swipeTarget(-direction) ?: return@swipeAxis
-                pull.animateTo(direction * paneWidth * 0.35f, motion.exit(160))
-                enterFrom = -direction
-                if (feed.categories.isEmpty()) pendingTabEntry = -direction
-                entry.snapTo(0f)
-                go()
-                pull.snapTo(0f)
-            },
-        )
     // Cards animate in once per loaded list, not again when scrolled back into view.
     val seen = remember(tab, feed.request) { mutableSetOf<Any>() }
+    var gridWidth by remember { mutableIntStateOf(0) }
     val cardIndex =
         remember(feed.cards) { feed.cards.withIndex().associate { it.value.key to it.index } }
     var query by rememberSaveable(tab) { mutableStateOf("") }
@@ -1004,7 +1033,28 @@ private fun BrowsePane(
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
     val initialScrollToTop = remember { scrollToTop }
+    // The search bar and filters slide away while scrolling down through results and come
+    // back on any upward scroll, at the top, or while the field is in use.
+    var headerShown by remember(tab) { mutableStateOf(true) }
+    val headerTravel = with(density) { 28.dp.toPx() }
+    val headerScroll =
+        remember(headerTravel) {
+            object : NestedScrollConnection {
+                var travel = 0f
+
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    val dy = available.y
+                    if (dy == 0f) return Offset.Zero
+                    if ((dy < 0f) != (travel < 0f)) travel = 0f
+                    travel += dy
+                    if (travel < -headerTravel) headerShown = false
+                    else if (travel > headerTravel) headerShown = true
+                    return Offset.Zero
+                }
+            }
+        }
     LaunchedEffect(scrollToTop) {
+        headerShown = true
         if (scrollToTop != initialScrollToTop) {
             if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
         }
@@ -1013,6 +1063,11 @@ private fun BrowsePane(
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { vm.rememberScroll(tab, it) }
+    }
+    LaunchedEffect(grid) {
+        snapshotFlow { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
+            .distinctUntilChanged()
+            .collect { top -> if (top) headerShown = true }
     }
     val focused by vm.playerOpen.collectAsState()
     val playingUrl by
@@ -1094,6 +1149,16 @@ private fun BrowsePane(
         Modifier.fillMaxSize().testTag("browse-pane"),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        AnimatedVisibility(
+            headerShown || searchActive,
+            enter =
+                if (!motion.animate) EnterTransition.None
+                else fadeIn(motion.fade(160)) + expandVertically(motion.enter(240), expandFrom = Alignment.Top),
+            exit =
+                if (!motion.animate) ExitTransition.None
+                else fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(220), shrinkTowards = Alignment.Top),
+        ) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(
             Modifier.align(Alignment.CenterHorizontally)
                 .padding(horizontal = MediaTokens.textInset)
@@ -1173,11 +1238,13 @@ private fun BrowsePane(
                     }
                 }
             }
+        }
+        }
         // Pull to refresh reuses the overflow menu's "Refresh feed" request.
         var refreshing by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
         val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(headerScroll)) {
         PullToRefreshBox(
             refreshing && feed.loading,
             onRefresh = {
@@ -1200,22 +1267,36 @@ private fun BrowsePane(
                         }
                 },
         ) {
+            val fixedColumns = tab == 2 && LocalConfiguration.current.screenWidthDp < 600
+            val minCell = if (tab in 2..3) 164.dp else 280.dp
+            val sidePadding = if (tab in 2..3) 16.dp else 0.dp
+            val cellGap = if (tab in 2..3) 12.dp else 8.dp
+            // Cover width in pixels, as the grid lays its cells out; covers use it instead of
+            // measuring themselves.
+            val cellPixels =
+                remember(gridWidth, fixedColumns, minCell, density) {
+                    with(density) {
+                        val available = gridWidth - 2 * sidePadding.roundToPx()
+                        val gap = cellGap.roundToPx()
+                        val count =
+                            if (fixedColumns) 2
+                            else maxOf(1, (available + gap) / (minCell.roundToPx() + gap))
+                        if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
+                    }
+                }
             LazyVerticalGrid(
                 columns =
-                    if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600)
-                        GridCells.Fixed(2)
-                    else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
+                    if (fixedColumns) GridCells.Fixed(2)
+                    else GridCells.Adaptive(minCell),
                 modifier =
                     Modifier.fillMaxSize()
-                        .then(swipe)
+                        .onSizeChanged { gridWidth = it.width }
                         .graphicsLayer {
                             // No offscreen buffer for a screen-sized scrolling grid.
                             compositingStrategy = CompositingStrategy.ModulateAlpha
                             val settle = if (feed.instantContent) 0f else 1f - entry.value
-                            val dragged = (abs(pull.value) / paneWidth).coerceIn(0f, 1f)
-                            alpha = (1f - settle.coerceIn(0f, 1f)) * (1f - dragged * 0.6f)
-                            translationX =
-                                pull.value * 0.6f + settle * enterFrom * 64.dp.toPx()
+                            alpha = 1f - settle.coerceIn(0f, 1f)
+                            translationX = settle * enterFrom * 64.dp.toPx()
                         }
                         .testTag("feed-list")
                         .focusRequester(browseFocus)
@@ -1226,7 +1307,7 @@ private fun BrowsePane(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
                         top = 4.dp,
-                        bottom = 24.dp,
+                        bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
@@ -1310,11 +1391,13 @@ private fun BrowsePane(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
+                                    val shelfWidth = if (tab == 1) 272.dp else 152.dp
                                     CompositionLocalProvider(
-                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
+                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
+                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() },
                                     ) {
                                         Box(
-                                            Modifier.width(if (tab == 1) 272.dp else 152.dp).pressFeedback()
+                                            Modifier.width(shelfWidth).pressFeedback()
                                         ) {
                                             val current = media.url.isNotBlank() && media.url == playingUrl
                                             MediaRow(
@@ -1342,7 +1425,8 @@ private fun BrowsePane(
                 ) { media ->
                     // Scroll state is read in image effects, without recomposing every card.
                     CompositionLocalProvider(
-                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
+                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
+                        LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
                     ) {
                         Box(
                             Modifier.then(
@@ -1444,17 +1528,33 @@ internal fun Artwork(
     enabled: Boolean = true,
     shape: androidx.compose.ui.graphics.Shape = MediaTokens.small,
 ) {
-    // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
-    // and a reused node of unchanged size never reports its size again.
-    BoxWithConstraints(
+    val frame =
         modifier
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .testTag("artwork-frame-${media.key}")
-    ) {
-        // A shared decode size: a one-pixel width difference between grid columns must not
-        // restart the load or fetch and cache the same cover again.
-        val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
+    // Feed grids say how wide their cells are, so a card needs no subcomposition of its own
+    // (one per cover cost scroll frames). Elsewhere the size comes from the constraints, not
+    // onSizeChanged: lazy lists reuse layout nodes, and a reused node of unchanged size never
+    // reports its size again.
+    val hinted = LocalArtworkPixels.current
+    if (hinted > 0)
+        Box(frame) { ArtworkBody(media, ArtworkCache.decodeSize(hinted), enabled) }
+    else
+        BoxWithConstraints(frame) {
+            // A shared decode size: a one-pixel width difference between grid columns must not
+            // restart the load or fetch and cache the same cover again.
+            val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
+            ArtworkBody(media, pixels, enabled)
+        }
+}
+
+/** Width in pixels of the artwork cells a feed grid lays out; 0 when unknown. */
+internal val LocalArtworkPixels = staticCompositionLocalOf { 0 }
+
+@Composable
+private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean) {
+    run {
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
         val bitmapState =
@@ -1698,10 +1798,19 @@ private fun MediaCardMenu(
             QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
                 execute { vm.enqueue(media) }
             }
-            if (!media.live)
-                QuickTile(Glyph.Download, "Download", Modifier.weight(1f)) {
-                    execute { vm.play(media, download = true) }
+            if (!media.live) {
+                var tileCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                QuickTile(
+                    Glyph.Download,
+                    "Download",
+                    Modifier.weight(1f).trackCentre { tileCentre = it },
+                ) {
+                    execute {
+                        DownloadFlight.launch(media, tileCentre)
+                        vm.play(media, download = true)
+                    }
                 }
+            }
             if (!media.collection && !media.live)
                 QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
                     execute { vm.play(media, preview = true) }
@@ -1856,6 +1965,7 @@ private fun MediaDurationBadge(media: MediaCard, mobile: JSONObject, modifier: M
             media.live,
             if (media.live) "Live" else time(media.value.optLong("duration").toFloat()),
             modifier.testTag("duration-${media.key}"),
+            pulse = false,
         )
 }
 
@@ -2212,6 +2322,9 @@ internal fun PlayerPane(
     }
 }
 
+/** Width/height of the music artwork area for a player style: square except the vinyl deck. */
+internal fun visualizerRatio(style: String): Float = if (style.startsWith("vinyl")) 1.35f else 1f
+
 @Composable
 internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modifier = Modifier) {
     val style = config.optString("music_player_style", "classic")
@@ -2252,7 +2365,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .aspectRatio(if (style == "classic") 1f else 1.35f)
+            .aspectRatio(visualizerRatio(style))
             .then(
                 if (style == "classic")
                     Modifier.shadow(
@@ -2313,24 +2426,38 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 config.optBoolean("thumbnails", true),
             )
         } else if (style.startsWith("vu")) {
-            // The liquid fills the container below the cover, which stays on top.
+            // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
                 LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.45f).aspectRatio(1f).align(Alignment.TopCenter),
+                    Modifier.fillMaxWidth(0.66f)
+                        .aspectRatio(1f)
+                        .align(Alignment.Center)
+                        .offset(y = (-10).dp)
+                        .beat(levels) { liquidTime }
+                        .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
+                        .clip(RoundedCornerShape(16.dp))
+                        .sharedCover(media.key, LocalPlayerExpanded.current),
                     config.optBoolean("thumbnails", true),
+                    shape = RoundedCornerShape(16.dp),
                 )
             }
         } else {
+            // A glow, a ring of spectrum bars and two liquid layers around a large round cover
+            // that swells slightly on the beat.
             LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
             Artwork(
                 media,
-                Modifier.fillMaxWidth(0.32f)
+                Modifier.fillMaxWidth(0.56f)
                     .aspectRatio(1f)
                     .align(Alignment.Center)
-                    .clip(CircleShape),
+                    .beat(levels) { liquidTime }
+                    .shadow(16.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                    .clip(CircleShape)
+                    .sharedCover(media.key, LocalPlayerExpanded.current),
                 config.optBoolean("thumbnails", true),
+                shape = CircleShape,
             )
         }
     }
@@ -2838,7 +2965,7 @@ private val GESTURE_SETTINGS =
         Triple(
             "gesture_swipe_tabs",
             "Swipe between tabs",
-            "Swipe the feed sideways to change tab or category",
+            "Swipe sideways to move between Home, Music, Radio and Downloads",
         ),
         Triple(
             "gesture_swipe_dismiss",
@@ -3338,13 +3465,14 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
     val stored by vm.lyricData.collectAsState()
     val versions by vm.lyricVersions.collectAsState()
     val imported by vm.importedLyrics.collectAsState()
+    val searching by vm.lyricSearching.collectAsState()
     val media = remember { player.media?.copyJson() ?: JSONObject() }
     var title by remember { mutableStateOf(media.optString("title")) }
     var artist by remember { mutableStateOf(media.optString("creator")) }
     var text by remember { mutableStateOf("") }
     var offset by remember { mutableStateOf("0") }
     var selected by remember { mutableIntStateOf(0) }
-    var follow by remember { mutableStateOf(false) }
+    var follow by remember { mutableStateOf(true) }
     val list = rememberLazyListState()
     val lines =
         remember(stored, versions, selected) {
@@ -3398,12 +3526,30 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                 )
             }
         else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
-        if (lines.isNotEmpty()) SettingToggle("Follow playing line", follow) { follow = it }
-        if (lines.isEmpty() && !editing && media.length() > 0)
+        val source =
+            stored.optJSONObject("track")?.let { "Saved on this device" }
+                ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
+        if (lines.isNotEmpty() && source != null)
+            Text(
+                source,
+                Modifier.padding(horizontal = 8.dp).testTag("lyrics-source"),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        if (lines.isNotEmpty() && lines.any { !it.isNull("at_ms") })
+            SettingToggle("Follow playing line", follow) { follow = it }
+        if (lines.isEmpty() && searching && !editing)
+            Box(
+                Modifier.fillMaxWidth().padding(32.dp).testTag("lyrics-loading"),
+                contentAlignment = Alignment.Center,
+            ) {
+                MediaSpinner()
+            }
+        if (lines.isEmpty() && !searching && !editing && media.length() > 0)
             EmptyMediaState(
                 Glyph.Lyrics,
-                "No lyrics yet",
-                "Find them on LRCLIB using this song's title and artist, or write your own.",
+                "No lyrics found",
+                "YouTube Music has no lyrics for this song. Search LRCLIB with an edited title and artist, or write your own.",
             ) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),

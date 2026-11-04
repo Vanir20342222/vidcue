@@ -7,6 +7,7 @@ pub mod formats;
 pub mod http;
 pub mod images;
 pub mod lyrics;
+pub mod music_lyrics;
 pub mod paths;
 pub mod radio;
 pub mod sponsorblock;

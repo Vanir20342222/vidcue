@@ -14,6 +14,8 @@ private const val BANDS_PER_GROUP = SPECTRUM_BANDS / LIQUID_GROUPS
 private const val TAU = 6.2831855f
 private const val LEVEL_ATTACK = 0.06f
 private const val LEVEL_RELEASE = 0.32f
+private const val BAR_ATTACK = 0.03f
+private const val BAR_RELEASE = 0.18f
 
 /** A stalled frame must not jump the liquid, so the smoothing never sees a longer step. */
 private const val MAX_STEP = 0.1f
@@ -69,6 +71,9 @@ internal class LiquidLevels {
     /** Smoothed energy per group, 0..1: bass, low-mid, high-mid, treble. */
     val groups = FloatArray(LIQUID_GROUPS)
 
+    /** Smoothed energy per band, 0..1, for spectrum bars. Quicker than the groups. */
+    val bands = FloatArray(SPECTRUM_BANDS)
+
     /** Mean group energy, 0..1. Drives the tank's height and the ring's size. */
     val overall: Float
         get() = groups.sum() / LIQUID_GROUPS
@@ -81,6 +86,16 @@ internal class LiquidLevels {
     fun step(spectrum: IntArray, elapsedSeconds: Float) {
         val step = elapsedSeconds.coerceIn(0f, MAX_STEP)
         if (step == 0f) return
+        for (band in 0 until SPECTRUM_BANDS) {
+            bands[band] =
+                followLevel(
+                    bands[band],
+                    (spectrum.getOrElse(band) { 0 } / 65535f).coerceIn(0f, 1f),
+                    step,
+                    BAR_ATTACK,
+                    BAR_RELEASE,
+                )
+        }
         for (group in 0 until LIQUID_GROUPS) {
             groups[group] =
                 followLevel(

@@ -398,7 +398,13 @@ internal class YtuiViewModel(
     suspend fun snapshot() =
         withContext(Dispatchers.Main.immediate) {
             snapshotLock.withLock {
-                val value = withContext(Dispatchers.Default) { JSONObject(MediaBridge.snapshot()) }
+                // Parse and fingerprint off the main thread: the service publishes five times a
+                // second, and serialising its JSON on the UI thread costs scroll frames.
+                val (value, playerRaw) =
+                    withContext(Dispatchers.Default) {
+                        val parsed = JSONObject(MediaBridge.snapshot())
+                        parsed to parsed.optJSONObject("player")?.toString()
+                    }
                 value.optJSONObject("player")?.let {
                     val pending = seekTarget
                     if (pending != null) {
@@ -419,7 +425,7 @@ internal class YtuiViewModel(
                             it.optLong("startup_token") == preparing.token
                     // Deduplicate native snapshots without dropping a pending intent;
                     // acceptance and video mode still change in one state emission.
-                    val raw = it.toString()
+                    val raw = if (pending != null) it.toString() else playerRaw ?: it.toString()
                     if (raw != lastPlayer || accepted) {
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
@@ -840,7 +846,12 @@ internal class YtuiViewModel(
     }
 
     /** Prepare at most one settled row, off the touch path and without history/queue effects. */
-    suspend fun prepareVisible(cards: List<MediaCard>) {
+    suspend fun prepareVisible(cards: List<MediaCard>) = withContext(Dispatchers.Default) {
+        prepareVisibleNow(cards)
+    }
+
+    /** Settings, connectivity (a binder call) and JNI checks stay off the main thread. */
+    private suspend fun prepareVisibleNow(cards: List<MediaCard>) {
         if (
             playbackJob?.isActive == true ||
                 playerOpen.value ||
@@ -1409,6 +1420,8 @@ internal class YtuiViewModel(
 
     val lyricData = MutableStateFlow(JSONObject())
     val lyricVersions = MutableStateFlow<List<JSONObject>>(emptyList())
+    /** True while lyrics are fetched automatically for the open song. */
+    val lyricSearching = MutableStateFlow(false)
     val importedLyrics = MutableStateFlow<String?>(null)
     private var lyricToken = ""
     private var lyricRevision = 0L
@@ -1422,7 +1435,17 @@ internal class YtuiViewModel(
         val revision = ++lyricRevision
         task {
             val result = RustRpc.objectCall("lyrics_get", "url" to media.optString("url"))
-            if (token == lyricToken && revision == lyricRevision) lyricData.value = result
+            if (token != lyricToken || revision != lyricRevision) return@task
+            lyricData.value = result
+            if (result.optJSONObject("track") != null) return@task
+            // Nothing saved: fetch YouTube Music's lyrics for this song (LRCLIB as fallback).
+            lyricSearching.value = true
+            try {
+                val found = RustRpc.arrayCall("lyrics_auto", "media" to media).objects()
+                if (token == lyricToken && revision == lyricRevision) lyricVersions.value = found
+            } finally {
+                if (token == lyricToken) lyricSearching.value = false
+            }
         }
     }
 
@@ -1431,6 +1454,7 @@ internal class YtuiViewModel(
     }
 
     fun lyricClose() {
+        lyricSearching.value = false
         lyricToken = ""
         lyricRevision++
         importedLyrics.value = null

@@ -781,6 +781,31 @@ fn duration(label: &str) -> Option<u64> {
         .split(':')
         .try_fold(0u64, |v, n| Some(v * 60 + n.trim().parse::<u64>().ok()?))
 }
+/// Podcast lengths such as "3 hr 13 min", "45 min" or "50 sec".
+fn spoken_duration(label: &str) -> Option<u64> {
+    let mut total = 0u64;
+    let mut number: Option<u64> = None;
+    let mut matched = false;
+    for word in label.split(|c: char| c.is_whitespace() || c == '•') {
+        if word.is_empty() {
+            continue;
+        }
+        if let Ok(value) = word.parse::<u64>() {
+            number = Some(value);
+            continue;
+        }
+        let Some(value) = number.take() else { continue };
+        let unit = match word.trim_end_matches(['s', '.']) {
+            "hr" | "hour" | "h" => 3600,
+            "min" | "minute" | "m" => 60,
+            "sec" | "second" => 1,
+            _ => continue,
+        };
+        total = total.checked_add(value.checked_mul(unit)?)?;
+        matched = true;
+    }
+    matched.then_some(total)
+}
 fn thumbnails(value: &Value) -> Vec<ytui_core::Thumbnail> {
     let mut images = Vec::new();
     fn walk(v: &Value, images: &mut Vec<ytui_core::Thumbnail>) {
@@ -919,6 +944,11 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
             .map(text)
             .unwrap_or_default();
     }
+    // Podcast episodes name their show in a second title line.
+    let episode = name == "musicMultiRowListItemRenderer";
+    if episode && let Some(show) = r.get("secondTitle").map(text).filter(|s| !s.is_empty()) {
+        item.creator = show;
+    }
     item.channel_thumbnail = channel_avatar(r);
     item.description = r.get("descriptionSnippet").map(text).unwrap_or_default();
     item.views_text = r
@@ -927,6 +957,25 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
         .map(text)
         .unwrap_or_default();
     item.published_text = r.get("publishedTimeText").map(text).unwrap_or_default();
+    if episode {
+        // "12K views • Mar 25" under an episode title.
+        let parts: Vec<String> = r
+            .pointer("/subtitle/runs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|run| run.get("text").and_then(Value::as_str))
+            .map(|part| clean_text(part.trim()))
+            .filter(|part| !part.is_empty() && part != "•")
+            .collect();
+        for part in parts {
+            if part.ends_with("views") || part.ends_with("view") {
+                item.views_text = part;
+            } else if item.published_text.is_empty() {
+                item.published_text = part;
+            }
+        }
+    }
     item.duration = r
         .get("lengthText")
         .map(text)
@@ -937,6 +986,12 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
                 .map(text)
                 .as_deref()
                 .and_then(duration)
+        })
+        .or_else(|| {
+            r.pointer("/playbackProgress/musicPlaybackProgressRenderer/durationText")
+                .map(text)
+                .as_deref()
+                .and_then(spoken_duration)
         });
     let video = r
         .get("videoId")
@@ -959,11 +1014,22 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
                 .and_then(Value::as_str)
         });
     // Album/artist/playlist navigation takes precedence over decorative play buttons.
-    let browse=r.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str)
+    // An episode's title links to its detail page; the playable item is the episode itself.
+    let browse = if episode {
+        None
+    } else {
+        r.pointer("/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str)
         .or_else(||r.pointer("/title/runs/0/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str))
-        .or_else(||r.pointer("/flexColumns/0/musicResponsiveListItemFlexColumnRenderer/text/runs/0/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str));
+        .or_else(||r.pointer("/flexColumns/0/musicResponsiveListItemFlexColumnRenderer/text/runs/0/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str))
+    };
     let playlist = r.get("playlistId").and_then(Value::as_str);
-    if let Some(id) = browse {
+    if let Some(list) = browse.and_then(|id| id.strip_prefix("MPSP")) {
+        // A podcast show is a playlist; its detail page id wraps the playlist id.
+        item.id = list.into();
+        item.kind = MediaKind::Playlist;
+        item.browse_id = Some(format!("VL{list}"));
+        item.url = format!("https://www.youtube.com/playlist?list={list}");
+    } else if let Some(id) = browse {
         item.id = id.into();
         item.browse_id = Some(id.into());
         item.kind = if id.starts_with("UC") {
@@ -1107,6 +1173,7 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
                         "channelRenderer",
                         "musicResponsiveListItemRenderer",
                         "musicTwoRowItemRenderer",
+                        "musicMultiRowListItemRenderer",
                     ]
                     .contains(&name.as_str())
                     {
@@ -1153,6 +1220,38 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn podcast_episodes_and_shows_become_playable_items() {
+        let data = json!({"contents":[{"musicCarouselShelfRenderer":{
+        "header":{"musicCarouselShelfBasicHeaderRenderer":{"title":{"runs":[{"text":"Popular episodes"}]}}},
+        "contents":[
+            {"musicMultiRowListItemRenderer":{
+                "title":{"runs":[{"text":"Episode one","navigationEndpoint":{"browseEndpoint":{"browseId":"MPEDepisode01"}}}]},
+                "secondTitle":{"runs":[{"text":"Fixture show","navigationEndpoint":{"browseEndpoint":{"browseId":"MPSPPLfixture"}}}]},
+                "subtitle":{"runs":[{"text":"12K views"},{"text":" \u{2022} "},{"text":"Mar 25"}]},
+                "onTap":{"watchEndpoint":{"videoId":"episode0001"}},
+                "playbackProgress":{"musicPlaybackProgressRenderer":{"durationText":{"runs":[{"text":" \u{2022} "},{"text":"3 hr 13 min"}]}}},
+                "thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://i.ytimg.test/vi/episode0001/hq.jpg","width":400,"height":225}]}}}}},
+            {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Fixture show"}]},
+                "navigationEndpoint":{"browseEndpoint":{"browseId":"MPSPPLfixture"}}}}
+        ]}}]});
+        let page = parse_page(&data, true);
+        assert_eq!(page.items.len(), 2);
+        let episode = &page.items[0];
+        assert_eq!(episode.kind, MediaKind::Song);
+        assert_eq!(episode.url, "https://www.youtube.com/watch?v=episode0001");
+        assert_eq!(episode.creator, "Fixture show");
+        assert_eq!(episode.views_text, "12K views");
+        assert_eq!(episode.published_text, "Mar 25");
+        assert_eq!(episode.duration, Some(3 * 3600 + 13 * 60));
+        assert_eq!(episode.section, "Popular episodes");
+        let show = &page.items[1];
+        assert_eq!(show.kind, MediaKind::Playlist);
+        assert_eq!(show.browse_id.as_deref(), Some("VLPLfixture"));
+        assert_eq!(show.url, "https://www.youtube.com/playlist?list=PLfixture");
+        assert_eq!(spoken_duration("45 min"), Some(2700));
+        assert_eq!(spoken_duration("Played"), None);
+    }
     #[test]
     fn parses_music_album_and_song_without_overlay_duplicates() {
         let data = json!({"contents":[{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Album"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"MPREtest"}},"overlay":{"watchEndpoint":{"videoId":"decoration"}}}},

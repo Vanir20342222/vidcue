@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -144,6 +145,7 @@ internal fun VideoSurface(
 }
 
 /** A bounded screen: advanced controls open separately, never below a long cover. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun FocusedPlayer(
     vm: YtuiViewModel,
@@ -294,7 +296,17 @@ internal fun FocusedPlayer(
                         !media.optBoolean("live") &&
                         !player.preview
                 Row(
-                    Modifier.fillMaxWidth().testTag("player-actions"),
+                    Modifier.fillMaxWidth()
+                        .then(
+                            // Music: one soft tray, the same shape language as the dock, instead
+                            // of loose icons floating above the gesture bar.
+                            if (player.video) Modifier
+                            else
+                                Modifier.clip(MediaTokens.card)
+                                    .background(LocalContentColor.current.copy(alpha = 0.07f))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                        .testTag("player-actions"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
@@ -312,10 +324,21 @@ internal fun FocusedPlayer(
                         PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
-                        if (canSave && media != null)
-                            PlayerAction(Glyph.Download, "Save", "Save offline", "player-download", compact) {
-                                vm.play(MediaCard(media), download = true)
+                        if (canSave && media != null) {
+                            var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                            PlayerAction(
+                                Glyph.Download,
+                                "Save",
+                                "Save offline",
+                                "player-download",
+                                compact,
+                                modifier = Modifier.trackCentre { saveCentre = it },
+                            ) {
+                                val card = MediaCard(media)
+                                DownloadFlight.launch(card, saveCentre)
+                                vm.play(card, download = true)
                             }
+                        }
                         val sleepLeft = rememberSleepLeft(player)
                         PlayerAction(
                             Glyph.Sleep,
@@ -354,13 +377,17 @@ internal fun FocusedPlayer(
                         ),
                     verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
                 ) {
+                    // Music keeps one line (long titles scroll) so the controls below never move
+                    // when the next track has a longer or not-yet-known title.
                     Text(
-                        player.title,
+                        player.title.ifBlank { " " },
+                        if (player.video) Modifier
+                        else Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1800),
                         style =
                             if (player.video) MaterialTheme.typography.titleLarge
-                            else MaterialTheme.typography.headlineSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                            else MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                        maxLines = if (player.video) 2 else 1,
+                        overflow = if (player.video) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
                     // Video: views and age under the title, then the channel row (watch-page
                     // order). Music keeps the artist directly under the title.
@@ -369,11 +396,14 @@ internal fun FocusedPlayer(
                         player.value.optString("station").ifBlank {
                             player.media?.optString("creator") ?: ""
                         }
-                    if (
+                    val showCreator =
                         creator.isNotBlank() &&
                             (mobile.optBoolean("show_channel", true) ||
                                 player.media?.optBoolean("live") == true)
-                    )
+                    if (!player.video && !showCreator)
+                        // Hold the artist line's height while the next track loads.
+                        Text(" ", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                    if (showCreator)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -404,7 +434,12 @@ internal fun FocusedPlayer(
                     .takeUnless { it.isBlank() || it == "null" }
                     ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 if (player.video) ActionRow()
-                if (!player.video) PlayerSeek(vm, player)
+                if (!player.video)
+                    // Fixed height: a track change (no duration yet) or a live station must not
+                    // shrink this slot and shift the title above it.
+                    Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.CenterStart) {
+                        PlayerSeek(vm, player)
+                    }
                 if (!player.video)
                     Row(
                         Modifier.fillMaxWidth(),
@@ -434,7 +469,7 @@ internal fun FocusedPlayer(
                         }
                     }
                 if (!player.video) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     ActionRow()
                 }
             }
@@ -503,9 +538,7 @@ internal fun FocusedPlayer(
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
                 } else {
-                    val ratio =
-                        if (config.optString("music_player_style", "classic") == "classic") 1f
-                        else 1.35f
+                    val ratio = visualizerRatio(config.optString("music_player_style", "classic"))
                     // The cover eases back while paused and steps forward when playing.
                     val rest by
                         animateFloatAsState(
@@ -561,9 +594,9 @@ internal fun FocusedPlayer(
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
             }
         else
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Art(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp))
-                Controls(Modifier.fillMaxWidth().padding(bottom = 8.dp))
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Art(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
+                Controls(Modifier.fillMaxWidth().padding(bottom = 12.dp))
             }
     }
 }
@@ -683,6 +716,7 @@ internal fun PlayerAction(
     tag: String = "",
     compact: Boolean = false,
     active: Boolean = false,
+    modifier: Modifier = Modifier,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
@@ -690,7 +724,7 @@ internal fun PlayerAction(
     if (compact) {
         // Music: an evenly spaced icon row with small captions, like a transport's second line.
         Column(
-            Modifier.testTag(tag)
+            modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
                 .heightIn(min = 56.dp)
@@ -716,7 +750,7 @@ internal fun PlayerAction(
         return
     }
     Row(
-        Modifier.testTag(tag)
+        modifier.testTag(tag)
             .pressScale(source, 0.94f)
             .heightIn(min = 48.dp)
             .clip(MediaTokens.pill)
@@ -769,9 +803,12 @@ internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = M
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
     val live = player.media?.optBoolean("live") == true
     var drag by remember(player.media?.optString("url")) { mutableStateOf<Float?>(null) }
-    if (live || player.duration <= 0f) {
+    if (live) {
+        // The same live marker as on station artwork, instead of bare capitals.
+        ArtworkBadge(true, "Live", Modifier.heightIn(min = 36.dp).testTag("player-live"))
+    } else if (player.duration <= 0f) {
         Text(
-            if (live) "LIVE" else if (player.value.optBoolean("buffering")) "Buffering…" else "",
+            if (player.value.optBoolean("buffering")) "Buffering…" else "",
             Modifier.heightIn(min = 36.dp),
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelMedium,
