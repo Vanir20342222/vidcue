@@ -39,6 +39,9 @@ struct Args {
     /// Capture the local saved shelf and sleep-timer form without public access.
     #[arg(long, conflicts_with_all = ["downloads_only", "audit_panels_only", "comfort_panels_only"])]
     library_panels_only: bool,
+    /// Refresh only the per-theme screenshots (the main view in every built-in theme).
+    #[arg(long, conflicts_with_all = ["vinyl_only", "visualizers_only", "downloads_only", "audit_panels_only", "comfort_panels_only", "library_panels_only"])]
+    themes_only: bool,
     #[arg(long, default_value = "docs/screenshots")]
     output: PathBuf,
     #[arg(
@@ -210,6 +213,10 @@ fn write_manifest(args: &Args) -> Result<()> {
     while let Some(dir) = dirs.pop() {
         for entry in std::fs::read_dir(dir)? {
             let path = entry?.path();
+            // Android captures keep their own manifest and native viewport sizes.
+            if path == args.output.join("android") {
+                continue;
+            }
             if path.is_dir() {
                 dirs.push(path);
             } else if path.extension().is_some_and(|e| e == "png") {
@@ -432,6 +439,11 @@ async fn main() -> Result<()> {
             &args.output.join(format!("themes/{theme}.png")),
             &font,
         )?;
+    }
+    if args.themes_only {
+        capture.close()?;
+        write_manifest(&args)?;
+        return Ok(());
     }
     capture.command("theme ytui-dark", "ytui-dark")?;
     for (tab, name) in [

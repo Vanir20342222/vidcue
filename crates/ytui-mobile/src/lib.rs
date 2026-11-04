@@ -53,6 +53,14 @@ pub struct Engine {
     lyrics: Mutex<HashMap<String, lyrics::Document>>,
     resolver: Arc<resolution::Resolver>,
 }
+/// Android's theme picker: every shared built-in except "terminal", which only means
+/// "inherit the terminal's colours" on desktop. A saved "terminal" value still resolves.
+fn mobile_themes() -> impl Iterator<Item = &'static str> {
+    ytui_core::theme::THEMES
+        .iter()
+        .copied()
+        .filter(|name| *name != "terminal")
+}
 impl Engine {
     pub fn new(root: &Path, cache: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
@@ -241,13 +249,13 @@ impl Engine {
                 *config = draft;
                 Ok(serde_json::to_value(palette)?)
             }
-            "themes" => Ok(json!(ytui_core::theme::THEMES)),
+            "themes" => Ok(json!(mobile_themes().collect::<Vec<_>>())),
             // Every built-in palette by name, for theme pickers that preview colours.
             // "system" follows the device: it is reported as the dark/light pair.
             "palettes" => {
                 let mut palettes = serde_json::Map::new();
-                for name in ytui_core::theme::THEMES {
-                    let value = if *name == "system" {
+                for name in mobile_themes() {
+                    let value = if name == "system" {
                         json!({
                             "dark": ytui_core::theme::builtin("ytui-dark")?,
                             "light": ytui_core::theme::builtin("ytui-light")?,
@@ -255,7 +263,7 @@ impl Engine {
                     } else {
                         serde_json::to_value(ytui_core::theme::builtin(name)?)?
                     };
-                    palettes.insert((*name).into(), value);
+                    palettes.insert(name.into(), value);
                 }
                 Ok(Value::Object(palettes))
             }
@@ -1204,12 +1212,17 @@ mod format_tests {
         let temp = tempfile::tempdir().unwrap();
         let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
         let palettes = engine.request(json!({"op":"palettes"})).await.unwrap();
-        for name in ytui_core::theme::THEMES {
+        let themes = engine.request(json!({"op":"themes"})).await.unwrap();
+        for name in mobile_themes() {
             assert!(
-                palettes.get(*name).is_some(),
+                palettes.get(name).is_some(),
                 "{name} has no preview palette"
             );
+            assert!(themes.as_array().unwrap().contains(&json!(name)));
         }
+        assert!(palettes.get("terminal").is_none());
+        assert!(!themes.as_array().unwrap().contains(&json!("terminal")));
+        assert_eq!(palettes["nothing-dark"]["accent"], json!([215, 25, 33]));
         assert_eq!(palettes["nord"]["accent"], json!([136, 192, 208]));
         assert_eq!(palettes["system"]["light"]["name"], "ytui-light");
     }

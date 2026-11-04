@@ -155,7 +155,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
     val content = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
     SideEffect { blurVideo(content, blur) }
     DisposableEffect(content) { onDispose { blurVideo(content, 0f) } }
-    MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
+    MaterialTheme(colorScheme = scheme, typography = ComposeHost.typography) {
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
             LocalReducedMotion provides reduced,
