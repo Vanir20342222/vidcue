@@ -28,6 +28,7 @@ Measured from the repository history and the Actions runs of 2-3 November 2026.
 | Aggregate jobs `Android gate` and `Rust gate` | One stable required check per workflow that also passes when a build was skipped on purpose |
 | Startup timing budgets advisory on PRs, enforced by a nightly run (03:17 UTC) and on demand (`timing: enforce`) | A 2001 ms frame on a shared runner no longer blocks a merge; hangs still fail (6 s ceiling). Measured times stay in the evidence files |
 | Rust CI no longer runs on branch pushes; secret scan only on `main` pushes, PRs and the merge queue | Fewer duplicate runs competing for runners |
+| Pull requests and the merge queue run a short Android lane (app and instrumentation-source compile, JVM unit tests, lint) instead of the native APK build and four emulator shards; the full APK builds on `main`, nightly and manual runs, and the emulator suite runs nightly and on demand (owner request, 2026-11-04) | Pull-request CI targets five minutes or less. Emulator regressions surface in the nightly run instead of on the PR |
 | `merge_group` trigger on Android, Rust, secret scan and hygiene | Ready for a merge queue (see below) |
 | Removed `android-preview.yml` (one-off publish with a hard-coded commit, run id and artifact id from 28 Oct) and `native-playback.yml` (ran only for branch `fix/native-playback`) | Fewer confusing workflows. Nothing referenced them; `git revert` restores them |
 

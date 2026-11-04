@@ -118,8 +118,14 @@ departs from "never weaken a test" in `docs/AGENT_PR_RULES.md`; the owner's inst
   height, label fit, search and settings checks remain. A possible real cause worth a follow-up:
   after a search the first result's menu button can sit partly under the chip row (seen in the CI
   tablet screenshot, where its visible height was 12 px), so a tap may miss it.
-- Not changed: workflows and shard count (a workflow edit needs the owner's `ci-change` label).
-  Fewer shards or a smaller emulator matrix would cut wall time further.
+- **CI (owner request, 2026-11-04: "only take 5 minutes at maximum")**: `android.yml` now runs a
+  short `app` job on pull requests and the merge queue: compile the app and the instrumentation
+  sources, run the JVM unit tests and lint. The native two-ABI APK build (about 7-8 minutes) runs
+  on `main`, nightly and manual runs only, because the release workflow publishes exactly that
+  artifact and checks both ABIs. The four emulator shards run nightly and on manual dispatch only.
+  Rust, secret scan and hygiene jobs are unchanged and already finish within about 3.5 minutes.
+  Trade-off: an emulator regression is now found by the nightly run, not on the PR, and a `main`
+  run still takes about 8 minutes for the release APK.
 
 ## Not verified and limits
 - No emulator or device: the instrumentation suites, real drag, swipe and shared-element motion,

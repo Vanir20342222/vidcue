@@ -56,9 +56,46 @@ jobs:
       - id: filter
         run: echo "run=$(tools/ci/should-run.sh android)" >> "$GITHUB_OUTPUT"
 
+  # Pull requests and the merge queue: compile the app and its instrumentation sources, run the
+  # JVM unit tests and lint. No native build and no emulator; the Rust workflow tests the engine.
+  # Kept to about five minutes (owner request, 2026-11-04).
+  app:
+    needs: changes
+    if: needs.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Use all runner cores for Gradle (CI only; project defaults stay low)
+        run: |
+          mkdir -p "$HOME/.gradle"
+          cat >> "$HOME/.gradle/gradle.properties" <<'PROPS'
+          org.gradle.workers.max=4
+          org.gradle.caching=true
+          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          PROPS
+      - name: Install the pinned Android platform
+        run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Check private signing and APK publication boundaries offline
+        run: python3 -m unittest discover -s tools/android -p 'test_*.py' -v
+      - name: Compile app and instrumentation sources, run unit tests and lint
+        run: |
+          apps/android/gradlew -p apps/android --no-daemon \
+            :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest :app:lintDebug
+
+  # main, the nightly run and manual runs: the full APK for both ABIs. The release workflow
+  # publishes exactly this artifact, so it is built for every main commit.
   apk:
     needs: changes
-    if: needs.changes.outputs.run == 'true'
+    if: needs.changes.outputs.run == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
@@ -126,8 +163,11 @@ jobs:
           retention-days: 3
           compression-level: 0
 
+  # The emulator suite runs nightly and on demand only; it took 3-8 minutes per shard on top of
+  # the APK build and is not part of pull-request or main CI.
   device:
     needs: apk
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -202,7 +242,7 @@ jobs:
   # or cancelled one does not.
   gate:
     name: Android gate
-    needs: [changes, apk, device]
+    needs: [changes, app, apk, device]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 2
