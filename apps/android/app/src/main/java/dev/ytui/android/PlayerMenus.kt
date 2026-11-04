@@ -57,12 +57,13 @@ internal fun playerTracks(player: JSONObject): List<PlayerTrack> =
         )
     } ?: emptyList()
 
-/** "Off", or the caption track that is showing. */
+/** "Off", or the caption track that is showing, short enough for a row's trailing value. */
 internal fun captionSummary(player: JSONObject): String {
     val text = playerTracks(player).filter { it.type == "text" }
     if (text.isEmpty()) return "None"
     if (!player.optBoolean("captions_on")) return "Off"
-    return text.firstOrNull { it.selected }?.title ?: "On"
+    val title = text.firstOrNull { it.selected }?.title ?: return "On"
+    return title.replace(" (auto-generated)", " · auto").replace(" (auto-translated)", " · translated")
 }
 
 /** The audio language that is playing, when there is a choice to make. */
