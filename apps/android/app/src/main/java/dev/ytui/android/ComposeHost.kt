@@ -990,6 +990,7 @@ private fun BrowsePane(
     val searchKey = if (tab == 3) "RadioSearch" else "Search"
     val searchResults = (feed.request as? JSONObject)?.has(searchKey) == true
     val searchMode = searchActive || searchResults
+    val showFeedBack = feed.request != "Home" && feed.request != "Cliamp" && !searchResults
     LaunchedEffect(feed.request) {
         (feed.request as? JSONObject)
             ?.optString(searchKey)
@@ -1064,19 +1065,30 @@ private fun BrowsePane(
             vm.sharedQuery.value = ""
         }
     }
-    LaunchedEffect(grid, feed.continuation, feed.loading, feed.error) {
-        snapshotFlow { grid.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
-            .distinctUntilChanged()
-            .collect { last ->
-                if (
-                    feed.cards.isNotEmpty() &&
-                        last >= feed.cards.size - 5 &&
-                        feed.continuation != null &&
-                        !feed.loading &&
-                        feed.error == null
-                )
-                    vm.more()
-            }
+    // Include the full-width headers, and wait for this page to be measured before
+    // using layout indices (the preceding page or skeleton may still be laid out).
+    val pageItemCount =
+        (shelves?.let { it.size * 2 } ?: feed.cards.size) +
+            (if (showFeedBack) 1 else 0) + (if (feed.notice != null) 1 else 0)
+    LaunchedEffect(grid, feed.continuation, feed.loading, feed.error, feed.cards.size, pageItemCount) {
+        if (
+            feed.cards.isNotEmpty() &&
+                feed.continuation != null &&
+                !feed.loading &&
+                feed.error == null
+        ) {
+            snapshotFlow {
+                    val layout = grid.layoutInfo
+                    val last = layout.visibleItemsInfo.lastOrNull()?.index
+                    // A Music shelf contains many songs but occupies only two grid items
+                    // (heading + row). Compare indices with the laid-out item count.
+                    last != null &&
+                        layout.totalItemsCount == pageItemCount &&
+                        last >= layout.totalItemsCount - 5
+                }
+                .distinctUntilChanged()
+                .collect { nearEnd -> if (nearEnd) vm.more() }
+        }
     }
     Column(
         Modifier.fillMaxSize().testTag("browse-pane"),
@@ -1219,7 +1231,7 @@ private fun BrowsePane(
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
             ) {
-                if (feed.request != "Home" && feed.request != "Cliamp" && !searchResults)
+                if (showFeedBack)
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
                             Pill(
@@ -1386,12 +1398,6 @@ private fun BrowsePane(
                             Action(if (tab == 3) "Browse stations" else "Explore feeds") {
                                 onFeeds()
                             }
-                        }
-                    }
-                if (feed.continuation != null && !feed.loading && feed.error == null)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            SecondaryAction("Load more") { vm.more() }
                         }
                     }
             }
