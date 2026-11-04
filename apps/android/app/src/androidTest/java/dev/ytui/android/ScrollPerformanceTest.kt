@@ -26,6 +26,7 @@ import org.junit.runner.RunWith
  * hang ceiling fails the test. Compare runs against each other, not against a phone.
  */
 @RunWith(AndroidJUnit4::class)
+@OptIn(androidx.compose.ui.test.ExperimentalTestApi::class)
 class ScrollPerformanceTest {
     @get:Rule
     val compose = createEmptyComposeRule(effectContext = kotlinx.coroutines.Dispatchers.Main)
