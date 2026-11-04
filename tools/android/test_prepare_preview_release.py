@@ -102,7 +102,7 @@ class PreviewPublicationTest(unittest.TestCase):
         self.prepare(changes="Merge PR #36: watch-page recommendations in Up next (Android)\n")
         notes = (self.root / "publish" / "notes.md").read_text()
         self.assertIn("CI debug-signed build, not the stable channel", notes)
-        self.assertIn("dev.ytui.android.preview", notes)
+        self.assertIn("dev.vidcue.android.preview", notes)
         self.assertIn("It was not rebuilt or re-signed", notes)
         for name, run in RUNS.items():
             self.assertIn(f"[{name}](https://github.com/Vanir20342222/ytui/actions/runs/{run})", notes)

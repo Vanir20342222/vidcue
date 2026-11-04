@@ -37,6 +37,10 @@ for abi in $abis; do
         cargo build -p vidcue-mobile --target "$target" --release --locked -j "${YTUI_BUILD_JOBS:-2}"
     mkdir -p "$root/target/android-jni/$abi"
     "$bin/llvm-strip" --strip-unneeded "$root/target/$target/release/libvidcue_mobile.so" -o "$root/target/android-jni/$abi/libvidcue_mobile.so"
+    # Optional on small build machines: the packaged JNI copy is all Gradle needs.
+    if [[ "${YTUI_ANDROID_PRUNE_TARGETS:-0}" == 1 ]]; then
+        cargo clean --target "$target"
+    fi
 done
 [[ "${YTUI_ANDROID_RUST_ONLY:-0}" != 1 ]] || exit 0
 cargo metadata --locked --format-version 1 > "$root/target/android-dependencies.json"

@@ -1,5 +1,6 @@
 name: Publish locally signed Android APK
 on:
+  create:
   workflow_dispatch:
     inputs:
       apk_url:
@@ -26,7 +27,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.repository == 'Vanir20342222/ytui' && github.ref == 'refs/heads/main'
+    if: github.repository == 'Vanir20342222/ytui' && (github.ref == 'refs/heads/main' || (github.event_name == 'create' && github.event.ref_type == 'branch' && startsWith(github.event.ref, 'publish-android-')))
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -37,23 +38,38 @@ jobs:
       YTUI_APK_SHA256: ${{ inputs.sha256 }}
       YTUI_VERSION_CODE: ${{ inputs.version_code }}
       YTUI_VERSION_NAME: ${{ inputs.version_name }}
+      YTUI_RELEASE_SOURCE: ${{ github.sha }}
     steps:
       - name: Mask the temporary transfer link before any environment logging
         uses: actions/github-script@v7
         with:
           script: |
+            if (context.eventName !== 'workflow_dispatch') return;
             const fs = require('fs');
             const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
             core.setSecret(event.inputs.apk_url);
             core.exportVariable('YTUI_APK_URL', event.inputs.apk_url);
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Load the temporary APK handoff (keys are never transferred)
+        if: github.event_name == 'create'
+        env:
+          HANDOFF_BRANCH: ${{ github.event.ref }}
+        run: |
+          python3 tools/android/publish_request.py read-branch "$HANDOFF_BRANCH"
+      - name: Use the verified source checkout
+        if: github.event_name == 'create'
+        run: git checkout --detach "$YTUI_RELEASE_SOURCE"
       - name: Require successful exact-source main checks
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/checks.json"
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq .commit.sha)" == "$YTUI_RELEASE_SOURCE" ]] ||
+            { echo 'Main moved; qualify and sign the current main revision.' >&2; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$YTUI_RELEASE_SOURCE&per_page=100" > "$RUNNER_TEMP/checks.json"
           python3 - <<'PY'
           import json, os, pathlib
           runs = json.loads((pathlib.Path(os.environ['RUNNER_TEMP']) / 'checks.json').read_text())['workflow_runs']
-          passed = {r['name'] for r in runs if r['head_sha'] == os.environ['GITHUB_SHA'] and r['head_branch'] == 'main' and r['status'] == 'completed' and r['conclusion'] == 'success'}
+          passed = {r['name'] for r in runs if r['head_sha'] == os.environ['YTUI_RELEASE_SOURCE'] and r['head_branch'] == 'main' and r['event'] == 'push' and r['status'] == 'completed' and r['conclusion'] == 'success'}
           missing = {'Android', 'Rust', 'Secret scan'} - passed
           if missing:
               raise SystemExit('Wait for successful main checks: ' + ', '.join(sorted(missing)))
@@ -82,5 +98,17 @@ jobs:
             echo 'A release already exists for this version; use an increasing version.' >&2
             exit 1
           fi
-          gh release create "$tag" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Vidcue Android $YTUI_VERSION_NAME" --notes-file publish/notes.md --draft --prerelease --latest=false
+          gh release create "$tag" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt --repo "$GITHUB_REPOSITORY" --target "$YTUI_RELEASE_SOURCE" --title "Vidcue Android $YTUI_VERSION_NAME" --notes-file publish/notes.md --draft --prerelease --latest=false
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false
+      - name: Remove the temporary handoff branch
+        if: always() && github.event_name == 'create'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.payload.ref;
+            if (!/^publish-android-[A-Za-z0-9.+_-]+-[0-9a-f]{12}$/.test(branch)) return;
+            try {
+              await github.rest.git.deleteRef({...context.repo, ref: `heads/${branch}`});
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }

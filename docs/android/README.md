@@ -1,8 +1,8 @@
-# Android development preview (M9)
+# Android beta (M9)
 
 The app combines the shared Rust engine with a native Jetpack Compose phone/tablet UI. Media3 handles video, background playback, media controls and offline transfers. The explicit account sign-in page is its only WebView. No Python or mpv executable runs on Android.
 
-[Download mobile.10 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk) · [Release/checksum](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.10) · [UI release and validation](MOBILE10_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
+[Android downloads and checksums](https://github.com/Vanir20342222/ytui/releases) · [Beta.1 channel and publication](BETA1_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
 
 ## Documents
 
@@ -11,7 +11,7 @@ Current guides: [UX overhaul](UX_OVERHAUL.md) and [UI fidelity review](UI_FIDELI
 [parity](PARITY.md), [validation record](VALIDATION.md), [signing and updates](SIGNING.md)
 and the [device checklist](DEVICE_ACCEPTANCE.md).
 
-Releases and qualification, newest first: [mobile.10](MOBILE10_RELEASE.md),
+Releases and qualification, newest first: [beta.1](BETA1_RELEASE.md), [mobile.10](MOBILE10_RELEASE.md),
 [mobile.9](MOBILE9_RELEASE.md), [player/library qualification (mobile.4)](PLAYER_LIBRARY_VALIDATION_2026-10-29.md).
 
 Design history and reviews: [content-first restyle](CONTENT_FIRST_RESTYLE.md),
@@ -25,11 +25,11 @@ Startup latency: [two-second target](TWO_SECOND_STARTUP.md), [mobile.5 validatio
 
 ## Install an APK
 
-Open the downloaded APK in Android Files and allow installation from that source when prompted. Version **0.2.0-alpha.12-mobile.10**, code **10**, includes ARM64 for Galaxy Tab S9/Nothing Phone (3a) and x86-64 for emulators, requires Android 8/API 26+, and targets API 35. The public download hash and signing certificate were verified.
+Open the downloaded APK in Android Files and allow installation from that source when prompted. Beta.1 is version **0.3.0-beta.1**, code **30001**, with ARM64 and x86-64 support, Android 8/API 26+ minimum and API 35 target.
 
-Open **vidcue** (`dev.ytui.android.stable`). Install over mobile.4–9 to retain your account, settings and offline library; do not uninstall. Older Preview/original packages remain separate with their own private data. A first stable-channel installation needs sign-in/folder selection once. Future stable updates use the same private identity. No GitHub signing-secret setup is needed; [recovery and updates](SIGNING.md) explain the encrypted owner backup. Debug Actions artifacts install as **vidcue Preview** and may have disposable identities.
+Open **Vidcue** (`dev.vidcue.android.stable`). Beta.1 starts a separate installation alongside old alphas and Preview apps, with its own account/settings/library state. Every later beta, RC and final release uses the same permanent package/key and updates that beta in place. About → Check for updates offers future signed releases. [Signing and recovery](SIGNING.md) describe the private backup; no GitHub signing secrets are needed. Debug CI artifacts are the separate **Vidcue Preview** app.
 
-This is a development preview. The mobile.10 qualification recorded 37 native passes and one explicitly skipped public YouTube case; `main` has since gained the [UX overhaul](UX_OVERHAUL.md), whose exact-commit Android run (four emulator shards) also succeeded but is not part of that signed APK. Real YouTube latency, audible output, physical-device updates and [parity/device gates](PARITY.md) remain open. [Device checklist](DEVICE_ACCEPTANCE.md).
+This beta remains an early testing release. Real YouTube latency, audible output, physical-device in-place updates and [parity/device gates](PARITY.md) remain open. The [older mobile.10 qualification](MOBILE10_RELEASE.md) belongs to that historical alpha, not to a new physical beta acceptance result. See the [device checklist](DEVICE_ACCEPTANCE.md).
 
 ## Navigate
 
