@@ -9,7 +9,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
 import kotlin.math.cos
@@ -41,6 +43,17 @@ internal fun LiquidTank(
     val path = remember { Path() }
     val palette = remember(accent, ink) { LiquidPalette(accent, ink) }
     Canvas(modifier) { drawLiquidTank(clock(), levels, palette, path) }
+}
+
+/**
+ * Swells the cover a little with the bass. [clock] is read so the layer updates every frame of
+ * the visualiser; the levels themselves are plain arrays.
+ */
+internal fun Modifier.beat(levels: LiquidLevels, clock: () -> Float): Modifier = graphicsLayer {
+    clock()
+    val swell = 1f + 0.045f * levels.groups[0].coerceIn(0f, 1f)
+    scaleX = swell
+    scaleY = swell
 }
 
 /** Pulse Orbit as a liquid ring around the circular cover. */
@@ -96,6 +109,25 @@ internal fun DrawScope.drawLiquidTank(
         ),
         crest = palette.light.copy(alpha = 0.7f),
     )
+    // Spectrum bars rising from the floor of the tank, under the surface glow.
+    val count = SPECTRUM_BANDS
+    val gap = size.width * 0.012f
+    val barWidth = (size.width - gap * (count + 1)) / count
+    for (band in 0 until count) {
+        val level = levels.bands[band].coerceIn(0f, 1f)
+        val barHeight = height * (0.03f + 0.32f * level)
+        val left = gap + band * (barWidth + gap)
+        drawRoundRect(
+            Brush.verticalGradient(
+                listOf(palette.light.copy(alpha = 0.75f), palette.deep.copy(alpha = 0.15f)),
+                startY = height - barHeight,
+                endY = height,
+            ),
+            topLeft = Offset(left, height - barHeight),
+            size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2),
+        )
+    }
 }
 
 /** One wave layer: an optional crest line, then the liquid body down to the bottom edge. */
@@ -131,8 +163,42 @@ internal fun DrawScope.drawLiquidOrb(
 ) {
     val minDimension = min(size.width, size.height)
     val center = Offset(size.width / 2f, size.height / 2f)
-    // The inner edge keeps clear of the cover (radius 0.16 of the width) even at full swell.
-    val radius = minDimension * 0.33f
+    // The inner edge keeps clear of the cover (radius 0.28 of the width) even at full swell.
+    val radius = minDimension * 0.375f
+    val overall = levels.overall
+    // A soft glow that breathes with the music.
+    drawCircle(
+        Brush.radialGradient(
+            listOf(palette.deep.copy(alpha = 0.32f + 0.25f * overall), Color.Transparent),
+            center = center,
+            radius = minDimension * (0.46f + 0.04f * overall),
+        ),
+        radius = minDimension * 0.5f,
+        center = center,
+    )
+    // Spectrum ring: bars around the liquid, mirrored so both halves match.
+    val bars = 64
+    val inner = radius * 1.12f
+    val reach = minDimension * 0.5f - inner
+    val barStroke = (TAU * inner / bars) * 0.42f
+    for (i in 0 until bars) {
+        val angle = i.toFloat() / bars * TAU - TAU / 4
+        val mirrored = if (i < bars / 2) i else bars - 1 - i
+        val position = mirrored.toFloat() / (bars / 2) * (SPECTRUM_BANDS - 1)
+        val low = position.toInt().coerceIn(0, SPECTRUM_BANDS - 1)
+        val high = (low + 1).coerceAtMost(SPECTRUM_BANDS - 1)
+        val mix = position - low
+        val level = (levels.bands[low] * (1 - mix) + levels.bands[high] * mix).coerceIn(0f, 1f)
+        val length = reach * (0.08f + 0.85f * level)
+        val direction = Offset(cos(angle), sin(angle))
+        drawLine(
+            lerp(palette.deep, palette.light, level).copy(alpha = 0.45f + 0.5f * level),
+            center + direction * inner,
+            center + direction * (inner + length),
+            barStroke,
+            StrokeCap.Round,
+        )
+    }
     orbLayer(
         path,
         center,

@@ -316,10 +316,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     }
     SideEffect {
         activity.window.statusBarColor = android.graphics.Color.TRANSPARENT
-        // The root and every panel paint this same background up to the gesture bar. An opaque
-        // bar in that colour keeps the system from drawing its own contrast scrim or theme
-        // colour there, which showed as a dark band under the player's action row.
-        activity.window.navigationBarColor = background.toArgb()
+        // The app draws behind the gesture bar itself: the root paints the page colour and the
+        // music player continues its cover-coloured backdrop there. An opaque bar colour (or the
+        // system's contrast scrim) showed as a dark band under the player's action row.
+        activity.window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 29) activity.window.isNavigationBarContrastEnforced = false
         WindowCompat.getInsetsController(activity.window, activity.window.decorView).apply {
             isAppearanceLightStatusBars = light
             isAppearanceLightNavigationBars = light
@@ -835,8 +836,6 @@ internal fun Panel(
                         }
                     else Modifier
                 )
-                .safeDrawingPadding()
-                .imePadding()
                 .semantics { paneTitle = title },
             color = MaterialTheme.colorScheme.background,
         ) {
@@ -844,7 +843,11 @@ internal fun Panel(
                 LocalPanelDrag provides
                     if (full && swipeToClose) PanelDrag(drag, flyOff) else null
             ) {
-                Body(Modifier.fillMaxSize().then(backdrop))
+                // The backdrop fills the whole window, under the status and gesture bars too;
+                // only the content keeps clear of them.
+                Box(Modifier.fillMaxSize().then(backdrop)) {
+                    Body(Modifier.fillMaxSize().safeDrawingPadding().imePadding())
+                }
             }
         }
     } else if (title == "About ytui") {
@@ -2319,6 +2322,9 @@ internal fun PlayerPane(
     }
 }
 
+/** Width/height of the music artwork area for a player style: square except the vinyl deck. */
+internal fun visualizerRatio(style: String): Float = if (style.startsWith("vinyl")) 1.35f else 1f
+
 @Composable
 internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modifier = Modifier) {
     val style = config.optString("music_player_style", "classic")
@@ -2359,7 +2365,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .aspectRatio(if (style == "classic") 1f else 1.35f)
+            .aspectRatio(visualizerRatio(style))
             .then(
                 if (style == "classic")
                     Modifier.shadow(
@@ -2420,24 +2426,38 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 config.optBoolean("thumbnails", true),
             )
         } else if (style.startsWith("vu")) {
-            // The liquid fills the container below the cover, which stays on top.
+            // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
                 LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.45f).aspectRatio(1f).align(Alignment.TopCenter),
+                    Modifier.fillMaxWidth(0.66f)
+                        .aspectRatio(1f)
+                        .align(Alignment.Center)
+                        .offset(y = (-10).dp)
+                        .beat(levels) { liquidTime }
+                        .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
+                        .clip(RoundedCornerShape(16.dp))
+                        .sharedCover(media.key, LocalPlayerExpanded.current),
                     config.optBoolean("thumbnails", true),
+                    shape = RoundedCornerShape(16.dp),
                 )
             }
         } else {
+            // A glow, a ring of spectrum bars and two liquid layers around a large round cover
+            // that swells slightly on the beat.
             LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
             Artwork(
                 media,
-                Modifier.fillMaxWidth(0.32f)
+                Modifier.fillMaxWidth(0.56f)
                     .aspectRatio(1f)
                     .align(Alignment.Center)
-                    .clip(CircleShape),
+                    .beat(levels) { liquidTime }
+                    .shadow(16.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+                    .clip(CircleShape)
+                    .sharedCover(media.key, LocalPlayerExpanded.current),
                 config.optBoolean("thumbnails", true),
+                shape = CircleShape,
             )
         }
     }
