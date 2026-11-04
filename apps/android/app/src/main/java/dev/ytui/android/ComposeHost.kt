@@ -3338,13 +3338,14 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
     val stored by vm.lyricData.collectAsState()
     val versions by vm.lyricVersions.collectAsState()
     val imported by vm.importedLyrics.collectAsState()
+    val searching by vm.lyricSearching.collectAsState()
     val media = remember { player.media?.copyJson() ?: JSONObject() }
     var title by remember { mutableStateOf(media.optString("title")) }
     var artist by remember { mutableStateOf(media.optString("creator")) }
     var text by remember { mutableStateOf("") }
     var offset by remember { mutableStateOf("0") }
     var selected by remember { mutableIntStateOf(0) }
-    var follow by remember { mutableStateOf(false) }
+    var follow by remember { mutableStateOf(true) }
     val list = rememberLazyListState()
     val lines =
         remember(stored, versions, selected) {
@@ -3398,12 +3399,30 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                 )
             }
         else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
-        if (lines.isNotEmpty()) SettingToggle("Follow playing line", follow) { follow = it }
-        if (lines.isEmpty() && !editing && media.length() > 0)
+        val source =
+            stored.optJSONObject("track")?.let { "Saved on this device" }
+                ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
+        if (lines.isNotEmpty() && source != null)
+            Text(
+                source,
+                Modifier.padding(horizontal = 8.dp).testTag("lyrics-source"),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        if (lines.isNotEmpty() && lines.any { !it.isNull("at_ms") })
+            SettingToggle("Follow playing line", follow) { follow = it }
+        if (lines.isEmpty() && searching && !editing)
+            Box(
+                Modifier.fillMaxWidth().padding(32.dp).testTag("lyrics-loading"),
+                contentAlignment = Alignment.Center,
+            ) {
+                MediaSpinner()
+            }
+        if (lines.isEmpty() && !searching && !editing && media.length() > 0)
             EmptyMediaState(
                 Glyph.Lyrics,
-                "No lyrics yet",
-                "Find them on LRCLIB using this song's title and artist, or write your own.",
+                "No lyrics found",
+                "YouTube Music has no lyrics for this song. Search LRCLIB with an edited title and artist, or write your own.",
             ) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),

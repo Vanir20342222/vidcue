@@ -1409,6 +1409,8 @@ internal class YtuiViewModel(
 
     val lyricData = MutableStateFlow(JSONObject())
     val lyricVersions = MutableStateFlow<List<JSONObject>>(emptyList())
+    /** True while lyrics are fetched automatically for the open song. */
+    val lyricSearching = MutableStateFlow(false)
     val importedLyrics = MutableStateFlow<String?>(null)
     private var lyricToken = ""
     private var lyricRevision = 0L
@@ -1422,7 +1424,17 @@ internal class YtuiViewModel(
         val revision = ++lyricRevision
         task {
             val result = RustRpc.objectCall("lyrics_get", "url" to media.optString("url"))
-            if (token == lyricToken && revision == lyricRevision) lyricData.value = result
+            if (token != lyricToken || revision != lyricRevision) return@task
+            lyricData.value = result
+            if (result.optJSONObject("track") != null) return@task
+            // Nothing saved: fetch YouTube Music's lyrics for this song (LRCLIB as fallback).
+            lyricSearching.value = true
+            try {
+                val found = RustRpc.arrayCall("lyrics_auto", "media" to media).objects()
+                if (token == lyricToken && revision == lyricRevision) lyricVersions.value = found
+            } finally {
+                if (token == lyricToken) lyricSearching.value = false
+            }
         }
     }
 
@@ -1431,6 +1443,7 @@ internal class YtuiViewModel(
     }
 
     fun lyricClose() {
+        lyricSearching.value = false
         lyricToken = ""
         lyricRevision++
         importedLyrics.value = null
