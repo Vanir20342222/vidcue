@@ -869,6 +869,15 @@ fn channel_avatar(value: &Value) -> String {
         .map(thumb)
         .unwrap_or_default()
 }
+/// Creator avatar on modern lockup cards. The decorated avatar sits beside the title in
+/// `lockupMetadataViewModel.image`; plain `avatarViewModel` is the undecorated form.
+fn lockup_avatar(metadata: &Value) -> String {
+    metadata
+        .pointer("/image/decoratedAvatarViewModel/avatar/avatarViewModel/image")
+        .or_else(|| metadata.pointer("/image/avatarViewModel/image"))
+        .map(thumb)
+        .unwrap_or_default()
+}
 fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
     let id = r.get("contentId")?.as_str()?;
     let metadata = r.pointer("/metadata/lockupMetadataViewModel")?;
@@ -902,6 +911,7 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
             format!("https://www.youtube.com/watch?v={id}")
         },
         browse_id: collection.then(|| format!("VL{id}")),
+        channel_thumbnail: lockup_avatar(metadata),
         ..Default::default()
     })
 }
@@ -1963,6 +1973,38 @@ mod category_tests {
             "https://yt3.ggpht.com/synthetic=s88-c-k"
         );
         assert_eq!(item.thumbnail, "https://i.ytimg.com/vi/aaaaaaaaaaa/hq.jpg");
+        assert!(
+            item.thumbnails.iter().all(|t| !t.url.contains("ggpht")),
+            "avatar URLs must not leak into video artwork: {:?}",
+            item.thumbnails
+        );
+    }
+
+    #[test]
+    fn lockup_card_keeps_its_creator_avatar_apart_from_the_artwork() {
+        let page = parse_page(
+            &json!({"contents":[{"lockupViewModel":{
+                "contentId":"ccccccccccc", "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                    {"url":"https://i.ytimg.com/vi/ccccccccccc/hq.jpg","width":480,"height":360}
+                ]}}},
+                "metadata":{"lockupMetadataViewModel":{
+                    "title":{"content":"Lockup video"},
+                    "image":{"decoratedAvatarViewModel":{"avatar":{"avatarViewModel":{"image":{"sources":[
+                        {"url":"https://yt3.ggpht.com/lockup=s68-c-k","width":68,"height":68}
+                    ]}}}}},
+                    "metadata":{"contentMetadataViewModel":{"metadataRows":[{"metadataParts":[{"text":{"content":"Lockup Channel"}}]}]}}
+                }}
+            }}]}),
+            false,
+        );
+        let item = &page.items[0];
+        assert_eq!(item.creator, "Lockup Channel");
+        assert_eq!(
+            item.channel_thumbnail,
+            "https://yt3.ggpht.com/lockup=s68-c-k"
+        );
+        assert_eq!(item.thumbnail, "https://i.ytimg.com/vi/ccccccccccc/hq.jpg");
         assert!(
             item.thumbnails.iter().all(|t| !t.url.contains("ggpht")),
             "avatar URLs must not leak into video artwork: {:?}",

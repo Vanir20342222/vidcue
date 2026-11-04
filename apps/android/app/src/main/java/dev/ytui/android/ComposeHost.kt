@@ -1027,6 +1027,18 @@ private fun BrowsePane(
             ?.let { query = it }
     }
     val focus = remember { FocusRequester() }
+    // Dismissing the keyboard from an empty, unsubmitted search leaves search mode. Otherwise
+    // the page title, Settings and More stay hidden behind an empty field (most visibly at
+    // large text sizes, where a second Back is easy to miss). A typed query keeps its session.
+    val imeShown = WindowInsets.ime.getBottom(density) > 0
+    var imeWasShown by remember { mutableStateOf(false) }
+    LaunchedEffect(imeShown) {
+        if (imeShown) imeWasShown = true
+        else if (imeWasShown) {
+            imeWasShown = false
+            if (searchActive && query.isBlank() && !searchResults) releaseSearchFocus()
+        }
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
     val rememberSearches = config.optBoolean("playback_history", true)
     val grid = rememberLazyGridState(initialFirstVisibleItemIndex = feed.scrollIndex)

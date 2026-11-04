@@ -451,6 +451,7 @@ public final class OfflineStore {
           .remove(job)
           .remove(job + "-request")
           .apply();
+      PrepareWorker.forget(MediaBridge.context, job);
       return;
     }
     DownloadService.sendRemoveDownload(MediaBridge.context, OfflineService.class, id, false);
@@ -468,6 +469,15 @@ public final class OfflineStore {
               .getString(job + "-request", null);
       androidx.work.WorkManager.getInstance(MediaBridge.context)
           .cancelWorkById(java.util.UUID.fromString(job));
+      // The restarted job gets a new id and row; drop the old row instead of leaving a
+      // duplicate, along with its cursor and checkpoint.
+      MediaBridge.context
+          .getSharedPreferences("preparations", Context.MODE_PRIVATE)
+          .edit()
+          .remove(job)
+          .remove(job + "-request")
+          .apply();
+      PrepareWorker.forget(MediaBridge.context, job);
       if (raw != null) PrepareWorker.enqueue(new JSONObject(raw));
       return;
     }

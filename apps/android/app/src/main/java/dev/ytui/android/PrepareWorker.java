@@ -37,6 +37,24 @@ public final class PrepareWorker extends Worker {
         .apply();
   }
 
+  /** Drops the cursor, retry list and checkpoint of a finished, restarted or removed job. */
+  static void forget(Context context, String id) {
+    context
+        .getSharedPreferences("preparations-progress", Context.MODE_PRIVATE)
+        .edit()
+        .remove(id)
+        .remove(id + "-failed")
+        .remove(id + "-retry")
+        .apply();
+    java.io.File checkpoint = new java.io.File(context.getFilesDir(), "prepare-" + id + ".json");
+    if (checkpoint.exists()) checkpoint.delete();
+  }
+
+  /** A cancelled worker must not write its row back after Restart or Remove dropped it. */
+  private void report(String id, String text, String request) {
+    if (!isStopped()) status(getApplicationContext(), id, text, request);
+  }
+
   @Override
   public Result doWork() {
     String id = getId().toString(), raw = getInputData().getString("request");
@@ -60,13 +78,18 @@ public final class PrepareWorker extends Worker {
           items = new JSONArray(out.toString("UTF-8"));
         }
       } else {
-        JSONObject response =
-            call(
-                new JSONObject()
-                    .put("op", "collection")
-                    .put("request", request.get("request"))
-                    .put("music", request.optBoolean("music")));
-        items = response.getJSONArray("data");
+        // A Restart after failures carries only the entries that failed.
+        JSONArray retry = request.optJSONArray("items");
+        if (retry != null) items = retry;
+        else {
+          JSONObject response =
+              call(
+                  new JSONObject()
+                      .put("op", "collection")
+                      .put("request", request.get("request"))
+                      .put("music", request.optBoolean("music")));
+          items = response.getJSONArray("data");
+        }
         android.util.AtomicFile atomic = new android.util.AtomicFile(checkpoint);
         java.io.FileOutputStream out = null;
         try {
@@ -83,11 +106,11 @@ public final class PrepareWorker extends Worker {
               .getSharedPreferences("preparations-progress", Context.MODE_PRIVATE);
       int start = PreparationPolicy.checkedCursor(progress.getInt(id, 0), items.length()),
           failed = progress.getInt(id + "-failed", 0);
+      String retryable = progress.getString(id + "-retry", "");
       for (int i = start; i < items.length(); i++) {
         if (isStopped()) return Result.retry();
         JSONObject media = items.getJSONObject(i);
-        status(
-            getApplicationContext(),
+        report(
             id,
             "Preparing " + (i + 1) + " / " + items.length() + " · " + failed + " failed",
             raw);
@@ -106,14 +129,11 @@ public final class PrepareWorker extends Worker {
         } else if (!resolved.optBoolean("ok")) {
           String error = resolved.optString("error").toLowerCase(java.util.Locale.ROOT);
           if (PreparationPolicy.rateLimited(error)) {
-            status(
-                getApplicationContext(),
-                id,
-                "Service cooldown; playlist preparation will retry",
-                raw);
+            report(id, "Service cooldown; playlist preparation will retry", raw);
             return Result.retry();
           }
           failed++;
+          retryable = PreparationPolicy.withFailure(retryable, i);
           MediaBridge.event(
               "error",
               "Playlist entry failed: "
@@ -147,31 +167,29 @@ public final class PrepareWorker extends Worker {
             Thread.sleep(100);
           }
         }
-        if (!progress.edit().putInt(id, i + 1).putInt(id + "-failed", failed).commit())
+        if (!progress
+            .edit()
+            .putInt(id, i + 1)
+            .putInt(id + "-failed", failed)
+            .putString(id + "-retry", retryable)
+            .commit())
           throw new java.io.IOException("Cannot persist playlist progress");
       }
-      status(
-          getApplicationContext(),
-          id,
-          failed == 0
-              ? "Playlist queued: " + items.length() + " entries"
-              : "Playlist queued with " + failed + " failures; review before retrying",
-          raw);
-      if (checkpoint.exists()) checkpoint.delete();
+      int[] retry = PreparationPolicy.failures(retryable, items.length());
+      String next = raw;
+      if (retry.length > 0) {
+        JSONArray again = new JSONArray();
+        for (int index : retry) again.put(items.getJSONObject(index));
+        next = new JSONObject(raw).put("items", again).toString();
+      }
+      report(id, PreparationPolicy.finished(items.length(), failed, retry.length), next);
+      forget(getApplicationContext(), id);
       return failed == 0 ? Result.success() : Result.failure();
     } catch (IllegalArgumentException error) {
-      status(
-          getApplicationContext(),
-          id,
-          "Invalid playlist checkpoint; remove and add the playlist again",
-          raw);
+      report(id, "Invalid playlist checkpoint; remove and add the playlist again", raw);
       return Result.failure();
     } catch (Exception error) {
-      status(
-          getApplicationContext(),
-          id,
-          "Playlist preparation interrupted; retry from downloads",
-          raw);
+      report(id, "Playlist preparation interrupted; retry from downloads", raw);
       return Result.retry();
     }
   }
