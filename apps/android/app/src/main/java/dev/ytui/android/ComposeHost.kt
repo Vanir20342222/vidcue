@@ -669,6 +669,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             Text(
                                 "All provider, extraction, account and library operations use the shared Rust engine. Android supplies touch, keyboard, video and background media. Development preview. Device playback, network and update checks are tracked in the validation report."
                             )
+                            AppUpdateSettings()
                             ValueRow("Radio artwork credits", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
@@ -694,6 +695,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 WindowInsets.safeDrawing.getBottom(this).toDp()
                             } + if (playerOpen || tabletLayoutOf()) 24.dp else if (hasPlayer) 156.dp else 92.dp,
                     )
+                if (!onboarding && !fullscreen) AppUpdateHost()
                 val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,

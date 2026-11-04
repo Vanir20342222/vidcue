@@ -67,8 +67,11 @@ jobs:
           packages: platform-tools
       - name: Install pinned inspection tools
         run: sdkmanager 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      - name: List published releases (version codes must keep increasing)
+        run: gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
       - name: Download, verify and inspect the signed APK
         run: |
+          export YTUI_PUBLISHED_RELEASES="$RUNNER_TEMP/releases.json"
           python3 tools/android/verify-local-release.py
           apk="publish/vidcue-$YTUI_VERSION_NAME.apk"
           tools/android/inspect-apk.sh "$apk" >> publish/APK-inspection.txt

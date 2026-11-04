@@ -24,6 +24,44 @@ Android, Rust and Secret scan runs for that exact revision, and uploads an APK
 and inspection report. It does not publish a GitHub Release or mark M9 complete.
 Physical-device/live and capability gates in [PARITY.md](PARITY.md) remain.
 
+## Beta channel: every published APK updates the installed beta
+
+From the beta on, every APK we publish must install **over** the installed beta, keeping the
+user's account, settings and library. Android allows that only when the new APK has:
+
+| Rule | How it is enforced |
+| --- | --- |
+| Same package, `dev.ytui.android.stable` | `verify-local-release.py` checks the package name. Debug Preview APKs (`.preview`) are never offered. |
+| Same signing key (certificate SHA256 above) | `verify-local-release.py` checks the certificate. The app also compares the release's marker with its own certificate. |
+| Strictly higher version code | `release_channel.require_update` compares it with **every** published release (markers plus the codes in older notes). Release builds also refuse to use the default code. |
+
+**Version codes.** Use `python3 tools/android/release_channel.py code 0.3.0-beta.1`:
+
+- The formula is `MAJOR·1,000,000 + MINOR·10,000 + PATCH·100 + stage`. The stage is N for `beta.N`, 50+N for `rc.N` and 99 for the final release.
+- So `0.3.0-beta.1` → 30001, `0.3.0-beta.2` → 30002, `0.3.0-rc.1` → 30051, `0.3.0` → 30099 and `0.3.1-beta.1` → 30101.
+- Every code is above the alpha codes already published (10–15), so the first beta installs over the current alpha stable app too.
+
+**In-app updates.**
+
+- Each locally signed release's notes end with an invisible `vidcue-android-update` marker. The marker records the package, version code and name, APK file name, APK SHA256, certificate SHA256 and minimum SDK.
+- Vidcue (signed builds only) reads the GitHub release list when it opens, at most every six hours, and shows **Update now · Later · Skip this version**.
+- *Update now* downloads the APK and checks the SHA256, package, version code and certificate. It then hands the APK to Android's installer, which asks the user to confirm.
+- The first time, Android asks to allow installs from Vidcue.
+- About → *Check for updates automatically* turns the startup check off. About → *Check for updates* checks on demand.
+- Releases without the marker (all alphas so far) are never offered.
+
+**CI Preview releases stop at the beta.** CI Preview APKs are debug-signed under another package, so they can never update the beta. *Release verified Android Preview* therefore refuses to publish once any release carries the marker. From then on, publish only through *Publish locally signed Android APK*.
+
+Release checklist for each beta/rc/final:
+
+1. Pick the name, then `export YTUI_ANDROID_VERSION_NAME=0.3.0-beta.1` and
+   `export YTUI_ANDROID_VERSION_CODE=$(python3 tools/android/release_channel.py code "$YTUI_ANDROID_VERSION_NAME")`.
+2. Build and sign locally with `tools/android/sign-local.py` (below).
+3. Run *Publish locally signed Android APK* with the same code and name. It refuses a code that is not higher than every published release, and adds the update marker.
+4. On a device with the previous beta installed, open About → Check for updates and install. Confirm that the account, settings and library are still there. This physical check is not automated.
+
+Never lose the signing key: without it no further update can reach installed betas.
+
 ## Current delivery: private local signing, no GitHub secrets
 
 The owner rejected GitHub secret setup on 2026-10-28. The stable signing identity

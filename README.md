@@ -77,7 +77,7 @@ Press `t` for the theme picker. `system` follows your desktop theme (Omarchy, Ca
   <a href="docs/screenshots/android/README.md"><img alt="Phone and tablet gallery" src="https://img.shields.io/badge/gallery-phone_%26_tablet-6ddbc1?style=for-the-badge"></a>
 </p>
 
-<sub>A development preview, not a production release. See the [Android notes](docs/android/README.md) and [release validation](docs/android/MOBILE10_RELEASE.md).</sub>
+<sub>From the beta on, the app offers new versions itself (About → Check for updates) and installs them over your current install. A development preview, not a production release. See the [Android notes](docs/android/README.md) and [release validation](docs/android/MOBILE10_RELEASE.md).</sub>
 
 ## 🚀 Install
 

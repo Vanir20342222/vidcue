@@ -23,6 +23,10 @@ gradle.taskGraph.whenReady { graph ->
     // release artifacts even when their command-line names omit "Release".
     if (graph.allTasks.any { it.project == androidProject && it.name in ['assembleRelease', 'packageRelease', 'bundleRelease'] } && !signingReady)
         throw new GradleException('Release builds require YTUI_ANDROID_KEYSTORE, YTUI_ANDROID_KEY_ALIAS, YTUI_ANDROID_STORE_PASSWORD and YTUI_ANDROID_KEY_PASSWORD; no debug-key fallback is used')
+    // Every release must install over the previous one, so its version code is chosen on
+    // purpose (higher than the last published release), never taken from the default.
+    if (graph.allTasks.any { it.project == androidProject && it.name in ['assembleRelease', 'packageRelease', 'bundleRelease'] } && !System.getenv('YTUI_ANDROID_VERSION_CODE'))
+        throw new GradleException('Release builds require an explicit YTUI_ANDROID_VERSION_CODE higher than the last published release; see docs/android/SIGNING.md')
 }
 android {
     namespace 'dev.ytui.android'
