@@ -94,6 +94,64 @@ class SpectrumMathTest {
         assertTrue(levels.overall > 0f && levels.overall < 1f)
     }
 
+    @Test
+    fun quietTrebleBandsAreAutoGainedToTheirOwnPeak() {
+        val levels = LiquidLevels()
+        // Treble at 10% of full scale, steady: its bar still reaches near the top.
+        val quiet = IntArray(SPECTRUM_BANDS) { if (it >= 18) 6553 else 0 }
+        repeat(60) { levels.step(quiet, 0.016f) }
+        assertTrue(levels.bands[20] > 0.8f)
+        assertEquals(0f, levels.bands[2], 0.0001f)
+    }
+
+    @Test
+    fun aBassHitStartsAKickAndARippleThatFade() {
+        val levels = LiquidLevels()
+        repeat(40) { levels.step(bands(3000), 0.016f) }
+        assertEquals(0f, levels.kick, 0.0001f)
+        assertTrue(levels.ripples.all { it >= RIPPLE_SECONDS })
+        levels.step(IntArray(SPECTRUM_BANDS) { if (it < 6) 60000 else 3000 }, 0.016f)
+        assertEquals(1f, levels.kick, 0.0001f)
+        assertEquals(1, levels.ripples.count { it < RIPPLE_SECONDS })
+        repeat(120) { levels.step(bands(3000), 0.016f) }
+        assertTrue(levels.kick < 0.01f)
+        assertTrue(levels.ripples.all { it >= RIPPLE_SECONDS })
+    }
+
+    @Test
+    fun peakMarkersHoldThenFallUnderGravity() {
+        val levels = LiquidLevels()
+        repeat(30) { levels.step(bands(65535), 0.016f) }
+        val top = levels.held[3]
+        assertTrue(top > 0.9f)
+        // Silence: the bar drops at once, the marker holds for the hold time…
+        repeat(20) { levels.step(bands(0), 0.016f) }
+        assertEquals(top, levels.held[3], 0.0001f)
+        assertTrue(levels.bands[3] < levels.held[3])
+        // …then falls to the bar within about a second.
+        repeat(80) { levels.step(bands(0), 0.016f) }
+        assertEquals(levels.bands[3], levels.held[3], 0.0001f)
+    }
+
+    @Test
+    fun quietPianoNotesAreBeatsButSteadyNoiseIsNot() {
+        // Notes at ~3% of full scale every 0.6 s: far below the old fixed bass threshold.
+        val piano = LiquidLevels()
+        var notes = 0
+        repeat(600) { frame ->
+            val time = frame * 0.016f
+            val since = time % 0.6f
+            if (since < 0.016f && time > 0.5f) notes++
+            val level = (2000 * kotlin.math.exp(-since / 0.25f)).toInt() + 150
+            piano.step(IntArray(SPECTRUM_BANDS) { if (it < 10) level else level / 3 }, 0.016f)
+        }
+        assertTrue("beats=${piano.beats} notes=$notes", piano.beats >= notes * 0.8 && piano.beats <= notes + 2)
+        val noise = LiquidLevels()
+        val random = kotlin.random.Random(3)
+        repeat(600) { noise.step(IntArray(SPECTRUM_BANDS) { 40000 + random.nextInt(3000) }, 0.016f) }
+        assertTrue("noise beats=${noise.beats}", noise.beats <= 3)
+    }
+
     private companion object {
         const val TWO_PI = 6.2831855f
     }

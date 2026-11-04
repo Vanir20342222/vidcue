@@ -153,3 +153,32 @@ async fn collection_budget_counts_all_thumbnail_choices_and_the_selected_copy() 
         Ok(_) => panic!("Nested thumbnail data bypassed the collection memory budget"),
     }
 }
+#[tokio::test]
+async fn playable_collection_expands_nested_playlists_into_single_videos() {
+    let (browser, calls, task) = provider(|n| match n {
+        // An artist-style page: one video, one nested playlist, one channel.
+        0 => json!({"contents":[
+            {"videoRenderer":{"videoId":"fixture-0","title":{"simpleText":"Video 0"}}},
+            {"playlistRenderer":{"playlistId":"PLnested","title":{"simpleText":"Tour Setlist"}}},
+            {"channelRenderer":{"channelId":"UCfixture","title":{"simpleText":"Channel"},
+                "navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture"}}}}
+        ]}),
+        // The nested playlist repeats video 0 and adds two more.
+        _ => page(3, None),
+    })
+    .await;
+    let result = crate::watch::collect_playable(
+        browser,
+        watch(false),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await;
+    task.abort();
+    let items = result.unwrap();
+    assert!(items.iter().all(|media| !media.collection()), "{items:?}");
+    assert_eq!(
+        items.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+        ["fixture-0", "fixture-1", "fixture-2"]
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}

@@ -186,23 +186,36 @@ internal object PlayerChrome {
             )) {
             view.findViewById<View>(id)?.apply {
                 val disc = disc(resources, 2f)
-                val glyph =
-                    (background as? LayerDrawable)?.findDrawableByLayerId(android.R.id.icon)
-                        ?: background
+                // Media3's own arrows are not centred on their ring, so the seek amount sat
+                // off-centre. Use the app's symmetric ring (centred at 12,12) for both.
+                val ring =
+                    androidx.core.content.ContextCompat.getDrawable(
+                        context,
+                        if (id == androidx.media3.ui.R.id.exo_rew_with_amount) R.drawable.ytui_rewind
+                        else R.drawable.ytui_forward,
+                    )
                 ViewCompat.setBackgroundTintList(this, null)
+                foreground = null
                 background =
-                    if (foreground != null || glyph == null) disc
-                    else LayerDrawable(arrayOf(disc, glyph)).apply { setId(1, android.R.id.icon) }
-                // Media3 writes the seek amount ("10") as button text; centre it inside the
-                // ring in the app's face instead of leaving it on the disc's lower edge.
+                    if (ring == null) disc
+                    else LayerDrawable(arrayOf(disc, ring)).apply { setId(1, android.R.id.icon) }
+                // Media3 writes the seek amount ("10") as button text. Centre the digits
+                // themselves: a centred text box puts them off by the font's spare ascent and
+                // descent.
                 (this as? android.widget.TextView)?.apply {
                     gravity = Gravity.CENTER
-                    setPadding(0, 0, 0, 0)
                     includeFontPadding = false
                     textSize = 10f
                     typeface =
                         androidx.core.content.res.ResourcesCompat.getFont(context, R.font.instrument_sans)
                             ?.let { android.graphics.Typeface.create(it, android.graphics.Typeface.BOLD) }
+                    val digits = android.graphics.Rect()
+                    paint.getTextBounds("0", 0, 1, digits)
+                    val metrics = paint.fontMetrics
+                    // How far the digits' middle sits below the text box's middle.
+                    val below = (-metrics.ascent - metrics.descent - digits.height()) / 2f
+                    val shift = kotlin.math.round(kotlin.math.abs(below) * 2).toInt()
+                    if (below > 0) setPadding(0, 0, 0, shift) else setPadding(0, shift, 0, 0)
                 }
             }
         }

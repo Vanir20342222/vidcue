@@ -1105,11 +1105,20 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   static void mergeMetadata(JSONObject media, JSONObject stream) throws JSONException {
-    for (String key :
-        new String[] {"title", "creator", "thumbnail", "upload_date", "description"}) {
+    for (String key : new String[] {"title", "creator", "upload_date", "description"}) {
       String value = stream.optString(key);
       if (!value.isEmpty() && !value.equals("null")) media.put(key, value);
     }
+    // The stream's cover only fills a gap. Replacing a working cover changed its source after
+    // every Next, reset the artwork, and the stream's URL (often a max-resolution image that
+    // many uploads lack) could then fail.
+    String thumbnail = stream.optString("thumbnail");
+    String current = media.optString("thumbnail");
+    JSONArray variants = media.optJSONArray("thumbnails");
+    if (!thumbnail.isEmpty()
+        && !thumbnail.equals("null")
+        && (current.isEmpty() || current.equals("null"))
+        && (variants == null || variants.length() == 0)) media.put("thumbnail", thumbnail);
     for (String key :
         new String[] {"duration", "view_count", "like_count", "channel_follower_count"}) {
       double value = stream.optDouble(key, -1);

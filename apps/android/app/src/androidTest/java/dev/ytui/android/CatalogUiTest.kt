@@ -1536,7 +1536,24 @@ class CatalogUiTest {
         var diagnostics = emptyList<String>()
         try {
             compose.waitUntil(15_000) {
-                val viewport = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                // The search header and the mini player/navigation dock float over the grid;
+                // a cover is only fully visible between them.
+                val grid = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                val header =
+                    compose.onAllNodesWithTag("browse-header").fetchSemanticsNodes().firstOrNull()?.let {
+                        with(compose.density) { it.boundsInRoot.bottom.toDp() }
+                    }
+                val dock =
+                    compose.onAllNodesWithTag("bottom-dock").fetchSemanticsNodes().firstOrNull()?.let {
+                        with(compose.density) { it.boundsInRoot.top.toDp() }
+                    }
+                val viewport =
+                    androidx.compose.ui.unit.DpRect(
+                        grid.left,
+                        if (header != null && header > grid.top) header else grid.top,
+                        grid.right,
+                        if (dock != null && dock < grid.bottom) dock else grid.bottom,
+                    )
                 var inspected = 0
                 var decoded = true
                 val checks = mutableListOf<String>()

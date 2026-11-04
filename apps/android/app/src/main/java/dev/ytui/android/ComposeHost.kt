@@ -47,6 +47,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -75,6 +76,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -344,6 +346,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         remember(mobile, config.optBoolean("reduced_motion")) {
             Motion.from(mobile, config.optBoolean("reduced_motion"))
         }
+    // Once the music player has finished opening it covers the whole window, so the page
+    // underneath stops drawing (it stays composed). Dragging the player down or closing it shows
+    // the page again at once.
+    var musicPlayerCovers by remember { mutableStateOf(false) }
+    LaunchedEffect(playerOpen, videoPlayer, motion) {
+        musicPlayerCovers = false
+        if (playerOpen && !videoPlayer) {
+            delay(motion.millis(400).toLong() + 100)
+            musicPlayerCovers = true
+        }
+    }
     MaterialTheme(
         colorScheme = colors,
         typography = typography,
@@ -376,7 +389,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .background(background)
                         // The video panel is opaque. Keep browse state/artwork
                         // attached, but skip drawing the covered content.
-                        .graphicsLayer { alpha = if (playerOpen && videoPlayer) 0f else 1f }
+                        .graphicsLayer {
+                            alpha =
+                                if (playerOpen && (videoPlayer || (musicPlayerCovers && !PanelPull.active.value))) 0f
+                                else 1f
+                        }
                         .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
@@ -743,6 +760,11 @@ internal fun Panel(
 ) {
     // Full-screen panels follow a downward drag and fly off when released past the threshold.
     val drag = remember { Animatable(0f) }
+    // Tell the app shell while a full panel is pulled away, so the page behind can show.
+    if (full) {
+        LaunchedEffect(drag) { snapshotFlow { drag.value != 0f }.collect { PanelPull.active.value = it } }
+        DisposableEffect(Unit) { onDispose { PanelPull.active.value = false } }
+    }
     val motion = LocalMotion.current
     val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dismissThreshold = with(LocalDensity.current) { 96.dp.toPx() }
@@ -926,6 +948,11 @@ internal fun Panel(
     }
 }
 
+/** True while a full-screen panel is being dragged or flung away. */
+internal object PanelPull {
+    val active = mutableStateOf(false)
+}
+
 /** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
 private var pendingTabEntry = 0
 
@@ -1035,28 +1062,26 @@ private fun BrowsePane(
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
     val initialScrollToTop = remember { scrollToTop }
-    // The search bar and filters slide away while scrolling down through results and come
-    // back on any upward scroll, at the top, or while the field is in use.
-    var headerShown by remember(tab) { mutableStateOf(true) }
-    val headerTravel = with(density) { 28.dp.toPx() }
+    // The search bar and filters move with the scroll: they slide up as the feed scrolls down
+    // and come back with any upward scroll. They float over the grid and only their layer moves,
+    // so hiding them never re-measures the grid mid-scroll.
+    var headerHeight by remember { mutableIntStateOf(0) }
+    val headerOffset = remember(tab) { mutableFloatStateOf(0f) }
     val headerScroll =
-        remember(headerTravel) {
+        remember(headerOffset) {
             object : NestedScrollConnection {
-                var travel = 0f
-
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     val dy = available.y
-                    if (dy == 0f) return Offset.Zero
-                    if ((dy < 0f) != (travel < 0f)) travel = 0f
-                    travel += dy
-                    if (travel < -headerTravel) headerShown = false
-                    else if (travel > headerTravel) headerShown = true
+                    if (dy != 0f)
+                        headerOffset.floatValue =
+                            (headerOffset.floatValue - dy).coerceIn(0f, headerHeight.toFloat())
                     return Offset.Zero
                 }
             }
         }
+    LaunchedEffect(searchActive, feed.request) { headerOffset.floatValue = 0f }
     LaunchedEffect(scrollToTop) {
-        headerShown = true
+        headerOffset.floatValue = 0f
         if (scrollToTop != initialScrollToTop) {
             if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
         }
@@ -1065,11 +1090,6 @@ private fun BrowsePane(
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { vm.rememberScroll(tab, it) }
-    }
-    LaunchedEffect(grid) {
-        snapshotFlow { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
-            .distinctUntilChanged()
-            .collect { top -> if (top) headerShown = true }
     }
     val focused by vm.playerOpen.collectAsState()
     val playingUrl by
@@ -1127,6 +1147,21 @@ private fun BrowsePane(
     val pageItemCount =
         (shelves?.let { it.size * 2 } ?: feed.cards.size) +
             (if (showFeedBack) 1 else 0) + (if (feed.notice != null) 1 else 0)
+    // A page that arrived empty but says more exists (a shell whose shelves load separately)
+    // fetches its next part once, instead of waiting for a scroll that cannot happen.
+    var emptyFollowed by remember(tab, feed.request) { mutableStateOf(false) }
+    LaunchedEffect(feed.cards.isEmpty(), feed.continuation, feed.loading, feed.error) {
+        if (
+            feed.cards.isEmpty() &&
+                feed.continuation != null &&
+                !feed.loading &&
+                feed.error == null &&
+                !emptyFollowed
+        ) {
+            emptyFollowed = true
+            vm.more()
+        }
+    }
     LaunchedEffect(grid, feed.continuation, feed.loading, feed.error, feed.cards.size, pageItemCount) {
         if (
             feed.cards.isNotEmpty() &&
@@ -1147,106 +1182,13 @@ private fun BrowsePane(
                 .collect { nearEnd -> if (nearEnd) vm.more() }
         }
     }
-    Column(
-        Modifier.fillMaxSize().testTag("browse-pane"),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        AnimatedVisibility(
-            headerShown || searchActive,
-            enter =
-                if (!motion.animate) EnterTransition.None
-                else fadeIn(motion.fade(160)) + expandVertically(motion.enter(240), expandFrom = Alignment.Top),
-            exit =
-                if (!motion.animate) ExitTransition.None
-                else fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(220), shrinkTowards = Alignment.Top),
-        ) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(
-            Modifier.align(Alignment.CenterHorizontally)
-                .padding(horizontal = MediaTokens.textInset)
-                .widthIn(max = 720.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (searchMode)
-                MediaIconButton(Glyph.Back, "Leave search") {
-                    releaseSearchFocus()
-                    if (searchResults) vm.back()
-                }
-            SearchField(
-                query,
-                { query = it },
-                if (tab == 3) "Search stations or genres" else "Search or paste a link",
-                // A single-line input should not stretch across a wide canvas;
-                // cap it and center it when the pane is wider than the cap.
-                Modifier.weight(1f)
-                    .focusRequester(focus)
-                    .onFocusChanged { onSearchFocus(it.isFocused) }
-                    .testTag("search-field"),
-                searching = searchMode,
-                onClear = {
-                    query = ""
-                    focus.requestFocus()
-                    keyboard?.show()
-                },
-                onSubmit = {
-                    keyboard?.hide()
-                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
-                    vm.search(query)
-                },
-            )
-        }
-        if (tab in 1..2 || feed.categories.isNotEmpty())
-            LazyRow(
-                Modifier.fillMaxWidth().testTag("feed-filters"),
-                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (tab in 1..2)
-                    items(
-                        // Library feeds the Browse sheet already offers, surfaced
-                        // where people look for them (Home only for video feeds).
-                        listOfNotNull(
-                            "For you" to "Home",
-                            "My playlists" to "Playlists",
-                            "Liked" to "Liked",
-                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
-                            if (tab == 1) "Watch later" to "WatchLater" else null,
-                        )
-                    ) { (label, request) ->
-                        MediaChip(
-                            label,
-                            selected = feed.request == request,
-                            modifier = Modifier.testTag("source-$request"),
-                        ) {
-                            vm.navigate(tab, request)
-                        }
-                    }
-                items(feed.categories) { category ->
-                    MediaChip(
-                        category.optString("title"),
-                        modifier = Modifier.testTag("category-${category.optString("title")}"),
-                        selected =
-                            feed.request !in
-                                listOf(
-                                    "Home",
-                                    "Subscriptions",
-                                    "WatchLater",
-                                    "Playlists",
-                                    "Liked",
-                                ) && category.opt("request")?.toString() == feed.request.toString(),
-                    ) {
-                        vm.navigate(request = category.get("request"))
-                    }
-                }
-            }
-        }
-        }
+    val headerSpace = with(density) { headerHeight.toDp() }
+    Box(Modifier.fillMaxSize().clipToBounds().testTag("browse-pane")) {
         // Pull to refresh reuses the overflow menu's "Refresh feed" request.
         var refreshing by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
         val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(headerScroll)) {
+        Box(Modifier.fillMaxSize().nestedScroll(headerScroll)) {
         PullToRefreshBox(
             refreshing && feed.loading,
             onRefresh = {
@@ -1254,7 +1196,11 @@ private fun BrowsePane(
                 vm.navigate(request = feed.request, remember = false)
             },
             state = pullState,
-            indicator = { RefreshDisc(pullState, refreshing && feed.loading) },
+            indicator = {
+                Box(Modifier.matchParentSize().padding(top = headerSpace)) {
+                    RefreshDisc(pullState, refreshing && feed.loading)
+                }
+            },
             modifier =
                 Modifier.fillMaxSize().pointerInput(searchActive) {
                     // Touching content ends an unsubmitted search session, as tapping
@@ -1286,6 +1232,13 @@ private fun BrowsePane(
                         if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
                     }
                 }
+            // Covers read these once from the grid's composition instead of every card
+            // providing its own copies.
+            val scrollingProbe = remember(grid) { { grid.isScrollInProgress } }
+            CompositionLocalProvider(
+                LocalArtworkScrolling provides scrollingProbe,
+                LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
+            ) {
             LazyVerticalGrid(
                 columns =
                     if (fixedColumns) GridCells.Fixed(2)
@@ -1308,7 +1261,7 @@ private fun BrowsePane(
                     PaddingValues(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
-                        top = 4.dp,
+                        top = 4.dp + headerSpace,
                         bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
@@ -1395,8 +1348,7 @@ private fun BrowsePane(
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
                                     val shelfWidth = if (tab == 1) 272.dp else 152.dp
                                     CompositionLocalProvider(
-                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() },
+                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() }
                                     ) {
                                         Box(
                                             Modifier.width(shelfWidth).pressFeedback()
@@ -1426,10 +1378,7 @@ private fun BrowsePane(
                     contentType = { "media-card" },
                 ) { media ->
                     // Scroll state is read in image effects, without recomposing every card.
-                    CompositionLocalProvider(
-                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                        LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
-                    ) {
+                    run {
                         Box(
                             Modifier.then(
                                     // Cached categories display at once, without card entrances.
@@ -1487,6 +1436,7 @@ private fun BrowsePane(
                         }
                     }
             }
+            }
         }
         // While the field is focused and empty, recent searches cover the feed (which stays
         // composed underneath so focus and scroll position survive).
@@ -1511,9 +1461,98 @@ private fun BrowsePane(
                     if (rememberSearches) RecentSearches.add(context, tab == 3, it)
                     vm.search(it)
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = headerSpace),
             )
         }
+        }
+        Column(
+            Modifier.fillMaxWidth()
+                .onSizeChanged { headerHeight = it.height }
+                .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
+                .background(MaterialTheme.colorScheme.background)
+                .padding(bottom = 12.dp)
+                .testTag("browse-header"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+        Row(
+            Modifier.align(Alignment.CenterHorizontally)
+                .padding(horizontal = MediaTokens.textInset)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (searchMode)
+                MediaIconButton(Glyph.Back, "Leave search") {
+                    releaseSearchFocus()
+                    if (searchResults) vm.back()
+                }
+            SearchField(
+                query,
+                { query = it },
+                if (tab == 3) "Search stations or genres" else "Search or paste a link",
+                // A single-line input should not stretch across a wide canvas;
+                // cap it and center it when the pane is wider than the cap.
+                Modifier.weight(1f)
+                    .focusRequester(focus)
+                    .onFocusChanged { onSearchFocus(it.isFocused) }
+                    .testTag("search-field"),
+                searching = searchMode,
+                onClear = {
+                    query = ""
+                    focus.requestFocus()
+                    keyboard?.show()
+                },
+                onSubmit = {
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
+                    vm.search(query)
+                },
+            )
+        }
+        if (tab in 1..2 || feed.categories.isNotEmpty())
+            LazyRow(
+                Modifier.fillMaxWidth().testTag("feed-filters"),
+                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (tab in 1..2)
+                    items(
+                        // Library feeds the Browse sheet already offers, surfaced
+                        // where people look for them (Home only for video feeds).
+                        listOfNotNull(
+                            "For you" to "Home",
+                            "My playlists" to "Playlists",
+                            "Liked" to "Liked",
+                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
+                            if (tab == 1) "Watch later" to "WatchLater" else null,
+                        )
+                    ) { (label, request) ->
+                        MediaChip(
+                            label,
+                            selected = feed.request == request,
+                            modifier = Modifier.testTag("source-$request"),
+                        ) {
+                            vm.navigate(tab, request)
+                        }
+                    }
+                items(feed.categories) { category ->
+                    MediaChip(
+                        category.optString("title"),
+                        modifier = Modifier.testTag("category-${category.optString("title")}"),
+                        selected =
+                            feed.request !in
+                                listOf(
+                                    "Home",
+                                    "Subscriptions",
+                                    "WatchLater",
+                                    "Playlists",
+                                    "Liked",
+                                ) && category.opt("request")?.toString() == feed.request.toString(),
+                    ) {
+                        vm.navigate(request = category.get("request"))
+                    }
+                }
+            }
         }
     }
     cardMenu?.let { (media, square) ->
@@ -1602,11 +1641,15 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 pause = (pause * 2).coerceAtMost(15_000L)
             }
         }
+        // While the exact size or a new source loads, keep painting the last cover of the same
+        // item (for example after Next, or a larger size for the full player) instead of
+        // flashing the placeholder.
+        val shown = bitmap ?: if (enabled) ArtworkCache.recent(media) else null
         // Cached art paints at once; art that arrives later fades in over the placeholder.
         val motion = LocalMotion.current
         val reveal =
             remember(media.key, source, pixels, enabled) {
-                Animatable(if (bitmap != null || !motion.animate) 1f else 0f)
+                Animatable(if (shown != null || !motion.animate) 1f else 0f)
             }
         LaunchedEffect(reveal, bitmap, motion) {
             if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
@@ -1615,7 +1658,7 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
         // and briefly exposing a different background as soon as the image arrives.
         Box(
             Modifier.fillMaxSize()
-                .graphicsLayer { alpha = if (bitmap == null) 1f else 1f - reveal.value }
+                .graphicsLayer { alpha = if (shown == null) 1f else 1f - reveal.value }
                 .background(MaterialTheme.colorScheme.surfaceContainer),
             contentAlignment = Alignment.Center,
         ) {
@@ -1625,14 +1668,18 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
             )
         }
-        if (bitmap != null)
+        if (shown != null)
             Image(
-                bitmap!!.asImageBitmap(),
+                shown.asImageBitmap(),
                 media.title,
                 Modifier.fillMaxSize()
                     .graphicsLayer { alpha = reveal.value }
-                    .testTag("artwork-${media.key}")
-                    .semantics { stateDescription = "Ready" },
+                    .then(
+                        // Only the exact cover counts as ready; a stand-in is just painted.
+                        if (bitmap != null)
+                            Modifier.testTag("artwork-${media.key}").semantics { stateDescription = "Ready" }
+                        else Modifier
+                    ),
                 contentScale = ContentScale.Crop,
                 // Crop from the leading edge so captions composed near the left of
                 // wide artwork survive inside a squarer container instead of being
@@ -1674,14 +1721,9 @@ private fun MediaRow(
             )
             if (media.live || !square)
                 MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
-            androidx.compose.animation.AnimatedVisibility(
-                current,
-                Modifier.align(Alignment.TopStart),
-                enter = fadeIn() + scaleIn(initialScale = 0.6f),
-                exit = fadeOut() + scaleOut(targetScale = 0.6f),
-            ) {
-                PlayingBars(playing)
-            }
+            // Only the playing card composes its bars; an AnimatedVisibility per card kept a
+            // transition alive in every cell of the grid.
+            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
         }
         Row(
             Modifier.fillMaxWidth()
@@ -1722,7 +1764,8 @@ private fun MediaRow(
                             )
                         else Color.Unspecified,
                 )
-                val information = if (tab == 1) mediaInformation(media.value, mobile) else ""
+                val information =
+                    remember(media, mobile, tab) { if (tab == 1) mediaInformation(media.value, mobile) else "" }
                 val metadata =
                     listOfNotNull(
                             if (mobile.optBoolean("show_channel", true))
@@ -2327,9 +2370,17 @@ internal fun PlayerPane(
 /** Width/height of the music artwork area for a player style: square except the vinyl deck. */
 internal fun visualizerRatio(style: String): Float = if (style.startsWith("vinyl")) 1.35f else 1f
 
+/**
+ * The style Android shows. The "-fullscreen" variants stay valid in the shared settings (the
+ * desktop app uses them), but Android no longer offers or acts on them: each one shows as its
+ * normal counterpart.
+ */
+internal fun androidPlayerStyle(config: JSONObject): String =
+    config.optString("music_player_style", "classic").removeSuffix("-fullscreen")
+
 @Composable
 internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modifier = Modifier) {
-    val style = config.optString("music_player_style", "classic")
+    val style = androidPlayerStyle(config)
     val reduced = config.optBoolean("reduced_motion")
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
@@ -2339,6 +2390,18 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val levels = remember(style) { LiquidLevels() }
     var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
+        if (!player.playing && !reduced && visible && (style.startsWith("vu") || style.startsWith("orbit"))) {
+            // Paused: let the bars, beat thump and shake ease out instead of freezing mid-beat.
+            val silence = IntArray(SPECTRUM_BANDS)
+            var previous = 0L
+            val until = System.nanoTime() + 900_000_000L
+            while (System.nanoTime() < until) withInfiniteAnimationFrameNanos { now ->
+                val elapsed = if (previous == 0L) 0f else (now - previous) / 1_000_000_000f
+                previous = now
+                levels.step(silence, elapsed)
+                liquidTime += elapsed
+            }
+        }
         if (player.playing && !reduced && style != "classic" && visible) {
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
@@ -2363,6 +2426,8 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onBackground
     val media = player.media?.let(::MediaCard) ?: return
+    // Bars and strings take the cover's own dominant colours.
+    val swatches = rememberArtworkSwatches(media, config.optBoolean("thumbnails", true))
     val cornerRadius = if (style == "classic") 20.dp else 4.dp
     BoxWithConstraints(
         modifier
@@ -2430,17 +2495,15 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else if (style.startsWith("vu")) {
             // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
-                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches)
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.66f)
+                    Modifier.fillMaxWidth(0.6f)
                         .aspectRatio(1f)
                         .align(Alignment.Center)
-                        .offset(y = (-10).dp)
                         .beat(levels) { liquidTime }
                         .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
-                        .clip(RoundedCornerShape(16.dp))
-                        .sharedCover(media.key, LocalPlayerExpanded.current),
+                        .clip(RoundedCornerShape(16.dp)),
                     config.optBoolean("thumbnails", true),
                     shape = RoundedCornerShape(16.dp),
                 )
@@ -2448,7 +2511,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else {
             // A glow, a ring of spectrum bars and two liquid layers around a large round cover
             // that swells slightly on the beat.
-            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches)
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.56f)
@@ -2456,8 +2519,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                     .align(Alignment.Center)
                     .beat(levels) { liquidTime }
                     .shadow(16.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
-                    .clip(CircleShape)
-                    .sharedCover(media.key, LocalPlayerExpanded.current),
+                    .clip(CircleShape),
                 config.optBoolean("thumbnails", true),
                 shape = CircleShape,
             )
@@ -2650,16 +2712,9 @@ private fun SettingsPanel(
                 }
                 Choice(
                     "Music player",
-                    config.optString("music_player_style", "classic"),
-                    listOf(
-                        "classic",
-                        "vinyl",
-                        "vinyl-fullscreen",
-                        "vu",
-                        "vu-fullscreen",
-                        "orbit",
-                        "orbit-fullscreen",
-                    ),
+                    androidPlayerStyle(config),
+                    listOf("classic", "vinyl", "vu", "orbit"),
+                    label = { PLAYER_STYLE_LABELS[it] ?: choiceLabel(it) },
                 ) { value ->
                     vm.updateConfig(dark) { it.put("music_player_style", value) }
                 }
@@ -3035,19 +3090,29 @@ private fun SettingToggle(
     }
 }
 
+/** Names for the music player styles; the stored ids stay as they are. */
+private val PLAYER_STYLE_LABELS =
+    mapOf("classic" to "Cover", "vinyl" to "Vinyl", "vu" to "Strings", "orbit" to "Pulse orbit")
+
 private fun choiceLabel(value: String) =
     value.replace("-fullscreen", " · Full screen").replace('-', ' ').replaceFirstChar(Char::titlecase)
 
 @Composable
-private fun Choice(title: String, value: String, values: List<String>, changed: (String) -> Unit) {
+private fun Choice(
+    title: String,
+    value: String,
+    values: List<String>,
+    label: (String) -> String = ::choiceLabel,
+    changed: (String) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
-        ValueRow(title, value = choiceLabel(value)) { open = true }
+        ValueRow(title, value = label(value)) { open = true }
         if (open)
             Panel(title, { open = false }) {
                 values.forEach { item ->
                     SheetAction(
-                        text = { Text(choiceLabel(item)) },
+                        text = { Text(label(item)) },
                         leadingIcon = { ChoiceMark(item == value) },
                         modifier = Modifier.semantics { selected = item == value },
                         onClick = {
@@ -3679,7 +3744,7 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             itemsIndexed(lines) { index, line ->
                 val current = index == active
                 val ink = MaterialTheme.colorScheme.onSurface
-                val faded = ink.copy(alpha = 0.38f)
+                val unsung = ink.copy(alpha = LYRIC_UNSUNG_ALPHA)
                 // Karaoke sweep: the playing line fills with ink as its time passes.
                 val sweep =
                     if (!current || !matching) null
@@ -3691,20 +3756,11 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         val nowMs = smooth * 1000 - (offset.toLongOrNull() ?: 0)
                         ((nowMs - at) / (next - at).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                     }
-                val lineStyle =
-                    if (sweep != null && LocalMotion.current.animate)
-                        MaterialTheme.typography.headlineSmall.copy(
-                            brush =
-                                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                    0f to ink,
-                                    sweep to ink,
-                                    (sweep + 0.06f).coerceAtMost(1f) to faded,
-                                    1f to faded,
-                                )
-                        )
-                    else MaterialTheme.typography.headlineSmall
+                val text = line.optString("text").ifBlank { "♪" }
                 Text(
-                    line.optString("text").ifBlank { "♪" },
+                    if (sweep != null && LocalMotion.current.animate)
+                        karaokeLine(text, sweep, ink, unsung)
+                    else AnnotatedString(text),
                     Modifier.fillMaxWidth()
                         .clip(MediaTokens.medium)
                         .clickable(enabled = matching && !line.isNull("at_ms")) {
@@ -3718,12 +3774,11 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     color =
                         animateColorAsState(
-                            if (current || active < 0) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            if (current || active < 0) ink else unsung,
                             LocalMotion.current.fade(320),
                             label = "lyric-line",
                         ).value,
-                    style = lineStyle,
+                    style = MaterialTheme.typography.headlineSmall,
                 )
             }
         }

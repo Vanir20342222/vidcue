@@ -16,6 +16,51 @@ public final class OfflineStore {
   static DownloadManager manager;
   static volatile boolean dirty = true, libraryVisible;
 
+  /**
+   * In-memory downloads, refreshed on the main thread twice a second while any is running. The
+   * download index only stores progress every few seconds, so its rows lag far behind; these
+   * objects carry the downloader's live progress.
+   */
+  private static volatile java.util.Map<String, Download> live = java.util.Collections.emptyMap();
+
+  private static volatile boolean ticking;
+
+  private static final Runnable tick =
+      new Runnable() {
+        @Override
+        public void run() {
+          ticking = false;
+          if (manager == null) return;
+          java.util.Map<String, Download> next = new java.util.HashMap<>();
+          boolean active = false;
+          for (Download d : manager.getCurrentDownloads()) {
+            next.put(d.request.id, d);
+            if (d.state == Download.STATE_DOWNLOADING) active = true;
+          }
+          live = next;
+          if (active) {
+            dirty = true;
+            MediaBridge.notifyUi();
+            ticking = true;
+            MediaBridge.main.postDelayed(this, 500);
+          }
+        }
+      };
+
+  /** Starts the live progress ticker (main thread). */
+  private static void watchProgress() {
+    if (ticking) return;
+    ticking = true;
+    MediaBridge.main.post(tick);
+  }
+
+  /** The live in-memory copy of [stored] when it is in the same state, else [stored]. */
+  private static Download fresher(Download stored) {
+    if (stored == null) return null;
+    Download now = live.get(stored.request.id);
+    return now != null && now.state == stored.state ? now : stored;
+  }
+
   static synchronized DownloadManager manager() {
     if (manager == null) {
       Context ctx = MediaBridge.context;
@@ -55,6 +100,8 @@ public final class OfflineStore {
             public void onDownloadChanged(
                 DownloadManager source, Download download, Exception error) {
               dirty = true;
+              if (download.state == Download.STATE_DOWNLOADING
+                  || download.state == Download.STATE_QUEUED) watchProgress();
               if (download.state == Download.STATE_COMPLETED) {
                 String id =
                     download.request.id.endsWith("-audio")
@@ -81,6 +128,7 @@ public final class OfflineStore {
       manager.setMaxParallelDownloads(MobileSettings.integer("download_parallel"));
       manager.setMinRetryCount(0);
       manager.resumeDownloads();
+      watchProgress();
     }
     return manager;
   }
@@ -297,7 +345,7 @@ public final class OfflineStore {
       if (manager != null) {
         try (DownloadCursor cursor = manager.getDownloadIndex().getDownloads()) {
           while (cursor.moveToNext() && rows.length() < 2000) {
-            Download d = cursor.getDownload();
+            Download d = fresher(cursor.getDownload());
             if (d.request.id.endsWith("-audio")) continue;
             JSONObject request =
                 new JSONObject(new String(d.request.data, java.nio.charset.StandardCharsets.UTF_8));
@@ -307,7 +355,8 @@ public final class OfflineStore {
             long total = d.contentLength > 0 ? d.contentLength : 0;
             String audio = request.getJSONObject("stream").optString("audio_url", "");
             if (!audio.isEmpty() && !"null".equals(audio)) {
-              Download paired = manager.getDownloadIndex().getDownload(d.request.id + "-audio");
+              Download paired =
+                  fresher(manager.getDownloadIndex().getDownload(d.request.id + "-audio"));
               progress =
                   (progress
                           + (paired == null

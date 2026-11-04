@@ -989,9 +989,12 @@ impl Engine {
                     failures: 0,
                     error: None,
                 };
-                let items =
-                    vidcue_providers::watch::collect(browser, watch, CancellationToken::new())
-                        .await?;
+                let items = vidcue_providers::watch::collect_playable(
+                    browser,
+                    watch,
+                    CancellationToken::new(),
+                )
+                .await?;
                 if op == "enqueue_collection" {
                     self.mutate(|state| {
                         ensure!(

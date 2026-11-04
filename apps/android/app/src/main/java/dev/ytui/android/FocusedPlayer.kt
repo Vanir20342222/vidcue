@@ -538,7 +538,7 @@ internal fun FocusedPlayer(
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
                 } else {
-                    val ratio = visualizerRatio(config.optString("music_player_style", "classic"))
+                    val ratio = visualizerRatio(androidPlayerStyle(config))
                     // The cover eases back while paused and steps forward when playing.
                     val rest by
                         animateFloatAsState(
@@ -546,14 +546,15 @@ internal fun FocusedPlayer(
                             motion.spring(),
                             label = "cover-rest",
                         )
+                    // The paused size is a real layout size, not a layer scale: the cover is a shared
+                    // element, which is placed without its parents' layer scale, so a scaled-down
+                    // parent drew it towards the bottom right.
                     Visualizer(
                         player,
                         config,
-                        Modifier.width(minOf(maxWidth, maxHeight * ratio))
+                        Modifier.width(minOf(maxWidth, maxHeight * ratio) * rest)
                             .aspectRatio(ratio)
                             .graphicsLayer {
-                                scaleX = rest
-                                scaleY = rest
                                 translationX = trackShift.value
                                 val away = (abs(trackShift.value) / trackWidth).coerceIn(0f, 1f)
                                 alpha = 1f - away * 0.7f

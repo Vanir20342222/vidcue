@@ -692,8 +692,11 @@ internal fun Modifier.sharedCover(key: String, visible: Boolean): Modifier {
     val shared = LocalSharedScope.current ?: return this
     if (!LocalMotion.current.animate) return this
     return with(shared) {
+        // One shared cover for whatever is playing. A per-track key made every Next create a new
+        // pair between the hidden mini player and the open player, which flew or mis-placed the
+        // new cover instead of simply showing it.
         this@sharedCover.sharedElementWithCallerManagedVisibility(
-            rememberSharedContentState("cover:$key"),
+            rememberSharedContentState("cover:now-playing"),
             visible,
         )
     }
