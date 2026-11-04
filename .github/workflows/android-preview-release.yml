@@ -3,6 +3,8 @@ name: Release verified Android Preview
 # prerelease. It never rebuilds or re-signs. The permanent stable signing key is held privately
 # by the owner and is published through "Publish locally signed Android APK" instead.
 on:
+  push:
+    tags: ['android-preview-request-*']
   workflow_dispatch:
     inputs:
       version_name:
@@ -17,9 +19,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   publish:
-    if: github.repository == 'Vanir20342222/ytui' && github.ref == 'refs/heads/main'
+    if: github.repository == 'Vanir20342222/ytui' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/android-preview-request-'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 35
     permissions:
       contents: write
       actions: read
@@ -33,8 +35,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            YTUI_PREVIEW_VERSION="${GITHUB_REF_NAME#android-preview-request-}"
+          fi
           [[ "$YTUI_PREVIEW_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$ ]] ||
             { echo 'Invalid version name.' >&2; exit 1; }
+          echo "YTUI_PREVIEW_VERSION=$YTUI_PREVIEW_VERSION" >> "$GITHUB_ENV"
           tag="android-preview-$YTUI_PREVIEW_VERSION"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
               git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
@@ -53,11 +59,21 @@ jobs:
             if (main.data.commit.sha !== sha) throw new Error('Main moved on; dispatch again for the current revision');
             const runs = {};
             for (const [workflow_id, key] of [['android.yml', 'android'], ['rust.yml', 'rust'], ['security.yml', 'secrets']]) {
-              const {data} = await github.rest.actions.listWorkflowRuns({owner, repo, workflow_id, branch: 'main', event: 'push', head_sha: sha, per_page: 100});
-              const latest = data.workflow_runs.filter(r => r.head_sha === sha).sort((a, b) => b.id - a.id)[0];
-              if (!latest || latest.status !== 'completed' || latest.conclusion !== 'success') throw new Error(`Missing successful exact-main check: ${workflow_id}`);
+              let latest;
+              const deadline = Date.now() + 20 * 60 * 1000;
+              while (true) {
+                const {data} = await github.rest.actions.listWorkflowRuns({owner, repo, workflow_id, branch: 'main', event: 'push', head_sha: sha, per_page: 100});
+                latest = data.workflow_runs.filter(r => r.head_sha === sha).sort((a, b) => b.id - a.id)[0];
+                if (latest?.status === 'completed') break;
+                if (Date.now() >= deadline) throw new Error(`Timed out waiting for exact-main check: ${workflow_id}`);
+                core.info(`Waiting for ${workflow_id} on ${sha}`);
+                await new Promise(resolve => setTimeout(resolve, 30000));
+              }
+              if (latest.conclusion !== 'success') throw new Error(`Failed exact-main check: ${workflow_id}`);
               runs[key] = latest.id;
             }
+            const currentMain = await github.rest.repos.getBranch({owner, repo, branch: 'main'});
+            if (currentMain.data.commit.sha !== sha) throw new Error('Main moved while waiting; request a release for current main');
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {owner, repo, run_id: runs.android, per_page: 100});
             const artifact = artifacts.find(a => a.name === `ytui-android-${sha}` && !a.expired);
             if (!artifact) throw new Error('Tested APK artifact unavailable or expired');
