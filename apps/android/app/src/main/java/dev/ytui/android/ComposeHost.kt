@@ -76,6 +76,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -3741,7 +3742,7 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             itemsIndexed(lines) { index, line ->
                 val current = index == active
                 val ink = MaterialTheme.colorScheme.onSurface
-                val faded = ink.copy(alpha = 0.38f)
+                val unsung = ink.copy(alpha = LYRIC_UNSUNG_ALPHA)
                 // Karaoke sweep: the playing line fills with ink as its time passes.
                 val sweep =
                     if (!current || !matching) null
@@ -3753,20 +3754,11 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         val nowMs = smooth * 1000 - (offset.toLongOrNull() ?: 0)
                         ((nowMs - at) / (next - at).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
                     }
-                val lineStyle =
-                    if (sweep != null && LocalMotion.current.animate)
-                        MaterialTheme.typography.headlineSmall.copy(
-                            brush =
-                                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                    0f to ink,
-                                    sweep to ink,
-                                    (sweep + 0.06f).coerceAtMost(1f) to faded,
-                                    1f to faded,
-                                )
-                        )
-                    else MaterialTheme.typography.headlineSmall
+                val text = line.optString("text").ifBlank { "♪" }
                 Text(
-                    line.optString("text").ifBlank { "♪" },
+                    if (sweep != null && LocalMotion.current.animate)
+                        karaokeLine(text, sweep, ink, unsung)
+                    else AnnotatedString(text),
                     Modifier.fillMaxWidth()
                         .clip(MediaTokens.medium)
                         .clickable(enabled = matching && !line.isNull("at_ms")) {
@@ -3780,12 +3772,11 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     color =
                         animateColorAsState(
-                            if (current || active < 0) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            if (current || active < 0) ink else unsung,
                             LocalMotion.current.fade(320),
                             label = "lyric-line",
                         ).value,
-                    style = lineStyle,
+                    style = MaterialTheme.typography.headlineSmall,
                 )
             }
         }
