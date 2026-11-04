@@ -86,6 +86,12 @@ public final class PrepareWorker extends Worker {
       for (int i = start; i < items.length(); i++) {
         if (isStopped()) return Result.retry();
         JSONObject media = items.getJSONObject(i);
+        if (PreparationPolicy.collection(media.optString("kind"))) {
+          // Older checkpoints may list nested playlists; they are not single videos.
+          if (!progress.edit().putInt(id, i + 1).commit())
+            throw new java.io.IOException("Cannot persist playlist progress");
+          continue;
+        }
         status(
             getApplicationContext(),
             id,

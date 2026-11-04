@@ -13,5 +13,18 @@ final class PreparationPolicy {
     return cursor;
   }
 
+  /** Nested playlist/album/artist/channel entries cannot be resolved as one video. */
+  static boolean collection(String kind) {
+    switch (kind) {
+      case "playlist":
+      case "album":
+      case "artist":
+      case "channel":
+        return true;
+      default:
+        return false;
+    }
+  }
+
   private PreparationPolicy() {}
 }
