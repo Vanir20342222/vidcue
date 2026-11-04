@@ -1,7 +1,10 @@
 package dev.ytui.android
 
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.widget.ImageButton
 import android.view.Gravity
 import android.view.View
 import androidx.compose.ui.graphics.Color
@@ -48,21 +51,63 @@ internal object PlayerChrome {
         view.setExtraAdGroupMarkers(times, BooleanArray(times.size))
     }
 
-    /** Refresh the marks whenever the controller (and so its timebar) becomes visible. */
+    /** Refresh the marks and the captions toggle whenever the controller becomes visible. */
     @JvmStatic
     fun trackSponsorMarks(view: PlayerView) {
         view.setControllerVisibilityListener(
             PlayerView.ControllerVisibilityListener { visibility ->
-                if (visibility == View.VISIBLE) showSponsorMarks(view)
+                if (visibility == View.VISIBLE) {
+                    showSponsorMarks(view)
+                    showCaptions(view)
+                }
             }
         )
         showSponsorMarks(view)
     }
 
     /**
+     * One captions button that switches captions on or off. Media3's own button opened a list of
+     * every caption track, which on YouTube means well over a hundred machine translations; the
+     * choice of language lives in the playback options instead. Switching on without a choice
+     * picks the most useful track (see Captions.best).
+     */
+    @JvmStatic
+    fun bindCaptions(view: PlayerView) {
+        val button = view.findViewById<ImageButton>(R.id.ytui_captions) ?: return
+        button.setOnClickListener {
+            MediaBridge.execute(org.json.JSONObject().put("op", "captions_toggle").toString())
+            // Track selection applies on the next main-looper turn; read it back after that.
+            view.postDelayed({ showCaptions(view) }, 250)
+        }
+        showCaptions(view)
+    }
+
+    /** Show the captions button only when the media has captions, with its current state. */
+    @JvmStatic
+    fun showCaptions(view: PlayerView) {
+        val button = view.findViewById<ImageButton>(R.id.ytui_captions) ?: return
+        val player = view.player
+        val groups = player?.currentTracks?.groups ?: emptyList()
+        val available = groups.any { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT && it.length > 0 }
+        val on =
+            available &&
+                player?.trackSelectionParameters?.disabledTrackTypes?.contains(
+                    androidx.media3.common.C.TRACK_TYPE_TEXT
+                ) != true &&
+                groups.any { it.type == androidx.media3.common.C.TRACK_TYPE_TEXT && it.isSelected }
+        button.visibility = if (available) View.VISIBLE else View.GONE
+        button.setImageResource(if (on) R.drawable.ytui_captions_on else R.drawable.ytui_captions_off)
+        button.contentDescription =
+            view.resources.getString(
+                if (on) R.string.ytui_player_captions_off else R.string.ytui_player_captions_on
+            )
+    }
+
+    /**
      * The inline portrait frame is too narrow for five discs: prev, rewind, play, forward and
-     * next crowd the picture and clip at the edge. Below [COMPACT_WIDTH_DP] keep prev/play/next;
-     * double-tap seeking (VideoGestures) still covers rewind and forward.
+     * next crowd the picture and clip at the edge. Below [COMPACT_WIDTH_DP] keep prev/play/next
+     * and use a smaller play disc; double-tap seeking (VideoGestures) still covers rewind and
+     * forward.
      */
     @JvmStatic
     fun fitTransport(view: PlayerView) {
@@ -78,22 +123,36 @@ internal object PlayerChrome {
             v.post {
                 view.setShowRewindButton(wide)
                 view.setShowFastForwardButton(wide)
+                view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)?.apply {
+                    val density = resources.displayMetrics.density
+                    val size = ((if (wide) 64 else 56) * density).toInt()
+                    val pad = ((if (wide) 19 else 16) * density).toInt()
+                    layoutParams = layoutParams.apply {
+                        width = size
+                        height = size
+                    }
+                    setPadding(pad, pad, pad, pad)
+                }
             }
         }
     }
 
     private const val COMPACT_WIDTH_DP = 560f
 
-    /** Frosted-glass disc: tinted translucent fill with a lit hairline edge. */
-    private fun glassDisc(resources: android.content.res.Resources) =
-        GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(MediaTokens.videoDisc.toArgb())
-            setStroke(
-                maxOf(1, resources.displayMetrics.density.toInt()),
-                MediaTokens.videoGlassEdge.toArgb(),
-            )
-        }
+    /**
+     * Flat dark disc behind a transport: no glass edge, so the controls sit quietly on the
+     * picture. [insetDp] draws it slightly inside a 48dp touch target; the disc still reaches the
+     * point ContrastUiTest samples (0.85 of the radius), so white glyphs keep 3:1 on white video.
+     */
+    private fun disc(resources: android.content.res.Resources, insetDp: Float = 0f): Drawable {
+        val shape =
+            GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(MediaTokens.videoChromeDisc.toArgb())
+            }
+        val inset = (insetDp * resources.displayMetrics.density).toInt()
+        return if (inset == 0) shape else InsetDrawable(shape, inset)
+    }
 
     @JvmStatic
     fun apply(view: PlayerView) {
@@ -113,7 +172,9 @@ internal object PlayerChrome {
                 androidx.media3.ui.R.id.exo_prev,
                 androidx.media3.ui.R.id.exo_next,
             )) {
-            view.findViewById<View>(id)?.apply { background = glassDisc(resources) }
+            view.findViewById<View>(id)?.apply {
+                background = disc(resources, if (id == androidx.media3.ui.R.id.exo_play_pause) 0f else 2f)
+            }
         }
         // API 23+ layouts merge these Buttons straight into the shared transport
         // strip. Their arrows are foregrounds; painting their parent creates a
@@ -124,7 +185,7 @@ internal object PlayerChrome {
                 androidx.media3.ui.R.id.exo_ffwd_with_amount,
             )) {
             view.findViewById<View>(id)?.apply {
-                val disc = glassDisc(resources)
+                val disc = disc(resources, 2f)
                 val glyph =
                     (background as? LayerDrawable)?.findDrawableByLayerId(android.R.id.icon)
                         ?: background

@@ -5,6 +5,7 @@
     <!-- Video timecodes in the app's text face, with even-width digits so they do not jitter. -->
     <style name="YtuiTime.Position" parent="ExoStyledControls.TimeText.Position">
         <item name="android:fontFamily">@font/instrument_sans</item>
+        <item name="android:textSize">12sp</item>
         <item name="android:fontFeatureSettings">tnum</item>
         <item name="android:textStyle">bold</item>
         <item name="android:shadowColor">#99000000</item>
@@ -12,13 +13,17 @@
     </style>
     <style name="YtuiTime.Duration" parent="ExoStyledControls.TimeText.Duration">
         <item name="android:fontFamily">@font/instrument_sans</item>
+        <item name="android:textSize">12sp</item>
         <item name="android:fontFeatureSettings">tnum</item>
         <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#B3FFFFFF</item>
         <item name="android:shadowColor">#99000000</item>
         <item name="android:shadowRadius">4</item>
     </style>
     <style name="YtuiTime.Separator" parent="ExoStyledControls.TimeText.Separator">
         <item name="android:fontFamily">@font/instrument_sans</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">#99FFFFFF</item>
         <item name="android:textStyle">normal</item>
     </style>
 </resources>

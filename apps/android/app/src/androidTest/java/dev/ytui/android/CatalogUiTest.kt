@@ -543,8 +543,12 @@ class CatalogUiTest {
             compose.onNodeWithTag("player-options").performClick()
             compose.onNodeWithTag("volume-slider").performScrollTo().assertIsDisplayed()
             captureSettled("restyle-player-options.png")
-            compose.onNodeWithText("Audio & subtitles").performScrollTo().performClick()
-            compose.onNodeWithText("Toggle captions").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("options-captions").performScrollTo().performClick()
+            // The captions page offers Off plus the video's tracks, or says there are none.
+            compose
+                .onNode(hasTestTag("captions-off") or hasText("This video has no captions."))
+                .performScrollTo()
+                .assertIsDisplayed()
             captureSettled("restyle-player-options-tracks.png")
             compose.onNodeWithContentDescription("Close").performClick()
             scenario.onActivity {
