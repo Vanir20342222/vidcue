@@ -20,6 +20,9 @@ An offline end-to-end build-script fixture reproduced the exact missing
 the fixture verifies both pruning modes, both copied JNI libraries, retained host
 cache, dependency metadata, license/notices and the Gradle packaging invocation.
 All 29 Android release-helper tests pass. Shell syntax and diff checks pass.
+The fixture explicitly selects its fake NDK so a hosted runner's preconfigured
+`ANDROID_NDK_HOME` cannot replace the disposable tools; the inherited-NDK failure
+was reproduced locally and corrected without changing assertions.
 
 ## Not verified and limits
 

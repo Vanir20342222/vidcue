@@ -64,6 +64,7 @@ else:
                     subprocess.run(["git", *args], cwd=root, check=True)
                 env = os.environ.copy()
                 env.update(PATH=f"{fake}:/usr/local/bin:/usr/bin:/bin", ANDROID_HOME=str(sdk),
+                           ANDROID_SDK_ROOT=str(sdk), ANDROID_NDK_HOME=str(sdk/"ndk/27.2.12479018"),
                            YTUI_ANDROID_PRUNE_TARGETS=prune, YTUI_ANDROID_VARIANT="debug",
                            YTUI_ANDROID_ABIS="arm64-v8a x86_64", YTUI_ANDROID_RUST_ONLY="0")
                 result = subprocess.run(["bash", str(tools / "build.sh")], cwd=root, env=env,
