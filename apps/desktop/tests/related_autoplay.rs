@@ -5,12 +5,12 @@ use crossterm::event::KeyCode;
 use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, Modal, RuntimeHandles, UiEvent},
     ui,
 };
-use ytui_core::{Config, Media, MediaKind, Page, shortcuts::Action};
-use ytui_services::{paths::Paths, player::PlayerCommand, store::Snapshot};
+use vidcue_core::{Config, Media, MediaKind, Page, shortcuts::Action};
+use vidcue_services::{paths::Paths, player::PlayerCommand, store::Snapshot};
 
 fn fixture(autoplay: bool) -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir) {
     let temp = tempfile::tempdir().unwrap();
@@ -26,7 +26,7 @@ fn fixture(autoplay: bool) -> (App, mpsc::Receiver<PlayerCommand>, tempfile::Tem
     };
     paths.create().unwrap();
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         image_protocol: "none".into(),

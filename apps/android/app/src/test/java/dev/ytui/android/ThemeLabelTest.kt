@@ -10,7 +10,7 @@ import org.junit.Test
 class ThemeLabelTest {
     @Test
     fun themeIdsBecomeReadableNames() {
-        assertEquals("ytui Dark", themeLabel("ytui-dark"))
+        assertEquals("Vidcue Dark", themeLabel("vidcue-dark"))
         assertEquals("Catppuccin Mocha", themeLabel("catppuccin-mocha"))
         assertEquals("System", themeLabel("system"))
         assertEquals("Gruvbox", themeLabel("gruvbox"))
@@ -24,7 +24,7 @@ class ThemeLabelTest {
     fun onlyBuiltInNothingPalettesSwitchToDotMatrixType() {
         assertTrue(YtuiType.isDotMatrix("nothing-dark", "Built-in"))
         assertTrue(YtuiType.isDotMatrix("nothing-light", "Built-in"))
-        assertFalse(YtuiType.isDotMatrix("ytui-dark", "Built-in"))
+        assertFalse(YtuiType.isDotMatrix("vidcue-dark", "Built-in"))
         // An imported palette that reuses the name keeps the default type.
         assertFalse(YtuiType.isDotMatrix("nothing-dark", "Omarchy"))
         assertSame(YtuiType.typography, YtuiType.forPalette(null))

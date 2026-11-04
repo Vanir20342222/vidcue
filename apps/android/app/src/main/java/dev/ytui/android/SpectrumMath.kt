@@ -4,7 +4,7 @@ import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.sin
 
-/** Log-spaced band count. Keep in step with `BANDS` in `crates/ytui-mobile/src/meter.rs`. */
+/** Log-spaced band count. Keep in step with `BANDS` in `crates/vidcue-mobile/src/meter.rs`. */
 internal const val SPECTRUM_BANDS = 24
 
 /** The liquid responds to four groups of bands: bass, low-mid, high-mid and treble. */

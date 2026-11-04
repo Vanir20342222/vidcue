@@ -31,9 +31,9 @@ class PreviewPublicationTest(unittest.TestCase):
         with zipfile.ZipFile(self.apk, "w") as archive:
             archive.writestr("classes.dex", dex)
             for abi in abis:
-                archive.writestr(f"lib/{abi}/libytui_mobile.so", b"fixture")
+                archive.writestr(f"lib/{abi}/libvidcue_mobile.so", b"fixture")
             archive.writestr("assets/notices/inventory.json", "{}")
-            archive.writestr("assets/ytui-LICENSE", "MIT")
+            archive.writestr("assets/vidcue-LICENSE", "MIT")
         digest = hashlib.sha256(self.apk.read_bytes()).hexdigest()
         self.apk.with_name("SHA256-and-checks.txt").write_text(
             "Verified signatures, ZIP alignment, both Rust ABIs, 16 KiB ELF segments and notices.\n"
@@ -48,12 +48,12 @@ class PreviewPublicationTest(unittest.TestCase):
     def test_published_apk_is_byte_identical_to_tested_artifact(self):
         self.prepare()
         published = list((self.root / "publish").glob("*.apk"))
-        self.assertEqual([p.name for p in published], [f"ytui-preview-{VERSION}.apk"])
+        self.assertEqual([p.name for p in published], [f"vidcue-preview-{VERSION}.apk"])
         self.assertEqual(published[0].read_bytes(), self.apk.read_bytes())
         digest = hashlib.sha256(self.apk.read_bytes()).hexdigest()
         self.assertEqual(
             (self.root / "publish" / "SHA256SUMS.txt").read_text(),
-            f"{digest}  ytui-preview-{VERSION}.apk\n",
+            f"{digest}  vidcue-preview-{VERSION}.apk\n",
         )
 
     def test_altered_apk_is_rejected(self):

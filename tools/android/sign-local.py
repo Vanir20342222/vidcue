@@ -32,7 +32,7 @@ def main():
     if identity.is_relative_to(root):
         raise ValueError("Keep the signing identity outside the repository")
     private_path(identity, directory=True)
-    keystore = identity / "ytui-stable.jks"
+    keystore = identity / "vidcue-stable.jks"
     credentials = identity / "credentials.json"
     private_path(keystore)
     private_path(credentials)

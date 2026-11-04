@@ -167,7 +167,7 @@ internal fun themeLabel(id: String): String =
     id.split('-', '_', ' ')
         .filter { it.isNotEmpty() }
         .joinToString(" ") { word ->
-            if (word.equals("ytui", ignoreCase = true)) "ytui"
+            if (word.equals("vidcue", ignoreCase = true)) "Vidcue"
             else word.replaceFirstChar(Char::titlecase)
         }
         .ifEmpty { id }

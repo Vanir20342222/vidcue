@@ -2,8 +2,8 @@
 //! look & feel, playback, account and a summary. Changes are drafted here and saved
 //! through the normal settings path when the user finishes or skips; every choice
 //! stays in Settings. Completion is recorded per [`VERSION`] in the state snapshot.
-use ytui_core::Config;
-use ytui_services::theme::{Palette, THEMES};
+use vidcue_core::Config;
+use vidcue_services::theme::{Palette, THEMES};
 
 /// First-run setup is shown once per version; bump it to show the flow again.
 pub const VERSION: u32 = 1;

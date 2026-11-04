@@ -3,11 +3,11 @@
 The current [mobile.10 APK and public inspection](https://github.com/Vanir20342222/ytui/releases/tag/android-0.2.0-alpha.12-mobile.10) use the permanent certificate below. Source `686e3794b023acee4b7355c437bb84f887a42ac6` passed exact-main checks; the public APK hash was independently verified. [Qualification and release build metadata](MOBILE10_RELEASE.md).
 
 Development APKs from the Android workflow use debug identities. New debug
-builds use `dev.ytui.android.preview` and the launcher label **ytui Preview**.
+builds use `dev.ytui.android.preview` and the launcher label **vidcue Preview**.
 This allows installing them alongside older `dev.ytui.android` development APKs
 without uninstalling or deleting existing private data. State and Keystore
 sessions are separate; no cross-app private data import is attempted. Release
-builds now use `dev.ytui.android.stable` and the normal **ytui** launcher label.
+builds now use `dev.ytui.android.stable` and the normal **vidcue** launcher label.
 This one-time owner-signed channel avoids conflicts with both earlier disposable
 package identities. Keep existing installations: their private data is untouched.
 The stable channel has separate account/settings/cache and will need sign-in and
@@ -48,7 +48,7 @@ To recover locally, install `age`, save the private archive, and run:
 ```bash
 install -d -m 700 "$HOME/.local/share/ytui-signing"
 umask 077
-age --decrypt -i "$HOME/.ssh/id_ed25519" ytui-android-signing-backup.age |
+age --decrypt -i "$HOME/.ssh/id_ed25519" vidcue-android-signing-backup.age |
   tar -xf - -C "$HOME/.local/share/ytui-signing"
 export YTUI_ANDROID_VERSION_CODE=10
 export YTUI_ANDROID_VERSION_NAME=0.2.0-alpha.12-mobile.10
@@ -85,14 +85,14 @@ of the current `main` revision when no owner-signed build is available. It runs
 only from `main` and takes the version name the tested APK was built with (the
 default is in `apps/android/app/build.gradle`). It requires successful
 Android, Rust and Secret scan runs for that exact revision, downloads the exact
-`ytui-android-<sha>` APK that the Android run built and inspected, and checks
+`vidcue-android-<sha>` APK that the Android run built and inspected, and checks
 its CI inspection report, checksum, both ABIs, notices, source revision and
 version name (`tools/android/prepare-preview-release.py`, with offline tests).
 It never rebuilds or re-signs the APK, refuses an existing tag, and lists the
 merged changes since the last `android-0.2.0-alpha.12-mobile.*` release.
 
 These releases are named `android-preview-<version>`. The APK is
-`dev.ytui.android.preview` (**ytui Preview**) with a CI debug certificate, so it
+`dev.ytui.android.preview` (**vidcue Preview**) with a CI debug certificate, so it
 neither updates the stable app nor, normally, an earlier Preview, because each
 CI runner generates its own debug key. It is not the in-place update channel
 for `dev.ytui.android.stable`; that remains the locally signed flow above.
@@ -109,8 +109,8 @@ and retain an encrypted backup of both the file and its passwords. For example,
 this command prompts for passwords:
 
 ```bash
-keytool -genkeypair -keystore /private/path/ytui-release.jks -storetype JKS \
-  -alias ytui -keyalg RSA -keysize 3072 -validity 10000
+keytool -genkeypair -keystore /private/path/vidcue-release.jks -storetype JKS \
+  -alias vidcue -keyalg RSA -keysize 3072 -validity 10000
 ```
 
 Losing this
@@ -136,7 +136,7 @@ YouTube account or browser cookies.
 
 After the selected main revision's checks pass, dispatch **Android signed APK**
 from `main` with an increasing `version_code` (1–2100000000) and a version name
-such as `0.2.0-alpha.12-mobile.4`. Download its `ytui-android-signed-<code>-<sha>`
+such as `0.2.0-alpha.12-mobile.4`. Download its `vidcue-android-signed-<code>-<sha>`
 artifact. The report includes the APK SHA256, public certificate fingerprints,
 source revision, both ABIs, 16 KiB alignment and license checks. Confirm the
 certificate matches the previous signed APK before installing an update.

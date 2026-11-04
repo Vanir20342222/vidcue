@@ -87,20 +87,20 @@ no browser session. Public fixtures can change.
 Focused live provider/cache checks:
 
 ```sh
-cargo test -p ytui-services --locked --test live_network -- --ignored --test-threads=2 --nocapture
+cargo test -p vidcue-services --locked --test live_network -- --ignored --test-threads=2 --nocapture
 tools/test-youtube.sh auto
 tools/test-youtube.sh yt-dlp
-YTUI_TEST_BINARY=target/release/ytui YTUI_TEST_PLAY_SECONDS=10 tools/test-native-playback.sh
+YTUI_TEST_BINARY=target/release/vidcue YTUI_TEST_PLAY_SECONDS=10 tools/test-native-playback.sh
 ```
 
 ## Installation and remaining acceptance
 
 Both local launchers are updated to the optimized alpha.10 build. Restart an
-existing ytui process to load it. The previous alpha.9 development launchers and
+existing vidcue process to load it. The previous alpha.9 development launchers and
 maintenance documents are backed up under
 `~/Work/caelestia-customization/ytui-alpha10-20261022/before/`, preserving absolute
-paths below that directory. Restore the saved `home/vanir/.local/bin/ytui` and
-`ytui-rs` for binary rollback. Existing user settings, queue/history and media
+paths below that directory. Restore the saved `home/vanir/.local/bin/vidcue` and
+`vidcue` for binary rollback. Existing user settings, queue/history and media
 were not modified by the tests or installation.
 
 Anonymous Music browsing redirects this network to `consent.youtube.com`.

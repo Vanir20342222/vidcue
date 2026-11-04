@@ -11,15 +11,15 @@ use std::{
     time::Duration,
 };
 use terminal::Capture;
-use ytui_core::{
+use vidcue_core::{
     BrowseRequest, DownloadOptions, Job, JobState, Media, MediaKind, playback_history::Position,
     watch::CollectionWatch,
 };
-use ytui_services::store::{Snapshot, Store};
+use vidcue_services::store::{Snapshot, Store};
 
 #[derive(Parser)]
 struct Args {
-    #[arg(long, default_value = "target/debug/ytui")]
+    #[arg(long, default_value = "target/debug/vidcue")]
     binary: PathBuf,
     /// Capture the music vinyl pane and fullscreen using fictional demo artwork.
     #[arg(long, conflicts_with_all = ["downloads_only", "audit_panels_only", "comfort_panels_only", "library_panels_only"])]
@@ -175,8 +175,8 @@ async fn seed_offline(root: &Path) -> Result<()> {
     job.state = JobState::Done;
     job.outputs.push(file);
     let snapshot = Snapshot {
-        downloads: ytui_core::DownloadQueue { jobs: vec![job] },
-        positions: ytui_core::playback_history::PlaybackHistory {
+        downloads: vidcue_core::DownloadQueue { jobs: vec![job] },
+        positions: vidcue_core::playback_history::PlaybackHistory {
             entries: vec![Position {
                 media,
                 seconds: 82.,
@@ -230,7 +230,7 @@ fn write_manifest(args: &Args) -> Result<()> {
         }
     }
     captures.sort();
-    let manifest = serde_json::json!({"source":"Actual Rust executable PTY output captured by native Rust tooling; fictional demo/offline data and generated artwork","binary":args.binary,"size":[2560,1440],"terminal":[212,58],"compact_terminal":[80,24],"themes":ytui_services::theme::THEMES,"captures":captures,"real_desktop_capture":false});
+    let manifest = serde_json::json!({"source":"Actual Rust executable PTY output captured by native Rust tooling; fictional demo/offline data and generated artwork","binary":args.binary,"size":[2560,1440],"terminal":[212,58],"compact_terminal":[80,24],"themes":vidcue_services::theme::THEMES,"captures":captures,"real_desktop_capture":false});
     std::fs::write(
         args.output.join("manifest.json"),
         format!("{}\n", serde_json::to_string_pretty(&manifest)?),
@@ -431,7 +431,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    for theme in ytui_services::theme::THEMES {
+    for theme in vidcue_services::theme::THEMES {
         capture.command(&format!("theme {theme}"), theme)?;
         capture.read_for(Duration::from_millis(350));
         shot(
@@ -445,7 +445,7 @@ async fn main() -> Result<()> {
         write_manifest(&args)?;
         return Ok(());
     }
-    capture.command("theme ytui-dark", "ytui-dark")?;
+    capture.command("theme vidcue-dark", "vidcue-dark")?;
     for (tab, name) in [
         ("1", "downloads"),
         ("2", "youtube"),
@@ -487,7 +487,7 @@ async fn main() -> Result<()> {
         ("theme", "theme-picker", "Themes"),
         ("groups", "groups", "Download groups"),
         ("log", "diagnostics", "Diagnostics"),
-        ("update", "update", "Update ytui"),
+        ("update", "update", "Update vidcue"),
         ("player-formats", "player-formats", "Available formats"),
         (
             "sponsor-status",
@@ -601,7 +601,7 @@ async fn main() -> Result<()> {
     capture.send("\x1b")?;
     capture.close()?;
     std::fs::copy(
-        args.output.join("themes/ytui-light.png"),
+        args.output.join("themes/vidcue-light.png"),
         args.output.join("light.png"),
     )?;
     write_manifest(&args)?;

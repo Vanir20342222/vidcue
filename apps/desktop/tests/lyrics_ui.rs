@@ -2,13 +2,13 @@ use crossterm::event::KeyCode;
 use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, Modal, RuntimeHandles, UiEvent},
     lyrics::View,
     ui,
 };
-use ytui_core::Config;
-use ytui_services::{
+use vidcue_core::Config;
+use vidcue_services::{
     lyrics::{Track, parse},
     paths::Paths,
     store::Snapshot,
@@ -126,7 +126,7 @@ async fn local_lyrics_work_offline_and_lookup_requires_explicit_online_review() 
     let event = app.tasks.join_next().await.unwrap().unwrap();
     app.apply(event);
     assert!(text(&mut app, 100, 30).contains("Offline words"));
-    let entry = ytui::actions::ENTRIES
+    let entry = vidcue::actions::ENTRIES
         .iter()
         .position(|entry| entry.command == "lyrics-find")
         .unwrap();
@@ -140,11 +140,11 @@ async fn local_lyrics_work_offline_and_lookup_requires_explicit_online_review() 
     );
     // A form can remain open while the player advances; its reviewed song
     // identity must not silently become the next song.
-    app.player_status.media = Some(ytui_core::Media {
+    app.player_status.media = Some(vidcue_core::Media {
         url: "fixture-A".into(),
         ..Default::default()
     });
-    let entry = ytui::actions::ENTRIES
+    let entry = vidcue::actions::ENTRIES
         .iter()
         .position(|entry| entry.command == "lyrics-local")
         .unwrap();
@@ -152,7 +152,7 @@ async fn local_lyrics_work_offline_and_lookup_requires_explicit_online_review() 
     let Some(Modal::Form(form)) = &mut app.modal else {
         panic!("Expected review form")
     };
-    form.fields[0].value = ytui::editor::Editor::new(file.to_str().unwrap());
+    form.fields[0].value = vidcue::editor::Editor::new(file.to_str().unwrap());
     app.player_status.media.as_mut().unwrap().url = "fixture-B".into();
     app.key(KeyCode::Enter.into());
     assert!(
@@ -165,8 +165,8 @@ async fn lyrics_all_states_render_in_every_theme_size_and_language_without_trans
     let (mut app, _temp) = fixture();
     for language in ["en", "de"] {
         app.config.language = language.into();
-        for theme in ytui_services::theme::THEMES {
-            app.palette = ytui_services::theme::builtin(theme).unwrap();
+        for theme in vidcue_services::theme::THEMES {
+            app.palette = vidcue_services::theme::builtin(theme).unwrap();
             for (width, height) in [(35, 12), (80, 24), (120, 40), (180, 50), (212, 58)] {
                 for state in 0..5 {
                     let mut view = View::new(Some("fixture-A".into()), "LRCLIB");
@@ -202,7 +202,7 @@ async fn lyrics_all_states_render_in_every_theme_size_and_language_without_trans
     view.opened = true;
     view.tracks.push(track());
     app.modal = Some(Modal::Lyrics(Box::new(view)));
-    let mut media = ytui_core::Media {
+    let mut media = vidcue_core::Media {
         title: "Song".into(),
         url: "fixture-B".into(),
         ..Default::default()

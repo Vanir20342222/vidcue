@@ -24,7 +24,7 @@ final class PlaybackPolicy {
 
   static String exportName(String title, String extension) {
     String clean = title.replaceAll("[\\p{Cntrl}/\\\\:*?\"<>|]", "_").trim();
-    if (clean.isEmpty()) clean = "ytui-media";
+    if (clean.isEmpty()) clean = "vidcue-media";
     clean =
         clean
             .codePoints()

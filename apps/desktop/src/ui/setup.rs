@@ -16,9 +16,12 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
     } else {
         " ↑/↓ choose · Space/←/→ change · Enter continue · Backspace back · Esc skip "
     };
-    let block = panel(format!(" ytui setup · {} ", app.tr(&setup.progress())), app)
-        .title_bottom(translated(app, hint))
-        .border_style(accent);
+    let block = panel(
+        format!(" vidcue setup · {} ", app.tr(&setup.progress())),
+        app,
+    )
+    .title_bottom(translated(app, hint))
+    .border_style(accent);
     let inner = block.inner(rect);
     f.render_widget(block, rect);
     // Step dots: filled for done, wide for the current step.
@@ -48,9 +51,11 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
         crate::setup::LOOK => {
             "Pick a colour theme. It previews right away and you can change it any time in Settings."
         }
-        crate::setup::PLAYBACK => "Choose how ytui plays. Every option is also in Settings later.",
+        crate::setup::PLAYBACK => {
+            "Choose how vidcue plays. Every option is also in Settings later."
+        }
         ACCOUNT => {
-            "Signing in is optional. It unlocks your subscriptions, playlists and music library. ytui imports your browser session; cookie databases stay closed until you choose a profile."
+            "Signing in is optional. It unlocks your subscriptions, playlists and music library. vidcue imports your browser session; cookie databases stay closed until you choose a profile."
         }
         _ => "Here's what you chose. Everything lives in Settings if you change your mind.",
     };

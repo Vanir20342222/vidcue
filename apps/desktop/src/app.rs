@@ -17,11 +17,11 @@ use tokio::{
     task::{JoinHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
-use ytui_core::{
+use vidcue_core::{
     shortcuts::{Action, REGISTRY},
     *,
 };
-use ytui_services::{
+use vidcue_services::{
     auth::{self, Session, SessionStore},
     browse::Browser,
     download,
@@ -193,7 +193,7 @@ pub struct Input {
 pub enum UiEvent {
     Lyrics {
         id: uuid::Uuid,
-        result: Result<Vec<ytui_services::lyrics::Track>>,
+        result: Result<Vec<vidcue_services::lyrics::Track>>,
     },
     Page {
         tab: usize,
@@ -246,7 +246,7 @@ pub enum UiEvent {
         id: uuid::Uuid,
         result: Result<Vec<String>>,
     },
-    CacheCleared(Result<ytui_services::images::CacheStats>),
+    CacheCleared(Result<vidcue_services::images::CacheStats>),
     AccountProfiles(Vec<auth::BrowserProfile>),
     Collection {
         generation: u64,
@@ -292,7 +292,7 @@ pub struct App {
     theme_fade: Option<(Palette, Palette, Instant)>,
     pub player_status: PlayerStatus,
     pub vinyl_motion: crate::ui::vinyl::Motion,
-    pub visual_levels: Option<ytui_services::visualizer::AudioLevels>,
+    pub visual_levels: Option<vidcue_services::visualizer::AudioLevels>,
     pub demo: bool,
     pub offline: bool,
     pub quit: bool,
@@ -333,7 +333,7 @@ pub struct App {
     policy: Option<schedule::Policy>,
     desktop_cancel: CancellationToken,
     clipboard_cancel: CancellationToken,
-    clipboard_monitor: ytui_services::desktop::ClipboardMonitor,
+    clipboard_monitor: vidcue_services::desktop::ClipboardMonitor,
     clipboard_generation: u64,
     clipboard_pending: bool,
     clipboard_due: Instant,
@@ -553,7 +553,7 @@ impl App {
                 ("Discover stations", "Explore Radio Browser", "radio"),
                 (
                     "Favorite stations",
-                    "Stations you saved in ytui",
+                    "Stations you saved in vidcue",
                     "favorites",
                 ),
             ],
@@ -606,7 +606,7 @@ impl App {
             &config.image_protocol,
             detected_image_protocol,
         ));
-        let client = ytui_services::http_client(config.proxy.as_deref())?;
+        let client = vidcue_services::http_client(config.proxy.as_deref())?;
         let browser = Browser::new(client.clone(), session.clone(), config.account_index);
         let radio = Radio::new(client.clone(), config.radio_servers.clone())
             .with_cache(paths.cache.join("radio"));
@@ -644,7 +644,7 @@ impl App {
             } else {
                 "Anonymous · F2 actions · , settings · ? help".into()
             },
-            palette: theme::builtin("ytui-dark")?,
+            palette: theme::builtin("vidcue-dark")?,
             theme_fade: None,
             player_status: PlayerStatus::default(),
             demo,
@@ -789,17 +789,17 @@ impl App {
         b.state = JobState::Done;
         self.snapshot.downloads.jobs = vec![a, b];
         self.player_status = PlayerStatus {
-            audio_levels: Some(ytui_services::visualizer::AudioLevels {
+            audio_levels: Some(vidcue_services::visualizer::AudioLevels {
                 left: 0.72,
                 right: 0.55,
                 peak: 0.86,
             }),
             backend: "demo · fictional formats".into(),
-            catalog: ytui_services::formats::Catalog::parse(&serde_json::json!({
+            catalog: vidcue_services::formats::Catalog::parse(&serde_json::json!({
                 "formats":[{"format_id":"137","height":1080,"vcodec":"avc1","acodec":"none","ext":"mp4"},{"format_id":"247","height":720,"vcodec":"vp9","acodec":"none","ext":"webm"},{"format_id":"140-de","vcodec":"none","acodec":"aac","language":"de","ext":"m4a"}],
                 "subtitles":{"de":[{"ext":"vtt","url":"https://example.invalid/fictional-caption"}]}
             })),
-            tracks: ytui_services::formats::tracks(
+            tracks: vidcue_services::formats::tracks(
                 &serde_json::json!([{"id":1,"type":"audio","lang":"en","codec":"aac","selected":true},{"id":2,"type":"audio","lang":"de","codec":"aac"},{"id":1,"type":"sub","lang":"de","codec":"vtt"}]),
             ),
             media: Some(Media {
@@ -816,7 +816,7 @@ impl App {
             speed: 1.0,
             active: true,
             sponsor_enabled: true,
-            segments: vec![ytui_services::sponsorblock::Segment {
+            segments: vec![vidcue_services::sponsorblock::Segment {
                 start: 90.0,
                 end: 115.0,
                 category: "sponsor".into(),
@@ -947,7 +947,7 @@ impl App {
                 } else if let BrowseRequest::OfflineLibrary { query, audio } = &request {
                     let queue = downloads.context("Missing offline queue snapshot")?;
                     let query = query.clone(); let audio = *audio;
-                    tokio::task::spawn_blocking(move || ytui_services::library::catalog(&queue, &query, audio)).await.map_err(anyhow::Error::from)
+                    tokio::task::spawn_blocking(move || vidcue_services::library::catalog(&queue, &query, audio)).await.map_err(anyhow::Error::from)
                 } else if tab==3 {
                     if request==BrowseRequest::Favorites {Ok(Page{title:"Favorite stations".into(),items:favorites,..Default::default()})}
                     else if request==BrowseRequest::Collection("custom".into()){Ok(Page{title:"Custom stations".into(),items:custom,..Default::default()})}
@@ -1012,7 +1012,7 @@ impl App {
                         }
                         Err(error) => {
                             view.error =
-                                Some(ytui_services::process::diagnostic(&error.to_string()))
+                                Some(vidcue_services::process::diagnostic(&error.to_string()))
                         }
                     }
                 }
@@ -1044,7 +1044,7 @@ impl App {
                     Err(error) => {
                         self.status = format!(
                             "Collection was not queued: {}",
-                            ytui_services::process::diagnostic(&error.to_string())
+                            vidcue_services::process::diagnostic(&error.to_string())
                         )
                     }
                 }
@@ -1177,10 +1177,10 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        view.error = Some(ytui_services::process::diagnostic(&e.to_string()));
+                        view.error = Some(vidcue_services::process::diagnostic(&e.to_string()));
                         if matches!(tab, 1 | 2)
                             && let Some(retry) =
-                                e.downcast_ref::<ytui_services::browse::FeedRetry>()
+                                e.downcast_ref::<vidcue_services::browse::FeedRetry>()
                             && let Some(load) = &mut view.load
                         {
                             let backoff = [2, 5, 15, 30, 60][(load.failures as usize).min(4)];
@@ -1269,7 +1269,7 @@ impl App {
                             self.paths.clone(),
                             self.theme_cancel.clone(),
                         );
-                        match ytui_services::http_client(self.config.proxy.as_deref()) {
+                        match vidcue_services::http_client(self.config.proxy.as_deref()) {
                             Ok(client) => {
                                 self.browser = Browser::new(
                                     client.clone(),
@@ -1355,7 +1355,7 @@ impl App {
                     Err(e) => {
                         self.status = format!(
                             "Sign-in failed: {}",
-                            ytui_services::process::diagnostic(&e.to_string())
+                            vidcue_services::process::diagnostic(&e.to_string())
                         )
                     }
                 }
@@ -1374,7 +1374,7 @@ impl App {
                     Err(e) => {
                         self.status = format!(
                             "Disconnected in memory; storage cleanup failed: {} · fix storage/unlock keyring and retry before restarting",
-                            ytui_services::process::diagnostic(&e.to_string())
+                            vidcue_services::process::diagnostic(&e.to_string())
                         )
                     }
                 }
@@ -1445,10 +1445,11 @@ impl App {
                         };
                     }
                     Err(e) => {
-                        let message = ytui_services::process::diagnostic(&e.to_string());
+                        let message = vidcue_services::process::diagnostic(&e.to_string());
                         let now = schedule::unix_now();
                         watch.failed(message.clone(), now);
-                        if let Some(retry) = e.downcast_ref::<ytui_services::browse::FeedRetry>() {
+                        if let Some(retry) = e.downcast_ref::<vidcue_services::browse::FeedRetry>()
+                        {
                             let seconds = retry
                                 .after
                                 .as_secs()
@@ -1463,11 +1464,11 @@ impl App {
             UiEvent::Import(result) => match result {
                 Ok(jobs) => {
                     let count =
-                        ytui_services::queue_import::append(&mut self.snapshot.downloads, jobs);
+                        vidcue_services::queue_import::append(&mut self.snapshot.downloads, jobs);
                     self.status = format!("Imported {count} queued items");
                     self.dirty = true;
                 }
-                Err(e) => self.status = ytui_services::process::diagnostic(&e.to_string()),
+                Err(e) => self.status = vidcue_services::process::diagnostic(&e.to_string()),
             },
             UiEvent::Text { id, result } => {
                 if let Some(Modal::PendingText { id: current, title }) = &self.modal
@@ -1476,7 +1477,7 @@ impl App {
                     self.modal = Some(Modal::Text {
                         title: title.clone(),
                         lines: result.unwrap_or_else(|error| {
-                            vec![ytui_services::process::diagnostic(&error.to_string())]
+                            vec![vidcue_services::process::diagnostic(&error.to_string())]
                         }),
                         offset: 0,
                     });
@@ -1526,7 +1527,7 @@ impl App {
             self.tabs[tab].empty_pages = 0;
             self.tabs[tab].seen_tokens.clear();
         }
-        if let Ok(client) = ytui_services::http_client(self.config.proxy.as_deref()) {
+        if let Ok(client) = vidcue_services::http_client(self.config.proxy.as_deref()) {
             self.browser = Browser::new(client, self.session.clone(), self.config.account_index);
         }
         self.sync_player_session();
@@ -1577,14 +1578,14 @@ impl App {
         self.tasks.spawn(async move {
             let mut account = None;
             let result = async {
-                ytui_services::http_client(c.proxy.as_deref())?;
+                vidcue_services::http_client(c.proxy.as_deref())?;
                 if (account_changed || storage_changed)
                     && let Some(session) = current
                 {
                     let mut candidate = (*session).clone();
                     if account_changed {
                         let browser = Browser::new(
-                            ytui_services::http_client(c.proxy.as_deref())?,
+                            vidcue_services::http_client(c.proxy.as_deref())?,
                             Some(session),
                             c.account_index,
                         );
@@ -2064,19 +2065,19 @@ impl App {
                         }
                         KeyCode::Char('o') => {
                             if let Some(media) = download.outputs.get(*selected).and_then(|path| {
-                                ytui_services::library::completed_file(download, path)
+                                vidcue_services::library::completed_file(download, path)
                             }) {
                                 let path = PathBuf::from(media.url);
                                 self.tasks.spawn(async move {
                                     UiEvent::Status(
-                                        match ytui_services::desktop::open_file(&path).await {
+                                        match vidcue_services::desktop::open_file(&path).await {
                                             Ok(()) => {
                                                 "Open with request sent to the desktop portal"
                                                     .into()
                                             }
                                             Err(error) => format!(
                                                 "Desktop open unavailable: {}",
-                                                ytui_services::process::diagnostic(
+                                                vidcue_services::process::diagnostic(
                                                     &error.to_string()
                                                 )
                                             ),
@@ -2087,7 +2088,7 @@ impl App {
                         }
                         KeyCode::Enter => {
                             if let Some(media) = download.outputs.get(*selected).and_then(|path| {
-                                ytui_services::library::completed_file(download, path)
+                                vidcue_services::library::completed_file(download, path)
                             }) {
                                 self.play(media);
                                 return;
@@ -2492,7 +2493,7 @@ impl App {
             .skip(view.selected.saturating_sub(2))
             .take(10)
             .filter(|m| !m.thumbnail.is_empty())
-            .map(|m| ytui_services::images::thumbnail_url(m, width, height))
+            .map(|m| vidcue_services::images::thumbnail_url(m, width, height))
             .collect::<Vec<_>>();
         let cache = self.images.clone();
         let cancel = self.image_cancel.clone();
@@ -2543,7 +2544,7 @@ impl App {
                 let audio = media.kind == MediaKind::Song;
                 Some((media, audio))
             })
-            .filter(|(media, _)| ytui_services::sponsorblock::video_id(media).is_some());
+            .filter(|(media, _)| vidcue_services::sponsorblock::video_id(media).is_some());
         let Some((media, audio)) = candidate else {
             if self.playback_prepare.take().is_some() {
                 let _ = self.player.try_send(PlayerCommand::CancelPrepare);
@@ -2683,7 +2684,7 @@ impl App {
                 area.width as u32 * fw as u32,
                 area.height as u32 * fh as u32,
             );
-            let url = ytui_services::images::thumbnail_url(&media, width, height);
+            let url = vidcue_services::images::thumbnail_url(&media, width, height);
             let cache = self.images.clone();
             let picker = self.picker.clone();
             let demo = self.demo.then(|| self.palette.clone());
@@ -2773,7 +2774,7 @@ impl App {
             return;
         }
         let (width, height) = self.thumbnail_size();
-        let url = ytui_services::images::thumbnail_url(&media, width, height);
+        let url = vidcue_services::images::thumbnail_url(&media, width, height);
         self.image_key = Some(key);
         self.image_generation += 1;
         let generation = self.image_generation;
@@ -2931,7 +2932,7 @@ impl App {
             Action::MusicPlayerStyle => {
                 if matches!(self.tab, 2 | 3) {
                     let mut config = self.config.clone();
-                    let styles = ytui_core::MUSIC_PLAYER_STYLES;
+                    let styles = vidcue_core::MUSIC_PLAYER_STYLES;
                     let index = styles
                         .iter()
                         .position(|s| *s == config.music_player_style)
@@ -2993,7 +2994,7 @@ impl App {
                     if let Some(job) = self.snapshot.downloads.jobs.get(self.download_selected) {
                         if job.outputs.len() == 1 && job.state == JobState::Done {
                             if let Some(media) =
-                                ytui_services::library::completed_file(job, &job.outputs[0])
+                                vidcue_services::library::completed_file(job, &job.outputs[0])
                             {
                                 self.play(media);
                             }
@@ -3328,7 +3329,7 @@ impl App {
                 if job
                     .outputs
                     .iter()
-                    .any(|path| ytui_services::library::completed_file(job, path).is_some())
+                    .any(|path| vidcue_services::library::completed_file(job, path).is_some())
                 {
                     ready += 1;
                 } else if matches!(
@@ -3514,7 +3515,7 @@ impl App {
         }
         self.dirty = true;
     }
-    pub fn resume_positions(&self) -> Vec<&ytui_core::playback_history::Position> {
+    pub fn resume_positions(&self) -> Vec<&vidcue_core::playback_history::Position> {
         self.snapshot
             .positions
             .resumable()
@@ -3526,7 +3527,7 @@ impl App {
             })
             .collect()
     }
-    pub fn resume_position(&mut self, position: ytui_core::playback_history::Position) {
+    pub fn resume_position(&mut self, position: vidcue_core::playback_history::Position) {
         if self.player_session_pending {
             self.status = "Updating player account · retry resume shortly".into();
             return;
@@ -3960,7 +3961,7 @@ impl App {
                     && (job.media.url == media.url
                         || id.is_some() && crate::related::video_id(&job.media) == id)
             })
-            .find_map(|job| ytui_services::library::completed_file(job, &job.outputs[0]))
+            .find_map(|job| vidcue_services::library::completed_file(job, &job.outputs[0]))
             .map(|copy| PathBuf::from(copy.url))
     }
     pub fn sleep_label(&self) -> Option<String> {
@@ -4052,7 +4053,7 @@ impl App {
         }
         if !self.demo {
             let policy = self.config.schedule.policy(
-                ytui_services::desktop::local_minute(),
+                vidcue_services::desktop::local_minute(),
                 self.config.download.global_bandwidth_kib,
                 self.config.concurrency,
             );
@@ -4131,7 +4132,7 @@ impl App {
                         UiEvent::Watch {
                             id,
                             generation,
-                            result: ytui_services::watch::collect(browser, watch, cancel).await,
+                            result: vidcue_services::watch::collect(browser, watch, cancel).await,
                         }
                     });
                 }
@@ -4148,7 +4149,7 @@ impl App {
             self.tasks.spawn(async move {
                 UiEvent::Clipboard {
                     generation,
-                    result: ytui_services::desktop::read_clipboard(cancel).await,
+                    result: vidcue_services::desktop::read_clipboard(cancel).await,
                 }
             });
         }
@@ -4243,7 +4244,7 @@ impl App {
             self.notification_pending += 1;
             self.tasks.spawn(async move {
                 UiEvent::Notification(
-                    ytui_services::desktop::notify(title, &text, failed, sound).await,
+                    vidcue_services::desktop::notify(title, &text, failed, sound).await,
                 )
             });
         }
@@ -4318,7 +4319,7 @@ impl App {
                     })
                     .await?;
                 let api = Browser::new(
-                    ytui_services::http_client(config.proxy.as_deref())?,
+                    vidcue_services::http_client(config.proxy.as_deref())?,
                     Some(Arc::new(candidate.clone())),
                     config.account_index,
                 );
@@ -4407,9 +4408,9 @@ impl App {
                         _ = cancel.cancelled() => Err(anyhow::anyhow!("Lyrics request cancelled")),
                         result = async {
                             if remote {
-                                ytui_services::lyrics::lookup(proxy.as_deref(), &title, &artist).await
+                                vidcue_services::lyrics::lookup(proxy.as_deref(), &title, &artist).await
                             } else {
-                                ytui_services::lyrics::local(std::path::Path::new(&value)).await.map(|track| vec![track])
+                                vidcue_services::lyrics::local(std::path::Path::new(&value)).await.map(|track| vec![track])
                             }
                         } => result,
                     };
@@ -4441,7 +4442,7 @@ impl App {
                 self.save_config(config);
             }
             "native-runtime" => {
-                let path = ytui_services::paths::executable(&value).context("Runtime was not found. Install Node.js 22+ or Deno 2.9.7, or clear the runtime field in Settings → Tools for automatic detection.")?;
+                let path = vidcue_services::paths::executable(&value).context("Runtime was not found. Install Node.js 22+ or Deno 2.9.7, or clear the runtime field in Settings → Tools for automatic detection.")?;
                 let mut config = self.config.clone();
                 config.native_js_runtime = Some(path);
                 self.save_config(config);
@@ -4475,7 +4476,7 @@ impl App {
             "add-station" => {
                 let name = parts.get(1).context("Provide a station name")?;
                 let url = parts.get(2).context("Provide a stream URL")?;
-                ytui_core::http_url(url)?;
+                vidcue_core::http_url(url)?;
                 let mut config = self.config.clone();
                 config.custom_stations.push(Media {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -4566,7 +4567,7 @@ impl App {
             "sleep" if value.is_empty() => {
                 self.modal = Some(Modal::Text { title: self.tr("Sleep timer").into(), offset: 0,
                     lines: vec![self.sleep_label().unwrap_or_else(|| self.tr("Sleep timer is off").into()),
-                        self.tr("Set or cancel the timer in Actions → Player. Playback stops without quitting ytui; the queue stays saved. The timer lasts for this session only.").into()] });
+                        self.tr("Set or cancel the timer in Actions → Player. Playback stops without quitting vidcue; the queue stays saved. The timer lasts for this session only.").into()] });
             }
             "sleep" => {
                 let seconds = schedule::delay_seconds(&value)?;
@@ -4597,7 +4598,7 @@ impl App {
                     .request
                     .clone()
                     .context("Open a collection first")?;
-                let watch = ytui_core::watch::CollectionWatch {
+                let watch = vidcue_core::watch::CollectionWatch {
                     id: uuid::Uuid::new_v4(),
                     title: self.tabs[self.tab].page.title.clone(),
                     request,
@@ -4728,7 +4729,7 @@ impl App {
                 self.status = "Checking installed tool capabilities…".into();
                 let id = self.pending_text("Setup & capabilities / support report");
                 self.tasks.spawn(async move {
-                    let report = ytui_services::diagnostics::Support::collect(
+                    let report = vidcue_services::diagnostics::Support::collect(
                         &config,
                         env!("CARGO_PKG_VERSION"),
                         env!("YTUI_BUILD_DESCRIPTION"),
@@ -4741,7 +4742,7 @@ impl App {
                         if let Some(path) = output {
                             let data = serde_json::to_vec_pretty(&report)?;
                             tokio::task::spawn_blocking(move || {
-                                ytui_services::paths::atomic_write_new(&path, &data)
+                                vidcue_services::paths::atomic_write_new(&path, &data)
                             })
                             .await??;
                         }
@@ -4754,7 +4755,7 @@ impl App {
             "log" | "diagnostics" => {
                 let mut lines = vec![
                     format!(
-                        "ytui {} · build {} · downloads {} · playback {}",
+                        "vidcue {} · build {} · downloads {} · playback {}",
                         env!("CARGO_PKG_VERSION"),
                         env!("YTUI_BUILD_DESCRIPTION"),
                         self.config.download_backend,
@@ -4773,7 +4774,7 @@ impl App {
                         .rev()
                         .filter_map(|j| {
                             j.error.as_ref().map(|e| {
-                                format!("{} · {}", j.id, ytui_services::process::diagnostic(e))
+                                format!("{} · {}", j.id, vidcue_services::process::diagnostic(e))
                             })
                         })
                         .take(30),
@@ -4781,9 +4782,9 @@ impl App {
                 if let Some(error) = &self.player_status.error {
                     lines.push(format!(
                         "Inferred failure phase: {}",
-                        ytui_services::diagnostics::phase(error)
+                        vidcue_services::diagnostics::phase(error)
                     ));
-                    lines.push(ytui_services::process::diagnostic(error));
+                    lines.push(vidcue_services::process::diagnostic(error));
                 }
                 self.modal = Some(Modal::Text {
                     title: "Diagnostics".into(),
@@ -4793,7 +4794,7 @@ impl App {
             }
             "update" => {
                 self.modal = Some(Modal::Text {
-                    title: "Update ytui".into(),
+                    title: "Update vidcue".into(),
                     lines: vec![
                         "Native extraction is compiled into the Rust application.".into(),
                         "Update the checkout, review changes, then run ./install-rust.sh.".into(),
@@ -4906,7 +4907,7 @@ impl App {
                         title,
                         options: Box::new(entry_options),
                         selection: value,
-                        result: ytui_services::watch::collect(browser, watch, cancel).await,
+                        result: vidcue_services::watch::collect(browser, watch, cancel).await,
                     }
                 });
             }
@@ -4977,17 +4978,17 @@ impl App {
                     let connect = action == "connect";
                     self.tasks.spawn(async move {
                         let result =
-                            ytui_services::vpn::change(&program, &id, connect, cancel).await;
+                            vidcue_services::vpn::change(&program, &id, connect, cancel).await;
                         UiEvent::Status(match result {
                             Ok(()) => "VPN action completed".into(),
-                            Err(e) => ytui_services::process::diagnostic(&e.to_string()),
+                            Err(e) => vidcue_services::process::diagnostic(&e.to_string()),
                         })
                     });
                 } else {
                     let id = self.pending_text("VPN connections");
                     self.tasks.spawn(async move {
                         let result =
-                            ytui_services::vpn::list(&program, cancel)
+                            vidcue_services::vpn::list(&program, cancel)
                                 .await
                                 .map(|connections| {
                                     let mut lines = vec![
@@ -5062,7 +5063,7 @@ impl App {
                 );
             }
             "profiles" => {
-                let names = ytui_services::profiles::list(&self.paths)?;
+                let names = vidcue_services::profiles::list(&self.paths)?;
                 self.status = if names.is_empty() {
                     "No saved profiles · F2 → Save settings profile".into()
                 } else {
@@ -5079,12 +5080,14 @@ impl App {
                 ensure!(!self.demo, "Profiles are disabled in demo mode");
                 match action.as_str() {
                     "save" => {
-                        ytui_services::profiles::save(&self.paths, &name, &self.config)?;
+                        vidcue_services::profiles::save(&self.paths, &name, &self.config)?;
                         self.status = format!("Saved profile {name}");
                     }
-                    "load" => self.save_config(ytui_services::profiles::load(&self.paths, &name)?),
+                    "load" => {
+                        self.save_config(vidcue_services::profiles::load(&self.paths, &name)?)
+                    }
                     "delete" => {
-                        ytui_services::profiles::delete(&self.paths, &name)?;
+                        vidcue_services::profiles::delete(&self.paths, &name)?;
                         self.status = format!("Deleted profile {name}");
                     }
                     _ => anyhow::bail!("Use :profile save/load/delete NAME"),
@@ -5362,7 +5365,7 @@ impl App {
                 self.tasks.spawn(async move {
                     UiEvent::Import(
                         tokio::task::spawn_blocking(move || {
-                            ytui_services::queue_import::read(&PathBuf::from(value), &config)
+                            vidcue_services::queue_import::read(&PathBuf::from(value), &config)
                         })
                         .await
                         .map_err(anyhow::Error::from)
@@ -5373,17 +5376,17 @@ impl App {
             "export" => {
                 ensure!(!value.is_empty(), "Provide an export path");
                 let data = serde_json::to_vec_pretty(&self.snapshot)?;
-                ytui_services::paths::atomic_write(&PathBuf::from(value), &data)?;
+                vidcue_services::paths::atomic_write(&PathBuf::from(value), &data)?;
                 self.status = "Queue/history exported".into();
             }
             "open" => {
                 ensure!(!self.offline, "Browser navigation requires online mode");
                 let media = self.selected().context("Select an item")?;
-                ytui_core::http_url(&media.url)?;
+                vidcue_core::http_url(&media.url)?;
                 let cancel = self.desktop_cancel.child_token();
                 self.tasks.spawn(async move {
-                    let result = ytui_services::process::run(
-                        ytui_services::process::ProcessSpec::new("xdg-open", vec![media.url], 10),
+                    let result = vidcue_services::process::run(
+                        vidcue_services::process::ProcessSpec::new("xdg-open", vec![media.url], 10),
                         cancel,
                         |_| {},
                     )

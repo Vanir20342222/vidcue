@@ -18,10 +18,10 @@ records the current visual requirements and acceptance checks.
 - `apps/desktop`: existing Rust terminal application, with unchanged binary names.
 - `apps/android`: native Jetpack Compose adaptive touch UI, Media3 video/player
   surface, and Android media/storage/service adapters.
-- `crates/ytui-core`: shared models, queue/config/history, themes and policy.
-- `crates/ytui-providers`: shared Rust YouTube/Music browsing, radio/cliamp,
+- `crates/vidcue-core`: shared models, queue/config/history, themes and policy.
+- `crates/vidcue-providers`: shared Rust YouTube/Music browsing, radio/cliamp,
   bounded HTTP/cache, session scoping, images, lyrics and SponsorBlock.
-- `crates/ytui-mobile`: Rust Android engine/JNI boundary and retained legacy UI
+- `crates/vidcue-mobile`: Rust Android engine/JNI boundary and retained legacy UI
   prototype; no desktop process,
   keyring, MPRIS, NetworkManager or browser-database dependency.
 - Desktop services re-export shared provider APIs rather than maintain copies.

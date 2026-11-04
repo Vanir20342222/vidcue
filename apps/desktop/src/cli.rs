@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use ytui_core::*;
-use ytui_services::{
+use vidcue_core::*;
+use vidcue_services::{
     auth::{self, SessionStore},
     browse::Browser,
     paths::Paths,
@@ -150,7 +150,7 @@ async fn load_session(config: &Config, paths: &Paths) -> Option<Arc<auth::Sessio
 pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<()> {
     match command {
         Command::Support { output } => {
-            let report = ytui_services::diagnostics::Support::collect(
+            let report = vidcue_services::diagnostics::Support::collect(
                 &config,
                 env!("CARGO_PKG_VERSION"),
                 env!("YTUI_BUILD_DESCRIPTION"),
@@ -160,7 +160,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             .await;
             let encoded = serde_json::to_vec_pretty(&report)?;
             if let Some(output) = output {
-                ytui_services::paths::atomic_write_new(&output, &encoded)?;
+                vidcue_services::paths::atomic_write_new(&output, &encoded)?;
                 println!("Support report: {}", output.display());
             } else {
                 println!("{}", String::from_utf8(encoded)?);
@@ -189,16 +189,16 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 title: "Public playback check".into(),
                 ..Default::default()
             };
-            let mut player = ytui_services::player::Player::spawn(config, paths, None);
+            let mut player = vidcue_services::player::Player::spawn(config, paths, None);
             player
                 .commands
-                .send(ytui_services::player::PlayerCommand::Play { media, audio })
+                .send(vidcue_services::player::PlayerCommand::Play { media, audio })
                 .await?;
             let result = tokio::time::timeout(std::time::Duration::from_secs(u64::from(seconds) + 120), async {
                 loop {
                     let state = player.status.borrow_and_update().clone();
                     if let Some(error) = state.error {
-                        anyhow::bail!("{}", ytui_services::process::diagnostic(&error));
+                        anyhow::bail!("{}", vidcue_services::process::diagnostic(&error));
                     }
                     if state.active
                         && !state.paused
@@ -220,7 +220,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                     tokio::select! {
                         changed = player.status.changed() => changed.context("Playback worker stopped")?,
                         event = player.events.recv() => match event {
-                            Some(ytui_services::player::PlayerEvent::Error(error)) => anyhow::bail!("{}", ytui_services::process::diagnostic(&error)),
+                            Some(vidcue_services::player::PlayerEvent::Error(error)) => anyhow::bail!("{}", vidcue_services::process::diagnostic(&error)),
                             _ => anyhow::bail!("Playback ended before the required progress"),
                         },
                         _ = tokio::signal::ctrl_c() => anyhow::bail!("Playback check interrupted"),
@@ -235,14 +235,14 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             );
         }
         Command::NativeWorker { request } => {
-            tokio::task::spawn_blocking(move || ytui_services::native::worker(&request)).await??
+            tokio::task::spawn_blocking(move || vidcue_services::native::worker(&request)).await??
         }
         Command::Init => {
             ensure!(
                 !paths.config_file().exists(),
                 "rust.toml already exists; it was not overwritten"
             );
-            ytui_services::paths::atomic_write_new(
+            vidcue_services::paths::atomic_write_new(
                 &paths.config_file(),
                 toml::to_string_pretty(&config)?.as_bytes(),
             )?;
@@ -253,7 +253,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 !network || !config.offline,
                 "Network diagnostics require network access; restart without --offline"
             );
-            println!("ytui {} · Rust application", env!("CARGO_PKG_VERSION"));
+            println!("vidcue {} · Rust application", env!("CARGO_PKG_VERSION"));
             println!("Executable: {}", std::env::current_exe()?.display());
             println!("Configuration: {}", paths.config_file().display());
             println!("State: {}", paths.state.display());
@@ -267,7 +267,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             );
             println!(
                 "yt-dlp-rs revision: {}",
-                ytui_services::native::UPSTREAM_REV
+                vidcue_services::native::UPSTREAM_REV
             );
             for (label, tool) in [
                 ("FFmpeg", &config.ffmpeg),
@@ -285,14 +285,14 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                     }
                 );
             }
-            match ytui_services::native_runtime::select(&config, CancellationToken::new()).await {
+            match vidcue_services::native_runtime::select(&config, CancellationToken::new()).await {
                 Ok(Some(path)) => println!("Native JavaScript runtime: {}", path.display()),
                 Ok(None) => println!(
                     "Native JavaScript runtime: missing; install Node.js 22+ or Deno 2.9.7 for current YouTube challenges"
                 ),
                 Err(error) => println!(
                     "Native JavaScript runtime: {}",
-                    ytui_services::process::diagnostic(&error.to_string())
+                    vidcue_services::process::diagnostic(&error.to_string())
                 ),
             }
             println!(
@@ -300,7 +300,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 std::env::var("TERM").unwrap_or_else(|_| "unknown".into()),
                 config.image_protocol
             );
-            match ytui_services::theme::resolve(&config, &paths).await {
+            match vidcue_services::theme::resolve(&config, &paths).await {
                 Ok(p) => println!("Theme: {} · {}", p.name, p.source),
                 Err(_) => println!(
                     "Theme provider unavailable; last valid palette/default will be retained"
@@ -310,7 +310,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 "Clipboard watcher: {}",
                 if !config.clipboard_watcher {
                     "disabled (opt-in)"
-                } else if ytui_services::desktop::clipboard_reader().is_ok() {
+                } else if vidcue_services::desktop::clipboard_reader().is_ok() {
                     "enabled; reader found"
                 } else {
                     "enabled; install wl-clipboard or xclip/xsel"
@@ -330,10 +330,10 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                     .unwrap_or("none")
             );
             println!(
-                "Browser stores were not opened. Use `ytui-rs auth profiles` to list profile paths."
+                "Browser stores were not opened. Use `vidcue auth profiles` to list profile paths."
             );
             if network {
-                let client = ytui_services::http_client(config.proxy.as_deref())?;
+                let client = vidcue_services::http_client(config.proxy.as_deref())?;
                 let browser = Browser::new(client.clone(), None, 0);
                 let mut failures = 0;
                 for (label, music) in [
@@ -386,7 +386,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 })
                 .await??;
                 let api = Browser::new(
-                    ytui_services::http_client(config.proxy.as_deref())?,
+                    vidcue_services::http_client(config.proxy.as_deref())?,
                     Some(Arc::new(session.clone())),
                     config.account_index,
                 );
@@ -414,7 +414,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
         Command::Browse { music, feed, query } => {
             let session = load_session(&config, &paths).await;
             let browser = Browser::new(
-                ytui_services::http_client(config.proxy.as_deref())?,
+                vidcue_services::http_client(config.proxy.as_deref())?,
                 session,
                 config.account_index,
             );
@@ -447,14 +447,15 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
         Command::Vpn { action, uuid } => {
             let cancel = CancellationToken::new();
             if action == "connect" || action == "disconnect" {
-                let id = uuid.context("Provide a UUID from `ytui-rs vpn list`")?;
-                ytui_services::vpn::change(&config.nmcli, &id, action == "connect", cancel).await?;
+                let id = uuid.context("Provide a UUID from `vidcue vpn list`")?;
+                vidcue_services::vpn::change(&config.nmcli, &id, action == "connect", cancel)
+                    .await?;
                 println!("VPN action completed");
             } else {
                 println!(
                     "{}",
                     serde_json::to_string_pretty(
-                        &ytui_services::vpn::list(&config.nmcli, cancel).await?
+                        &vidcue_services::vpn::list(&config.nmcli, cancel).await?
                     )?
                 );
             }
@@ -474,7 +475,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
                 BrowseRequest::Cliamp
             };
             let radio = Radio::new(
-                ytui_services::http_client(config.proxy.as_deref())?,
+                vidcue_services::http_client(config.proxy.as_deref())?,
                 config.radio_servers.clone(),
             )
             .with_cache(paths.cache.join("radio"));
@@ -495,7 +496,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             now,
         } => {
             let policy = config.schedule.policy(
-                ytui_services::desktop::local_minute(),
+                vidcue_services::desktop::local_minute(),
                 config.download.global_bandwidth_kib,
                 1,
             );
@@ -550,7 +551,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             store.save(snapshot.clone()).await?;
             let (tx, mut rx) = mpsc::channel(128);
             let cancel = CancellationToken::new();
-            let worker = tokio::spawn(ytui_services::download::execute(
+            let worker = tokio::spawn(vidcue_services::download::execute(
                 job,
                 config,
                 paths,
@@ -619,7 +620,7 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
             let p = paths.clone();
             let mut c = config.clone();
             let (result, snapshot, new_config) = tokio::task::spawn_blocking(move || {
-                let result = ytui_services::migration::import(&p, &mut c, &mut snapshot, apply);
+                let result = vidcue_services::migration::import(&p, &mut c, &mut snapshot, apply);
                 (result, snapshot, c)
             })
             .await?;
@@ -635,11 +636,11 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
         Command::Import { file } => {
             let c = config.clone();
             let jobs =
-                tokio::task::spawn_blocking(move || ytui_services::queue_import::read(&file, &c))
+                tokio::task::spawn_blocking(move || vidcue_services::queue_import::read(&file, &c))
                     .await??;
             let store = Store::open(&paths.state)?;
             let mut snapshot = store.load().await?;
-            let count = ytui_services::queue_import::append(&mut snapshot.downloads, jobs);
+            let count = vidcue_services::queue_import::append(&mut snapshot.downloads, jobs);
             store.save(snapshot).await?;
             store.close().await?;
             println!("Imported {count} queued items; start the TUI to run them");
@@ -691,14 +692,14 @@ fn print_probe(label: &str, result: Result<Page>) -> bool {
         Ok(page) if !page.items.is_empty() => {
             println!("{label}: OK ({} items)", page.items.len());
             if let Some(notice) = page.notice {
-                println!("  {}", ytui_services::process::diagnostic(&notice));
+                println!("  {}", vidcue_services::process::diagnostic(&notice));
             }
             true
         }
         Ok(page) => {
             println!(
                 "{label}: EMPTY · {}",
-                ytui_services::process::diagnostic(
+                vidcue_services::process::diagnostic(
                     page.notice
                         .as_deref()
                         .unwrap_or("No supported items returned")
@@ -709,7 +710,7 @@ fn print_probe(label: &str, result: Result<Page>) -> bool {
         Err(error) => {
             println!(
                 "{label}: FAILED · {}",
-                ytui_services::process::diagnostic(&error.to_string())
+                vidcue_services::process::diagnostic(&error.to_string())
             );
             false
         }

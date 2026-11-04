@@ -30,7 +30,7 @@ impl Motion {
 }
 
 pub(super) fn render(f: &mut Frame, app: &mut App, area: Rect) {
-    let shortcut = super::workspace::key(app, ytui_core::shortcuts::Action::MusicPlayerStyle);
+    let shortcut = super::workspace::key(app, vidcue_core::shortcuts::Action::MusicPlayerStyle);
     let block = panel(
         format!(" Vinyl · {shortcut} view · Esc exits fullscreen "),
         app,
@@ -105,7 +105,7 @@ pub(super) fn render(f: &mut Frame, app: &mut App, area: Rect) {
             let label = media
                 .map(|m| m.creator.as_str())
                 .filter(|v| !v.is_empty())
-                .unwrap_or("ytui");
+                .unwrap_or("vidcue");
             f.render_widget(
                 Paragraph::new(format!("\n♫\n\n{label}"))
                     .centered()
@@ -147,8 +147,8 @@ pub(super) fn render(f: &mut Frame, app: &mut App, area: Rect) {
             Line::from(state),
             Line::from(format!(
                 "{} pause · {} controls · , settings",
-                super::workspace::key(app, ytui_core::shortcuts::Action::Pause),
-                super::workspace::key(app, ytui_core::shortcuts::Action::PlayerMenu)
+                super::workspace::key(app, vidcue_core::shortcuts::Action::Pause),
+                super::workspace::key(app, vidcue_core::shortcuts::Action::PlayerMenu)
             )),
         ])
         .centered(),

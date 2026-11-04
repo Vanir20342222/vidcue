@@ -1,4 +1,4 @@
-# ytui
+# vidcue
 
 A Rust monorepo for YouTube, YouTube Music, downloads and radio. The desktop app uses Lazygit-style terminal panes, keyboard navigation, thumbnails and mpv. [Android](docs/android/README.md) uses the shared Rust engine with a native Jetpack Compose UI for phones and tablets.
 
@@ -14,13 +14,13 @@ broader service/device acceptance and unsupported features.
 
 ```bash
 git clone https://github.com/Vanir20342222/ytui.git
-cd ytui
+cd vidcue
 ./install.sh
-ytui doctor
-ytui
+vidcue doctor
+vidcue
 ```
 
-The installer builds Rust and installs both `ytui` and the compatible `ytui-rs`
+The installer builds Rust and installs both `vidcue` and the compatible `vidcue`
 launcher. Install current stable Rust, a C compiler, pkg-config, OpenSSL headers,
 mpv and FFmpeg first. On CachyOS/Arch:
 
@@ -31,7 +31,7 @@ rustup default stable
 
 Use `main` for the integrated Rust application.
 Pulling source alone does not replace an installed binary: rerun `./install.sh`
-and check `~/.local/bin/ytui --version`. `install-rust.sh` is a compatibility alias.
+and check `~/.local/bin/vidcue --version`. `install-rust.sh` is a compatibility alias.
 
 - `1`–`4`: Downloads, YouTube, Music, Radio. `b`: feeds; `/`: search; `?`: help.
 - `F4` in Music/Radio cycles classic → vinyl → Neon VU → Pulse Orbit (pane/fullscreen for each); `Esc` exits fullscreen. Choose a persistent default in General settings → Appearance → Music player style. The record spins during playback and freezes for pause/buffering; Reduced motion disables rotation.
@@ -47,9 +47,9 @@ and check `~/.local/bin/ytui --version`. `install-rust.sh` is a compatibility al
   Music and stations start from the top. `u`: resume list/selected; `p`: playback queue.
 - `S`: save/remove a video or song locally; **Library → Saved locally** opens the shelf and `/` searches it.
 - **o → Set sleep timer** stops playback after e.g. `30m` while keeping the queue; cancel it from the same menu.
-- `ytui --demo`: fictional catalog for UI review; `ytui --offline`: local library.
-- `ytui doctor --network`: opt-in public provider diagnostics without importing an account.
-- `ytui playback-check URL --backend native`: check three seconds of actual mpv playback without browser cookies.
+- `vidcue --demo`: fictional catalog for UI review; `vidcue --offline`: local library.
+- `vidcue doctor --network`: opt-in public provider diagnostics without importing an account.
+- `vidcue playback-check URL --backend native`: check three seconds of actual mpv playback without browser cookies.
 
 Playback now defaults to **native Rust**, using updated pinned
 [yt-dlp-rs](https://github.com/aagedal/yt-dlp-rs). Installed Node.js 22+ (or Deno
@@ -82,7 +82,7 @@ opens its window menu. Volume/mute persist. `B` toggles SponsorBlock skipping an
 replays a skipped part; Settings → Playback controls categories and skip/mark/off.
 
 Rust migration reads existing legacy settings, profiles and queues on request:
-`ytui migrate` previews; `ytui migrate --apply` imports with backups. Existing
+`vidcue migrate` previews; `vidcue migrate --apply` imports with backups. Existing
 user files and downloaded media are retained. The old Python source is available
 in Git history.
 
@@ -104,8 +104,8 @@ describe the required tools, optional public fixture URLs and CI runner.
 Generate WQHD captures entirely in Rust:
 
 ```bash
-cargo build -p ytui --locked
-cargo run -p ytui --example capture_ui --locked -- --binary target/debug/ytui
+cargo build -p vidcue --locked
+cargo run -p vidcue --example capture_ui --locked -- --binary target/debug/vidcue
 ```
 
 The capture tool runs the actual executable in an isolated PTY with fictional

@@ -8,9 +8,9 @@ use ratatui_image::{
 };
 use std::{io::Cursor, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
-use ytui::app::{App, RuntimeHandles, UiEvent};
-use ytui_core::{Config, DownloadOptions, Job, JobState, Media, MediaKind, shortcuts::Action};
-use ytui_services::{
+use vidcue::app::{App, RuntimeHandles, UiEvent};
+use vidcue_core::{Config, DownloadOptions, Job, JobState, Media, MediaKind, shortcuts::Action};
+use vidcue_services::{
     auth::{Cookie, Session},
     images::ImageCache,
     paths::Paths,
@@ -20,7 +20,7 @@ use ytui_services::{
 
 #[tokio::test]
 async fn completed_tool_panels_never_reopen_after_escape_or_replace_a_newer_request() {
-    use ytui::app::Modal;
+    use vidcue::app::Modal;
     let (mut app, _rx, _temp) = fixture();
     app.command("thumbnail-cache").unwrap();
     let Some(Modal::PendingText { id: old, .. }) = app.modal else {
@@ -64,7 +64,7 @@ fn fixture() -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir) {
     };
     paths.create().unwrap();
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         image_protocol: "halfblocks".into(),
@@ -264,7 +264,7 @@ async fn audit_b04_valid_thumbnail_survives_a_disk_cache_write_failure() {
     let (url, server) = public_fixture(body.into_inner()).await;
     // Route even the fixture's request through its own loopback server, so no
     // inherited proxy configuration can make this test contact a public host.
-    let client = ytui_services::http_client(Some(&url)).unwrap();
+    let client = vidcue_services::http_client(Some(&url)).unwrap();
     let result = ImageCache::new(client, cache_dir)
         .load_sized(&url, 16, 16)
         .await;
@@ -295,8 +295,8 @@ async fn audit_b05_partial_playlist_outputs_are_visible_offline() {
     );
     job.state = JobState::Error;
     job.outputs.push(path);
-    let queue = ytui_core::DownloadQueue { jobs: vec![job] };
-    let page = ytui_services::library::catalog(&queue, "", Some(true));
+    let queue = vidcue_core::DownloadQueue { jobs: vec![job] };
+    let page = vidcue_services::library::catalog(&queue, "", Some(true));
     assert_eq!(
         page.items.len(),
         1,
@@ -371,11 +371,11 @@ fn audit_b07_local_conversion_honors_requested_audio_bitrate() {
     let config = temp.path().join("config.toml");
     std::fs::write(
         &config,
-        "theme='ytui-dark'\nauth_store='file'\nnotifications=false\n",
+        "theme='vidcue-dark'\nauth_store='file'\nnotifications=false\n",
     )
     .unwrap();
     let output_dir = temp.path().join("output");
-    let result = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .arg("--config")
         .arg(&config)
         .arg("--state-dir")
@@ -511,7 +511,10 @@ async fn partial_collection_files_can_be_selected_and_played_from_downloads() {
     app.snapshot.downloads.jobs = vec![job];
     app.tab = 0;
     app.action(Action::Open);
-    assert!(matches!(app.modal, Some(ytui::app::Modal::Outputs { .. })));
+    assert!(matches!(
+        app.modal,
+        Some(vidcue::app::Modal::Outputs { .. })
+    ));
     app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     match player.recv().await.unwrap() {
@@ -533,15 +536,15 @@ async fn disconnect_waits_for_committed_settings_and_busy_form_keeps_the_draft()
     let mut saved = app.config.clone();
     saved.account_index = 1;
     app.paths.save_config(&saved).unwrap();
-    ytui_services::auth::SessionStore::new(&app.paths, "file")
+    vidcue_services::auth::SessionStore::new(&app.paths, "file")
         .save(&synthetic_session())
         .unwrap();
     let ticket = app.operations.config(true);
     app.pending_operation = Some((ticket.clone(), "Saving settings".into()));
     let mut draft = saved.clone();
-    draft.theme = "ytui-light".into();
+    draft.theme = "vidcue-light".into();
     app.save_config(draft);
-    assert!(matches!(app.modal, Some(ytui::app::Modal::Form(_))));
+    assert!(matches!(app.modal, Some(vidcue::app::Modal::Form(_))));
     app.command("disconnect").unwrap();
     // The write has already committed. Its completion must be applied before
     // disconnect uses the new account/store, instead of abandoning saved config.
@@ -563,7 +566,7 @@ async fn disconnect_waits_for_committed_settings_and_busy_form_keeps_the_draft()
     assert_eq!(app.config.account_index, 1);
     assert_eq!(app.paths.load_config().unwrap().account_index, 1);
     assert!(
-        ytui_services::auth::SessionStore::new(&app.paths, "file")
+        vidcue_services::auth::SessionStore::new(&app.paths, "file")
             .load()
             .unwrap()
             .is_none()
@@ -589,7 +592,7 @@ async fn long_continuation_feeds_have_bounded_memory_without_stopping_pagination
             tab: 1,
             generation: 0,
             append: true,
-            result: Ok(ytui_core::Page {
+            result: Ok(vidcue_core::Page {
                 items,
                 continuation: Some(format!("page-{}", page + 1)),
                 ..Default::default()
@@ -642,10 +645,10 @@ async fn collection_entries_resume_individually_and_survive_store_restart() {
             job.state = JobState::Error;
         }
     }
-    let store = ytui_services::store::Store::open(&app.paths.state).unwrap();
+    let store = vidcue_services::store::Store::open(&app.paths.state).unwrap();
     store.save(app.snapshot.clone()).await.unwrap();
     store.close().await.unwrap();
-    let store = ytui_services::store::Store::open(&app.paths.state).unwrap();
+    let store = vidcue_services::store::Store::open(&app.paths.state).unwrap();
     app.snapshot = store.load().await.unwrap();
     app.queue_collection(
         "VLfixture".into(),
@@ -687,19 +690,19 @@ async fn browser_profile_selection_reviews_the_path_without_importing_cookies() 
     let (mut app, _player, temp) = fixture();
     app.demo = false;
     let profile = temp.path().join("Brave-Origin/Default");
-    app.modal = Some(ytui::app::Modal::Account {
+    app.modal = Some(vidcue::app::Modal::Account {
         profiles: vec![],
         selected: 0,
     });
     app.apply(UiEvent::AccountProfiles(vec![
-        ytui_services::auth::BrowserProfile {
+        vidcue_services::auth::BrowserProfile {
             browser: "brave-origin".into(),
             path: profile.clone(),
         },
     ]));
     app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    let Some(ytui::app::Modal::Form(form)) = &app.modal else {
+    let Some(vidcue::app::Modal::Form(form)) = &app.modal else {
         panic!("Expected review form")
     };
     assert_eq!(form.fields[1].value.text, profile.display().to_string());
@@ -718,14 +721,14 @@ async fn browser_profile_selection_reviews_the_path_without_importing_cookies() 
 async fn playback_dialog_selects_reported_formats_tracks_and_captions() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     let (mut app, mut received, _temp) = fixture();
-    app.player_status.catalog = ytui_services::formats::Catalog::parse(
+    app.player_status.catalog = vidcue_services::formats::Catalog::parse(
         &serde_json::json!({"formats":[{"format_id":"137","vcodec":"avc1","acodec":"none","height":1080}],"subtitles":{"de":[{"ext":"vtt","url":"https://example.test/caption"}]}}),
     );
-    app.player_status.tracks = ytui_services::formats::tracks(
+    app.player_status.tracks = vidcue_services::formats::tracks(
         &serde_json::json!([{"id":2,"type":"audio","lang":"de","codec":"aac"}]),
     );
     for section in 0..3 {
-        app.modal = Some(ytui::app::Modal::PlayerSettings {
+        app.modal = Some(vidcue::app::Modal::PlayerSettings {
             section,
             selected: 0,
         });
@@ -810,7 +813,7 @@ async fn recent_destination_history_is_bounded_and_persisted_without_moving_file
     }
     assert_eq!(app.snapshot.recent_destinations.len(), 12);
     assert!(app.snapshot.recent_destinations[0].ends_with("folder-14"));
-    let store = ytui_services::store::Store::open(&app.paths.state).unwrap();
+    let store = vidcue_services::store::Store::open(&app.paths.state).unwrap();
     store.save(app.snapshot.clone()).await.unwrap();
     let loaded = store.load().await.unwrap();
     assert_eq!(loaded.recent_destinations, app.snapshot.recent_destinations);
@@ -857,7 +860,7 @@ async fn repeated_disconnect_completes_cleanup_without_leaving_settings_busy() {
     let (mut app, _player, _temp) = fixture();
     app.demo = false;
     app.session = Some(Arc::new(synthetic_session()));
-    let store = ytui_services::auth::SessionStore::new(&app.paths, "file");
+    let store = vidcue_services::auth::SessionStore::new(&app.paths, "file");
     store.save(&synthetic_session()).unwrap();
     app.command("disconnect").unwrap();
     app.command("disconnect").unwrap();
@@ -881,8 +884,8 @@ async fn repeated_disconnect_completes_cleanup_without_leaving_settings_busy() {
 
 #[tokio::test]
 async fn network_settings_cancel_old_feed_requests_and_reject_their_results() {
-    use ytui::app::FeedLoad;
-    use ytui_core::{BrowseRequest, Page};
+    use vidcue::app::FeedLoad;
+    use vidcue_core::{BrowseRequest, Page};
     let (mut app, _rx, _temp) = fixture();
     let request = BrowseRequest::Search("kept query".into());
     app.tabs[1].request = Some(request.clone());
@@ -928,11 +931,11 @@ async fn network_settings_cancel_old_feed_requests_and_reject_their_results() {
     app.shutdown().await;
 }
 
-fn network_watch() -> ytui_core::watch::CollectionWatch {
-    ytui_core::watch::CollectionWatch {
+fn network_watch() -> vidcue_core::watch::CollectionWatch {
+    vidcue_core::watch::CollectionWatch {
         id: uuid::Uuid::new_v4(),
         title: "Network fixture".into(),
-        request: ytui_core::BrowseRequest::Collection("VLfixture".into()),
+        request: vidcue_core::BrowseRequest::Collection("VLfixture".into()),
         music: false,
         options: DownloadOptions::default(),
         interval_seconds: 60,
@@ -985,11 +988,11 @@ async fn background_watch_obeys_provider_retry_after() {
     let watch = network_watch();
     let id = watch.id;
     app.snapshot.watches.push(watch);
-    let now = ytui_core::schedule::unix_now();
+    let now = vidcue_core::schedule::unix_now();
     app.apply(UiEvent::Watch {
         id,
         generation: 0,
-        result: Err(ytui_services::browse::FeedRetry::new(
+        result: Err(vidcue_services::browse::FeedRetry::new(
             "Rate limited",
             Duration::from_secs(3600),
         )

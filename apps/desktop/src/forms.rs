@@ -1,6 +1,6 @@
 use crate::editor::Editor;
 use anyhow::{Result, ensure};
-use ytui_core::{Config, DownloadOptions, Media};
+use vidcue_core::{Config, DownloadOptions, Media};
 #[derive(Clone)]
 pub struct Field {
     pub label: &'static str,
@@ -74,7 +74,7 @@ impl Form {
     pub fn explanation(&self) -> Option<&'static str> {
         Some(match self.fields.get(self.selected)?.label {
             "Duration (e.g. 30m)" => {
-                "Use 30m, 1h or 90s, up to 24 hours. Stops playback and queue advance without quitting ytui. Pausing or changing tracks does not reset the timer; restarting ytui clears it."
+                "Use 30m, 1h or 90s, up to 24 hours. Stops playback and queue advance without quitting vidcue. Pausing or changing tracks does not reset the timer; restarting vidcue clears it."
             }
             "Language" => {
                 "en = English; de = Deutsch; system follows LC_ALL, LC_MESSAGES or LANG. Saved changes apply immediately. Tool/provider errors keep their original text."
@@ -153,7 +153,7 @@ impl Form {
 
     pub fn download(media: Media, mut options: DownloadOptions) -> Self {
         options.playlist |=
-            ytui_core::is_playlist_url(&media.url) || options.playlist_items.is_some();
+            vidcue_core::is_playlist_url(&media.url) || options.playlist_items.is_some();
         let o = &options;
         let fields = vec![
             Field::flag("Audio only", o.audio),
@@ -204,7 +204,7 @@ impl Form {
     pub fn settings(config: Config) -> Self {
         let c = &config;
         let fields = vec![
-            Field::choice("Theme", &c.theme, ytui_services::theme::THEMES),
+            Field::choice("Theme", &c.theme, vidcue_services::theme::THEMES),
             Field::choice(
                 "Theme provider",
                 &c.theme_provider,
@@ -312,7 +312,7 @@ impl Form {
             Field::choice(
                 "Music player style",
                 &c.music_player_style,
-                ytui_core::MUSIC_PLAYER_STYLES,
+                vidcue_core::MUSIC_PLAYER_STYLES,
             ),
             Field::flag("Resume videos where you left off", c.resume_on_play),
             Field::flag(
@@ -340,7 +340,7 @@ impl Form {
         }
     }
     pub fn keys(config: Config) -> Self {
-        let fields = ytui_core::shortcuts::REGISTRY
+        let fields = vidcue_core::shortcuts::REGISTRY
             .iter()
             .map(|(default, _, action, description)| {
                 let mapped = config
@@ -378,13 +378,13 @@ impl Form {
         };
         let mut config = base.clone();
         config.keybindings.clear();
-        for (index, (_, _, action, _)) in ytui_core::shortcuts::REGISTRY.iter().enumerate() {
+        for (index, (_, _, action, _)) in vidcue_core::shortcuts::REGISTRY.iter().enumerate() {
             ensure!(
                 !self.value(index).is_empty(),
                 "Each action needs at least one key"
             );
             for key in self.value(index).split_whitespace() {
-                ensure!(ytui_core::shortcuts::valid_key(key), "Unknown key {key}");
+                ensure!(vidcue_core::shortcuts::valid_key(key), "Unknown key {key}");
                 ensure!(
                     !config.keybindings.contains_key(key),
                     "Key {key} is assigned more than once"
@@ -503,7 +503,7 @@ impl Form {
             Some(self.value(6).into())
         };
         ensure!(
-            !ytui_core::is_playlist_url(&media.url) || o.playlist,
+            !vidcue_core::is_playlist_url(&media.url) || o.playlist,
             "This is a playlist link. Enable Whole playlist or use a single-song URL"
         );
         if o.playlist_items.is_some() {
@@ -636,7 +636,7 @@ impl Form {
         c.seek_seconds = self.value(58).parse()?;
         c.prefer_offline = self.value(59) == "yes";
         c.preload_next = self.value(60) == "yes";
-        c.card_info = ytui_core::CardInfo {
+        c.card_info = vidcue_core::CardInfo {
             channel: self.value(61) == "yes",
             views: self.value(62) == "yes",
             upload_date: self.value(63) == "yes",

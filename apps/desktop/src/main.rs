@@ -1,6 +1,6 @@
 #[cfg(test)]
-use ytui::forms;
-use ytui::{app, cli, terminal, ui};
+use vidcue::forms;
+use vidcue::{app, cli, terminal, ui};
 
 use anyhow::Result;
 use clap::Parser;
@@ -14,8 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
-use ytui_core::Config;
-use ytui_services::{
+use vidcue_core::Config;
+use vidcue_services::{
     auth::SessionStore,
     paths::Paths,
     player::{Player, PlayerCommand, PlayerEvent},
@@ -26,8 +26,8 @@ use ytui_services::{
 async fn main() {
     if let Err(e) = entry().await {
         eprintln!(
-            "ytui: {}",
-            ytui_services::process::diagnostic(&e.to_string())
+            "vidcue: {}",
+            vidcue_services::process::diagnostic(&e.to_string())
         );
         std::process::exit(1);
     }
@@ -36,7 +36,7 @@ async fn entry() -> Result<()> {
     let args = cli::Args::parse();
     if let Some(cli::Command::NativeWorker { request }) = &args.command {
         let request = request.clone();
-        return tokio::task::spawn_blocking(move || ytui_services::native::worker(&request))
+        return tokio::task::spawn_blocking(move || vidcue_services::native::worker(&request))
             .await?;
     }
     let mut paths = Paths::discover()?;
@@ -163,7 +163,7 @@ async fn interface(
     app: &mut app::App,
     player: &mut Player,
     store: Option<&Store>,
-    job_rx: &mut mpsc::Receiver<ytui_core::JobEvent>,
+    job_rx: &mut mpsc::Receiver<vidcue_core::JobEvent>,
 ) -> Result<()> {
     let mut events = EventStream::new();
     let mut desktop_media = if app.demo {
@@ -171,7 +171,7 @@ async fn interface(
     } else {
         tokio::time::timeout(
             Duration::from_secs(2),
-            ytui_services::mpris::connect(player.commands.clone(), player.status.clone()),
+            vidcue_services::mpris::connect(player.commands.clone(), player.status.clone()),
         )
         .await
         .ok()
@@ -214,16 +214,16 @@ async fn interface(
                 PlayerEvent::Error(message)=>{app.status=message;app.redraw=true;}
             },
             Some(event)=async { desktop_media.as_mut().expect("guarded desktop bridge").events.recv().await },if desktop_media.is_some()=>match event {
-                ytui_services::mpris::Event::Next=>app.action(ytui_core::shortcuts::Action::NextTrack),
-                ytui_services::mpris::Event::Previous=>app.action(ytui_core::shortcuts::Action::PreviousTrack),
-                ytui_services::mpris::Event::Play=>{
+                vidcue_services::mpris::Event::Next=>app.action(vidcue_core::shortcuts::Action::NextTrack),
+                vidcue_services::mpris::Event::Previous=>app.action(vidcue_core::shortcuts::Action::PreviousTrack),
+                vidcue_services::mpris::Event::Play=>{
                     let index = app.snapshot.playback.current.unwrap_or(0);
                     if let Some(media)=app.snapshot.playback.items.get(index).cloned()
                         && app.play_existing(media)
                     {app.snapshot.playback.current=Some(index);app.dirty=true;}
                 },
-                ytui_services::mpris::Event::Quit=>app.quit=true,
-                ytui_services::mpris::Event::Stop=>app.action(ytui_core::shortcuts::Action::Stop),
+                vidcue_services::mpris::Event::Quit=>app.quit=true,
+                vidcue_services::mpris::Event::Stop=>app.action(vidcue_core::shortcuts::Action::Stop),
             },
             _=tick.tick()=>{
                 app.tick().await;
@@ -263,15 +263,15 @@ mod tests {
         let paths = Paths {
             config_override: None,
             xdg_state: temp.path().join("state"),
-            config: temp.path().join("config/ytui"),
-            state: temp.path().join("state/ytui/rust"),
+            config: temp.path().join("config/vidcue"),
+            state: temp.path().join("state/vidcue/rust"),
             cache: temp.path().join("cache"),
             legacy_data: temp.path().join("data"),
             home: temp.path().into(),
         };
         paths.create().unwrap();
         let config = Config {
-            theme: "ytui-dark".into(),
+            theme: "vidcue-dark".into(),
             ..Default::default()
         };
         let (tx, rx) = mpsc::channel(32);
@@ -312,13 +312,13 @@ mod tests {
     async fn all_tabs_and_modals_render_at_supported_sizes() {
         let (mut a, _rx, _temp) = fixture().await;
         for tab in 1..4 {
-            a.tabs[tab].page.categories = vec![ytui_core::Category {
+            a.tabs[tab].page.categories = vec![vidcue_core::Category {
                 title: "Fixture category".into(),
-                request: ytui_core::BrowseRequest::Search("fixture".into()),
+                request: vidcue_core::BrowseRequest::Search("fixture".into()),
             }];
         }
-        for name in ytui_services::theme::THEMES {
-            a.palette = ytui_services::theme::builtin(name).unwrap();
+        for name in vidcue_services::theme::THEMES {
+            a.palette = vidcue_services::theme::builtin(name).unwrap();
             for (w, h) in [(80, 24), (120, 40), (180, 50), (35, 12), (212, 58)] {
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 for tab in 0..4 {
@@ -340,11 +340,11 @@ mod tests {
                 for modal in [
                     app::Modal::Actions {
                         selected: 0,
-                        query: ytui::editor::Editor::default(),
+                        query: vidcue::editor::Editor::default(),
                     },
                     app::Modal::Categories(0),
                     app::Modal::Form(Box::new(forms::Form::action(
-                        ytui::actions::ENTRIES
+                        vidcue::actions::ENTRIES
                             .iter()
                             .find(|entry| entry.command == "add")
                             .unwrap(),
@@ -395,16 +395,16 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
             a.tab = 0;
             for (state, label) in [
-                (ytui_core::JobState::Queued, "Queued"),
-                (ytui_core::JobState::Resolving, "Resolving"),
-                (ytui_core::JobState::Downloading, "Downloading"),
-                (ytui_core::JobState::Merging, "Merging"),
-                (ytui_core::JobState::Converting, "Converting"),
-                (ytui_core::JobState::Backoff, "Retry wait"),
-                (ytui_core::JobState::Paused, "Paused"),
-                (ytui_core::JobState::Cancelled, "Cancelled"),
-                (ytui_core::JobState::Done, "Complete"),
-                (ytui_core::JobState::Error, "Failed"),
+                (vidcue_core::JobState::Queued, "Queued"),
+                (vidcue_core::JobState::Resolving, "Resolving"),
+                (vidcue_core::JobState::Downloading, "Downloading"),
+                (vidcue_core::JobState::Merging, "Merging"),
+                (vidcue_core::JobState::Converting, "Converting"),
+                (vidcue_core::JobState::Backoff, "Retry wait"),
+                (vidcue_core::JobState::Paused, "Paused"),
+                (vidcue_core::JobState::Cancelled, "Cancelled"),
+                (vidcue_core::JobState::Done, "Complete"),
+                (vidcue_core::JobState::Error, "Failed"),
             ] {
                 a.snapshot.downloads.jobs[0].state = state;
                 terminal.draw(|f| ui::render(f, &mut a)).unwrap();
@@ -417,7 +417,7 @@ mod tests {
                     .collect::<String>();
                 assert!(text.contains(label), "{name} hides phase {label}");
             }
-            a.snapshot.downloads.jobs[0].state = ytui_core::JobState::Paused;
+            a.snapshot.downloads.jobs[0].state = vidcue_core::JobState::Paused;
         }
         a.shutdown().await;
     }
@@ -468,9 +468,9 @@ mod tests {
         assert_eq!(a.snapshot.downloads.jobs.len(), before);
         assert!(rx.try_recv().is_err());
         a.tab = 3;
-        a.action(ytui_core::shortcuts::Action::Favorite);
+        a.action(vidcue_core::shortcuts::Action::Favorite);
         assert_eq!(a.snapshot.favorites.len(), 1);
-        a.action(ytui_core::shortcuts::Action::Favorite);
+        a.action(vidcue_core::shortcuts::Action::Favorite);
         assert!(a.snapshot.favorites.is_empty());
         a.command("pin-country DE").unwrap();
         a.command("pin-country de").unwrap();
@@ -495,13 +495,13 @@ mod tests {
         terminal.draw(|f| ui::render(f, &mut a)).unwrap();
         assert!(a.sidebar_visible);
         let before = a.snapshot.downloads.jobs.len();
-        a.action(ytui_core::shortcuts::Action::Feeds);
+        a.action(vidcue_core::shortcuts::Action::Feeds);
         assert!(a.feeds_focused && a.modal.is_none());
-        a.action(ytui_core::shortcuts::Action::Down);
+        a.action(vidcue_core::shortcuts::Action::Down);
         assert_eq!(a.feed_selected, 1);
         assert_eq!(a.snapshot.downloads.jobs.len(), before);
         assert!(rx.try_recv().is_err());
-        a.action(ytui_core::shortcuts::Action::Back);
+        a.action(vidcue_core::shortcuts::Action::Back);
         assert!(!a.feeds_focused);
         let click = |a: &mut app::App, rect: ratatui::layout::Rect| {
             a.mouse(MouseEvent {
@@ -520,7 +520,7 @@ mod tests {
         click(&mut a, rect);
         assert!(a.feeds_focused);
         assert_eq!(a.feed_selected, 2);
-        a.action(ytui_core::shortcuts::Action::Open);
+        a.action(vidcue_core::shortcuts::Action::Open);
         assert!(!a.feeds_focused);
         assert!(rx.try_recv().is_err());
         let rect = a
@@ -608,7 +608,7 @@ mod tests {
             "stations must not advertise unsupported previews"
         );
         a.tab = 1;
-        a.tabs[1].page.items[0].kind = ytui_core::MediaKind::Playlist;
+        a.tabs[1].page.items[0].kind = vidcue_core::MediaKind::Playlist;
         terminal.draw(|f| ui::render(f, &mut a)).unwrap();
         let text = terminal
             .backend()
@@ -706,8 +706,8 @@ mod tests {
         a.config.keybindings.insert("f9".into(), "settings".into());
         a.player_status.error =
             Some("yt-dlp failed: ERROR: Sign in to confirm you are not a bot".into());
-        for theme in ytui_services::theme::THEMES {
-            a.palette = ytui_services::theme::builtin(theme).unwrap();
+        for theme in vidcue_services::theme::THEMES {
+            a.palette = vidcue_services::theme::builtin(theme).unwrap();
             for (width, height) in [(35, 12), (80, 24), (180, 50)] {
                 let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
                 terminal.draw(|f| ui::render(f, &mut a)).unwrap();
@@ -734,27 +734,27 @@ mod tests {
     }
     #[tokio::test]
     async fn download_counts_and_player_time_stay_readable_in_small_and_light_layouts() {
-        use ytui_core::JobState;
+        use vidcue_core::JobState;
         let (mut a, _rx, _temp) = fixture().await;
         a.tab = 0;
         a.snapshot.downloads.jobs[0].state = JobState::Error;
         a.snapshot.downloads.jobs[0].error =
             Some("Fixture transfer failed; retry available".into());
-        a.snapshot.downloads.jobs[0].progress = ytui_core::Progress {
+        a.snapshot.downloads.jobs[0].progress = vidcue_core::Progress {
             downloaded: 42,
             total: Some(100),
             eta: Some(30.0),
             ..Default::default()
         };
-        a.player_status = ytui_services::player::PlayerStatus {
+        a.player_status = vidcue_services::player::PlayerStatus {
             active: true,
             title: "A deliberately long fictional title that must not hide playback timing".into(),
             position: 135.0,
             duration: Some(300.0),
             ..Default::default()
         };
-        for palette in ["ytui-dark", "ytui-light", "terminal"] {
-            a.palette = ytui_services::theme::builtin(palette).unwrap();
+        for palette in ["vidcue-dark", "vidcue-light", "terminal"] {
+            a.palette = vidcue_services::theme::builtin(palette).unwrap();
             for (w, h) in [(35, 12), (80, 24), (120, 40)] {
                 let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
                 terminal.draw(|f| ui::render(f, &mut a)).unwrap();
@@ -793,11 +793,11 @@ mod tests {
     #[tokio::test]
     async fn schedule_closure_cancels_work_preserves_manual_pause_and_rejects_late_finish() {
         use tokio_util::sync::CancellationToken;
-        use ytui_core::{JobEvent, JobState, JobUpdate};
+        use vidcue_core::{JobEvent, JobState, JobUpdate};
         let (mut a, _rx, _temp) = fixture().await;
         a.demo = false;
         a.config.notifications = false;
-        let minute = (ytui_services::desktop::local_minute() + 20) % 1440;
+        let minute = (vidcue_services::desktop::local_minute() + 20) % 1440;
         let end = (minute + 1) % 1440;
         a.config.schedule.download_window = Some(format!(
             "{:02}:{:02}-{:02}:{:02}",
@@ -833,7 +833,7 @@ mod tests {
             update: JobUpdate::Finished,
         });
         assert_eq!(a.snapshot.downloads.jobs[0].state, JobState::Queued);
-        a.snapshot.downloads.jobs[0].not_before = Some(ytui_core::schedule::unix_now() + 3600);
+        a.snapshot.downloads.jobs[0].not_before = Some(vidcue_core::schedule::unix_now() + 3600);
         a.config.schedule.download_window = None;
         tokio::task::yield_now().await;
         a.tick().await;
@@ -859,7 +859,7 @@ mod tests {
     }
     #[tokio::test]
     async fn preview_positions_are_ignored_and_resume_is_explicit() {
-        use ytui_core::{Media, MediaKind};
+        use vidcue_core::{Media, MediaKind};
         let (mut a, mut rx, _temp) = fixture().await;
         a.demo = false;
         let media = Media {
@@ -869,7 +869,7 @@ mod tests {
             kind: MediaKind::Video,
             ..Default::default()
         };
-        let mut status = ytui_services::player::PlayerStatus {
+        let mut status = vidcue_services::player::PlayerStatus {
             media: Some(media.clone()),
             position: 42.0,
             duration: Some(200.0),
@@ -895,7 +895,7 @@ mod tests {
     }
     #[tokio::test]
     async fn playing_a_partly_watched_video_resumes_from_its_saved_position() {
-        use ytui_core::{Media, MediaKind};
+        use vidcue_core::{Media, MediaKind};
         let (mut a, mut rx, _temp) = fixture().await;
         a.demo = false;
         let video = Media {
@@ -946,7 +946,7 @@ mod tests {
     }
     #[tokio::test]
     async fn paused_watch_rejects_old_results_and_baseline_never_enqueues() {
-        use ytui_core::{BrowseRequest, Media, watch::CollectionWatch};
+        use vidcue_core::{BrowseRequest, Media, watch::CollectionWatch};
         let (mut a, _rx, _temp) = fixture().await;
         a.demo = false;
         let id = uuid::Uuid::new_v4();
@@ -993,7 +993,7 @@ mod tests {
     }
     #[tokio::test]
     async fn offline_mode_holds_remote_jobs_and_never_plays_remote_queue_items() {
-        use ytui_core::{JobState, Media};
+        use vidcue_core::{JobState, Media};
         let (mut a, mut rx, _temp) = fixture().await;
         a.demo = false;
         a.offline = true;
@@ -1009,7 +1009,7 @@ mod tests {
             ..Default::default()
         });
         assert!(rx.try_recv().is_err());
-        a.navigate(1, ytui_core::BrowseRequest::Home, false);
+        a.navigate(1, vidcue_core::BrowseRequest::Home, false);
         assert_eq!(a.tasks.len(), tasks);
         a.shutdown().await;
     }

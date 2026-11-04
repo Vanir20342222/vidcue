@@ -5266,6 +5266,122 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vidcue"
+version = "0.2.0-alpha.12"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "fontdue",
+ "futures-util",
+ "image",
+ "portable-pty",
+ "ratatui",
+ "ratatui-image",
+ "serde_json",
+ "shell-words",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "unicode-width 0.2.0",
+ "url",
+ "uuid",
+ "vidcue-core",
+ "vidcue-services",
+ "vt100",
+]
+
+[[package]]
+name = "vidcue-core"
+version = "0.2.0-alpha.12"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "toml",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "vidcue-mobile"
+version = "0.2.0-alpha.12"
+dependencies = [
+ "android-activity",
+ "anyhow",
+ "eframe",
+ "egui",
+ "glow",
+ "image",
+ "jni 0.21.1",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "url",
+ "uuid",
+ "vidcue-core",
+ "vidcue-providers",
+ "yt-dlp-rs",
+]
+
+[[package]]
+name = "vidcue-providers"
+version = "0.2.0-alpha.12"
+dependencies = [
+ "anyhow",
+ "directories",
+ "futures-util",
+ "hex",
+ "httpdate",
+ "image",
+ "libc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "url",
+ "uuid",
+ "vidcue-core",
+]
+
+[[package]]
+name = "vidcue-services"
+version = "0.2.0-alpha.12"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "futures-util",
+ "hex",
+ "keyring",
+ "libc",
+ "reqwest",
+ "rookie",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "url",
+ "uuid",
+ "vidcue-core",
+ "vidcue-providers",
+ "yt-dlp-rs",
+ "zbus 4.4.0",
+]
+
+[[package]]
 name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6194,122 +6310,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "url",
-]
-
-[[package]]
-name = "ytui"
-version = "0.2.0-alpha.12"
-dependencies = [
- "anyhow",
- "clap",
- "crossterm",
- "fontdue",
- "futures-util",
- "image",
- "portable-pty",
- "ratatui",
- "ratatui-image",
- "serde_json",
- "shell-words",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "unicode-width 0.2.0",
- "url",
- "uuid",
- "vt100",
- "ytui-core",
- "ytui-services",
-]
-
-[[package]]
-name = "ytui-core"
-version = "0.2.0-alpha.12"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "toml",
- "url",
- "uuid",
-]
-
-[[package]]
-name = "ytui-mobile"
-version = "0.2.0-alpha.12"
-dependencies = [
- "android-activity",
- "anyhow",
- "eframe",
- "egui",
- "glow",
- "image",
- "jni 0.21.1",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "url",
- "uuid",
- "yt-dlp-rs",
- "ytui-core",
- "ytui-providers",
-]
-
-[[package]]
-name = "ytui-providers"
-version = "0.2.0-alpha.12"
-dependencies = [
- "anyhow",
- "directories",
- "futures-util",
- "hex",
- "httpdate",
- "image",
- "libc",
- "reqwest",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "url",
- "uuid",
- "ytui-core",
-]
-
-[[package]]
-name = "ytui-services"
-version = "0.2.0-alpha.12"
-dependencies = [
- "anyhow",
- "fs2",
- "futures-util",
- "hex",
- "keyring",
- "libc",
- "reqwest",
- "rookie",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "tokio",
- "tokio-util",
- "toml",
- "url",
- "uuid",
- "yt-dlp-rs",
- "ytui-core",
- "ytui-providers",
- "zbus 4.4.0",
 ]
 
 [[package]]

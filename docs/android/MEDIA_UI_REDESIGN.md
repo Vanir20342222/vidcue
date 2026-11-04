@@ -37,7 +37,7 @@ physical device and real YouTube acceptance remain separate.
 The previous installed preview and the redesign's first CI APK have different
 public signing certificates. An in-place update is therefore rejected by
 Android. Debug builds now use a separate `dev.ytui.android.preview` identity and
-**ytui Preview** launcher, preserving the older app and its private data. Normal
+**vidcue Preview** launcher, preserving the older app and its private data. Normal
 release identity is unchanged. Future updates still require matching signing
 keys; see SIGNING.md for the owner-supplied stable identity.
 

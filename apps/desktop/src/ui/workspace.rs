@@ -1,7 +1,7 @@
 //! The main workspace: compact navigation, a readable catalog and selected-item details.
 use super::*;
 use crate::app::HitTarget;
-use ytui_core::{Job, shortcuts::Action};
+use vidcue_core::{Job, shortcuts::Action};
 
 fn style(app: &App, color: (u8, u8, u8)) -> Style {
     Style::default().fg(themed(app, color))
@@ -68,7 +68,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     );
     if area.width < 35 || area.height < 12 {
         f.render_widget(
-            Paragraph::new("ytui\nEnlarge to at least 35 × 12.\nCtrl+C quits safely.")
+            Paragraph::new("vidcue\nEnlarge to at least 35 × 12.\nCtrl+C quits safely.")
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -226,7 +226,7 @@ fn sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(5),
     ])
     .split(area);
-    let block = panel(" ytui · Status ", app);
+    let block = panel(" vidcue · Status ", app);
     let inner = inset(block.inner(rows[0]));
     f.render_widget(block, rows[0]);
     let account = app
@@ -362,7 +362,7 @@ fn header(f: &mut Frame, app: &App, area: Rect) {
         Layout::horizontal([Constraint::Min(10), Constraint::Length(right_width)]).split(area);
     let spans = vec![
         Span::styled(
-            " ytui ",
+            " vidcue ",
             style(app, app.palette.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -494,7 +494,7 @@ fn job_state(app: &App, job: &Job) -> (&'static str, (u8, u8, u8)) {
         JobState::Queued
             if job
                 .not_before
-                .is_some_and(|at| at > ytui_core::schedule::unix_now()) =>
+                .is_some_and(|at| at > vidcue_core::schedule::unix_now()) =>
         {
             ("Scheduled", app.palette.warning)
         }
@@ -711,7 +711,7 @@ fn download_details(f: &mut Frame, app: &App, job: &Job, area: Rect) {
         style(app, color).add_modifier(Modifier::BOLD),
     )];
     if let Some(error) = &job.error {
-        if let Some(recovery) = ytui_services::failure::recovery(error) {
+        if let Some(recovery) = vidcue_services::failure::recovery(error) {
             lines.extend([
                 Line::styled(recovery.title, style(app, app.palette.error)),
                 Line::from(recovery.instruction),
@@ -1178,7 +1178,7 @@ fn selected_details(f: &mut Frame, app: &mut App, area: Rect) {
                 "Open this collection to explore its videos or tracks.".into()
             } else if app.tab == 3 {
                 "Play this station or save it to your favorites.".into()
-            } else if media.kind == ytui_core::MediaKind::Song || app.tab == 2 {
+            } else if media.kind == vidcue_core::MediaKind::Song || app.tab == 2 {
                 "Play this track or add it to your queue.".into()
             } else {
                 "Preview this video, play it now, or add it to your downloads.".into()
@@ -1188,7 +1188,7 @@ fn selected_details(f: &mut Frame, app: &mut App, area: Rect) {
         },
     ));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), regions[0]);
-    let actions = if media.kind == ytui_core::MediaKind::Station {
+    let actions = if media.kind == vidcue_core::MediaKind::Station {
         vec![
             hints(app, &[(Action::Open, "play/open")], regions[1].width),
             hints(app, &[(Action::Favorite, "save station")], regions[1].width),
@@ -1242,7 +1242,7 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 1 {
         if let Some(error) = &status.error {
             let title =
-                ytui_services::failure::recovery(error).map_or("Playback failed", |r| r.title);
+                vidcue_services::failure::recovery(error).map_or("Playback failed", |r| r.title);
             f.render_widget(
                 Paragraph::new(format!(" {} Actions · {title}", key(app, Action::Command)))
                     .style(style(app, app.palette.error)),
@@ -1315,7 +1315,7 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = inset(block.inner(area));
     f.render_widget(block, area);
     if let Some(error) = &status.error {
-        let recovery = ytui_services::failure::recovery(error);
+        let recovery = vidcue_services::failure::recovery(error);
         let title = recovery.map_or("Playback failed", |r| r.title);
         let instruction = recovery.map_or(
             "Open Playback repair or Diagnostics in Actions for details.",

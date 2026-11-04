@@ -7,7 +7,7 @@ pub(super) fn render(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
     let name = if orbit { "Pulse Orbit" } else { "Neon VU" };
-    let key = super::workspace::key(app, ytui_core::shortcuts::Action::MusicPlayerStyle);
+    let key = super::workspace::key(app, vidcue_core::shortcuts::Action::MusicPlayerStyle);
     let block = panel(format!(" {name} · {key} view "), app);
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -141,8 +141,8 @@ pub(super) fn render(f: &mut Frame, app: &mut App, area: Rect) {
             }),
             Line::from(format!(
                 "{} pause · {} controls · Esc leaves fullscreen",
-                super::workspace::key(app, ytui_core::shortcuts::Action::Pause),
-                super::workspace::key(app, ytui_core::shortcuts::Action::PlayerMenu)
+                super::workspace::key(app, vidcue_core::shortcuts::Action::Pause),
+                super::workspace::key(app, vidcue_core::shortcuts::Action::PlayerMenu)
             )),
         ])
         .centered(),

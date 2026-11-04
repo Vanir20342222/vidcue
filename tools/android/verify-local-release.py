@@ -45,7 +45,7 @@ def main():
     url = transfer_url(os.environ["YTUI_APK_URL"])
     output = Path("publish")
     output.mkdir(exist_ok=True)
-    apk = output / f"ytui-{version}.apk"
+    apk = output / f"vidcue-{version}.apk"
     opener = urllib.request.build_opener(SecureRedirect())
     total = 0
     checksum = hashlib.sha256()
@@ -83,7 +83,7 @@ def main():
     (output / "SHA256SUMS.txt").write_text(f"{digest}  {apk.name}\n")
     (output / "notes.md").write_text(
         f"Android development preview **{version}**, code **{code}**. Android 8+, ARM64/x86-64.\n\n"
-        "Download the APK below and open it from Files. Installs as **ytui** "
+        "Download the APK below and open it from Files. Installs as **vidcue** "
         "(`dev.ytui.android.stable`) alongside older Preview apps. No uninstall is needed. "
         "Account/settings/library are separate; sign in and choose folders once. "
         "Subsequent stable builds use this same signing identity.\n\n"

@@ -27,7 +27,7 @@ Startup latency: [two-second target](TWO_SECOND_STARTUP.md), [mobile.5 validatio
 
 Open the downloaded APK in Android Files and allow installation from that source when prompted. Version **0.2.0-alpha.12-mobile.10**, code **10**, includes ARM64 for Galaxy Tab S9/Nothing Phone (3a) and x86-64 for emulators, requires Android 8/API 26+, and targets API 35. The public download hash and signing certificate were verified.
 
-Open **ytui** (`dev.ytui.android.stable`). Install over mobile.4–9 to retain your account, settings and offline library; do not uninstall. Older Preview/original packages remain separate with their own private data. A first stable-channel installation needs sign-in/folder selection once. Future stable updates use the same private identity. No GitHub signing-secret setup is needed; [recovery and updates](SIGNING.md) explain the encrypted owner backup. Debug Actions artifacts install as **ytui Preview** and may have disposable identities.
+Open **vidcue** (`dev.ytui.android.stable`). Install over mobile.4–9 to retain your account, settings and offline library; do not uninstall. Older Preview/original packages remain separate with their own private data. A first stable-channel installation needs sign-in/folder selection once. Future stable updates use the same private identity. No GitHub signing-secret setup is needed; [recovery and updates](SIGNING.md) explain the encrypted owner backup. Debug Actions artifacts install as **vidcue Preview** and may have disposable identities.
 
 This is a development preview. The mobile.10 qualification recorded 37 native passes and one explicitly skipped public YouTube case; `main` has since gained the [UX overhaul](UX_OVERHAUL.md), whose exact-commit Android run (four emulator shards) also succeeded but is not part of that signed APK. Real YouTube latency, audible output, physical-device updates and [parity/device gates](PARITY.md) remain open. [Device checklist](DEVICE_ACCEPTANCE.md).
 
@@ -81,7 +81,7 @@ Segmented streams, live recordings and incompatible codec combinations cannot
 currently be exported. MP3/FLAC conversion is not offered as an implemented option.
 
 Appearance follows Android light/dark or selects a built-in palette. Import a
-Caelestia JSON, Omarchy TOML or exported ytui Palette JSON through the document
+Caelestia JSON, Omarchy TOML or exported vidcue Palette JSON through the document
 picker; Linux theme daemons are not accessed on a phone. Importing creates a
 private copy. Vinyl/VU/Orbit are available only for Music/Radio. VU/Orbit use decoded
 PCM levels, not microphone input; reduced motion and pause stop their animation.
@@ -162,14 +162,14 @@ the desktop installer/tests remain unchanged in behavior.
 
 ## Repository structure
 
-- `apps/desktop`: Rust terminal app, still `ytui` and `ytui-rs`.
+- `apps/desktop`: Rust terminal app, still `vidcue` and `vidcue`.
 - `apps/android`: packaging and Android platform adapters, no application UI.
-- `crates/ytui-core`: shared models, configuration, themes and policy.
-- `crates/ytui-providers`: shared networking, YouTube/Music/radio, sessions,
+- `crates/vidcue-core`: shared models, configuration, themes and policy.
+- `crates/vidcue-providers`: shared networking, YouTube/Music/radio, sessions,
   bounded caches, images, lyrics and SponsorBlock.
-- `crates/ytui-services`: desktop process, browser/keyring, mpv and OS adapters;
+- `crates/vidcue-services`: desktop process, browser/keyring, mpv and OS adapters;
   re-exports shared providers for compatibility.
-- `crates/ytui-mobile`: Rust Android engine, adaptive touch UI, GLES video,
+- `crates/vidcue-mobile`: Rust Android engine, adaptive touch UI, GLES video,
   JNI boundary and PCM visualizer metering.
 - `vendor/winit`: pinned 0.30.13 with a documented Android destruction/recreation
   adapter; other platforms retain upstream behavior.

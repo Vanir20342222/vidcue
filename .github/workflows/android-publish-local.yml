@@ -70,7 +70,7 @@ jobs:
       - name: Download, verify and inspect the signed APK
         run: |
           python3 tools/android/verify-local-release.py
-          apk="publish/ytui-$YTUI_VERSION_NAME.apk"
+          apk="publish/vidcue-$YTUI_VERSION_NAME.apk"
           tools/android/inspect-apk.sh "$apk" >> publish/APK-inspection.txt
       - name: Publish the verified APK without rebuilding or signing
         run: |
@@ -79,5 +79,5 @@ jobs:
             echo 'A release already exists for this version; use an increasing version.' >&2
             exit 1
           fi
-          gh release create "$tag" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "ytui Android $YTUI_VERSION_NAME" --notes-file publish/notes.md --draft --prerelease --latest=false
+          gh release create "$tag" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Vidcue Android $YTUI_VERSION_NAME" --notes-file publish/notes.md --draft --prerelease --latest=false
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease --latest=false

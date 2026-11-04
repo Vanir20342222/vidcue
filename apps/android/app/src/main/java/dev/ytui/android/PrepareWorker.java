@@ -203,7 +203,7 @@ public final class PrepareWorker extends Worker {
     Notification n =
         new Notification.Builder(getApplicationContext(), "ytui-prepare")
             .setSmallIcon(dev.ytui.android.R.drawable.ic_ytui)
-            .setContentTitle("ytui: preparing playlist")
+            .setContentTitle("Vidcue: preparing playlist")
             .setContentText("Preparing every entry for offline download")
             .setOngoing(true)
             .build();

@@ -2,7 +2,7 @@
 
 The gallery now includes [Saved locally](screenshots/saved-media.png) and
 [the sleep-timer form](screenshots/sleep-timer.png), generated from actual PTY
-output with fictional offline data. Run `cargo run -p ytui --example capture_ui -- --library-panels-only` to refresh these two captures.
+output with fictional offline data. Run `cargo run -p vidcue --example capture_ui -- --library-panels-only` to refresh these two captures.
 
 The layout follows Lazygit/Lazydocker's pane-based approach: status, workspaces
 and feeds on the left, a large card catalog and smaller details pane on the right,
@@ -19,8 +19,8 @@ artwork are fictional; no media or external provider is accessed by the capture.
 
 | Theme | WQHD screenshot | Check |
 | --- | --- | --- |
-| ytui Dark | [View](screenshots/themes/ytui-dark.png) | Render, switching, role contrast |
-| ytui Light | [View](screenshots/themes/ytui-light.png) | Render, switching, role contrast |
+| vidcue Dark | [View](screenshots/themes/vidcue-dark.png) | Render, switching, role contrast |
+| vidcue Light | [View](screenshots/themes/vidcue-light.png) | Render, switching, role contrast |
 | Nothing Dark | [View](screenshots/themes/nothing-dark.png) | Render, switching, role contrast; dot-matrix download meter |
 | Nothing Light | [View](screenshots/themes/nothing-light.png) | Render, switching, role contrast; dot-matrix download meter |
 | Tokyo Night | [View](screenshots/themes/tokyo-night.png) | Render, switching, role contrast |
@@ -38,7 +38,7 @@ artwork are fictional; no media or external provider is accessed by the capture.
 Dracula, Rose Pine, Solarized Dark and Gruvbox Light were retired in the theme overhaul.
 Saved settings that name them load as Catppuccin Mocha, Catppuccin Mocha, Nord and
 Flexoki Light respectively. Refresh only the theme captures with
-`target/debug/examples/capture_ui --themes-only --binary target/debug/ytui`.
+`target/debug/examples/capture_ui --themes-only --binary target/debug/vidcue`.
 
 Each entry renders all four workspaces and fifteen dialogs at five sizes, including
 35×12 and 212×58 (1,425 combinations). All ten download phases are also rendered
@@ -76,8 +76,8 @@ Settings categories: [General](screenshots/settings/general.png),
 Recreate captures entirely in Rust:
 
 ```sh
-cargo build --locked -p ytui
-cargo run -p ytui --example capture_ui --locked -- --binary target/debug/ytui
+cargo build --locked -p vidcue
+cargo run -p vidcue --example capture_ui --locked -- --binary target/debug/vidcue
 ```
 
 The helper isolates XDG/config/state, uses demo and synthetic offline fixtures,
@@ -100,9 +100,9 @@ WQHD captures at the first audit checkpoint. Empty/short dialogs size to their c
 uses explicitly fictional demo metadata. To refresh only these dialogs and diagnostics:
 
 ```sh
-cargo build -p ytui --locked --example capture_ui
-cargo build -p ytui --locked
-target/debug/examples/capture_ui --audit-panels-only --binary target/debug/ytui
+cargo build -p vidcue --locked --example capture_ui
+cargo build -p vidcue --locked
+target/debug/examples/capture_ui --audit-panels-only --binary target/debug/vidcue
 ```
 
 The comfort follow-up adds [German navigation](screenshots/german-youtube.png),

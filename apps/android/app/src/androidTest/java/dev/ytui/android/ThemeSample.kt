@@ -10,6 +10,6 @@ import org.json.JSONArray
  */
 internal fun representativeThemes(all: JSONArray): List<String> {
     val ids = (0 until all.length()).map { all.getString(it) }
-    val picked = listOf("ytui-dark", "ytui-light", "catppuccin-latte").filter { it in ids }
+    val picked = listOf("vidcue-dark", "vidcue-light", "catppuccin-latte").filter { it in ids }
     return picked.ifEmpty { ids.take(3) }
 }

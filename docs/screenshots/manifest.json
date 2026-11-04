@@ -1,6 +1,6 @@
 {
   "source": "Actual Rust executable PTY output captured by native Rust tooling; fictional demo/offline data and generated artwork",
-  "binary": "target/debug/ytui",
+  "binary": "target/debug/vidcue",
   "size": [
     2560,
     1440
@@ -15,8 +15,8 @@
   ],
   "themes": [
     "system",
-    "ytui-dark",
-    "ytui-light",
+    "vidcue-dark",
+    "vidcue-light",
     "nothing-dark",
     "nothing-light",
     "tokyo-night",
@@ -96,8 +96,8 @@
     "themes/system.png",
     "themes/terminal.png",
     "themes/tokyo-night.png",
-    "themes/ytui-dark.png",
-    "themes/ytui-light.png",
+    "themes/vidcue-dark.png",
+    "themes/vidcue-light.png",
     "thumbnail-cache.png",
     "update.png",
     "watches.png",

@@ -33,7 +33,7 @@ class SigningBoundary(unittest.TestCase):
 
     def test_invalid_recovery_does_not_echo_credentials(self):
         with tempfile.TemporaryDirectory() as folder:
-            for name in ["ytui-stable.jks", "credentials.json"]:
+            for name in ["vidcue-stable.jks", "credentials.json"]:
                 path = Path(folder) / name
                 path.write_text("synthetic-private-value-must-not-appear")
                 path.chmod(0o600)

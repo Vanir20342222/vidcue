@@ -1,4 +1,11 @@
-# Working on ytui
+# Working on vidcue
+
+The app was renamed from ytui to **Vidcue** on 2026-11-04 at the user's request. Older
+dated records, change notes and evidence documents still say ytui and stay as written.
+Keep these old names for compatibility: the `ytui`/`ytui-rs` launcher aliases, migration
+from `ytui` config/state/cache folders, the `ytui-rust` keyring entry, `YTUI_*` environment
+variables and secrets, the GitHub repository URL until the owner renames it, and the Android
+package `dev.ytui.android` (changing it would install a separate app without the user's data).
 
 Read [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md) before planning or implementing
 the Rust rewrite. It contains confirmed user requirements, provisional choices,
@@ -47,8 +54,8 @@ baseline defects, milestones, migration requirements, and acceptance checks.
 
 - M9 adds the Android preview and monorepo. Desktop source is `apps/desktop`;
   package/binary names and installed state paths must remain compatible.
-  Shared network/provider code is `crates/ytui-providers`; Android's engine
-  remains Rust in `crates/ytui-mobile`. On 2026-10-28 the user authorized a
+  Shared network/provider code is `crates/vidcue-providers`; Android's engine
+  remains Rust in `crates/vidcue-mobile`. On 2026-10-28 the user authorized a
   stack change after reporting unusable text input/themes/account navigation on
   a physical Galaxy Tab S9. Android's current UI target is native Jetpack Compose
   under `apps/android`, with the shared Rust engine. Later on 2026-10-28 the user

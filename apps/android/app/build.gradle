@@ -30,7 +30,7 @@ android {
     ndkVersion '27.2.12479018'
     defaultConfig {
         applicationId 'dev.ytui.android'
-        resValue 'string', 'app_name', 'ytui'
+        resValue 'string', 'app_name', 'Vidcue'
         minSdk 26
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
         targetSdk 35
@@ -58,7 +58,7 @@ android {
         debug {
             debuggable true
             applicationIdSuffix '.preview'
-            resValue 'string', 'app_name', 'ytui Preview'
+            resValue 'string', 'app_name', 'Vidcue Preview'
         }
         release {
             applicationIdSuffix '.stable'

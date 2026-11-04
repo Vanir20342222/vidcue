@@ -39,7 +39,7 @@ pub const ENTRIES: &[Entry] = &[
         "Settings",
         "Export safe support report",
         "support-export",
-        &[("New JSON file", "ytui-support.json")]
+        &[("New JSON file", "vidcue-support.json")]
     ),
     entry!("Settings", "Playback and SponsorBlock", "playback-settings"),
     entry!(
@@ -58,7 +58,7 @@ pub const ENTRIES: &[Entry] = &[
         "Settings",
         "Choose theme by name",
         "theme",
-        &[("Theme name", "ytui-dark")]
+        &[("Theme name", "vidcue-dark")]
     ),
     entry!("Account", "Connect browser or cookie file", "auth"),
     entry!("Account", "Disconnect saved browser session", "disconnect"),

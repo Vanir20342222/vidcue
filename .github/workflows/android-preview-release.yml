@@ -59,7 +59,7 @@ jobs:
               runs[key] = latest.id;
             }
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {owner, repo, run_id: runs.android, per_page: 100});
-            const artifact = artifacts.find(a => a.name === `ytui-android-${sha}` && !a.expired);
+            const artifact = artifacts.find(a => a.name === `vidcue-android-${sha}` && !a.expired);
             if (!artifact) throw new Error('Tested APK artifact unavailable or expired');
             core.setOutput('source', sha);
             core.setOutput('android_run', runs.android);
@@ -95,5 +95,5 @@ jobs:
         run: |
           gh release create "$YTUI_PREVIEW_TAG" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt \
             --repo "$GITHUB_REPOSITORY" --target "$YTUI_PREVIEW_SOURCE" \
-            --title "ytui Android Preview $YTUI_PREVIEW_VERSION (CI debug-signed)" \
+            --title "Vidcue Android Preview $YTUI_PREVIEW_VERSION (CI debug-signed)" \
             --notes-file publish/notes.md --prerelease --latest=false

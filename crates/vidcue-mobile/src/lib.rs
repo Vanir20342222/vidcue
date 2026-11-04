@@ -1,0 +1,2112 @@
+//! Android application engine. JNI entrypoints run on platform worker threads.
+use anyhow::{Context, Result, ensure};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock},
+};
+use tokio_util::sync::CancellationToken;
+use vidcue_core::{BrowseRequest, Config, Media, MediaKind, Page};
+use vidcue_providers::{
+    auth::Session, browse::Browser, images::ImageCache, paths::atomic_write, radio::Radio,
+};
+mod account;
+mod audio_tracks;
+mod indexed_playback;
+mod lyrics;
+mod resolution;
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MobileState {
+    pub saved: Vec<Media>,
+    pub offline_playlists: Vec<vidcue_core::offline::OfflinePlaylist>,
+    pub queue: Vec<Media>,
+    pub positions: HashMap<String, u64>,
+    pub playback: vidcue_core::PlaybackQueue,
+    pub recent: Vec<Media>,
+}
+struct PlaybackContext {
+    id: String,
+    items: std::collections::VecDeque<Media>,
+    prepared: bool,
+    /// Recommendations for the source video rather than a finite collection's tail.
+    related: bool,
+    consumed: std::collections::HashSet<String>,
+}
+pub struct Engine {
+    settings_commit: Mutex<()>,
+    root: PathBuf,
+    cache: PathBuf,
+    config: Mutex<Config>,
+    state: Mutex<MobileState>,
+    session: Mutex<Option<Arc<Session>>>,
+    account_notice: Mutex<Option<String>>,
+    account_intent: std::sync::atomic::AtomicU64,
+    browser: Mutex<Browser>,
+    radio: Mutex<Radio>,
+    images: Mutex<ImageCache>,
+    cancellations: Mutex<HashMap<u64, CancellationToken>>,
+    playback_context: Mutex<Option<PlaybackContext>>,
+    lyrics: Mutex<HashMap<String, lyrics::Document>>,
+    resolver: Arc<resolution::Resolver>,
+}
+/// Android's theme picker: every shared built-in except "terminal", which only means
+/// "inherit the terminal's colours" on desktop. A saved "terminal" value still resolves.
+fn mobile_themes() -> impl Iterator<Item = &'static str> {
+    vidcue_core::theme::THEMES
+        .iter()
+        .copied()
+        .filter(|name| *name != "terminal")
+}
+impl Engine {
+    pub fn new(root: &Path, cache: &Path) -> Result<Self> {
+        std::fs::create_dir_all(root)?;
+        std::fs::create_dir_all(cache)?;
+        let config: Config = read_json(&root.join("config.json"))?.unwrap_or_else(|| Config {
+            theme: "vidcue-dark".into(), // Owner-approved mobile default; existing config wins.
+            auth_store: "file".into(),
+            notifications: true,
+            download: vidcue_core::DownloadOptions {
+                quality: "1080".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        config.validate()?;
+        let state = read_json(&root.join("library.json"))?.unwrap_or_default();
+        let stored=account::load(root).unwrap_or_else(|_|account::Stored {
+            session:None,notice:Some("Stored account is unavailable; reconnect or disconnect it. Saved media and downloads are intact.".into()),
+        });
+        let session = stored.session.map(Arc::new);
+        let mut account_notice = stored.notice;
+        if account::clear_transient_auth(cache).is_err() {
+            account_notice=Some("An older private session staging file could not be removed; reconnect or clear the app cache after stopping playback.".into());
+        }
+        let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+        Ok(Self {
+            settings_commit: Mutex::new(()),
+            resolver: Arc::new(resolution::Resolver::default()),
+            root: root.into(),
+            cache: cache.into(),
+            config: Mutex::new(config.clone()),
+            state: Mutex::new(state),
+            session: Mutex::new(session.clone()),
+            account_notice: Mutex::new(account_notice),
+            account_intent: std::sync::atomic::AtomicU64::new(0),
+            browser: Mutex::new(Browser::new(client.clone(), session, config.account_index)),
+            radio: Mutex::new(
+                Radio::new(client.clone(), config.radio_servers.clone())
+                    .with_cache(cache.join("radio")),
+            ),
+            images: Mutex::new(ImageCache::new(client, cache.join("images"))),
+            cancellations: Mutex::new(HashMap::new()),
+            playback_context: Mutex::new(None),
+            lyrics: Mutex::new(read_json(&root.join("lyrics.json"))?.unwrap_or_default()),
+        })
+    }
+    pub fn activate_context(&self, id: Option<String>) {
+        let mut active = self.playback_context.lock().expect("playback context");
+        if id
+            .as_deref()
+            .is_some_and(|id| active.as_ref().is_some_and(|c| c.id == id))
+        {
+            return;
+        }
+        *active = id.map(|id| PlaybackContext {
+            id,
+            items: Default::default(),
+            prepared: false,
+            related: false,
+            consumed: Default::default(),
+        });
+    }
+    pub async fn thumbnail(
+        &self,
+        media: &Media,
+        width: u32,
+        height: u32,
+    ) -> Result<image::DynamicImage> {
+        let width = width.clamp(32, 768);
+        let height = height.clamp(32, 768);
+        let cache = self.images.lock().expect("images").clone();
+        let url = vidcue_providers::images::thumbnail_url(media, width, height);
+        cache.load_sized(&url, width, height).await
+    }
+    pub fn cancel(&self, id: u64) {
+        if let Some(c) = self.cancellations.lock().expect("cancellations").get(&id) {
+            c.cancel();
+        }
+    }
+    pub fn account_intent(&self) -> u64 {
+        self.account_intent
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn begin_account_change(&self) -> u64 {
+        self.resolver.clear();
+        self.account_intent
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+    fn check_account_intent(&self, r: &Value) -> Result<()> {
+        ensure!(
+            r["account_intent"].as_u64() == Some(self.account_intent()),
+            "Account action was superseded"
+        );
+        Ok(())
+    }
+    pub async fn request(&self, mut request: Value) -> Result<Value> {
+        if matches!(
+            request["op"].as_str(),
+            Some("import_cookie_file" | "import_cookies" | "disconnect" | "reload_account")
+        ) && request["account_intent"].is_null()
+        {
+            request["account_intent"] = json!(self.begin_account_change());
+        }
+        let id = request["request_id"].as_u64().unwrap_or(0);
+        let cancel = CancellationToken::new();
+        if id > 0 {
+            let mut jobs = self.cancellations.lock().expect("cancellations");
+            ensure!(jobs.len() < 32, "Too many pending requests");
+            ensure!(!jobs.contains_key(&id), "Duplicate request ID");
+            jobs.insert(id, cancel.clone());
+        }
+        let _registration = RequestRegistration { engine: self, id };
+        let result = tokio::select! {_=cancel.cancelled()=>Err(anyhow::anyhow!("Request cancelled")),r=self.dispatch(&request)=>r};
+        result
+    }
+    async fn dispatch(&self, r: &Value) -> Result<Value> {
+        let op = r["op"].as_str().context("Missing operation")?;
+        match op {
+            "settings" => Ok(serde_json::to_value(
+                self.config.lock().expect("config").clone(),
+            )?),
+            "save_settings" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                let config: Config = serde_json::from_value(r["config"].clone())?;
+                config.validate()?;
+                if let Some(proxy) = &config.proxy {
+                    let url = url::Url::parse(proxy)?;
+                    ensure!(
+                        url.scheme() == "http"
+                            && url.username().is_empty()
+                            && url.password().is_none(),
+                        "Android supports an HTTP proxy without embedded credentials, or your system VPN"
+                    );
+                }
+                let previous = self.config.lock().expect("config").clone();
+                atomic_write(
+                    &self.root.join("config.json"),
+                    &serde_json::to_vec(&config)?,
+                )?;
+                let proxy_changed = previous.proxy != config.proxy;
+                let account_changed = previous.account_index != config.account_index;
+                if proxy_changed
+                    || account_changed
+                    || previous.radio_servers != config.radio_servers
+                {
+                    let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+                    if proxy_changed || account_changed {
+                        let session = self.session.lock().expect("session").clone();
+                        *self.browser.lock().expect("browser") =
+                            Browser::new(client.clone(), session, config.account_index);
+                        self.resolver.clear();
+                    }
+                    if proxy_changed || previous.radio_servers != config.radio_servers {
+                        *self.radio.lock().expect("radio") =
+                            Radio::new(client.clone(), config.radio_servers.clone())
+                                .with_cache(self.cache.join("radio"));
+                    }
+                    if proxy_changed {
+                        *self.images.lock().expect("images") =
+                            ImageCache::new(client, self.cache.join("images"));
+                    }
+                }
+                *self.config.lock().expect("config") = config;
+                Ok(json!({"saved":true}))
+            }
+            "import_theme" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                let text = r["text"].as_str().context("Missing palette document")?;
+                ensure!(
+                    text.len() <= 2 * 1024 * 1024,
+                    "Palette document exceeds limit"
+                );
+                let palette = serde_json::from_str::<vidcue_core::theme::Palette>(text)
+                    .map_err(anyhow::Error::from)
+                    .or_else(|_| vidcue_core::theme::caelestia(text))
+                    .or_else(|_| vidcue_core::theme::omarchy(text, false))?;
+                atomic_write(
+                    &self.root.join("palette.json"),
+                    &serde_json::to_vec(&palette)?,
+                )?;
+                let mut config = self.config.lock().expect("config");
+                let mut draft = config.clone();
+                draft.theme = "custom".into();
+                atomic_write(&self.root.join("config.json"), &serde_json::to_vec(&draft)?)?;
+                *config = draft;
+                Ok(serde_json::to_value(palette)?)
+            }
+            "themes" => Ok(json!(mobile_themes().collect::<Vec<_>>())),
+            // Every built-in palette by name, for theme pickers that preview colours.
+            // "system" follows the device: it is reported as the dark/light pair.
+            "palettes" => {
+                let mut palettes = serde_json::Map::new();
+                for name in mobile_themes() {
+                    let value = if name == "system" {
+                        json!({
+                            "dark": vidcue_core::theme::builtin("vidcue-dark")?,
+                            "light": vidcue_core::theme::builtin("vidcue-light")?,
+                        })
+                    } else {
+                        serde_json::to_value(vidcue_core::theme::builtin(name)?)?
+                    };
+                    palettes.insert(name.into(), value);
+                }
+                Ok(Value::Object(palettes))
+            }
+            "theme" => {
+                let config = self.config.lock().expect("config").clone();
+                let name = if config.theme == "system" {
+                    if r["dark"].as_bool().unwrap_or(true) {
+                        "vidcue-dark"
+                    } else {
+                        "vidcue-light"
+                    }
+                } else {
+                    config.theme.as_str()
+                };
+                if name == "custom" {
+                    return Ok(serde_json::to_value(
+                        read_json::<vidcue_core::theme::Palette>(&self.root.join("palette.json"))?
+                            .context("No imported palette")?,
+                    )?);
+                }
+                Ok(serde_json::to_value(vidcue_core::theme::builtin(name)?)?)
+            }
+            "browse" => {
+                let query: BrowseRequest = serde_json::from_value(r["request"].clone())?;
+                let tab = r["tab"].as_u64().unwrap_or(1);
+                let mut page = if matches!(
+                    query,
+                    BrowseRequest::SavedMedia { .. } | BrowseRequest::Favorites
+                ) {
+                    let state = self.state.lock().expect("state");
+                    Page {
+                        title: "Saved locally".into(),
+                        items: state.saved.clone(),
+                        ..Default::default()
+                    }
+                } else if tab == 3 {
+                    let radio = self.radio.lock().expect("radio").clone();
+                    radio
+                        .fetch(
+                            &query,
+                            r["offset"].as_u64().unwrap_or(0).min(100_000) as usize,
+                        )
+                        .await?
+                } else {
+                    let browser = self.browser.lock().expect("browser").clone();
+                    browser.fetch(tab == 2, &query).await?
+                };
+                page.notice = page.notice.map(mobile_notice);
+                ensure!(
+                    page.retained_bytes() <= 16 * 1024 * 1024,
+                    "Feed response exceeds memory budget"
+                );
+                Ok(serde_json::to_value(page)?)
+            }
+            "saved" => Ok(serde_json::to_value(
+                self.state.lock().expect("state").saved.clone(),
+            )?),
+            "offline_playlists" => Ok(serde_json::to_value(
+                &self.state.lock().expect("state").offline_playlists,
+            )?),
+            "offline_playlist_create" | "offline_playlist_update" | "offline_playlist_delete" => {
+                self.mutate(|state| {
+                    match r["op"].as_str().unwrap_or_default() {
+                        "offline_playlist_create" => {
+                            state
+                                .offline_playlists
+                                .push(vidcue_core::offline::OfflinePlaylist {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    title: r["title"].as_str().unwrap_or_default().trim().into(),
+                                    items: vec![],
+                                });
+                        }
+                        "offline_playlist_update" => {
+                            let playlist = state
+                                .offline_playlists
+                                .iter_mut()
+                                .find(|p| Some(p.id.as_str()) == r["id"].as_str())
+                                .context("Offline playlist is no longer available")?;
+                            if let Some(title) = r["title"].as_str() {
+                                playlist.title = title.trim().into();
+                            }
+                            if let Some(items) = r.get("items") {
+                                playlist.items = serde_json::from_value(items.clone())?;
+                            }
+                        }
+                        _ => state
+                            .offline_playlists
+                            .retain(|p| Some(p.id.as_str()) != r["id"].as_str()),
+                    }
+                    vidcue_core::offline::validate_library(&state.offline_playlists)?;
+                    Ok(serde_json::to_value(&state.offline_playlists)?)
+                })
+            }
+            "save_media" => {
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
+                self.mutate(|state| {
+                    let saved = if let Some(i) = state.saved.iter().position(|m| m.url == media.url)
+                    {
+                        state.saved.remove(i);
+                        false
+                    } else {
+                        ensure!(state.saved.len() < 2000, "Saved library is full");
+                        state.saved.push(media);
+                        true
+                    };
+                    Ok(json!({"count":state.saved.len(),"saved":saved}))
+                })
+            }
+            "queue" => Ok(serde_json::to_value(
+                self.state.lock().expect("state").queue.clone(),
+            )?),
+            "enqueue" => {
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
+                self.mutate(|state| {
+                    ensure!(state.queue.len() < 500, "Queue is full");
+                    state.queue.push(media);
+                    Ok(json!({"count":state.queue.len()}))
+                })
+            }
+            "queue_peek" => {
+                let state = self.state.lock().expect("state");
+                let index = if r["shuffle"].as_bool().unwrap_or(false) && !state.queue.is_empty() {
+                    if let Some(index) = state
+                        .queue
+                        .iter()
+                        .position(|m| Some(m.url.as_str()) == r["preferred_url"].as_str())
+                    {
+                        index
+                    } else {
+                        u64::from_le_bytes(
+                            uuid::Uuid::new_v4().as_bytes()[..8]
+                                .try_into()
+                                .expect("UUID bytes"),
+                        ) as usize
+                            % state.queue.len()
+                    }
+                } else {
+                    0
+                };
+                let explicit = state
+                    .queue
+                    .get(index)
+                    .map(serde_json::to_value)
+                    .transpose()?;
+                drop(state);
+                if let Some(media) = explicit {
+                    return Ok(media);
+                }
+                let context = self.playback_context.lock().expect("playback context");
+                if let Some(context) = context
+                    .as_ref()
+                    .filter(|c| Some(c.id.as_str()) == r["context_id"].as_str())
+                    && let Some(media) = context.items.get(
+                        if r["shuffle"].as_bool().unwrap_or(false) && !context.items.is_empty() {
+                            context
+                                .items
+                                .iter()
+                                .position(|m| Some(m.url.as_str()) == r["preferred_url"].as_str())
+                                .unwrap_or_else(|| {
+                                    (uuid::Uuid::new_v4().as_u128() % context.items.len() as u128)
+                                        as usize
+                                })
+                        } else {
+                            0
+                        },
+                    )
+                {
+                    let mut value = serde_json::to_value(media)?;
+                    value["context_entry"] = json!(true);
+                    return Ok(value);
+                }
+                Ok(json!({}))
+            }
+            "up_next" => {
+                // Read-only view of what Next/autoplay will choose: the explicit queue,
+                // then the active playback context (playlist tail or related videos).
+                let queue = self.state.lock().expect("state").queue.clone();
+                let limit = r["limit"].as_u64().unwrap_or(25).clamp(1, 100) as usize;
+                let context = self.playback_context.lock().expect("playback context");
+                let context = context.as_ref().map(|c| {
+                    json!({
+                        "id": c.id,
+                        "related": c.related,
+                        "prepared": c.prepared,
+                        "count": c.items.len(),
+                        "items": c.items.iter().take(limit).collect::<Vec<_>>(),
+                    })
+                });
+                Ok(json!({"queue":queue.iter().take(100).collect::<Vec<_>>(),"context":context}))
+            }
+            "queue_commit" => {
+                if r["context_entry"].as_bool().unwrap_or(false) {
+                    let mut context = self.playback_context.lock().expect("playback context");
+                    let committed = if let Some(context) = context
+                        .as_mut()
+                        .filter(|c| Some(c.id.as_str()) == r["context_id"].as_str())
+                    {
+                        if let Some(index) = context
+                            .items
+                            .iter()
+                            .position(|m| Some(m.url.as_str()) == r["url"].as_str())
+                        {
+                            // Choosing a later playlist entry skips the ones before it.
+                            let skipped = if r["skip_before"].as_bool().unwrap_or(false) {
+                                index
+                            } else {
+                                0
+                            };
+                            for media in context.items.drain(..skipped) {
+                                context.consumed.insert(media.url);
+                            }
+                            if let Some(media) = context.items.remove(index - skipped) {
+                                context.consumed.insert(media.url);
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    return Ok(json!({"committed":committed}));
+                }
+                self.mutate(|state| {
+                    let chosen = state
+                        .queue
+                        .iter()
+                        .position(|m| Some(m.url.as_str()) == r["url"].as_str());
+                    if let Some(index) = chosen {
+                        state.queue.remove(index);
+                    }
+                    Ok(json!({"committed":chosen.is_some()}))
+                })
+            }
+            "history_list" => {
+                let state = self.state.lock().expect("state");
+                let recent = if state.recent.is_empty() {
+                    &state.playback.items
+                } else {
+                    &state.recent
+                };
+                Ok(json!(recent.iter().rev().collect::<Vec<_>>()))
+            }
+            "history_clear" => self.mutate(|state| {
+                state.playback = Default::default();
+                state.recent.clear();
+                state.positions.clear();
+                Ok(json!([]))
+            }),
+            "history_peek" => {
+                if !self.config.lock().expect("config").playback_history {
+                    return Ok(json!({}));
+                }
+                let state = self.state.lock().expect("state");
+                let timeline = &state.playback;
+                // Skipping an unstarted history candidate must not record it as played.
+                let from = r["from_index"]
+                    .as_u64()
+                    .and_then(|n| usize::try_from(n).ok())
+                    .filter(|i| *i < timeline.items.len())
+                    .or(timeline.current);
+                let target = from.and_then(|index| {
+                    if r["direction"] == "previous" {
+                        index.checked_sub(1)
+                    } else {
+                        index.checked_add(1)
+                    }
+                });
+                Ok(target
+                    .and_then(|index| {
+                        timeline
+                            .items
+                            .get(index)
+                            .map(|media| json!({"media":media,"index":index}))
+                    })
+                    .unwrap_or_else(|| json!({})))
+            }
+            "history_record" => {
+                if !self.config.lock().expect("config").playback_history {
+                    return Ok(json!({"recorded":false}));
+                }
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
+                vidcue_core::http_url(&media.url)?;
+                self.mutate(|state| {
+                    if state.recent.is_empty() {
+                        state.recent = state.playback.items.clone();
+                    }
+                    let accepted = media.clone();
+                    let timeline = &mut state.playback;
+                    let requested = r["index"].as_u64().and_then(|n| usize::try_from(n).ok());
+                    let same = |i: usize| {
+                        timeline
+                            .items
+                            .get(i)
+                            .is_some_and(|old| old.url == media.url)
+                    };
+                    if let Some(index) = requested.filter(|i| same(*i)) {
+                        timeline.current = Some(index);
+                        timeline.items[index] = media;
+                    } else if timeline.current.is_none_or(|i| !same(i)) {
+                        if let Some(i) = timeline.current {
+                            timeline.items.truncate(i.saturating_add(1));
+                        }
+                        timeline.play(media);
+                    } else if let Some(index) = timeline.current {
+                        timeline.items[index] = media;
+                    }
+                    let mut bytes = timeline
+                        .items
+                        .iter()
+                        .map(Media::retained_bytes)
+                        .sum::<usize>();
+                    while timeline.items.len() > 100 || bytes > 2 * 1024 * 1024 {
+                        bytes = bytes.saturating_sub(timeline.items.remove(0).retained_bytes());
+                        timeline.current = timeline.current.map(|i| i.saturating_sub(1));
+                    }
+                    state.recent.retain(|m| m.url != accepted.url);
+                    state.recent.push(accepted);
+                    let mut bytes = state
+                        .recent
+                        .iter()
+                        .map(Media::retained_bytes)
+                        .sum::<usize>();
+                    while state.recent.len() > 100 || bytes > 2 * 1024 * 1024 {
+                        bytes = bytes.saturating_sub(state.recent.remove(0).retained_bytes());
+                    }
+                    Ok(json!({"recorded":true}))
+                })
+            }
+            "queue_remove" => {
+                let i = r["index"].as_u64().context("Missing queue index")? as usize;
+                self.mutate(|state| {
+                    ensure!(i < state.queue.len(), "Queue index is out of bounds");
+                    ensure!(
+                        r["url"]
+                            .as_str()
+                            .is_none_or(|url| state.queue[i].url == url),
+                        "The queue changed; review its current order"
+                    );
+                    state.queue.remove(i);
+                    Ok(json!({"removed":true,"items":state.queue}))
+                })
+            }
+            "queue_move" => {
+                let from = r["from"].as_u64().context("Missing source index")? as usize;
+                let to = r["to"].as_u64().context("Missing destination index")? as usize;
+                let expected = r["url"].as_str().context("Missing queue item URL")?;
+                self.mutate(|state| {
+                    ensure!(
+                        from < state.queue.len() && to < state.queue.len(),
+                        "Queue index is out of bounds"
+                    );
+                    ensure!(
+                        state.queue[from].url == expected,
+                        "The queue changed; review its current order"
+                    );
+                    let media = state.queue.remove(from);
+                    state.queue.insert(to, media);
+                    Ok(json!({"items":state.queue}))
+                })
+            }
+            "position" => {
+                let url = r["url"].as_str().context("Missing media URL")?;
+                ensure!(url.len() <= 8192, "Media URL exceeds limit");
+                if let Some(ms) = r["milliseconds"].as_u64() {
+                    ensure!(ms <= 7 * 24 * 3600 * 1000, "Invalid media position");
+                    self.mutate(|state| {
+                        if state.positions.len() >= 2000
+                            && !state.positions.contains_key(url)
+                            && let Some(key) = state.positions.keys().next().cloned()
+                        {
+                            state.positions.remove(&key);
+                        }
+                        state.positions.insert(url.into(), ms);
+                        Ok(json!({"saved":true}))
+                    })
+                } else {
+                    Ok(
+                        json!({"milliseconds":self.state.lock().expect("state").positions.get(url).copied().unwrap_or(0)}),
+                    )
+                }
+            }
+            "account" => Ok(
+                json!({"connected":self.session.lock().expect("session").is_some(),"notice":self.account_notice.lock().expect("account notice").clone()}),
+            ),
+            "reload_account" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                self.check_account_intent(r)?;
+                let stored=account::load(&self.root).unwrap_or_else(|_|account::Stored {
+                    session:None,notice:Some("Stored account is unavailable; reconnect or disconnect it. Saved media and downloads are intact.".into()),
+                });
+                let config = self.config.lock().expect("config").clone();
+                let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+                let session = stored.session.map(Arc::new);
+                *self.browser.lock().expect("browser") =
+                    Browser::new(client, session.clone(), config.account_index);
+                *self.session.lock().expect("session") = session.clone();
+                *self.account_notice.lock().expect("account notice") = stored.notice.clone();
+                self.resolver.clear();
+                self.activate_context(None);
+                Ok(json!({"connected":session.is_some(),"notice":stored.notice}))
+            }
+            "lyrics" => {
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                let proxy = self.config.lock().expect("config").proxy.clone();
+                let title = r["title"].as_str().unwrap_or(&media.title);
+                let artist = r["artist"].as_str().unwrap_or(&media.creator);
+                let tracks =
+                    vidcue_providers::lyrics::lookup(proxy.as_deref(), title, artist).await?;
+                Ok(serde_json::to_value(tracks)?)
+            }
+            "lyrics_auto" => {
+                // Opening lyrics for a song: YouTube Music's own lyrics by video ID, then LRCLIB
+                // by the song's title and artist. Neither request carries the account session.
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                let proxy = self.config.lock().expect("config").proxy.clone();
+                let mut tracks = Vec::new();
+                if let Some(video) = vidcue_providers::music_lyrics::video_id(&media.id, &media.url)
+                    && let Ok(Some(track)) = vidcue_providers::music_lyrics::lookup(
+                        proxy.as_deref(),
+                        &video,
+                        &media.title,
+                        &media.creator,
+                    )
+                    .await
+                {
+                    tracks.push(track);
+                }
+                // Timed LRCLIB lines are worth adding when YouTube Music had only plain text.
+                if (tracks.iter().all(|t| !t.synced()))
+                    && !media.title.trim().is_empty()
+                    && !media.creator.trim().is_empty()
+                    && let Ok(found) = vidcue_providers::lyrics::lookup(
+                        proxy.as_deref(),
+                        &media.title,
+                        media.creator.trim_end_matches(" - Topic"),
+                    )
+                    .await
+                {
+                    let synced: Vec<_> = found.iter().filter(|t| t.synced()).cloned().collect();
+                    if !synced.is_empty() {
+                        tracks.splice(0..0, synced.into_iter().take(3));
+                    } else if tracks.is_empty() {
+                        tracks.extend(found.into_iter().take(3));
+                    }
+                }
+                Ok(serde_json::to_value(tracks)?)
+            }
+            "lyrics_get" | "lyrics_save" | "lyrics_remove" => self.local_lyrics(r),
+            "import_cookie_file" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                self.check_account_intent(r)?;
+                let text = r["text"].as_str().context("Missing cookie document")?;
+                ensure!(
+                    text.len() <= 2 * 1024 * 1024,
+                    "Cookie document exceeds limit"
+                );
+                let session = vidcue_providers::auth::parse_netscape(text)?;
+                let config = self.config.lock().expect("config").clone();
+                let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+                let notice = account::save(&self.root, &session)?;
+                *self.account_notice.lock().expect("account notice") = notice.clone();
+                let session = Arc::new(session);
+                *self.session.lock().expect("session") = Some(session.clone());
+                self.resolver.clear();
+                self.activate_context(None);
+                *self.browser.lock().expect("browser") =
+                    Browser::new(client, Some(session), config.account_index);
+                Ok(json!({"connected":true,"notice":notice}))
+            }
+            "import_cookies" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                self.check_account_intent(r)?;
+                let cookies = if let Some(header) = r["header"].as_str() {
+                    ensure!(
+                        header.len() <= 2 * 1024 * 1024,
+                        "Cookie header exceeds limit"
+                    );
+                    header
+                        .split(';')
+                        .filter_map(|pair| pair.trim().split_once('='))
+                        .map(|(name, value)| vidcue_providers::auth::Cookie {
+                            domain: ".youtube.com".into(),
+                            path: "/".into(),
+                            secure: true,
+                            expires: None,
+                            name: name.into(),
+                            value: value.into(),
+                            http_only: true,
+                        })
+                        .collect()
+                } else {
+                    serde_json::from_value(r["cookies"].clone())?
+                };
+                let session = Arc::new(Session::new(cookies)?);
+                let notice = account::save(&self.root, &session)?;
+                *self.account_notice.lock().expect("account notice") = notice.clone();
+                *self.session.lock().expect("session") = Some(session.clone());
+                self.resolver.clear();
+                self.activate_context(None);
+                let config = self.config.lock().expect("config").clone();
+                *self.browser.lock().expect("browser") = Browser::new(
+                    vidcue_providers::http_client(config.proxy.as_deref())?,
+                    Some(session),
+                    config.account_index,
+                );
+                Ok(json!({"connected":true,"notice":notice}))
+            }
+            "disconnect" => {
+                let _commit = self.settings_commit.lock().expect("settings commit");
+                self.check_account_intent(r)?;
+                account::remove(&self.root)?;
+                *self.account_notice.lock().expect("account notice") = None;
+                *self.session.lock().expect("session") = None;
+                self.resolver.clear();
+                self.activate_context(None);
+                let config = self.config.lock().expect("config").clone();
+                *self.browser.lock().expect("browser") = Browser::new(
+                    vidcue_providers::http_client(config.proxy.as_deref())?,
+                    None,
+                    config.account_index,
+                );
+                Ok(json!({"connected":false}))
+            }
+            "resolve" => self.resolve(r).await,
+            "resolve_cache_clear" => {
+                self.resolver.clear();
+                Ok(json!({"cleared":true}))
+            }
+            "seed_context" | "offline_context" | "radio_context" => {
+                let id = r["context_id"]
+                    .as_str()
+                    .context("Missing playback context")?;
+                let items: Vec<Media> = serde_json::from_value(r["items"].clone())?;
+                let offline = r["op"].as_str() == Some("offline_context");
+                let radio = r["op"].as_str() == Some("radio_context");
+                if offline {
+                    vidcue_core::offline::OfflinePlaylist {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        title: "Playback".into(),
+                        items: items.clone(),
+                    }
+                    .validate()?;
+                }
+                ensure!(
+                    items.len() <= if offline { 1000 } else { 500 }
+                        && items.iter().map(Media::retained_bytes).sum::<usize>()
+                            <= 4 * 1024 * 1024,
+                    "Playback seed exceeds budget"
+                );
+                let source = r["source_url"].as_str().unwrap_or("");
+                if radio {
+                    ensure!(
+                        items.iter().any(|m| m.url == source),
+                        "Selected station or track is no longer present in the radio list"
+                    );
+                }
+                let offset = items
+                    .iter()
+                    .position(|m| m.url == source)
+                    .map_or(0, |i| i + 1);
+                let mut active = self.playback_context.lock().expect("playback context");
+                if radio && let Some(context) = active.as_ref().filter(|c| c.id == id && c.prepared)
+                {
+                    return Ok(json!({"prepared":true,"count":context.items.len()}));
+                }
+                if let Some(context) = active
+                    .as_mut()
+                    .filter(|c| c.id == id && !c.prepared && c.items.is_empty())
+                {
+                    context.items = items
+                        .into_iter()
+                        .skip(offset)
+                        .filter(|m| {
+                            (!m.live || radio && m.kind == MediaKind::Station)
+                                && !m.collection()
+                                && m.url != source
+                                && !context.consumed.contains(&m.url)
+                        })
+                        .collect();
+                    context.prepared = offline || radio;
+                    Ok(json!({"prepared":true,"count":context.items.len()}))
+                } else {
+                    Ok(json!({"prepared":false}))
+                }
+            }
+            "context_status" => {
+                let active = self.playback_context.lock().expect("playback context");
+                Ok(
+                    json!({"active":active.as_ref().is_some_and(|c|Some(c.id.as_str())==r["context_id"].as_str())}),
+                )
+            }
+            "prepare_context" => {
+                let id = r["context_id"]
+                    .as_str()
+                    .context("Missing playback context")?;
+                if let Some(context) = self
+                    .playback_context
+                    .lock()
+                    .expect("playback context")
+                    .as_ref()
+                    .filter(|c| c.id == id && c.prepared)
+                {
+                    return Ok(json!({"prepared":true,"count":context.items.len()}));
+                }
+                if self
+                    .playback_context
+                    .lock()
+                    .expect("playback context")
+                    .as_ref()
+                    .is_none_or(|c| c.id != id)
+                {
+                    return Ok(json!({"prepared":false}));
+                }
+                let query: BrowseRequest = serde_json::from_value(r["request"].clone())?;
+                ensure!(
+                    matches!(
+                        query,
+                        BrowseRequest::Collection(_)
+                            | BrowseRequest::Details(_)
+                            | BrowseRequest::CliampTracks(_)
+                            | BrowseRequest::Related(_)
+                    ),
+                    "This feed is not a finite playback collection"
+                );
+                let related = matches!(query, BrowseRequest::Related(_));
+                let items = if related {
+                    let browser = self.browser.lock().expect("browser").clone();
+                    browser
+                        .fetch(r["music"].as_bool().unwrap_or(false), &query)
+                        .await?
+                        .items
+                } else if matches!(query, BrowseRequest::CliampTracks(_)) {
+                    let radio = self.radio.lock().expect("radio").clone();
+                    radio.fetch(&query, 0).await?.items
+                } else {
+                    let browser = self.browser.lock().expect("browser").clone();
+                    vidcue_providers::watch::collect(
+                        browser,
+                        vidcue_core::watch::CollectionWatch {
+                            id: uuid::Uuid::new_v4(),
+                            title: "Playback collection".into(),
+                            request: query,
+                            music: r["music"].as_bool().unwrap_or(false),
+                            options: Default::default(),
+                            interval_seconds: 1800,
+                            next_check: 0,
+                            enabled: true,
+                            generation: 0,
+                            owner: "mobile".into(),
+                            seen: None,
+                            failures: 0,
+                            error: None,
+                        },
+                        CancellationToken::new(),
+                    )
+                    .await?
+                };
+                let selected = if related {
+                    None
+                } else {
+                    Some(
+                        items
+                            .iter()
+                            .position(|m| {
+                                Some(m.url.as_str()) == r["source_url"].as_str()
+                                    || !m.id.is_empty()
+                                        && Some(m.id.as_str()) == r["source_id"].as_str()
+                            })
+                            .context("Selected song is no longer present in the collection")?,
+                    )
+                };
+                let tail = items
+                    .into_iter()
+                    .skip(selected.map_or(0, |i| i + 1))
+                    .filter(|m| {
+                        !m.live
+                            && !m.collection()
+                            && Some(m.url.as_str()) != r["source_url"].as_str()
+                    })
+                    .collect::<std::collections::VecDeque<_>>();
+                ensure!(
+                    tail.len() <= 2000
+                        && tail.iter().map(Media::retained_bytes).sum::<usize>()
+                            <= 16 * 1024 * 1024,
+                    "Playback collection exceeds the memory budget"
+                );
+                let mut active = self.playback_context.lock().expect("playback context");
+                if let Some(context) = active.as_mut().filter(|c| c.id == id) {
+                    if !context.prepared {
+                        context.related = related;
+                        context.items = tail
+                            .into_iter()
+                            .filter(|m| !context.consumed.contains(&m.url))
+                            .collect();
+                        context.prepared = true;
+                    }
+                    let count = context.items.len();
+                    Ok(json!({"prepared":true,"count":count}))
+                } else {
+                    Ok(json!({"prepared":false}))
+                }
+            }
+            "collection" | "enqueue_collection" => {
+                let music = r["music"].as_bool().unwrap_or(false);
+                let request: BrowseRequest = serde_json::from_value(r["request"].clone())?;
+                let browser = self.browser.lock().expect("browser").clone();
+                let watch = vidcue_core::watch::CollectionWatch {
+                    id: uuid::Uuid::new_v4(),
+                    title: "Mobile playlist".into(),
+                    request,
+                    music,
+                    options: Default::default(),
+                    interval_seconds: 1800,
+                    next_check: 0,
+                    enabled: true,
+                    generation: 0,
+                    owner: "mobile".into(),
+                    seen: None,
+                    failures: 0,
+                    error: None,
+                };
+                let items =
+                    vidcue_providers::watch::collect(browser, watch, CancellationToken::new())
+                        .await?;
+                if op == "enqueue_collection" {
+                    self.mutate(|state| {
+                        ensure!(
+                            state.queue.len() + items.len() <= 500,
+                            "This collection exceeds the 500-item mobile queue budget"
+                        );
+                        let count = items.len();
+                        state.queue.extend(items);
+                        Ok(json!({"added":count}))
+                    })
+                } else {
+                    Ok(json!(items))
+                }
+            }
+            "sponsor" => {
+                if self.config.lock().expect("config").playback_sponsorblock == "off" {
+                    return Ok(json!([]));
+                }
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                let config = self.config.lock().expect("config").clone();
+                Ok(json!(
+                    vidcue_providers::sponsorblock::fetch(&config, &media).await?
+                ))
+            }
+            _ => anyhow::bail!("Unknown mobile operation"),
+        }
+    }
+    fn mutate<T>(&self, update: impl FnOnce(&mut MobileState) -> Result<T>) -> Result<T> {
+        let mut state = self.state.lock().expect("state");
+        let mut draft = state.clone();
+        let value = update(&mut draft)?;
+        self.persist(&draft)?;
+        *state = draft;
+        Ok(value)
+    }
+    fn persist(&self, state: &MobileState) -> Result<()> {
+        let bytes = serde_json::to_vec(state)?;
+        ensure!(
+            bytes.len() <= 16 * 1024 * 1024,
+            "Local library exceeds memory budget"
+        );
+        atomic_write(&self.root.join("library.json"), &bytes)
+    }
+    async fn resolve(&self, r: &Value) -> Result<Value> {
+        let started = std::time::Instant::now();
+        let media: Media = serde_json::from_value(r["media"].clone())?;
+        let url = vidcue_core::http_url(&media.url)?;
+        if let Some(session) = self.session.lock().expect("session").as_ref() {
+            session.headers("https://www.youtube.com")?;
+        }
+        let config = self.config.lock().expect("config").clone();
+        let audio = r["audio"].as_bool().unwrap_or(false);
+        let language = r["audio_language"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
+        let quality = r["quality"]
+            .as_str()
+            .unwrap_or(&config.download.quality)
+            .to_owned();
+        let key = resolution::Key {
+            epoch: self.resolver.epoch(),
+            account: self
+                .account_intent
+                .load(std::sync::atomic::Ordering::Acquire),
+            account_index: config.account_index,
+            proxy: config.proxy.clone(),
+            url: media.url.clone(),
+            audio,
+            quality: quality.clone(),
+            audio_language: language.clone(),
+        };
+        // Wait for background capacity before taking a per-video flight lock.
+        // Foreground taps can use their reserved slot while cancelled blocking
+        // speculation finishes, and the final settled viewport still gets warmed.
+        let background = if r["speculative"].as_bool().unwrap_or(false)
+            && vidcue_core::youtube_host(url.host_str().unwrap_or_default())
+        {
+            Some(background_extractor_slots().acquire_owned().await?)
+        } else {
+            None
+        };
+        let client_key = key.clone();
+        let fresh = r["fresh"].as_bool().unwrap_or(false);
+        let mut value = self
+            .resolver
+            .get_or_resolve(key, fresh, async {
+                if !vidcue_core::youtube_host(url.host_str().unwrap_or_default()) {
+                    let radio = self.radio.lock().expect("radio").clone();
+                    let resolved = radio.resolve_playlist(url.as_str()).await?;
+                    return Ok(
+                        json!({"url":resolved,"headers":{},"audio_url":null,"live":media.live}),
+                    );
+                }
+                let cookies = self.session.lock().expect("session").clone();
+                let visitor = self
+                    .browser
+                    .lock()
+                    .expect("browser")
+                    .playback_visitor(audio);
+                let pool = self.resolver.clone();
+                let slot_at = std::time::Instant::now();
+                let permit = extractor_slots().acquire_owned().await?;
+                let slot_ms = slot_at.elapsed().as_millis() as u64;
+                let worker_at = std::time::Instant::now();
+                let (data, client_ms, extract_ms, worker_ms) =
+                    tokio::task::spawn_blocking(move || -> Result<(Value, u64, u64, u64)> {
+                        let worker_ms = worker_at.elapsed().as_millis() as u64;
+                        let client_at = std::time::Instant::now();
+                        let _permit = permit;
+                        let _background = background;
+                        let create = || {
+                            let jar = cookies.as_deref().map(account::native_jar).transpose()?;
+                            Ok(yt_dlp_rs::YoutubeDl::with_options(
+                                yt_dlp_rs::YoutubeOptions {
+                                    no_playlist: true,
+                                    playback_format: Some(audio_tracks::selector(
+                                        &mobile_format(audio, &quality)?,
+                                        language.as_deref(),
+                                    )?),
+                                    playback_skip_direct: fresh,
+                                    playback_visitor_data: visitor,
+                                    js_runtime: if cfg!(target_os = "android") {
+                                        Some("vidcue-android-js".into())
+                                    } else {
+                                        None
+                                    },
+                                    ..Default::default()
+                                },
+                                yt_dlp_rs::HttpOptions {
+                                    proxy: config.proxy,
+                                    cookies: jar,
+                                    socket_timeout: Some(12.0),
+                                    ..Default::default()
+                                },
+                            )?)
+                        };
+                        // A rejected stream must bypass both its lease and the
+                        // direct-player shortcut, without replacing pooled fast clients.
+                        let client = if fresh {
+                            Arc::new(create()?)
+                        } else {
+                            pool.client(&client_key, create)?
+                        };
+                        let client_ms = client_at.elapsed().as_millis() as u64;
+                        let extract_at = std::time::Instant::now();
+                        let info = client.extract_info_with_format(
+                            &media.url,
+                            Some(&audio_tracks::selector(
+                                &mobile_format(audio, &quality)?,
+                                language.as_deref(),
+                            )?),
+                        )?;
+                        let extract_ms = extract_at.elapsed().as_millis() as u64;
+                        Ok((
+                            serde_json::to_value(info)?,
+                            client_ms,
+                            extract_ms,
+                            worker_ms,
+                        ))
+                    })
+                    .await??;
+                let stream_at = std::time::Instant::now();
+                let mut value = stream(&data, audio)?;
+                value["resolution_stream_ms"] = (stream_at.elapsed().as_millis() as u64).into();
+                for (name, ms) in [
+                    ("slot", slot_ms),
+                    ("worker", worker_ms),
+                    ("client", client_ms),
+                    ("extract", extract_ms),
+                ] {
+                    value[format!("resolution_{name}_ms")] = ms.into();
+                }
+                for phase in ["visitor", "player", "manifest"] {
+                    if let Some(ms) = data[format!("vidcue_{phase}_ms")].as_u64() {
+                        value[format!("resolution_{phase}_ms")] = ms.into();
+                    }
+                }
+                Ok(value)
+            })
+            .await?;
+        value["resolution_engine_ms"] = (started.elapsed().as_millis() as u64).into();
+        Ok(value)
+    }
+}
+fn background_extractor_slots() -> Arc<tokio::sync::Semaphore> {
+    static BACKGROUND: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    BACKGROUND
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+}
+fn extractor_slots() -> Arc<tokio::sync::Semaphore> {
+    static EXTRACTORS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+    EXTRACTORS
+        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
+        .clone()
+}
+fn mobile_format(audio: bool, quality: &str) -> Result<String> {
+    if audio {
+        return Ok("bestaudio/best".into());
+    }
+    if quality == "best" {
+        return Ok("bestvideo+bestaudio/best".into());
+    }
+    ensure!(
+        ["360", "480", "720", "1080"].contains(&quality),
+        "Invalid quality"
+    );
+    // H.264/AAC decodes and exports on API 26. Keep bounded codec fallbacks.
+    Ok(format!(
+        "bestvideo[height<={quality}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<={quality}][vcodec^=avc1]+bestaudio/bestvideo[height<={quality}][vcodec!^=av01]+bestaudio/best[height<={quality}]"
+    ))
+}
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cancelled_and_dropped_resolve_requests_release_ids_without_starting_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine =
+            Arc::new(Engine::new(&dir.path().join("files"), &dir.path().join("cache")).unwrap());
+        // Hold both actual extraction permits. Requests can register but cannot start an extractor.
+        let slots = extractor_slots();
+        let _permits = slots.acquire_many_owned(2).await.unwrap();
+        for id in [77u64, 78] {
+            let pending = engine.clone();
+            let task = tokio::spawn(async move {
+                pending.request(json!({"op":"resolve","request_id":id,"media":{"url":"https://www.youtube.com/watch?v=abcdefghijk","title":"Synthetic"}})).await
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while !engine.cancellations.lock().unwrap().contains_key(&id) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert!(
+                engine
+                    .request(json!({"op":"settings","request_id":id}))
+                    .await
+                    .is_err()
+            );
+            if id == 77 {
+                engine.cancel(id);
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_secs(2), task)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .is_err()
+                );
+            } else {
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            }
+            assert!(
+                engine
+                    .request(json!({"op":"settings","request_id":id}))
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+    #[tokio::test]
+    async fn palettes_preview_every_built_in_theme() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let palettes = engine.request(json!({"op":"palettes"})).await.unwrap();
+        let themes = engine.request(json!({"op":"themes"})).await.unwrap();
+        for name in mobile_themes() {
+            assert!(
+                palettes.get(name).is_some(),
+                "{name} has no preview palette"
+            );
+            assert!(themes.as_array().unwrap().contains(&json!(name)));
+        }
+        assert!(palettes.get("terminal").is_none());
+        assert!(!themes.as_array().unwrap().contains(&json!("terminal")));
+        assert_eq!(palettes["nothing-dark"]["accent"], json!([215, 25, 33]));
+        assert_eq!(palettes["nord"]["accent"], json!([136, 192, 208]));
+        assert_eq!(palettes["system"]["light"]["name"], "vidcue-light");
+    }
+
+    #[test]
+    fn mobile_dark_default_does_not_replace_an_explicit_saved_theme() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        assert_eq!(engine.config.lock().unwrap().theme, "vidcue-dark");
+        let saved = Config {
+            theme: "catppuccin-latte".into(),
+            ..Config::default()
+        };
+        std::fs::write(
+            temp.path().join("config.json"),
+            serde_json::to_vec(&saved).unwrap(),
+        )
+        .unwrap();
+        let restored = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        assert_eq!(restored.config.lock().unwrap().theme, "catppuccin-latte");
+    }
+
+    #[tokio::test]
+    async fn radio_context_keeps_live_stations_prioritizes_manual_queue_and_rejects_stale_lists() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        engine.activate_context(Some("radio".into()));
+        let descriptor = json!({"op":"radio_context","context_id":"radio","source_url":"https://radio.test/current","items":[
+            {"url":"https://radio.test/current","kind":"station","live":true},
+            {"url":"https://radio.test/next","kind":"station","live":true},
+            {"url":"https://radio.test/live-video","kind":"video","live":true},
+            {"url":"https://radio.test/collection","kind":"playlist"},
+            {"url":"https://radio.test/track","kind":"song"}
+        ]});
+        assert_eq!(
+            engine.request(descriptor.clone()).await.unwrap()["count"],
+            2
+        );
+        let view = engine.request(json!({"op":"up_next"})).await.unwrap();
+        assert_eq!(view["context"]["prepared"], true);
+        assert_eq!(view["context"]["items"][0]["live"], true);
+        engine
+            .request(
+                json!({"op":"enqueue","media":{"url":"https://radio.test/manual","kind":"song"}}),
+            )
+            .await
+            .unwrap();
+        let peek = json!({"op":"queue_peek","context_id":"radio"});
+        assert_eq!(
+            engine.request(peek.clone()).await.unwrap()["url"],
+            "https://radio.test/manual"
+        );
+        engine
+            .request(json!({"op":"queue_commit","url":"https://radio.test/manual"}))
+            .await
+            .unwrap();
+        // Repeated reads or a failed decoder do not consume the next station.
+        for _ in 0..2 {
+            assert_eq!(
+                engine.request(peek.clone()).await.unwrap()["url"],
+                "https://radio.test/next"
+            );
+        }
+        engine.request(json!({"op":"queue_commit","context_id":"radio","context_entry":true,"url":"https://radio.test/next"})).await.unwrap();
+        assert_eq!(
+            engine.request(peek.clone()).await.unwrap()["url"],
+            "https://radio.test/track"
+        );
+        // A repeated preparation cannot restore a consumed station.
+        assert_eq!(
+            engine.request(descriptor.clone()).await.unwrap()["prepared"],
+            true
+        );
+        assert_eq!(
+            engine.request(peek).await.unwrap()["url"],
+            "https://radio.test/track"
+        );
+        engine.activate_context(Some("new-selection".into()));
+        assert_eq!(engine.request(descriptor).await.unwrap()["prepared"], false);
+        assert_eq!(
+            engine
+                .request(json!({"op":"queue_peek","context_id":"new-selection"}))
+                .await
+                .unwrap(),
+            json!({})
+        );
+        assert!(engine.request(json!({"op":"radio_context","context_id":"new-selection","source_url":"https://radio.test/missing","items":[]})).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn playlist_seed_is_available_before_the_full_collection_and_commits_only_on_start() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        engine.activate_context(Some("collection".into()));
+        let items = json!([{"url":"https://media.test/a","title":"First","kind":"song"},
+            {"url":"https://media.test/b","title":"Second","kind":"song"},
+            {"url":"https://media.test/c","title":"Third","kind":"song"}]);
+        let seeded=engine.request(json!({"op":"seed_context","context_id":"collection","source_url":"https://media.test/a","items":items})).await.unwrap();
+        assert_eq!(seeded["count"], 2);
+        for _ in 0..2 {
+            assert_eq!(
+                engine
+                    .request(json!({"op":"queue_peek","context_id":"collection"}))
+                    .await
+                    .unwrap()["title"],
+                "Second"
+            );
+        }
+        engine.request(json!({"op":"queue_commit","context_id":"collection","context_entry":true,"url":"https://media.test/b"})).await.unwrap();
+        assert_eq!(
+            engine
+                .request(json!({"op":"queue_peek","context_id":"collection"}))
+                .await
+                .unwrap()["title"],
+            "Third"
+        );
+        assert!(
+            engine
+                .playback_context
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .consumed
+                .contains("https://media.test/b")
+        );
+        engine.activate_context(Some("new intent".into()));
+        assert_eq!(
+            engine
+                .request(json!({"op":"seed_context","context_id":"collection","items":[]}))
+                .await
+                .unwrap()["prepared"],
+            false
+        );
+    }
+
+    #[tokio::test]
+    async fn up_next_lists_queue_then_context_and_skips_to_a_chosen_entry() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let empty = engine.request(json!({"op":"up_next"})).await.unwrap();
+        assert_eq!(empty["context"], Value::Null);
+        assert_eq!(empty["queue"], json!([]));
+        engine.activate_context(Some("collection".into()));
+        engine.request(json!({"op":"seed_context","context_id":"collection","source_url":"https://media.test/a","items":[
+            {"url":"https://media.test/a","kind":"video"}, {"url":"https://media.test/b","kind":"video"},
+            {"url":"https://media.test/c","kind":"video"}, {"url":"https://media.test/d","kind":"video"}]})).await.unwrap();
+        engine
+            .request(json!({"op":"enqueue","media":{"url":"https://media.test/q","kind":"video"}}))
+            .await
+            .unwrap();
+        let view = engine.request(json!({"op":"up_next"})).await.unwrap();
+        assert_eq!(view["queue"][0]["url"], "https://media.test/q");
+        assert_eq!(view["context"]["id"], "collection");
+        assert_eq!(view["context"]["related"], false);
+        assert_eq!(view["context"]["count"], 3);
+        assert_eq!(view["context"]["items"][0]["url"], "https://media.test/b");
+        let committed = engine
+            .request(
+                json!({"op":"queue_commit","context_id":"collection","context_entry":true,
+            "skip_before":true,"url":"https://media.test/c"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(committed["committed"], true);
+        let view = engine
+            .request(json!({"op":"up_next","limit":1}))
+            .await
+            .unwrap();
+        assert_eq!(view["context"]["count"], 1);
+        assert_eq!(view["context"]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(view["context"]["items"][0]["url"], "https://media.test/d");
+        let context = engine.playback_context.lock().unwrap();
+        let consumed = &context.as_ref().unwrap().consumed;
+        assert!(
+            consumed.contains("https://media.test/b") && consumed.contains("https://media.test/c")
+        );
+    }
+
+    #[tokio::test]
+    async fn warm_shuffle_choice_stays_stable_without_overriding_manual_queue_priority() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        engine.activate_context(Some("collection".into()));
+        engine.request(json!({"op":"seed_context","context_id":"collection","source_url":"https://media.test/a","items":[
+            {"url":"https://media.test/a","kind":"song"}, {"url":"https://media.test/b","kind":"song"}, {"url":"https://media.test/c","kind":"song"}]})).await.unwrap();
+        let peek = json!({"op":"queue_peek","context_id":"collection","shuffle":true,"preferred_url":"https://media.test/c"});
+        for _ in 0..3 {
+            assert_eq!(
+                engine.request(peek.clone()).await.unwrap()["url"],
+                "https://media.test/c"
+            );
+        }
+        engine
+            .request(
+                json!({"op":"enqueue","media":{"url":"https://media.test/manual","kind":"song"}}),
+            )
+            .await
+            .unwrap();
+        let candidate = engine.request(peek.clone()).await.unwrap();
+        assert_eq!(candidate["url"], "https://media.test/manual");
+        assert!(candidate.get("context_entry").is_none());
+        engine
+            .request(json!({"op":"queue_commit","url":"https://media.test/manual"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.request(peek).await.unwrap()["url"],
+            "https://media.test/c"
+        );
+        assert_eq!(engine.request(json!({"op":"queue_peek","context_id":"collection","preferred_url":"https://media.test/c"})).await.unwrap()["url"], "https://media.test/b");
+    }
+
+    #[tokio::test]
+    async fn offline_playlists_are_transactional_persisted_and_prepare_without_network() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let created = engine
+            .request(json!({"op":"offline_playlist_create","title":"Road trip"}))
+            .await
+            .unwrap();
+        let id = created[0]["id"].as_str().unwrap();
+        let items = json!([
+            {"url":"https://media.test/a","title":"First","kind":"song","offline_id":"a".repeat(64)},
+            {"url":"https://media.test/b","title":"Second","kind":"song","offline_id":"b".repeat(64)}
+        ]);
+        engine
+            .request(json!({"op":"offline_playlist_update","id":id,"items":items}))
+            .await
+            .unwrap();
+        let previous = std::fs::read(temp.path().join("library.json")).unwrap();
+        assert!(
+            engine
+                .request(json!({"op":"offline_playlist_update","id":id,"title":""}))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            previous,
+            std::fs::read(temp.path().join("library.json")).unwrap()
+        );
+        engine.activate_context(Some("offline".into()));
+        assert_eq!(engine.request(json!({"op":"offline_context","context_id":"offline","items":items,"source_url":"https://media.test/a"})).await.unwrap()["count"],1);
+        let next = engine
+            .request(json!({"op":"queue_peek","context_id":"offline"}))
+            .await
+            .unwrap();
+        assert_eq!(next["offline_id"], "b".repeat(64));
+        assert_eq!(
+            engine.request(json!({"op":"history_list"})).await.unwrap(),
+            json!([])
+        );
+        drop(engine);
+        let restored = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let restored_items: Vec<Media> = serde_json::from_value(
+            restored
+                .request(json!({"op":"offline_playlists"}))
+                .await
+                .unwrap()[0]["items"]
+                .clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            restored_items,
+            serde_json::from_value::<Vec<Media>>(items).unwrap()
+        );
+        restored
+            .request(json!({"op":"offline_playlist_delete","id":id}))
+            .await
+            .unwrap();
+        assert_eq!(
+            restored
+                .request(json!({"op":"offline_playlists"}))
+                .await
+                .unwrap(),
+            json!([])
+        );
+    }
+
+    #[test]
+    fn phone_quality_prefers_compatible_video_and_honors_the_selected_cap() {
+        let formats = vec![
+            json!({"format_id":"audio","url":"https://media.test/a","ext":"m4a","vcodec":"none","acodec":"mp4a.40.2"}),
+            json!({"format_id":"720","url":"https://media.test/720","ext":"mp4","height":720,"vcodec":"avc1.64001F","acodec":"none"}),
+            json!({"format_id":"1080","url":"https://media.test/1080","ext":"mp4","height":1080,"vcodec":"avc1.640028","acodec":"none"}),
+            json!({"format_id":"av1","url":"https://media.test/av1","ext":"mp4","height":1080,"vcodec":"av01.0.08M.08","acodec":"none"}),
+            json!({"format_id":"4k","url":"https://media.test/4k","ext":"mp4","height":2160,"vcodec":"av01.0.12M.08","acodec":"none"}),
+            json!({"format_id":"opus","url":"https://media.test/opus","ext":"webm","vcodec":"none","acodec":"opus"}),
+        ];
+        for (quality, expected, sound) in [("720", 1, 0), ("1080", 2, 0), ("best", 4, 5)] {
+            let selector =
+                yt_dlp_rs::format_select::parse(&mobile_format(false, quality).unwrap()).unwrap();
+            let selected = selector
+                .select(&formats, &Default::default(), None)
+                .unwrap();
+            assert_eq!(selected[0].formats, vec![expected, sound]);
+        }
+        assert!(mobile_format(false, "invalid").is_err());
+        let audio = yt_dlp_rs::format_select::parse(&mobile_format(true, "1080").unwrap()).unwrap();
+        assert_eq!(
+            audio.select(&formats, &Default::default(), None).unwrap()[0].formats,
+            vec![5]
+        );
+        let fallback =
+            yt_dlp_rs::format_select::parse(&mobile_format(false, "1080").unwrap()).unwrap();
+        let no_aac = formats[1..].to_vec();
+        assert_eq!(
+            fallback.select(&no_aac, &Default::default(), None).unwrap()[0].formats,
+            vec![1, 4]
+        );
+    }
+}
+struct RequestRegistration<'a> {
+    engine: &'a Engine,
+    id: u64,
+}
+impl Drop for RequestRegistration<'_> {
+    fn drop(&mut self) {
+        if self.id > 0 {
+            self.engine
+                .cancellations
+                .lock()
+                .expect("cancellations")
+                .remove(&self.id);
+        }
+    }
+}
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>> {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            ensure!(
+                bytes.len() <= 16 * 1024 * 1024,
+                "Stored state exceeds memory budget"
+            );
+            Ok(Some(serde_json::from_slice(&bytes)?))
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+fn stream(data: &Value, audio: bool) -> Result<Value> {
+    let formats = data["requested_formats"].as_array();
+    let primary = formats
+        .and_then(|fs| {
+            fs.iter().find(|f| {
+                if audio {
+                    f["acodec"] != "none"
+                } else {
+                    f["vcodec"] != "none"
+                }
+            })
+        })
+        .unwrap_or(data);
+    let url=primary["url"].as_str().context("Native extractor returned no playable stream; this video may require an unsupported signature challenge")?;
+    vidcue_core::http_url(url)?;
+    let audio_url = if audio {
+        None
+    } else {
+        formats
+            .and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"))
+            .and_then(|f| f["url"].as_str())
+    };
+    if let Some(url) = audio_url {
+        vidcue_core::http_url(url)?;
+    }
+    let mut headers = serde_json::Map::new();
+    for source in [data, primary] {
+        if let Some(h) = source["http_headers"].as_object() {
+            for (key, value) in h {
+                if [
+                    "user-agent",
+                    "referer",
+                    "origin",
+                    "accept",
+                    "accept-language",
+                ]
+                .contains(&key.to_ascii_lowercase().as_str())
+                    && value
+                        .as_str()
+                        .is_some_and(|v| !v.chars().any(char::is_control))
+                {
+                    headers.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+    let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":data["vidcue_playback_route"],"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
+    let duration = data["duration"].as_f64();
+    let secondary = formats.and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"));
+    result["audio_tracks"] = json!(audio_tracks::choices(data));
+    result["audio_language"] = secondary.unwrap_or(primary)["language"].clone();
+    let tracks = if !audio && let Some(second) = secondary {
+        vec![primary, second]
+    } else {
+        vec![primary]
+    };
+    if let Some(manifest) = indexed_playback::manifest(&tracks, duration) {
+        result["dash_manifest"] = manifest.into();
+    } else if !audio
+        && let Some(second) = secondary
+        && let Some(manifest) = indexed_playback::manifest(&[second], duration)
+    {
+        result["audio_dash_manifest"] = manifest.into();
+    }
+    if !audio
+        && (audio_url.is_none() || primary["acodec"] == "none")
+        && let Some(master) = playback_hls_master(primary)
+    {
+        result["hls_master"] = master.into();
+    }
+    Ok(result)
+}
+
+// Preserve the selected variant's codec declaration for Media3 chunkless
+// preparation. Starting from its bare media playlist discards this information
+// and forces track discovery from segment bytes. All references stay absolute;
+// the in-memory one-variant master does not introduce another network request.
+fn playback_hls_master(primary: &Value) -> Option<String> {
+    if primary["protocol"] != "m3u8_native" || !primary["manifest_url"].is_string() {
+        return None;
+    }
+    let codec = |field: &str| {
+        primary[field].as_str().filter(|value| {
+            *value != "none"
+                && !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"._-".contains(&byte))
+        })
+    };
+    let video = codec("vcodec")?;
+    let codecs = if primary["acodec"] == "none" {
+        video.to_owned()
+    } else {
+        format!("{video},{}", codec("acodec")?)
+    };
+    let url = primary["url"].as_str()?;
+    if url.chars().any(char::is_control) {
+        return None;
+    }
+    vidcue_core::http_url(url).ok()?;
+    let bandwidth = primary["tbr"]
+        .as_f64()
+        .filter(|b| b.is_finite() && *b > 0.0)
+        .map(|b| (b * 1000.0).clamp(1.0, 1_000_000_000.0) as u64)
+        .unwrap_or(1_000_000);
+    Some(format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth},CODECS=\"{codecs}\"\n{url}\n"
+    ))
+}
+
+#[cfg(test)]
+mod hls_playback_tests {
+    use super::*;
+
+    fn muxed() -> Value {
+        json!({"url":"https://media.test/selected.m3u8?x=1&y=2", "protocol":"m3u8_native",
+            "manifest_url":"https://media.test/master.m3u8", "vcodec":"avc1.640028",
+            "acodec":"mp4a.40.2", "tbr":2000, "height":1080, "format_id":"96"})
+    }
+
+    #[test]
+    fn selected_hls_codec_metadata_prepares_without_an_extra_master_fetch() {
+        let data = muxed();
+        let value = stream(&data, false).unwrap();
+        let master = value["hls_master"].as_str().unwrap();
+        assert!(master.contains("BANDWIDTH=2000000,CODECS=\"avc1.640028,mp4a.40.2\""));
+        assert!(master.ends_with("https://media.test/selected.m3u8?x=1&y=2\n"));
+        assert_eq!(value["url"], data["url"]);
+        assert!(stream(&data, true).unwrap()["hls_master"].is_null());
+    }
+
+    #[test]
+    fn video_only_hls_retains_codec_preparation_and_separate_indexed_audio() {
+        let mut video = muxed();
+        video["acodec"] = "none".into();
+        let audio = json!({"url":"https://media.test/audio.m4a", "protocol":"https",
+            "vcodec":"none","acodec":"mp4a.40.2","ext":"m4a","filesize":5000,
+            "vidcue_init_range":{"start":0,"end":500},
+            "vidcue_index_range":{"start":501,"end":700},"vidcue_duration_ms":"10000"});
+        let data = json!({"requested_formats":[video,audio]});
+        let value = stream(&data, false).unwrap();
+        assert!(value["dash_manifest"].is_null());
+        assert!(
+            value["hls_master"]
+                .as_str()
+                .unwrap()
+                .contains("CODECS=\"avc1.640028\"")
+        );
+        assert!(!value["hls_master"].as_str().unwrap().contains("mp4a"));
+        assert!(
+            value["audio_dash_manifest"]
+                .as_str()
+                .unwrap()
+                .contains("audio/mp4")
+        );
+        assert_eq!(value["audio_url"], "https://media.test/audio.m4a");
+    }
+
+    #[test]
+    fn progressive_paired_unknown_codecs_and_unsafe_attributes_keep_normal_source() {
+        for (field, value) in [
+            ("protocol", "https"),
+            ("vcodec", "none"),
+            ("acodec", "mp4a\"\n#EXT-X-MEDIA:bad"),
+            ("url", "https://media.test/a\nother"),
+        ] {
+            let mut data = muxed();
+            data[field] = value.into();
+            assert!(playback_hls_master(&data).is_none(), "{field}");
+        }
+        let mut data = muxed();
+        data.as_object_mut().unwrap().remove("manifest_url");
+        assert!(playback_hls_master(&data).is_none());
+        let data = json!({"requested_formats":[muxed(), {"url":"https://media.test/audio.m3u8","vcodec":"none","acodec":"mp4a.40.2"}]});
+        assert!(stream(&data, false).unwrap()["hls_master"].is_null());
+    }
+}
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
+    static R: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    R.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(3)
+            .enable_all()
+            .build()
+            .expect("mobile runtime")
+    })
+}
+static ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
+pub fn initialize(root: &Path, cache: &Path) -> Result<()> {
+    ENGINE
+        .set(Arc::new(Engine::new(root, cache)?))
+        .map_err(|_| anyhow::anyhow!("Mobile engine already initialized"))
+}
+pub fn call(raw: &str) -> String {
+    let result = (|| -> Result<Value> {
+        ensure!(
+            raw.len() <= 2 * 1024 * 1024,
+            "Request exceeds memory budget"
+        );
+        let value = serde_json::from_str(raw)?;
+        runtime().block_on(
+            ENGINE
+                .get()
+                .context("Engine is not initialized")?
+                .request(value),
+        )
+    })();
+    match result {
+        Ok(value) => json!({"ok":true,"data":value}).to_string(),
+        Err(error) => mobile_error(&error).to_string(),
+    }
+}
+fn mobile_error(error: &anyhow::Error) -> Value {
+    let text = vidcue_providers::diagnostic(&format!("{error:#}"));
+    let lower = text.to_ascii_lowercase();
+    let (code, message) = if lower.contains("no anonymous home recommendations") {
+        ("anonymous_home_empty","YouTube did not provide anonymous recommendations. Search for a video or sign in for a personalized feed.".into())
+    } else if lower.contains("sign in first") || lower.contains("session expired") {
+        (
+            "auth_required",
+            "Sign in to open this feed. Use Account → Sign in, or import a cookie document/header."
+                .into(),
+        )
+    } else if text.contains("F2") || text.contains("vidcue auth") {
+        ("consent_required","YouTube requires consent or a refreshed account session. Use Account → Sign in or import cookies.".into())
+    } else if lower.contains("likely being blocked")
+        || lower.contains("http 429")
+        || lower.contains("rate limit")
+    {
+        ("provider_rejected", text)
+    } else {
+        ("provider_error", text)
+    };
+    let retry = error
+        .downcast_ref::<vidcue_providers::browse::FeedRetry>()
+        .map(|r| r.after.as_millis().min(u64::MAX as u128) as u64);
+    json!({"ok":false,"code":code,"error":message,"retryable":retry.is_some(),"retry_after_ms":retry})
+}
+fn mobile_notice(text: String) -> String {
+    if text.contains("F2") || text.contains("vidcue auth") {
+        mobile_error(&anyhow::anyhow!(text))["error"]
+            .as_str()
+            .unwrap_or("Use Account to sign in or import cookies.")
+            .to_owned()
+    } else {
+        text
+    }
+}
+#[cfg(test)]
+mod mobile_error_tests {
+    use super::*;
+    #[test]
+    fn successful_empty_pages_do_not_keep_desktop_instructions() {
+        let notice = mobile_notice("No anonymous Home recommendations were returned. Press / to search, or F2 → Account → Connect browser".into());
+        assert!(notice.contains("Search") && notice.contains("sign in"));
+        assert!(!notice.contains("F2") && !notice.contains("Press /"));
+        assert_eq!(mobile_notice("End of results".into()), "End of results");
+    }
+    #[test]
+    fn account_errors_offer_android_actions_without_desktop_commands() {
+        for text in [
+            "Sign in first: use F2 → Account → Connect browser or vidcue auth import --browser brave-origin",
+            "YouTube requires browser consent. Open YouTube then F2 → Account → Connect browser",
+        ] {
+            let value = mobile_error(&anyhow::anyhow!(text));
+            let text = value["error"].as_str().unwrap();
+            assert!(text.contains("Account"));
+            assert!(
+                !text.contains("F2") && !text.contains("brave-origin") && !text.contains("vidcue")
+            );
+        }
+        let value = mobile_error(&anyhow::anyhow!(
+            "No anonymous Home recommendations were returned. Press / to search, or F2"
+        ));
+        assert_eq!(value["code"], "anonymous_home_empty");
+        assert!(value["error"].as_str().unwrap().contains("Search"));
+    }
+    #[test]
+    fn transient_transport_errors_remain_retryable_without_a_service_delay() {
+        let error = vidcue_providers::browse::FeedRetry::new(
+            "Temporary connection failure",
+            std::time::Duration::ZERO,
+        );
+        let value = mobile_error(&error.into());
+        assert_eq!(value["retryable"], true);
+        assert_eq!(value["retry_after_ms"], 0);
+        assert_eq!(
+            mobile_error(&anyhow::anyhow!("Bad request"))["retryable"],
+            false
+        );
+    }
+}
+#[cfg(target_os = "android")]
+mod android {
+    use super::*;
+    use jni::{
+        JNIEnv,
+        objects::{JClass, JString},
+        sys::{jlong, jstring},
+    };
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_activateContext(
+        mut env: JNIEnv,
+        _class: JClass,
+        id: JString,
+    ) {
+        let result = (|| -> Result<()> {
+            let id: String = env.get_string(&id)?.into();
+            ensure!(id.len() <= 128, "Invalid playback context");
+            ENGINE
+                .get()
+                .context("Engine is not initialized")?
+                .activate_context((!id.is_empty()).then_some(id));
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = env.throw_new(
+                "java/lang/IllegalArgumentException",
+                "Invalid playback context",
+            );
+        }
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_init(
+        mut env: JNIEnv,
+        _class: JClass,
+        root: JString,
+        cache: JString,
+    ) -> jstring {
+        let result = (|| -> Result<()> {
+            crate::platform::initialize_bridge(&mut env)?;
+            let root: String = env.get_string(&root)?.into();
+            let cache: String = env.get_string(&cache)?.into();
+            initialize(Path::new(&root), Path::new(&cache))
+        })();
+        let text = match result {
+            Ok(()) => String::new(),
+            Err(e) => vidcue_providers::diagnostic(&format!("{e:#}")),
+        };
+        env.new_string(text)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_beginAccountChange(
+        _env: JNIEnv,
+        _class: JClass,
+    ) -> jlong {
+        ENGINE
+            .get()
+            .map(|e| e.begin_account_change() as jlong)
+            .unwrap_or(0)
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_accountIntent(
+        _env: JNIEnv,
+        _class: JClass,
+    ) -> jlong {
+        ENGINE
+            .get()
+            .map(|e| e.account_intent() as jlong)
+            .unwrap_or(0)
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_thumbnail(
+        mut env: JNIEnv,
+        _class: JClass,
+        media: JString,
+        pixels: jni::sys::jint,
+    ) -> jni::sys::jintArray {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+            || -> Result<jni::sys::jintArray> {
+                let raw: String = env.get_string(&media)?.into();
+                ensure!(raw.len() <= 256 * 1024, "Thumbnail request exceeds limit");
+                let media: Media = serde_json::from_str(&raw)?;
+                let width = pixels.clamp(32, 768) as u32;
+                let image = runtime()
+                    .block_on(
+                        ENGINE
+                            .get()
+                            .context("Engine is not initialized")?
+                            .thumbnail(&media, width, width),
+                    )?
+                    .to_rgba8();
+                let mut values =
+                    Vec::with_capacity(2 + image.width() as usize * image.height() as usize);
+                values.extend([image.width() as i32, image.height() as i32]);
+                values.extend(image.pixels().map(|p| {
+                    ((p[3] as u32) << 24 | (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32)
+                        as i32
+                }));
+                let output = env.new_int_array(values.len() as i32)?;
+                env.set_int_array_region(&output, 0, &values)?;
+                Ok(output.into_raw())
+            },
+        ));
+        result
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(std::ptr::null_mut())
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_request(
+        mut env: JNIEnv,
+        _class: JClass,
+        request: JString,
+    ) -> jstring {
+        let raw = env
+            .get_string(&request)
+            .map(|v| v.into())
+            .unwrap_or_else(|_| String::new());
+        let value = std::panic::catch_unwind(|| call(&raw))
+            .unwrap_or_else(|_| json!({"ok":false,"error":"Native operation failed"}).to_string());
+        env.new_string(value)
+            .map(|s| s.into_raw())
+            .unwrap_or(std::ptr::null_mut())
+    }
+    /// Runs `read` over the decoder's direct PCM window; `None` when the window is out of range.
+    fn with_direct_pcm<R>(
+        env: &JNIEnv,
+        buffer: &jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        if offset < 0 || length < 0 {
+            return None;
+        }
+        let capacity = env.get_direct_buffer_capacity(buffer).ok()?;
+        let end = (offset as usize).checked_add(length as usize)?;
+        if end > capacity {
+            return None;
+        }
+        let pointer = env.get_direct_buffer_address(buffer).ok()?;
+        // Java owns the direct decoder buffer and keeps it immutable for this call.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(pointer.add(offset as usize), length as usize) };
+        Some(read(bytes))
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_meter(
+        env: JNIEnv,
+        _class: JClass,
+        buffer: jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        channels: jni::sys::jint,
+    ) -> jlong {
+        if channels < 1 {
+            return 0;
+        }
+        with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+            crate::meter::pcm16(bytes, channels as usize) as jlong
+        })
+        .unwrap_or(0)
+    }
+    /// Writes `out.length` log-spaced band levels (0..=65535). Unusable windows write zeros.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_spectrum(
+        env: JNIEnv,
+        _class: JClass,
+        buffer: jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        channels: jni::sys::jint,
+        sample_rate: jni::sys::jint,
+        out: jni::objects::JIntArray,
+    ) {
+        let mut bands = [0_i32; crate::meter::BANDS];
+        if channels >= 1 && sample_rate > 0 {
+            with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+                crate::meter::spectrum_pcm16(
+                    bytes,
+                    channels as usize,
+                    sample_rate as u32,
+                    &mut bands,
+                )
+            });
+        }
+        let _ = env.set_int_array_region(&out, 0, &bands);
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_cancel(
+        _env: JNIEnv,
+        _class: JClass,
+        id: jlong,
+    ) {
+        if let Some(engine) = ENGINE.get() {
+            engine.cancel(id as u64);
+        }
+    }
+}
+
+pub mod meter;
+#[cfg(target_os = "android")]
+mod platform;
+pub mod ui;
