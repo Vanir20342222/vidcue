@@ -34,4 +34,12 @@ public final class PreparationPolicyTest {
       }
     }
   }
+
+  @Test
+  public void nestedCollectionsAreSkippedNotResolved() {
+    for (String kind : new String[] {"playlist", "album", "artist", "channel"})
+      assertTrue(kind, PreparationPolicy.collection(kind));
+    for (String kind : new String[] {"video", "song", "station", ""})
+      assertFalse(kind, PreparationPolicy.collection(kind));
+  }
 }
