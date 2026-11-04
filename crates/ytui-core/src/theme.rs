@@ -16,21 +16,56 @@ pub struct Palette {
     pub success: Rgb,
     pub light: bool,
 }
+/// Built-in themes, in picker order: automatic, the ytui pair, the Nothing pair, then
+/// popular editor palettes that also ship as Omarchy desktop themes (so a fixed choice can
+/// match the target desktop), and finally the terminal's own colours.
 pub const THEMES: &[&str] = &[
     "system",
-    "catppuccin-mocha",
-    "catppuccin-latte",
-    "tokyo-night",
-    "gruvbox",
-    "gruvbox-light",
-    "nord",
-    "rose-pine",
     "ytui-dark",
     "ytui-light",
-    "dracula",
-    "solarized-dark",
+    "nothing-dark",
+    "nothing-light",
+    "tokyo-night",
+    "catppuccin-mocha",
+    "catppuccin-latte",
+    "everforest",
+    "gruvbox",
+    "kanagawa",
+    "nord",
+    "matte-black",
+    "flexoki-light",
     "terminal",
 ];
+/// Themes removed from the picker, with the closest remaining palette. Saved settings that
+/// name one keep working and are rewritten to the replacement on load.
+pub const RETIRED_THEMES: &[(&str, &str)] = &[
+    ("dracula", "catppuccin-mocha"),
+    ("rose-pine", "catppuccin-mocha"),
+    ("solarized-dark", "nord"),
+    ("gruvbox-light", "flexoki-light"),
+];
+/// The current name for a saved theme value: retired built-ins map to their replacement;
+/// anything else (current names, "system", "custom", palette file paths) is unchanged.
+pub fn canonical(name: &str) -> &str {
+    RETIRED_THEMES
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map_or(name, |(_, new)| new)
+}
+/// Serde hook for `Config::theme` so every load path migrates retired names.
+pub fn deserialize_theme<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
+    let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(canonical(&name).to_owned())
+}
+impl Palette {
+    /// Nothing-styled palettes draw meters as dot-matrix rows and, on Android, use
+    /// dot-matrix display type. Imported palettes never opt in.
+    pub fn dot_matrix(&self) -> bool {
+        self.source == "Built-in" && self.name.starts_with("nothing-")
+    }
+}
 pub fn color(value: &str) -> Result<Rgb> {
     let value = value.trim().trim_start_matches('#');
     let value = if value.len() == 3 {
@@ -54,7 +89,47 @@ pub fn builtin(name: &str) -> Result<Palette> {
         "light" => "ytui-light",
         other => other,
     };
+    let name = canonical(name);
+    // Roles: background, surface, text, muted, accent, selection, error, warning, success.
     let (values, light) = match name {
+        "ytui-dark" | "terminal" => (
+            [
+                "101418", "1b232c", "e5edf4", "a8b9c9", "6ddbc1", "294053", "ff7f86", "f5c36c",
+                "8edd99",
+            ],
+            false,
+        ),
+        "ytui-light" => (
+            [
+                "f6f8fa", "e9eff3", "202c36", "52687b", "006f62", "d0e3eb", "b42336", "986300",
+                "24713e",
+            ],
+            true,
+        ),
+        // Nothing: true-black OLED canvas, white type, grey secondary text and one red
+        // signal colour used sparingly (as on Nothing OS widgets and the Glyph record dot).
+        "nothing-dark" => (
+            [
+                "000000", "141414", "ffffff", "999999", "d71921", "262626", "ff4d4d", "e6b422",
+                "4cbb6c",
+            ],
+            false,
+        ),
+        // Nothing light: paper-white surfaces on a pale grey page, black ink, the same red.
+        "nothing-light" => (
+            [
+                "f2f2f2", "ffffff", "000000", "585a5a", "d71921", "dcdcdc", "a3121a", "8a6200",
+                "1f7a3a",
+            ],
+            true,
+        ),
+        "tokyo-night" => (
+            [
+                "1a1b26", "24283b", "c0caf5", "9aa5ce", "7aa2f7", "3b4261", "f7768e", "e0af68",
+                "9ece6a",
+            ],
+            false,
+        ),
         "catppuccin-mocha" | "system" => (
             [
                 "1e1e2e", "313244", "cdd6f4", "a6adc8", "cba6f7", "45475a", "f38ba8", "f9e2af",
@@ -69,10 +144,10 @@ pub fn builtin(name: &str) -> Result<Palette> {
             ],
             true,
         ),
-        "tokyo-night" => (
+        "everforest" => (
             [
-                "1a1b26", "24283b", "c0caf5", "9aa5ce", "7aa2f7", "3b4261", "f7768e", "e0af68",
-                "9ece6a",
+                "2d353b", "343f44", "d3c6aa", "9da9a0", "a7c080", "475258", "e67e80", "dbbc7f",
+                "83c092",
             ],
             false,
         ),
@@ -83,12 +158,12 @@ pub fn builtin(name: &str) -> Result<Palette> {
             ],
             false,
         ),
-        "gruvbox-light" => (
+        "kanagawa" => (
             [
-                "fbf1c7", "ebdbb2", "3c3836", "665c54", "9d0006", "d5c4a1", "cc241d", "af3a03",
-                "427b58",
+                "1f1f28", "2a2a37", "dcd7ba", "a6a69c", "7e9cd8", "2d4f67", "e46876", "e6c384",
+                "98bb6c",
             ],
-            true,
+            false,
         ),
         "nord" => (
             [
@@ -97,47 +172,20 @@ pub fn builtin(name: &str) -> Result<Palette> {
             ],
             false,
         ),
-        "rose-pine" => (
+        // Omarchy's Matte Black: near-black neutrals with a single amber accent.
+        "matte-black" => (
             [
-                "191724", "1f1d2e", "e0def4", "aaa5c5", "c4a7e7", "403d52", "eb6f92", "f6c177",
-                "9ccfd8",
+                "121212", "1e1e1e", "bebebe", "8a8a8d", "e68e0d", "333333", "d35f5f", "ffc107",
+                "8fae6b",
             ],
             false,
         ),
-        "ytui-dark" => (
+        "flexoki-light" => (
             [
-                "101418", "1b232c", "e5edf4", "a8b9c9", "6ddbc1", "294053", "ff7f86", "f5c36c",
-                "8edd99",
-            ],
-            false,
-        ),
-        "ytui-light" => (
-            [
-                "f6f8fa", "e9eff3", "202c36", "52687b", "006f62", "d0e3eb", "b42336", "986300",
-                "24713e",
+                "fffcf0", "f2f0e5", "100f0f", "6f6e69", "205ea6", "dad8ce", "af3029", "ad8301",
+                "66800b",
             ],
             true,
-        ),
-        "dracula" => (
-            [
-                "282a36", "343746", "f8f8f2", "bdc1d0", "bd93f9", "44475a", "ff5555", "f1fa8c",
-                "50fa7b",
-            ],
-            false,
-        ),
-        "solarized-dark" => (
-            [
-                "002b36", "073642", "eee8d5", "93a1a1", "2aa198", "174c56", "dc322f", "b58900",
-                "859900",
-            ],
-            false,
-        ),
-        "terminal" => (
-            [
-                "101418", "1b232c", "e5edf4", "a8b9c9", "6ddbc1", "294053", "ff7f86", "f5c36c",
-                "8edd99",
-            ],
-            false,
         ),
         _ => anyhow::bail!(
             "Unknown theme {name}; use :theme to list built-ins or a palette file path"
@@ -234,5 +282,40 @@ mod tests {
         }
         assert_eq!(color("#abc").unwrap(), (170, 187, 204));
         assert_eq!(color("012345").unwrap(), (1, 35, 69));
+    }
+    #[test]
+    fn retired_themes_resolve_to_a_listed_replacement() {
+        for (old, new) in RETIRED_THEMES {
+            assert!(!THEMES.contains(old), "{old} is still listed");
+            assert!(THEMES.contains(new), "{new} is not listed");
+            assert_eq!(builtin(old).unwrap(), builtin(new).unwrap());
+            assert_eq!(canonical(old), *new);
+        }
+        for name in ["system", "custom", "/home/me/palette.toml", "nothing-dark"] {
+            assert_eq!(canonical(name), name);
+        }
+    }
+    #[test]
+    fn saved_settings_with_a_retired_theme_load_as_its_replacement() {
+        let toml: crate::Config = toml::from_str("theme = 'dracula'").unwrap();
+        assert_eq!(toml.theme, "catppuccin-mocha");
+        let json: crate::Config = serde_json::from_str(r#"{"theme":"gruvbox-light"}"#).unwrap();
+        assert_eq!(json.theme, "flexoki-light");
+        let kept: crate::Config = toml::from_str("theme = 'nord'").unwrap();
+        assert_eq!(kept.theme, "nord");
+        let missing: crate::Config = toml::from_str("").unwrap();
+        assert_eq!(missing.theme, "system");
+    }
+    #[test]
+    fn only_built_in_nothing_palettes_use_dot_matrix_styling() {
+        assert!(builtin("nothing-dark").unwrap().dot_matrix());
+        assert!(builtin("nothing-light").unwrap().dot_matrix());
+        assert!(!builtin("ytui-dark").unwrap().dot_matrix());
+        let mut imported = builtin("nothing-dark").unwrap();
+        imported.source = "Custom palette".into();
+        assert!(!imported.dot_matrix());
+        let nothing = builtin("nothing-dark").unwrap();
+        assert_eq!(nothing.background, (0, 0, 0));
+        assert_eq!(nothing.accent, (0xd7, 0x19, 0x21));
     }
 }

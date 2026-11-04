@@ -46,6 +46,9 @@ pub struct Config {
     pub version: u32,
     #[serde(skip)]
     pub offline: bool,
+    /// Built-in name, "system", "custom" (Android import) or a palette file path.
+    /// Retired built-in names are migrated to their replacement while loading.
+    #[serde(deserialize_with = "crate::theme::deserialize_theme")]
     pub theme: String,
     pub language: String,
     pub theme_provider: String,

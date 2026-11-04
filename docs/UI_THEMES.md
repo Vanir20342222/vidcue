@@ -19,34 +19,41 @@ artwork are fictional; no media or external provider is accessed by the capture.
 
 | Theme | WQHD screenshot | Check |
 | --- | --- | --- |
-| Catppuccin Mocha | [View](screenshots/themes/catppuccin-mocha.png) | Render, switching, role contrast |
-| Catppuccin Latte | [View](screenshots/themes/catppuccin-latte.png) | Render, switching, role contrast; darker muted/status roles |
-| Tokyo Night | [View](screenshots/themes/tokyo-night.png) | Render, switching, role contrast |
-| Gruvbox | [View](screenshots/themes/gruvbox.png) | Render, switching, role contrast |
-| Gruvbox Light | [View](screenshots/themes/gruvbox-light.png) | Render, switching, role contrast |
-| Nord | [View](screenshots/themes/nord.png) | Render, switching, role contrast |
-| Rose Pine | [View](screenshots/themes/rose-pine.png) | Render, switching, role contrast |
 | ytui Dark | [View](screenshots/themes/ytui-dark.png) | Render, switching, role contrast |
 | ytui Light | [View](screenshots/themes/ytui-light.png) | Render, switching, role contrast |
-| Dracula | [View](screenshots/themes/dracula.png) | Render, switching, role contrast |
-| Solarized Dark | [View](screenshots/themes/solarized-dark.png) | Render, switching, role contrast |
+| Nothing Dark | [View](screenshots/themes/nothing-dark.png) | Render, switching, role contrast; dot-matrix download meter |
+| Nothing Light | [View](screenshots/themes/nothing-light.png) | Render, switching, role contrast; dot-matrix download meter |
+| Tokyo Night | [View](screenshots/themes/tokyo-night.png) | Render, switching, role contrast |
+| Catppuccin Mocha | [View](screenshots/themes/catppuccin-mocha.png) | Render, switching, role contrast |
+| Catppuccin Latte | [View](screenshots/themes/catppuccin-latte.png) | Render, switching, role contrast; darker muted/status roles |
+| Everforest | [View](screenshots/themes/everforest.png) | Render, switching, role contrast |
+| Gruvbox | [View](screenshots/themes/gruvbox.png) | Render, switching, role contrast |
+| Kanagawa | [View](screenshots/themes/kanagawa.png) | Render, switching, role contrast |
+| Nord | [View](screenshots/themes/nord.png) | Render, switching, role contrast |
+| Matte Black | [View](screenshots/themes/matte-black.png) | Render, switching, role contrast |
+| Flexoki Light | [View](screenshots/themes/flexoki-light.png) | Render, switching, role contrast |
 | Terminal ANSI | [View](screenshots/themes/terminal.png) | ANSI text/chrome; thumbnail image colors remain intact |
 | System preview | [View](screenshots/themes/system.png) | Built-in fallback preview; real desktop following is a separate acceptance check |
 
+Dracula, Rose Pine, Solarized Dark and Gruvbox Light were retired in the theme overhaul.
+Saved settings that name them load as Catppuccin Mocha, Catppuccin Mocha, Nord and
+Flexoki Light respectively. Refresh only the theme captures with
+`target/debug/examples/capture_ui --themes-only --binary target/debug/ytui`.
+
 Each entry renders all four workspaces and fifteen dialogs at five sizes, including
-35×12 and 212×58 (1,235 combinations). All ten download phases are also rendered
+35×12 and 212×58 (1,425 combinations). All ten download phases are also rendered
 in every theme. Built-in RGB text, muted text and selected text must reach contrast
 4.5:1; accent/status roles must reach 3:1 against the background. These checks do
 not certify arbitrary user palettes, terminal ANSI colors or real desktop themes.
 
 The nine settings categories additionally render their first and last selected
-fields in English and German, all 13 themes and five sizes: 2,340 settings states.
+fields in English and German, all 15 themes and five sizes: 2,700 settings states.
 German Save/Cancel buttons use compact labels when necessary. The three download
-form categories add 390 states. Keyboard/mouse
+form categories add 450 states. Keyboard/mouse
 editing, invalid-save recovery, cancellation and persistence have separate tests.
 
 The lyrics panel's loading, empty, candidates, open text and error states render in
-both languages, all 13 themes and five sizes (650 states). Media titles/lyrics are
+both languages, all 15 themes and five sizes (750 states). Media titles/lyrics are
 not translated. Actual track matching and stale/closed-request handling have
 separate interaction checks.
 

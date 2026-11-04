@@ -199,6 +199,83 @@ internal object YtuiType {
                     letterSpacing = 0.2.sp,
                 ),
         )
+
+    @OptIn(ExperimentalTextApi::class)
+    private fun dotFont(weight: Int) =
+        Font(
+            R.font.doto,
+            FontWeight(weight),
+            // Fully round dots, like Nothing's Ndot dot-matrix face.
+            variationSettings =
+                FontVariation.Settings(
+                    FontVariation.weight(weight),
+                    FontVariation.Setting("ROND", 100f),
+                ),
+        )
+
+    @OptIn(ExperimentalTextApi::class)
+    private fun geistFont(weight: Int) =
+        Font(
+            R.font.geist,
+            FontWeight(weight),
+            variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
+        )
+
+    @OptIn(ExperimentalTextApi::class)
+    private fun geistMonoFont(weight: Int) =
+        Font(
+            R.font.geist_mono,
+            FontWeight(weight),
+            variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
+        )
+
+    /** Dot-matrix display face (Doto, an open stand-in for Nothing's Ndot). */
+    val dotMatrix = FontFamily(dotFont(700), dotFont(800), dotFont(900))
+
+    /** Nothing OS 5's everyday sans and its monospace companion. */
+    val geist = FontFamily(geistFont(400), geistFont(500), geistFont(600), geistFont(700))
+    val geistMono = FontFamily(geistMonoFont(400), geistMonoFont(500), geistMonoFont(600))
+
+    /**
+     * Nothing-styled type: dot matrix only where it gives character (page names and the
+     * playing title), Geist for reading, and Geist Mono for small labels and metadata.
+     */
+    val nothing: androidx.compose.material3.Typography =
+        typography.run {
+            fun TextStyle.dots() =
+                copy(fontFamily = dotMatrix, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.sp)
+            fun TextStyle.mono(spacing: Float) =
+                copy(fontFamily = geistMono, fontWeight = FontWeight.Medium, letterSpacing = spacing.sp)
+            copy(
+                displaySmall = displaySmall.dots(),
+                headlineMedium = headlineMedium.dots(),
+                headlineSmall = headlineSmall.dots(),
+                titleLarge =
+                    titleLarge.copy(
+                        fontFamily = geist,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.sp,
+                    ),
+                titleMedium = titleMedium.copy(fontFamily = geist, fontWeight = FontWeight.Medium),
+                titleSmall = titleSmall.copy(fontFamily = geist, fontWeight = FontWeight.Medium),
+                bodyLarge = bodyLarge.copy(fontFamily = geist),
+                bodyMedium = bodyMedium.copy(fontFamily = geist),
+                bodySmall = bodySmall.copy(fontFamily = geist),
+                labelLarge = labelLarge.mono(0.4f),
+                labelMedium = labelMedium.mono(0.4f),
+                labelSmall = labelSmall.mono(0.5f),
+            )
+        }
+
+    /** Type for an applied palette: built-in Nothing palettes get [nothing]; others the default. */
+    fun forPalette(palette: JSONObject?): androidx.compose.material3.Typography =
+        if (palette != null && isDotMatrix(palette.optString("name"), palette.optString("source")))
+            nothing
+        else typography
+
+    /** Mirrors Rust's `Palette::dot_matrix`: imported palettes never switch type. */
+    fun isDotMatrix(name: String, source: String): Boolean =
+        source == "Built-in" && name.startsWith("nothing-")
 }
 
 /**

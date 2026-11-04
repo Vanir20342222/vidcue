@@ -506,14 +506,16 @@ fn job_state(app: &App, job: &Job) -> (&'static str, (u8, u8, u8)) {
         JobState::Backoff => ("Retry wait", app.palette.warning),
     }
 }
-fn meter(value: f64, width: usize) -> String {
+/// Nothing-styled palettes draw a dot-matrix row instead of a solid bar.
+fn meter(value: f64, width: usize, dots: bool) -> String {
     let value = if value.is_finite() {
         value.clamp(0.0, 1.0)
     } else {
         0.0
     };
     let filled = (value * width as f64).round() as usize;
-    format!("{}{}", "━".repeat(filled), "─".repeat(width - filled))
+    let (on, off) = if dots { ("●", "·") } else { ("━", "─") };
+    format!("{}{}", on.repeat(filled), off.repeat(width - filled))
 }
 fn downloads(f: &mut Frame, app: &mut App, area: Rect) {
     let jobs = &app.snapshot.downloads.jobs;
@@ -730,7 +732,11 @@ fn download_details(f: &mut Frame, app: &App, job: &Job, area: Rect) {
         lines.push(Line::styled(
             format!(
                 "{}  {:.0}%",
-                meter(value, inner.width.saturating_sub(7) as usize),
+                meter(
+                    value,
+                    inner.width.saturating_sub(7) as usize,
+                    app.palette.dot_matrix()
+                ),
                 value * 100.0
             ),
             style(app, color),
@@ -1491,5 +1497,15 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
             )),
             inner,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn meter_switches_to_dot_matrix_for_nothing_palettes() {
+        assert_eq!(super::meter(0.5, 4, false), "━━──");
+        assert_eq!(super::meter(0.5, 4, true), "●●··");
+        assert_eq!(super::meter(f64::NAN, 2, true), "··");
     }
 }

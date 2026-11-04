@@ -112,6 +112,9 @@ object ComposeHost {
     /** Last applied app palette, so the sign-in activity matches the chosen theme. */
     internal var colorScheme: ColorScheme? = null
 
+    /** Type that goes with [colorScheme]; Nothing palettes use dot-matrix display type. */
+    internal var typography: androidx.compose.material3.Typography = MediaTokens.typography
+
     private val authWorking = MutableStateFlow(false)
     private val authStatus = MutableStateFlow("")
 
@@ -141,7 +144,7 @@ object ComposeHost {
             val message by authStatus.collectAsState()
             val dark = isSystemInDarkTheme()
             val scheme = colorScheme ?: if (dark) darkColorScheme() else lightColorScheme()
-            MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
+            MaterialTheme(colorScheme = scheme, typography = typography) {
                 CompositionLocalProvider(
                     LocalContentColor provides scheme.onBackground,
                     LocalIndication provides SoftIndication,
@@ -284,8 +287,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             outline = lerp(background, foreground, 0.35f),
             outlineVariant = lerp(background, foreground, 0.12f),
         )
+    // Imported ("custom") palettes may reuse a built-in name; they keep the default type.
+    val typography = if (neutralPreset) YtuiType.forPalette(palette) else MediaTokens.typography
     SideEffect {
         ComposeHost.colorScheme = colors
+        ComposeHost.typography = typography
         AuthUi.motion(config.optBoolean("reduced_motion"))
     }
     LaunchedEffect(Unit) { vm.initialize(dark) }
@@ -331,7 +337,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         }
     MaterialTheme(
         colorScheme = colors,
-        typography = MediaTokens.typography,
+        typography = typography,
         shapes =
             Shapes(
                 small = MediaTokens.small,
