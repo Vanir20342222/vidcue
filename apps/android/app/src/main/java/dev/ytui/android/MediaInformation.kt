@@ -16,7 +16,7 @@ internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
         if (views.isNotBlank()) details += views
     }
     if (settings.optBoolean("show_upload_date", true)) {
-        val date = media.optString("upload_date").takeIf { it.matches(Regex("[0-9]{8}")) }
+        val date = media.optString("upload_date").takeIf { it.matches(UPLOAD_DATE) }
         val text =
             date?.let(::relativeUploadDate)
                 ?: media.optString("published_text").takeUnless { it == "null" }
@@ -30,17 +30,29 @@ internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
 }
 
 /** "283K", "1.2M": the short counts a watch page shows instead of every digit. */
-internal fun compactCount(count: Long): String =
-    android.icu.text.CompactDecimalFormat.getInstance(
-            java.util.Locale.getDefault(),
-            android.icu.text.CompactDecimalFormat.CompactStyle.SHORT,
-        )
-        .apply {
-            // "283K", not "284K": like YouTube, never round a count up.
-            roundingMode = android.icu.math.BigDecimal.ROUND_DOWN
-            maximumFractionDigits = if (count in 1_000..9_999 || count in 1_000_000..9_999_999) 1 else 0
+internal fun compactCount(count: Long): String {
+    val digits = if (count in 1_000..9_999 || count in 1_000_000..9_999_999) 1 else 0
+    // Building an ICU formatter loads locale data; doing it per card cost scroll frames.
+    // Formatters are kept per locale and digit count (and are not shared across threads).
+    val format =
+        synchronized(COMPACT_FORMATS) {
+            COMPACT_FORMATS.getOrPut(java.util.Locale.getDefault() to digits) {
+                android.icu.text.CompactDecimalFormat.getInstance(
+                        java.util.Locale.getDefault(),
+                        android.icu.text.CompactDecimalFormat.CompactStyle.SHORT,
+                    )
+                    .apply {
+                        // "283K", not "284K": like YouTube, never round a count up.
+                        roundingMode = android.icu.math.BigDecimal.ROUND_DOWN
+                        maximumFractionDigits = digits
+                    }
+            }
         }
-        .format(count)
+    return synchronized(format) { format.format(count) }
+}
+
+private val COMPACT_FORMATS = HashMap<Pair<java.util.Locale, Int>, android.icu.text.CompactDecimalFormat>()
+private val UPLOAD_DATE = Regex("[0-9]{8}")
 
 /** `yyyyMMdd` as "3 days ago" / "7 months ago"; falls back to the ISO date when parsing fails. */
 internal fun relativeUploadDate(date: String, today: java.time.LocalDate = java.time.LocalDate.now()): String {

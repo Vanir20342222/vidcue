@@ -47,6 +47,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -1033,28 +1034,26 @@ private fun BrowsePane(
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
     val initialScrollToTop = remember { scrollToTop }
-    // The search bar and filters slide away while scrolling down through results and come
-    // back on any upward scroll, at the top, or while the field is in use.
-    var headerShown by remember(tab) { mutableStateOf(true) }
-    val headerTravel = with(density) { 28.dp.toPx() }
+    // The search bar and filters move with the scroll: they slide up as the feed scrolls down
+    // and come back with any upward scroll. They float over the grid and only their layer moves,
+    // so hiding them never re-measures the grid mid-scroll.
+    var headerHeight by remember { mutableIntStateOf(0) }
+    val headerOffset = remember(tab) { mutableFloatStateOf(0f) }
     val headerScroll =
-        remember(headerTravel) {
+        remember(headerOffset) {
             object : NestedScrollConnection {
-                var travel = 0f
-
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     val dy = available.y
-                    if (dy == 0f) return Offset.Zero
-                    if ((dy < 0f) != (travel < 0f)) travel = 0f
-                    travel += dy
-                    if (travel < -headerTravel) headerShown = false
-                    else if (travel > headerTravel) headerShown = true
+                    if (dy != 0f)
+                        headerOffset.floatValue =
+                            (headerOffset.floatValue - dy).coerceIn(0f, headerHeight.toFloat())
                     return Offset.Zero
                 }
             }
         }
+    LaunchedEffect(searchActive, feed.request) { headerOffset.floatValue = 0f }
     LaunchedEffect(scrollToTop) {
-        headerShown = true
+        headerOffset.floatValue = 0f
         if (scrollToTop != initialScrollToTop) {
             if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
         }
@@ -1063,11 +1062,6 @@ private fun BrowsePane(
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { vm.rememberScroll(tab, it) }
-    }
-    LaunchedEffect(grid) {
-        snapshotFlow { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
-            .distinctUntilChanged()
-            .collect { top -> if (top) headerShown = true }
     }
     val focused by vm.playerOpen.collectAsState()
     val playingUrl by
@@ -1160,106 +1154,13 @@ private fun BrowsePane(
                 .collect { nearEnd -> if (nearEnd) vm.more() }
         }
     }
-    Column(
-        Modifier.fillMaxSize().testTag("browse-pane"),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        AnimatedVisibility(
-            headerShown || searchActive,
-            enter =
-                if (!motion.animate) EnterTransition.None
-                else fadeIn(motion.fade(160)) + expandVertically(motion.enter(240), expandFrom = Alignment.Top),
-            exit =
-                if (!motion.animate) ExitTransition.None
-                else fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(220), shrinkTowards = Alignment.Top),
-        ) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(
-            Modifier.align(Alignment.CenterHorizontally)
-                .padding(horizontal = MediaTokens.textInset)
-                .widthIn(max = 720.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (searchMode)
-                MediaIconButton(Glyph.Back, "Leave search") {
-                    releaseSearchFocus()
-                    if (searchResults) vm.back()
-                }
-            SearchField(
-                query,
-                { query = it },
-                if (tab == 3) "Search stations or genres" else "Search or paste a link",
-                // A single-line input should not stretch across a wide canvas;
-                // cap it and center it when the pane is wider than the cap.
-                Modifier.weight(1f)
-                    .focusRequester(focus)
-                    .onFocusChanged { onSearchFocus(it.isFocused) }
-                    .testTag("search-field"),
-                searching = searchMode,
-                onClear = {
-                    query = ""
-                    focus.requestFocus()
-                    keyboard?.show()
-                },
-                onSubmit = {
-                    keyboard?.hide()
-                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
-                    vm.search(query)
-                },
-            )
-        }
-        if (tab in 1..2 || feed.categories.isNotEmpty())
-            LazyRow(
-                Modifier.fillMaxWidth().testTag("feed-filters"),
-                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (tab in 1..2)
-                    items(
-                        // Library feeds the Browse sheet already offers, surfaced
-                        // where people look for them (Home only for video feeds).
-                        listOfNotNull(
-                            "For you" to "Home",
-                            "My playlists" to "Playlists",
-                            "Liked" to "Liked",
-                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
-                            if (tab == 1) "Watch later" to "WatchLater" else null,
-                        )
-                    ) { (label, request) ->
-                        MediaChip(
-                            label,
-                            selected = feed.request == request,
-                            modifier = Modifier.testTag("source-$request"),
-                        ) {
-                            vm.navigate(tab, request)
-                        }
-                    }
-                items(feed.categories) { category ->
-                    MediaChip(
-                        category.optString("title"),
-                        modifier = Modifier.testTag("category-${category.optString("title")}"),
-                        selected =
-                            feed.request !in
-                                listOf(
-                                    "Home",
-                                    "Subscriptions",
-                                    "WatchLater",
-                                    "Playlists",
-                                    "Liked",
-                                ) && category.opt("request")?.toString() == feed.request.toString(),
-                    ) {
-                        vm.navigate(request = category.get("request"))
-                    }
-                }
-            }
-        }
-        }
+    val headerSpace = with(density) { headerHeight.toDp() }
+    Box(Modifier.fillMaxSize().clipToBounds().testTag("browse-pane")) {
         // Pull to refresh reuses the overflow menu's "Refresh feed" request.
         var refreshing by remember { mutableStateOf(false) }
         LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
         val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(headerScroll)) {
+        Box(Modifier.fillMaxSize().nestedScroll(headerScroll)) {
         PullToRefreshBox(
             refreshing && feed.loading,
             onRefresh = {
@@ -1267,7 +1168,11 @@ private fun BrowsePane(
                 vm.navigate(request = feed.request, remember = false)
             },
             state = pullState,
-            indicator = { RefreshDisc(pullState, refreshing && feed.loading) },
+            indicator = {
+                Box(Modifier.matchParentSize().padding(top = headerSpace)) {
+                    RefreshDisc(pullState, refreshing && feed.loading)
+                }
+            },
             modifier =
                 Modifier.fillMaxSize().pointerInput(searchActive) {
                     // Touching content ends an unsubmitted search session, as tapping
@@ -1299,6 +1204,13 @@ private fun BrowsePane(
                         if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
                     }
                 }
+            // Covers read these once from the grid's composition instead of every card
+            // providing its own copies.
+            val scrollingProbe = remember(grid) { { grid.isScrollInProgress } }
+            CompositionLocalProvider(
+                LocalArtworkScrolling provides scrollingProbe,
+                LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
+            ) {
             LazyVerticalGrid(
                 columns =
                     if (fixedColumns) GridCells.Fixed(2)
@@ -1321,7 +1233,7 @@ private fun BrowsePane(
                     PaddingValues(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
-                        top = 4.dp,
+                        top = 4.dp + headerSpace,
                         bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
@@ -1408,8 +1320,7 @@ private fun BrowsePane(
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
                                     val shelfWidth = if (tab == 1) 272.dp else 152.dp
                                     CompositionLocalProvider(
-                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() },
+                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() }
                                     ) {
                                         Box(
                                             Modifier.width(shelfWidth).pressFeedback()
@@ -1439,10 +1350,7 @@ private fun BrowsePane(
                     contentType = { "media-card" },
                 ) { media ->
                     // Scroll state is read in image effects, without recomposing every card.
-                    CompositionLocalProvider(
-                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                        LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
-                    ) {
+                    run {
                         Box(
                             Modifier.then(
                                     // Cached categories display at once, without card entrances.
@@ -1500,6 +1408,7 @@ private fun BrowsePane(
                         }
                     }
             }
+            }
         }
         // While the field is focused and empty, recent searches cover the feed (which stays
         // composed underneath so focus and scroll position survive).
@@ -1524,9 +1433,98 @@ private fun BrowsePane(
                     if (rememberSearches) RecentSearches.add(context, tab == 3, it)
                     vm.search(it)
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(top = headerSpace),
             )
         }
+        }
+        Column(
+            Modifier.fillMaxWidth()
+                .onSizeChanged { headerHeight = it.height }
+                .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
+                .background(MaterialTheme.colorScheme.background)
+                .padding(bottom = 12.dp)
+                .testTag("browse-header"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+        Row(
+            Modifier.align(Alignment.CenterHorizontally)
+                .padding(horizontal = MediaTokens.textInset)
+                .widthIn(max = 720.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (searchMode)
+                MediaIconButton(Glyph.Back, "Leave search") {
+                    releaseSearchFocus()
+                    if (searchResults) vm.back()
+                }
+            SearchField(
+                query,
+                { query = it },
+                if (tab == 3) "Search stations or genres" else "Search or paste a link",
+                // A single-line input should not stretch across a wide canvas;
+                // cap it and center it when the pane is wider than the cap.
+                Modifier.weight(1f)
+                    .focusRequester(focus)
+                    .onFocusChanged { onSearchFocus(it.isFocused) }
+                    .testTag("search-field"),
+                searching = searchMode,
+                onClear = {
+                    query = ""
+                    focus.requestFocus()
+                    keyboard?.show()
+                },
+                onSubmit = {
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
+                    vm.search(query)
+                },
+            )
+        }
+        if (tab in 1..2 || feed.categories.isNotEmpty())
+            LazyRow(
+                Modifier.fillMaxWidth().testTag("feed-filters"),
+                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (tab in 1..2)
+                    items(
+                        // Library feeds the Browse sheet already offers, surfaced
+                        // where people look for them (Home only for video feeds).
+                        listOfNotNull(
+                            "For you" to "Home",
+                            "My playlists" to "Playlists",
+                            "Liked" to "Liked",
+                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
+                            if (tab == 1) "Watch later" to "WatchLater" else null,
+                        )
+                    ) { (label, request) ->
+                        MediaChip(
+                            label,
+                            selected = feed.request == request,
+                            modifier = Modifier.testTag("source-$request"),
+                        ) {
+                            vm.navigate(tab, request)
+                        }
+                    }
+                items(feed.categories) { category ->
+                    MediaChip(
+                        category.optString("title"),
+                        modifier = Modifier.testTag("category-${category.optString("title")}"),
+                        selected =
+                            feed.request !in
+                                listOf(
+                                    "Home",
+                                    "Subscriptions",
+                                    "WatchLater",
+                                    "Playlists",
+                                    "Liked",
+                                ) && category.opt("request")?.toString() == feed.request.toString(),
+                    ) {
+                        vm.navigate(request = category.get("request"))
+                    }
+                }
+            }
         }
     }
     cardMenu?.let { (media, square) ->
@@ -1687,14 +1685,9 @@ private fun MediaRow(
             )
             if (media.live || !square)
                 MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
-            androidx.compose.animation.AnimatedVisibility(
-                current,
-                Modifier.align(Alignment.TopStart),
-                enter = fadeIn() + scaleIn(initialScale = 0.6f),
-                exit = fadeOut() + scaleOut(targetScale = 0.6f),
-            ) {
-                PlayingBars(playing)
-            }
+            // Only the playing card composes its bars; an AnimatedVisibility per card kept a
+            // transition alive in every cell of the grid.
+            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
         }
         Row(
             Modifier.fillMaxWidth()
@@ -1735,7 +1728,8 @@ private fun MediaRow(
                             )
                         else Color.Unspecified,
                 )
-                val information = if (tab == 1) mediaInformation(media.value, mobile) else ""
+                val information =
+                    remember(media, mobile, tab) { if (tab == 1) mediaInformation(media.value, mobile) else "" }
                 val metadata =
                     listOfNotNull(
                             if (mobile.optBoolean("show_channel", true))
