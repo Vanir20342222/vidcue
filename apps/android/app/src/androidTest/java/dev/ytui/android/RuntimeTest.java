@@ -153,6 +153,31 @@ public final class RuntimeTest {
   }
 
   @Test
+  public void decodedToneProducesFrequencyBandsNearItsPitch() throws Exception {
+    AudioTap tap = new AudioTap();
+    tap.configure(
+        new androidx.media3.common.audio.AudioProcessor.AudioFormat(
+            44100, 1, androidx.media3.common.C.ENCODING_PCM_16BIT));
+    tap.flush();
+    java.nio.ByteBuffer tone =
+        java.nio.ByteBuffer.allocateDirect(2048 * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+    for (int n = 0; n < 2048; n++) {
+      tone.putShort((short) Math.round(16000 * Math.sin(2 * Math.PI * 1000 * n / 44100.0)));
+    }
+    tone.flip();
+    AudioTap.enabled = true;
+    try {
+      tap.queueInput(tone);
+      int strongest = 0;
+      for (int value : AudioTap.spectrum) strongest = Math.max(strongest, value);
+      assertTrue("A 1 kHz tone must produce strong band levels", strongest > 20000);
+    } finally {
+      AudioTap.enabled = false;
+      tap.reset();
+    }
+  }
+
+  @Test
   public void emptyAudioProcessorInputDoesNotCopyTheSharedEosBuffer() throws Exception {
     AudioTap tap = new AudioTap();
     tap.configure(

@@ -4,11 +4,16 @@ import androidx.media3.common.C;
 import androidx.media3.common.audio.BaseAudioProcessor;
 import java.nio.ByteBuffer;
 
-/** A pass-through tap; numerical analysis is Rust and never records audio. */
+/**
+ * A pass-through tap; numerical analysis is Rust and never records audio. {@code spectrum} is
+ * written in place from the audio thread and read by the frame loop. A torn read only shows as
+ * one slightly stale visual frame, so it is intentionally not synchronized.
+ */
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public final class AudioTap extends BaseAudioProcessor {
   static volatile long levels;
   static volatile boolean enabled;
+  static final int[] spectrum = new int[24];
 
   @Override
   public AudioFormat onConfigure(AudioFormat input) {
@@ -19,8 +24,16 @@ public final class AudioTap extends BaseAudioProcessor {
   public void queueInput(ByteBuffer input) {
     int size = input.remaining();
     if (size == 0) return; // EOS may pass the shared EMPTY_BUFFER; never put a buffer into itself.
-    if (enabled && size > 0)
+    if (enabled && size > 0) {
       levels = NativeBridge.meter(input, input.position(), size, inputAudioFormat.channelCount);
+      NativeBridge.spectrum(
+          input,
+          input.position(),
+          size,
+          inputAudioFormat.channelCount,
+          inputAudioFormat.sampleRate,
+          spectrum);
+    }
     ByteBuffer output = replaceOutputBuffer(size);
     output.put(input);
     output.flip();

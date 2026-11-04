@@ -29,4 +29,11 @@ public final class NativeBridge {
   public static native long uiShutdowns();
 
   public static native long meter(java.nio.ByteBuffer buffer, int offset, int length, int channels);
+
+  /**
+   * Writes {@code out.length} log-spaced band levels (0..65535, low to high frequency) from the
+   * same PCM window. The Rust side keeps a rolling mono window across calls.
+   */
+  public static native void spectrum(
+      java.nio.ByteBuffer buffer, int offset, int length, int channels, int sampleRate, int[] out);
 }

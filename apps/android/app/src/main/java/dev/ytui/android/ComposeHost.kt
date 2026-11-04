@@ -2211,14 +2211,21 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
     var phase by remember { mutableFloatStateOf(0f) }
-    var levels by remember(style) { mutableLongStateOf(0L) }
+    // The liquid keeps its own clock. It is read only while drawing, so the animation never
+    // recomposes this screen.
+    val levels = remember(style) { LiquidLevels() }
+    var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
         if (player.playing && !reduced && style != "classic" && visible) {
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
-                if (previous != 0L) phase = (phase + (now - previous) / 1_000_000_000f * 90) % 360
+                val elapsed = if (previous == 0L) 0f else (now - previous) / 1_000_000_000f
+                if (previous != 0L) phase = (phase + elapsed * 90) % 360
                 previous = now
-                if (style.startsWith("vu") || style.startsWith("orbit")) levels = AudioTap.levels
+                if (style.startsWith("vu") || style.startsWith("orbit")) {
+                    levels.step(AudioTap.spectrum, elapsed)
+                    liquidTime += elapsed
+                }
             }
         }
     }
@@ -2298,56 +2305,17 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                 config.optBoolean("thumbnails", true),
             )
         } else if (style.startsWith("vu")) {
-            Column(Modifier.fillMaxSize()) {
+            // The liquid fills the container below the cover, which stays on top.
+            Box(Modifier.fillMaxSize()) {
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.45f)
-                        .aspectRatio(1f)
-                        .align(Alignment.CenterHorizontally),
+                    Modifier.fillMaxWidth(0.45f).aspectRatio(1f).align(Alignment.TopCenter),
                     config.optBoolean("thumbnails", true),
                 )
-                // Keep the meter in the artwork's visual group instead of
-                // stranding it at the bottom of the container.
-                Spacer(Modifier.height(32.dp))
-                Canvas(Modifier.weight(1f).fillMaxWidth()) {
-                    val packed = levels
-                    val left = (packed and 65535) / 65535f
-                    val right = ((packed ushr 16) and 65535) / 65535f
-                    // Inset the strip by the container's corner radius so the
-                    // rounded clip never cuts into the end segments.
-                    val inset = cornerRadius.toPx()
-                    val span = (size.width - inset * 2).coerceAtLeast(0f)
-                    for (i in 0..23) {
-                        val level = if (i < 12) left else right
-                        val height =
-                            ((0.03f + level * (0.12f + 0.08f * sin(phase / 30 + i))) * span)
-                                .coerceAtMost(size.height)
-                        drawRect(
-                            accent.copy(alpha = 0.5f + 0.5f * level),
-                            Offset(inset + i * span / 24, 0f),
-                            androidx.compose.ui.geometry.Size(span / 30, height),
-                        )
-                    }
-                }
             }
         } else {
-            Canvas(Modifier.fillMaxSize()) {
-                val packed = levels
-                val left = (packed and 65535) / 65535f
-                val right = ((packed ushr 16) and 65535) / 65535f
-                val center = Offset(size.width / 2, size.height / 2)
-                val radius = size.minDimension * 0.28f
-                drawCircle(accent.copy(alpha = 0.2f), radius, center, style = Stroke(3f))
-                for (i in 0..11) {
-                    val angle = phase / 180 * PI + i * PI / 6
-                    val r = radius * (1 + (left + right) * 0.4f)
-                    drawCircle(
-                        accent,
-                        4 + (left + right) * 10,
-                        center + Offset((cos(angle) * r).toFloat(), (sin(angle) * r).toFloat()),
-                    )
-                }
-            }
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.32f)

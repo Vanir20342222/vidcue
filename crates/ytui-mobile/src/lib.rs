@@ -1915,6 +1915,28 @@ mod android {
             .map(|s| s.into_raw())
             .unwrap_or(std::ptr::null_mut())
     }
+    /// Runs `read` over the decoder's direct PCM window; `None` when the window is out of range.
+    fn with_direct_pcm<R>(
+        env: &JNIEnv,
+        buffer: &jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Option<R> {
+        if offset < 0 || length < 0 {
+            return None;
+        }
+        let capacity = env.get_direct_buffer_capacity(buffer).ok()?;
+        let end = (offset as usize).checked_add(length as usize)?;
+        if end > capacity {
+            return None;
+        }
+        let pointer = env.get_direct_buffer_address(buffer).ok()?;
+        // Java owns the direct decoder buffer and keeps it immutable for this call.
+        let bytes =
+            unsafe { std::slice::from_raw_parts(pointer.add(offset as usize), length as usize) };
+        Some(read(bytes))
+    }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_meter(
         env: JNIEnv,
@@ -1924,25 +1946,38 @@ mod android {
         length: jni::sys::jint,
         channels: jni::sys::jint,
     ) -> jlong {
-        if offset < 0 || length < 0 || channels < 1 {
+        if channels < 1 {
             return 0;
         }
-        let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
-            return 0;
-        };
-        let Some(end) = (offset as usize).checked_add(length as usize) else {
-            return 0;
-        };
-        if end > capacity {
-            return 0;
+        with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+            crate::meter::pcm16(bytes, channels as usize) as jlong
+        })
+        .unwrap_or(0)
+    }
+    /// Writes `out.length` log-spaced band levels (0..=65535). Unusable windows write zeros.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_spectrum(
+        env: JNIEnv,
+        _class: JClass,
+        buffer: jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        channels: jni::sys::jint,
+        sample_rate: jni::sys::jint,
+        out: jni::objects::JIntArray,
+    ) {
+        let mut bands = [0_i32; crate::meter::BANDS];
+        if channels >= 1 && sample_rate > 0 {
+            with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+                crate::meter::spectrum_pcm16(
+                    bytes,
+                    channels as usize,
+                    sample_rate as u32,
+                    &mut bands,
+                )
+            });
         }
-        let Ok(pointer) = env.get_direct_buffer_address(&buffer) else {
-            return 0;
-        };
-        // Java owns the direct decoder buffer and keeps it immutable for this call.
-        let bytes =
-            unsafe { std::slice::from_raw_parts(pointer.add(offset as usize), length as usize) };
-        crate::meter::pcm16(bytes, channels as usize) as jlong
+        let _ = env.set_int_array_region(&out, 0, &bands);
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_cancel(
