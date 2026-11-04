@@ -199,7 +199,7 @@ public final class OfflineExport extends Worker {
             "Original container export supports MP4/M4A and WebM downloads");
       String extension = mp4 ? (audioOnly ? "m4a" : "mp4") : "webm";
       return new Plan(
-          request.getJSONObject("media").optString("title", "ytui-media"),
+          request.getJSONObject("media").optString("title", "vidcue-media"),
           extension,
           (audioOnly ? "audio/" : "video/") + (mp4 ? "mp4" : "webm"),
           parts,
@@ -224,7 +224,7 @@ public final class OfflineExport extends Worker {
       throw new UnsupportedOperationException(
           "This codec combination cannot be exported by Android; choose another download quality");
     return new Plan(
-        request.getJSONObject("media").optString("title", "ytui-media"),
+        request.getJSONObject("media").optString("title", "vidcue-media"),
         webm ? "webm" : "mp4",
         webm ? "video/webm" : "video/mp4",
         parts,

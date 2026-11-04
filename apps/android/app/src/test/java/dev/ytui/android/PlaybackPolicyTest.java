@@ -36,6 +36,6 @@ public final class PlaybackPolicyTest {
     assertEquals("a_b_c_.mp4", PlaybackPolicy.exportName("a/b\\c\n", "mp4"));
     String longName = PlaybackPolicy.exportName("🎵".repeat(120), "webm");
     assertEquals(100, longName.substring(0, longName.length() - 5).codePointCount(0, 200));
-    assertEquals("ytui-media.m4a", PlaybackPolicy.exportName(" ", "m4a"));
+    assertEquals("vidcue-media.m4a", PlaybackPolicy.exportName(" ", "m4a"));
   }
 }
