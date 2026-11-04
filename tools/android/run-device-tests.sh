@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 evidence="$root/target/android-device-evidence"
-test_package=dev.ytui.android.preview
+test_package=dev.vidcue.android.preview
 mkdir -p "$evidence"
 # Google SDK Setup can raise its own first-boot ANR before instrumentation and
 # obscure a correctly rendered app. It is not an app dependency. Disable only

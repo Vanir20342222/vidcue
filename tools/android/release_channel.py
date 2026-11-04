@@ -2,7 +2,7 @@
 """Rules that keep every published Android APK installable as an update of the beta.
 
 Android only replaces an installed app in place when the new APK has
-- the same package name (`dev.ytui.android.stable`),
+- the same package name (`dev.vidcue.android.stable`),
 - the same signing certificate (the owner's stable key), and
 - a strictly higher version code.
 
@@ -22,7 +22,9 @@ from pathlib import Path
 import re
 import sys
 
-PACKAGE = "dev.ytui.android.stable"
+PACKAGE = "dev.vidcue.android.stable"
+CERT_SHA256 = "d3c9001eb3b22b31549f515f2d976000d3280ae8d5d0fc517bd03be946ddfd20"
+KEYSTORE_FILENAME = "vidcue-beta.jks"
 MARKER = "vidcue-android-update"
 MARKER_RE = re.compile(r"<!--\s*" + MARKER + r"\s+(\{.*?\})\s*-->", re.S)
 # Owner-signed releases before the marker existed state their code in the notes.
@@ -86,9 +88,16 @@ class UpdateOrderError(ValueError):
     """The version code would not install over an already published release."""
 
 
-def require_update(releases, code, package=PACKAGE):
+def require_update(releases, code, package=PACKAGE, cert_sha256=CERT_SHA256):
     """Refuse a version code that would not install over every earlier release."""
     highest = highest_published_code(releases, package)
+    for release in stable_releases(releases):
+        previous = marker_of(release)
+        if previous is not None and previous.get("package") == package:
+            if previous.get("certSha256") != cert_sha256:
+                raise UpdateOrderError(
+                    "The signing certificate must match every published release in this channel"
+                )
     if int(code) <= highest:
         raise UpdateOrderError(
             f"Version code {code} must be higher than every published release ({highest}); "

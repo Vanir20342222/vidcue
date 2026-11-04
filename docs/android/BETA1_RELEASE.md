@@ -1,54 +1,51 @@
 # Vidcue Android 0.3.0-beta.1
 
-Release preparation for [PR #82](https://github.com/Vanir20342222/ytui/pull/82).
-The APK has not been published: the owner confirmed on 2026-11-04 that the existing
-private signing setup is unavailable. Version defaults are `0.3.0-beta.1`, code
-`30001`. Desktop release versions are unchanged.
+Version `0.3.0-beta.1`, code `30001`, starts the permanent Vidcue Android update
+channel. The owner clarified on 2026-11-04 that every later release must update
+this beta; compatibility with the installed alpha is not required.
 
-## Included changes
+The package is `dev.vidcue.android.stable`. It installs alongside older alpha and
+Preview apps, starting with separate app-private account, settings and library
+state. Every subsequent beta, RC and final release keeps this package and signing
+certificate, updating the beta in place. About → Check for updates offers them.
 
-- Vidcue app name, shared crate names and native library; the Android package stays
-  `dev.ytui.android.stable` and existing account, settings and library stay in place.
-- Signed releases can check for updates in About and offer Update now, Later or
-  Skip this version. Downloads are checked against their checksum, package, version
-  and signing certificate before Android asks the user to confirm installation.
-- The release publisher requires increasing version codes and the existing stable
-  certificate. Future APKs carry the marker used by the update check. Once that
-  channel starts, the separate debug Preview publisher refuses further publication.
-- All changes already landed on main before this PR remain included, including
-  nested-playlist preparation, lyric sweep, artwork-driven visualizers and scrolling
-  regressions. Other open PRs are outside this release preparation.
+## Changes
 
-## Finish publication when signing is available
+- Vidcue branding and the renamed shared Rust/JNI library from PR #82.
+- Verified in-app APK updates with Update now, Later and Skip this version.
+- A permanent beta identity backed up privately with SSH-key encryption.
+- Publication checks exact source, checksum, package, certificate, both ABIs,
+  16 KiB alignment and increasing version codes. Future releases must also match
+  the certificate recorded in earlier beta-channel markers.
+- Debug Preview publication refuses beta/RC/final names and stops after the beta.
 
-1. Use the final merged main revision whose Android, Rust and Secret scan push
-   workflows all pass. Keep that exact clean checkout for the signing build and
-   publisher; if main changes, qualify and build the new revision instead.
-2. Recover the original signing directory privately as described in [SIGNING.md](SIGNING.md).
-   The helper still expects the existing `ytui-stable.jks` and `credentials.json`.
-3. On that trusted machine, with the Android SDK/NDK and Rust targets available:
+## Build and publish
 
-   ```bash
-   export YTUI_ANDROID_VERSION_NAME=0.3.0-beta.1
-   export YTUI_ANDROID_VERSION_CODE=30001
-   python3 tools/android/sign-local.py /private/path/to/recovered-identity
-   ```
-
-4. Publish the resulting `apps/android/app/build/outputs/apk/release/app-release.apk`
-   through **Publish locally signed Android APK**, using the same code/name and
-   its SHA256. Only the finished APK goes through the temporary transfer service.
-   The workflow checks source, certificate, package, version, both ABIs, ZIP and
-   16 KiB ELF alignment before creating `android-0.3.0-beta.1` as a prerelease.
-5. Independently download the public APK, compare its checksum/certificate/version,
-   and install over the existing owner-signed alpha stable app. Confirm settings,
-   account and library retention. The first alpha-to-beta installation is manual;
-   in-app update support starts with beta.1 and can be exercised with beta.2.
+1. Use a clean current-main revision whose exact Android, Rust and Secret scan
+   push workflows all pass. Recover the beta identity using [SIGNING.md](SIGNING.md).
+2. Set `YTUI_ANDROID_VERSION_NAME=0.3.0-beta.1` and `YTUI_ANDROID_VERSION_CODE=30001`.
+   Run `python3 tools/android/sign-local.py /private/path/to/beta-identity`.
+3. Transfer only the finished APK through a short-lived HTTPS file-service URL.
+   Keep the signing key and passwords out of Git and Actions.
+4. Run **Publish locally signed Android APK** on that revision with the APK URL,
+   checksum, version and code. Alternatively, write a local JSON handoff containing
+   `version_name`, integer `version_code`, `sha256`, `apk_url` and the full `source`
+   revision. Run `python3 tools/android/publish_request.py create /private/transfer.json`
+   which returns a temporary branch name and metadata commit. Push that commit to
+   `refs/heads/<returned-branch>`. The commit must have the qualified source as its
+   only parent and exactly the same file tree; the workflow verifies both.
+5. The workflow masks the transfer URL, requires successful checks for exact
+   current main, verifies the finished APK without rebuilding and publishes
+   `android-0.3.0-beta.1`. It deletes the temporary handoff branch afterward. The
+   permanent release tag points only at source. The expiring transfer URL grants
+   read access only to the APK being released publicly, never to signing material.
+6. Independently download and inspect the public APK. Install beta.1 as a new app.
+   When beta.2 exists, accept its actual in-place update and data retention on a device.
 
 ## Qualification limits
 
-Beta denotes an early testing release. Physical installation/update acceptance,
-live YouTube/account behavior, audible output, hardware playback and OEM background
-behavior remain open. No signed beta APK, emulator run, physical-device test or
-live-service acceptance is claimed by this preparation. See the PR's verification
-table and the [completion change note](../changes/2026-11-04-vidcue-beta-preparation.md)
-for checks actually run on the final source.
+Beta is an early testing release. Physical updates, live YouTube/account behavior,
+audible output, hardware playback and OEM background behavior remain open.
+Unit/build/APK inspection does not establish those results. See the
+[channel evidence](../changes/2026-11-04-android-permanent-beta-channel.md) and
+[original integration evidence](../changes/2026-11-04-vidcue-beta-preparation.md).

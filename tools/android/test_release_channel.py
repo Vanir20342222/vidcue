@@ -12,7 +12,7 @@ spec = importlib.util.spec_from_file_location(
 channel = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(channel)
 
-CERT = "b" * 64
+CERT = channel.CERT_SHA256
 
 
 def marked(tag, code, package=channel.PACKAGE, draft=False):
@@ -61,6 +61,12 @@ class ReleaseChannel(unittest.TestCase):
         for code in (300100, 300099, 1):
             with self.subTest(code=code), self.assertRaises(channel.UpdateOrderError):
                 channel.require_update(releases, code)
+
+    def test_later_releases_cannot_change_the_beta_signing_identity(self):
+        releases = [marked("android-0.3.0-beta.1", 30001)]
+        with self.assertRaises(channel.UpdateOrderError):
+            channel.require_update(releases, 30002, cert_sha256="0" * 64)
+        channel.require_update(releases, 30002)
 
     def test_preview_releases_stop_once_the_beta_exists(self):
         legacy = [{"tag_name": "android-0.2.0-alpha.12-mobile.10", "body": "code **10**"}]

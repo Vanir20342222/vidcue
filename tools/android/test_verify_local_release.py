@@ -34,7 +34,7 @@ class PublicationBoundary(unittest.TestCase):
         )
 
     def run_fixture(self, *, wrong_digest=False, wrong_source=False,
-                    wrong_certificate=False, debuggable=False, published_code=3):
+                    wrong_certificate=False, debuggable=False, published_code=3, handoff=False):
         source = "1" * 40
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
@@ -46,6 +46,8 @@ class PublicationBoundary(unittest.TestCase):
             "GITHUB_SHA": source, "YTUI_APK_URL": "https://a.oaiusercontent.com/fixture",
             "ANDROID_HOME": "/synthetic-sdk",
         }
+        if handoff:
+            env.update(GITHUB_SHA="3" * 40, YTUI_RELEASE_SOURCE=source)
         response = io.BytesIO(payload)
         response.status = 200
         opener = Mock()
@@ -53,7 +55,7 @@ class PublicationBoundary(unittest.TestCase):
         cert = "0" * 64 if wrong_certificate else verify.STABLE_CERT
         signature = f"Signer #1 certificate SHA-256 digest: {cert}\n"
         badging = (
-            "package: name='dev.ytui.android.stable' versionCode='4' versionName='1.0-preview' "
+            "package: name='dev.vidcue.android.stable' versionCode='4' versionName='1.0-preview' "
             "platformBuildVersionName='15'\nsdkVersion:'26'\n"
         )
         if debuggable:
@@ -76,7 +78,7 @@ class PublicationBoundary(unittest.TestCase):
                 notes = Path("publish/notes.md").read_text()
                 marker = verify.release_channel.marker_of({"body": notes})
                 self.assertEqual(marker["versionCode"], 4)
-                self.assertEqual(marker["package"], "dev.ytui.android.stable")
+                self.assertEqual(marker["package"], "dev.vidcue.android.stable")
                 self.assertEqual(marker["apk"], "vidcue-1.0-preview.apk")
                 self.assertEqual(marker["certSha256"], verify.STABLE_CERT)
                 self.assertEqual(marker["sha256"], env["YTUI_APK_SHA256"])
@@ -87,6 +89,11 @@ class PublicationBoundary(unittest.TestCase):
 
     def test_valid_transfer_is_traceable(self):
         self.run_fixture()
+
+    def test_metadata_only_handoff_still_requires_the_qualified_apk_source(self):
+        self.run_fixture(handoff=True)
+        with self.assertRaises(ValueError):
+            self.run_fixture(handoff=True, wrong_source=True)
 
     def test_version_code_must_exceed_every_published_release(self):
         for code in (4, 5):

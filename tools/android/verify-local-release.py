@@ -14,7 +14,7 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_channel  # noqa: E402
 
-STABLE_CERT = "b3e9f1a70dd6597884d1dbba09eafad3d4d73ea62c4074a9b8cec1ac1e034848"
+STABLE_CERT = release_channel.CERT_SHA256
 LIMIT = 100 * 1024 * 1024
 
 
@@ -38,7 +38,7 @@ def main():
     version = os.environ["YTUI_VERSION_NAME"]
     code = os.environ["YTUI_VERSION_CODE"]
     digest = os.environ["YTUI_APK_SHA256"]
-    revision = os.environ["GITHUB_SHA"]
+    revision = os.environ.get("YTUI_RELEASE_SOURCE") or os.environ["GITHUB_SHA"]
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}", version):
         raise ValueError("Invalid version")
     if not re.fullmatch(r"[1-9][0-9]{0,9}", code) or int(code) > 2100000000:
@@ -102,11 +102,12 @@ def main():
     (output / "SHA256SUMS.txt").write_text(f"{digest}  {apk.name}\n")
     (output / "notes.md").write_text(
         f"Vidcue for Android **{version}**, code **{code}**. Android 8+, ARM64/x86-64.\n\n"
-        "Upgrading from an alpha? Download this APK and open it from Files to update the "
-        "owner-signed stable app, keeping its account, settings and library. Starting with "
-        "beta.1, About → Check for updates offers future signed releases in the app.\n\n"
+        "Beta.1 starts a new permanent update channel. Install it alongside the older alpha "
+        "or Preview app; its private account, settings and library start separately. "
+        "Every later beta, RC and final release updates this beta in place, keeping its data. "
+        "About → Check for updates offers future signed releases.\n\n"
         "New install: download the APK below and open it from Files. It installs as **Vidcue** "
-        "(`dev.ytui.android.stable`) alongside older Preview apps; no uninstall is needed. "
+        "(`dev.vidcue.android.stable`) alongside older alpha/Preview apps; no uninstall is needed. "
         "Every later release uses this same package and signing key, so it updates in place.\n\n"
         f"Source `{revision}` passed Android, Rust and Secret scan workflows. "
         "The APK is signed privately, checksum/certificate/ABI/alignment inspected, "

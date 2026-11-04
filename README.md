@@ -72,15 +72,12 @@ Press `t` for the theme picker. `system` follows your desktop theme (Omarchy, Ca
 <p align="center"><img src="docs/readme/android.png" alt="Vidcue on Android: player, Pulse Orbit and settings" width="85%"></p>
 
 <p align="center">
-  <a href="https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk"><img alt="Download the Android APK" src="https://img.shields.io/badge/download-APK_mobile.10-8b7cff?style=for-the-badge&logo=android&logoColor=white"></a>
+  <a href="https://github.com/Vanir20342222/ytui/releases"><img alt="Download the Android APK" src="https://img.shields.io/badge/download-APK_beta.1-8b7cff?style=for-the-badge&logo=android&logoColor=white"></a>
   &nbsp;
   <a href="docs/screenshots/android/README.md"><img alt="Phone and tablet gallery" src="https://img.shields.io/badge/gallery-phone_%26_tablet-6ddbc1?style=for-the-badge"></a>
 </p>
 
-<sub>From the beta on, the app offers new versions itself (About → Check for updates) and installs them over your current install. A development preview, not a production release. See the [Android notes](docs/android/README.md) and [release validation](docs/android/MOBILE10_RELEASE.md).</sub>
-
-Android `0.3.0-beta.1` is [prepared for signing](docs/android/BETA1_RELEASE.md).
-Publication is pending availability of the existing private signing setup; the download above is the earlier signed alpha.
+<sub>Beta.1 starts a new app installation alongside older alphas. Every subsequent beta, RC and final release updates that beta in place; About → Check for updates offers new versions. This is an early testing release. See the [beta notes](docs/android/BETA1_RELEASE.md) and [Android notes](docs/android/README.md).</sub>
 
 ## 🚀 Install
 

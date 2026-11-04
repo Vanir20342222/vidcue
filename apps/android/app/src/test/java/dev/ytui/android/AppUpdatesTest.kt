@@ -26,7 +26,7 @@ import org.robolectric.RuntimeEnvironment
 @RunWith(RobolectricTestRunner::class)
 class AppUpdatesTest {
     private val cert = "b".repeat(64)
-    private val pkg = "dev.ytui.android.stable"
+    private val pkg = "dev.vidcue.android.stable"
     private lateinit var server: MockWebServer
     private val defaults = AppUpdates.releasesUrl to AppUpdates.downloadPrefix
 
@@ -111,7 +111,7 @@ class AppUpdatesTest {
                 JSONArray()
                     .put(release("android-a", 300200))
                     .put(release("android-b", 300300, certSha = "c".repeat(64)))
-                    .put(release("android-c", 300400, packageName = "dev.ytui.android.preview"))
+                    .put(release("android-c", 300400, packageName = "dev.vidcue.android.preview"))
                     .put(release("android-d", 300500, minSdk = 35))
                     .put(release("android-e", 300050))
                     .toString()

@@ -5,7 +5,11 @@ dated records, change notes and evidence documents still say ytui and stay as wr
 Keep these old names for compatibility: the `ytui`/`ytui-rs` launcher aliases, migration
 from `ytui` config/state/cache folders, the `ytui-rust` keyring entry, `YTUI_*` environment
 variables and secrets, the GitHub repository URL until the owner renames it, and the Android
-package `dev.ytui.android` (changing it would install a separate app without the user's data).
+Java/JNI namespace `dev.ytui.android`. The owner clarified on 2026-11-04 that beta.1
+starts a new permanent installation channel: package `dev.vidcue.android.stable` and
+the beta certificate pinned in `tools/android/release_channel.py`. Every subsequent
+beta, RC and final release must update that channel; compatibility with old alphas
+is not required. Never generate a replacement key for an established beta channel.
 
 Read [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md) before planning or implementing
 the Rust rewrite. It contains confirmed user requirements, provisional choices,
