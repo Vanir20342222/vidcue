@@ -4,10 +4,10 @@ use crate::app::{App, HitTarget};
 use crate::updates::BUTTONS;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Padding, Paragraph, Wrap},
 };
 use vidcue_services::update::Release;
 
@@ -39,14 +39,14 @@ pub fn render(f: &mut Frame, app: &mut App, release: &Release, selected: usize, 
         .title_bottom(
             Line::from(app.tr(" ←/→ choose · Enter confirms · u updates · Esc later ")).centered(),
         );
-    let inner = block.inner(area);
+    let inner = block.inner(area).inner(Margin::new(2, 1));
     f.render_widget(block, area);
     let [body, buttons] =
         Layout::vertical([Constraint::Min(3), Constraint::Length(3)]).areas(inner);
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
-                format!(" {} ", env!("CARGO_PKG_VERSION")),
+                format!("{} ", env!("CARGO_PKG_VERSION")),
                 Style::default().fg(muted),
             ),
             Span::styled("➜ ", Style::default().fg(warning)),
@@ -60,18 +60,18 @@ pub fn render(f: &mut Frame, app: &mut App, release: &Release, selected: usize, 
     ];
     lines.extend(release.notes.iter().map(|note| {
         Line::from(vec![
-            Span::styled("  • ", Style::default().fg(accent)),
+            Span::styled(" • ", Style::default().fg(accent)),
             Span::styled(note.as_str(), Style::default().fg(text)),
         ])
     }));
     lines.push(Line::from(""));
     lines.push(Line::styled(
-        app.tr(" Update now rebuilds this release from GitHub and replaces the vidcue command. Your settings and library stay."),
+        app.tr("Update now rebuilds this release from GitHub and replaces the vidcue command. Your settings and library stay."),
         Style::default().fg(muted),
     ));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body);
     let widths = BUTTONS.map(|b| Constraint::Length(app.tr(b).chars().count() as u16 + 6));
-    let cells = Layout::horizontal(widths).spacing(1).split(buttons);
+    let cells = Layout::horizontal(widths).spacing(2).split(buttons);
     for (index, (label, cell)) in BUTTONS.iter().zip(cells.iter()).enumerate() {
         let chosen = index == selected;
         let colour = if index == 0 { success } else { muted };
@@ -91,11 +91,7 @@ pub fn render(f: &mut Frame, app: &mut App, release: &Release, selected: usize, 
             ))
             .style(style)
             .centered()
-            .block(
-                Block::default()
-                    .borders(Borders::TOP | Borders::BOTTOM)
-                    .border_style(style),
-            ),
+            .block(Block::default().padding(Padding::top(1))),
             *cell,
         );
         app.hit_targets.push((*cell, HitTarget::MenuItem(index)));

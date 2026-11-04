@@ -539,7 +539,7 @@
 "Check for a new Vidcue version" = "Nach neuer Vidcue-Version suchen"
 "New version available" = "Neue Version verfügbar"
 " ←/→ choose · Enter confirms · u updates · Esc later " = " ←/→ wählen · Enter bestätigt · u aktualisiert · Esc später "
-" Update now rebuilds this release from GitHub and replaces the vidcue command. Your settings and library stay." = " Jetzt aktualisieren baut diese Version von GitHub neu und ersetzt den Befehl vidcue. Einstellungen und Mediathek bleiben erhalten."
+"Update now rebuilds this release from GitHub and replaces the vidcue command. Your settings and library stay." = "Jetzt aktualisieren baut diese Version von GitHub neu und ersetzt den Befehl vidcue. Einstellungen und Mediathek bleiben erhalten."
 "Update now" = "Jetzt aktualisieren"
 "Later" = "Später"
 "Skip this version" = "Diese Version überspringen"

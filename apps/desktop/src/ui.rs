@@ -172,7 +172,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         Modal::Text { .. } => (90, 28),
         Modal::Setup(_) => (84, 24),
-        Modal::Update { release, .. } => (78, release.notes.len() as u16 + 12),
+        Modal::Update { release, .. } => (80, release.notes.len() as u16 + 14),
     };
     let rect = centered(area, size.0, size.1);
     f.render_widget(Clear, rect);

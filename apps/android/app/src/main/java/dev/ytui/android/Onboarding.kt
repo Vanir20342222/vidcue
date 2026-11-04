@@ -513,7 +513,7 @@ private fun WelcomeText(center: Boolean) {
     ) {
         Staggered(3) {
             Text(
-                "ytui",
+                "Vidcue",
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = align,

@@ -1,115 +1,216 @@
-# vidcue
+<p align="center">
+  <img src="docs/readme/hero.svg" alt="Vidcue: videos, music, radio and downloads in your terminal and on Android" width="100%">
+</p>
 
-A Rust monorepo for YouTube, YouTube Music, downloads and radio. The desktop app uses Lazygit-style terminal panes, keyboard navigation, thumbnails and mpv. [Android](docs/android/README.md) uses the shared Rust engine with a native Jetpack Compose UI for phones and tablets.
+<p align="center">
+  <a href="#-install"><img alt="Desktop: terminal" src="https://img.shields.io/badge/desktop-terminal-6ddbc1?style=for-the-badge&logo=gnometerminal&logoColor=white"></a>
+  <a href="docs/android/README.md"><img alt="Android preview" src="https://img.shields.io/badge/android-preview-8b7cff?style=for-the-badge&logo=android&logoColor=white"></a>
+  <img alt="Built with Rust" src="https://img.shields.io/badge/built_with-rust-ff7eb6?style=for-the-badge&logo=rust&logoColor=white">
+  <img alt="Version 0.2.0-alpha.12" src="https://img.shields.io/badge/version-0.2.0--alpha.12-f5c36c?style=for-the-badge">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-8edd99?style=for-the-badge"></a>
+</p>
 
-[Download Android mobile.10](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk) · [UI release and validation](docs/android/MOBILE10_RELEASE.md) · [Player/offline features and validation](docs/android/PLAYER_LIBRARY_VALIDATION_2026-10-29.md) · [Phone/tablet gallery](docs/screenshots/android/README.md)
+<h3 align="center">🎬 Watch &nbsp;·&nbsp; 🎧 Listen &nbsp;·&nbsp; 📻 Tune in &nbsp;·&nbsp; ⬇️ Keep it</h3>
 
-Omarchy + Ghostty + Brave Origin is the current desktop target; CachyOS/Caelestia remain compatibility targets.
+<p align="center">
+A fast, keyboard-first app for <b>YouTube</b>, <b>YouTube Music</b>, <b>internet radio</b> and <b>downloads</b>.<br>
+Lazygit-style panes and mpv on the desktop · a native touch app on Android · one shared Rust engine.
+</p>
 
-This is the **0.2.0-alpha.12 candidate** ([audit fixes and acceptance](docs/AUDIT_IMPLEMENTATION.md)).
-[Local acceptance](docs/LOCAL_ACCEPTANCE_2026-10-26.md) records verified target-PC
-playback, account and desktop cases; [remaining work](docs/REMAINING_WORK.md) tracks
-broader service/device acceptance and unsupported features.
-[Research and usage](docs/FEATURE_RESEARCH_2026-10-24.md) cover the local saved shelf and sleep timer.
+> [!NOTE]
+> **ytui is now Vidcue.** Your settings, queues, history and downloads move over automatically,
+> and the old `ytui` command keeps working.
+
+---
+
+## ✨ Highlights
+
+| | |
+|---|---|
+| 🎬 **Videos in mpv** | Native Rust playback, resume where you left off, SponsorBlock skip or mark. |
+| 👀 **Quick previews** | Press `v` for a short, muted preview before you commit. |
+| 🎧 **Four music players** | Classic, spinning vinyl, Neon VU and Pulse Orbit, each pane or fullscreen. |
+| 📻 **Radio** | Thousands of stations, pinned countries, optional cliamp. |
+| ⬇️ **Downloads** | Videos, audio, whole playlists, subtitles, chapters and per-file retry. |
+| 🎨 **15 themes** | Follows Omarchy or Caelestia, or pick Tokyo Night, Catppuccin, Gruvbox and more. |
+| 🔔 **One-press updates** | A popup tells you about a new release; **Update now** installs it. |
+| 📱 **Android** | Jetpack Compose UI for phones and tablets on the same Rust engine. |
+
+## 🎨 Every theme, one keypress
+
+<p align="center"><img src="docs/readme/themes.gif" alt="Vidcue cycling through its built-in themes" width="90%"></p>
+
+Press `t` for the theme picker. `system` follows your desktop theme (Omarchy, Caelestia, GNOME).
+
+## 🎧 Players that move with the music
+
+<p align="center"><img src="docs/readme/players.gif" alt="Classic, vinyl, Neon VU and Pulse Orbit music players" width="90%"></p>
+
+`F4` cycles **classic → vinyl → Neon VU → Pulse Orbit**. `Esc` leaves fullscreen.
+
+## 🖼️ A closer look
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/youtube.png" alt="YouTube workspace"><p align="center"><b>📺 YouTube</b>: feeds, search, details</p></td>
+    <td width="50%"><img src="docs/screenshots/music-vinyl-pane.png" alt="Music with the vinyl player"><p align="center"><b>💿 Music</b>: the vinyl player</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/radio.png" alt="Radio stations"><p align="center"><b>📻 Radio</b>: stations worldwide</p></td>
+    <td><img src="docs/screenshots/downloads.png" alt="Downloads"><p align="center"><b>⬇️ Downloads</b>: jobs, files, retries</p></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/update-popup.png" alt="New version popup with Update now, Later and Skip this version"><p align="center"><b>🔔 Updates</b>: one press</p></td>
+    <td><img src="docs/screenshots/settings.png" alt="General settings"><p align="center"><b>⚙️ Settings</b>: grouped by topic</p></td>
+  </tr>
+</table>
+
+<sub>All screenshots use the fictional demo catalog (<code>vidcue --demo</code>). No real account is shown.</sub>
+
+## 📱 Android
+
+<p align="center"><img src="docs/readme/android.png" alt="Vidcue on Android: player, Pulse Orbit and settings" width="85%"></p>
+
+<p align="center">
+  <a href="https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.10/ytui-0.2.0-alpha.12-mobile.10.apk"><img alt="Download the Android APK" src="https://img.shields.io/badge/download-APK_mobile.10-8b7cff?style=for-the-badge&logo=android&logoColor=white"></a>
+  &nbsp;
+  <a href="docs/screenshots/android/README.md"><img alt="Phone and tablet gallery" src="https://img.shields.io/badge/gallery-phone_%26_tablet-6ddbc1?style=for-the-badge"></a>
+</p>
+
+<sub>A development preview, not a production release. See the [Android notes](docs/android/README.md) and [release validation](docs/android/MOBILE10_RELEASE.md).</sub>
+
+## 🚀 Install
+
+You need stable Rust, a C compiler, pkg-config, OpenSSL headers, **mpv** and **FFmpeg**.
+Node.js 22+ (or Deno 2.9.7) speeds up native playback.
 
 ```bash
-git clone https://github.com/Vanir20342222/ytui.git
-cd vidcue
-./install.sh
-vidcue doctor
-vidcue
-```
-
-The installer builds Rust and installs both `vidcue` and the compatible `vidcue`
-launcher. Install current stable Rust, a C compiler, pkg-config, OpenSSL headers,
-mpv and FFmpeg first. On CachyOS/Arch:
-
-```bash
+# Arch / CachyOS / Omarchy
 sudo pacman -S --needed base-devel rustup openssl mpv ffmpeg nodejs
 rustup default stable
+
+git clone https://github.com/Vanir20342222/ytui.git vidcue
+cd vidcue && ./install.sh
+vidcue doctor   # check tools and settings
+vidcue          # start
 ```
 
-Use `main` for the integrated Rust application.
-Pulling source alone does not replace an installed binary: rerun `./install.sh`
-and check `~/.local/bin/vidcue --version`. `install-rust.sh` is a compatibility alias.
+`./install.sh` puts `vidcue` in `~/.local/bin`, keeps `ytui` and `ytui-rs` as aliases, and saves the
+previous build as `vidcue.previous` (`tools/rollback-install.sh` switches back).
 
-- `1`–`4`: Downloads, YouTube, Music, Radio. `b`: feeds; `/`: search; `?`: help.
-- `F4` in Music/Radio cycles classic → vinyl → Neon VU → Pulse Orbit (pane/fullscreen for each); `Esc` exits fullscreen. Choose a persistent default in General settings → Appearance → Music player style. The record spins during playback and freezes for pause/buffering; Reduced motion disables rotation.
-- `Enter`: play/open; `v`: short muted mpv preview; `d`: download options.
-- `,`: general settings window; `F2`: searchable Actions; `F1`: toggle bottom hints. PgUp/PgDn changes sections;
-  F6 focuses categories; arrows edit choices; Space toggles; Enter saves; Esc cancels.
-- `F2 → Account`: import a selected local browser session. Personal feeds need sign-in;
-  anonymous Home may have no recommendations.
-- `F2 → Player`: actual formats, audio/subtitle choices, SponsorBlock status; `F2 → Settings`: setup, thumbnail cache and safe support export.
-- `F2 → Downloads`: full-collection individual jobs, per-entry retry/files and recent destinations.
-- Videos continue where you left off: playing a partly watched video starts at its
-  locally saved position (toggle in `F2 → Settings → General`; `:player-seek 0` starts over).
-  Music and stations start from the top. `u`: resume list/selected; `p`: playback queue.
-- `S`: save/remove a video or song locally; **Library → Saved locally** opens the shelf and `/` searches it.
-- **o → Set sleep timer** stops playback after e.g. `30m` while keeping the queue; cancel it from the same menu.
-- `vidcue --demo`: fictional catalog for UI review; `vidcue --offline`: local library.
-- `vidcue doctor --network`: opt-in public provider diagnostics without importing an account.
-- `vidcue playback-check URL --backend native`: check three seconds of actual mpv playback without browser cookies.
+### 🔄 Staying up to date
 
-Playback now defaults to **native Rust**, using updated pinned
+- Vidcue checks GitHub when it starts and shows a popup when a newer release exists.
+- **Update now** downloads that release, builds it and installs it. **Skip this version** stays quiet until the next one.
+- Check any time with `F2 → Check for a new Vidcue version`, or run `vidcue update` (`--check` only reports).
+- Turn the check off in `,` → **General** → *Check GitHub for new releases*.
+
+## ⌨️ Keys you'll use most
+
+| Key | Does |
+|---|---|
+| `1` `2` `3` `4` | Downloads · YouTube · Music · Radio |
+| `/` · `b` | Search · browse feeds |
+| `Enter` · `v` · `d` | Play · quick preview · download |
+| `Space` · `o` · `p` | Pause · player controls · queue |
+| `F4` | Next music player style |
+| `S` · `u` | Save locally · resume list |
+| `t` · `,` · `F2` | Themes · settings · all actions |
+| `?` · `F1` | Help · show or hide hints |
+
+## 🧰 Handy commands
+
+```bash
+vidcue --demo                  # fictional catalog, no account or network
+vidcue --offline               # your local library only
+vidcue doctor --network        # test public YouTube, Music and radio access
+vidcue playback-check URL      # play 3 seconds with mpv and report
+vidcue migrate [--apply]       # import settings from the old Python app
+vidcue update [--check]        # install (or just look for) a new release
+```
+
+<details>
+<summary><b>🎬 Playback details</b></summary>
+
+Playback defaults to **native Rust**, using pinned
 [yt-dlp-rs](https://github.com/aagedal/yt-dlp-rs). Installed Node.js 22+ (or Deno
 2.9.7) solves its offline JavaScript challenges. Playback preserves native stream
-headers, accepts HLS manifests, and refreshes an interrupted native URL once.
+headers, accepts HLS manifests and refreshes an interrupted native URL once.
 It never starts Python automatically in native mode. **Settings → Playback →
-Playback backend** selects native, auto or external yt-dlp explicitly; downloads
-retain their separate `auto` default. Install `yt-dlp` separately if you choose
-fallback or external extraction. Existing explicit playback choices are retained.
-Successful live access still depends on the account/network; a 99% watching
-success rate is **not established**. See [current playback evidence](docs/SINGLE_VIDEO_SWEEP.md)
-and [CI diagnosis](docs/CI_PLAYBACK_DIAGNOSIS.md).
+Playback backend** selects native, auto or external yt-dlp; downloads keep their
+separate `auto` default. Install `yt-dlp` yourself if you choose fallback or external
+extraction. Existing explicit playback choices are kept.
 
-Playlist links select collection downloads automatically; watch links with playlist
-context stay single-video unless explicitly expanded. Playlist jobs retain their
-source across entry metadata/retries, and auto uses yt-dlp for native playlist limits.
-[Playback/playlist fixes and validation boundaries](docs/PLAYBACK_REPAIR.md).
-Downloads preserve valid outputs after malformed later records and reject empty
-files. Preview controls preserve saved player preferences; service/tool/storage
-failures show contextual recovery steps.
+Live access still depends on the account and network; a 99% watching success rate is
+**not established**. See [current playback evidence](docs/SINGLE_VIDEO_SWEEP.md),
+[CI diagnosis](docs/CI_PLAYBACK_DIAGNOSIS.md) and
+[playback/playlist fixes](docs/PLAYBACK_REPAIR.md).
 
-Thumbnails use sized memory/disk caches and nearby prefetch. Feeds load continuation
-pages near the end and recover temporary errors automatically, keeping visible
-videos and selection. Fresh HTML Home data saves an extra request; overlapping
-pages no longer end the feed immediately. Bounded feed/radio/stream caches reuse
-recent requests; explicit refresh invalidates cached feeds. Server categories and
-section labels remain. Wide cards get most of the width, with square Music art.
-`o` opens player controls; **g in mpv**
-opens its window menu. Volume/mute persist. `B` toggles SponsorBlock skipping and `U`
-replays a skipped part; Settings → Playback controls categories and skip/mark/off.
+- Videos continue where you left off (toggle in General settings; `:player-seek 0` starts over).
+  Music and stations start from the top.
+- `B` toggles SponsorBlock skipping and `U` replays a skipped part; Settings → Playback
+  chooses categories and skip / mark / off.
+- `o → Set sleep timer` stops playback after e.g. `30m` and keeps the queue.
+- `g` in mpv opens its window menu. Volume and mute persist.
+</details>
 
-Rust migration reads existing legacy settings, profiles and queues on request:
-`vidcue migrate` previews; `vidcue migrate --apply` imports with backups. Existing
-user files and downloaded media are retained. The old Python source is available
-in Git history.
+<details>
+<summary><b>⬇️ Downloads and feeds</b></summary>
 
-[Documentation index](docs/README.md) · [Usage and settings](docs/RUST.md) · [Remaining work](docs/REMAINING_WORK.md) ·
-[Current app audit and backlog](docs/APP_AUDIT_2026-10-22.md) ·
-[Feature audit](docs/FEATURE_AUDIT.md) · [Validation](docs/VALIDATION.md) ·
-[WQHD theme gallery](docs/UI_THEMES.md) · [Rewrite plan](RUST_REWRITE_PLAN.md)
+- Playlist links download whole collections; watch links with playlist context stay
+  single-video unless you expand them. Collection jobs keep their source across retries,
+  and `auto` uses yt-dlp for native playlist limits.
+- Downloads keep valid outputs after malformed later records and reject empty files.
+- `F2 → Downloads` shows individual jobs, per-entry retry and files, and recent folders.
+- Feeds load more near the end and recover from temporary errors without losing your place.
+  Thumbnails use sized memory and disk caches with nearby prefetch.
+- `F2 → Account` imports a selected local browser session. Personal feeds need sign-in;
+  anonymous Home may have no recommendations.
+</details>
 
-![Rust terminal demo with fictional content](docs/screenshots/youtube.png)
+<details>
+<summary><b>🖥️ Desktop targets and status</b></summary>
 
-Run checks with `cargo fmt --all -- --check`,
-`cargo clippy --workspace --all-targets --locked -- -D warnings` and
-`cargo test --workspace --locked`. The separate real-media fixture and opt-in
-live YouTube tests are described in the validation record.
-Run `tools/test-youtube.sh auto` for isolated public browsing, playback and
-two-entry playlist checks; [live test instructions](docs/LIVE_YOUTUBE_TESTS.md)
-describe the required tools, optional public fixture URLs and CI runner.
+Omarchy + Ghostty + Brave Origin is the current desktop target; CachyOS and Caelestia
+remain compatibility targets. This is the **0.2.0-alpha.12 candidate**
+([audit fixes and acceptance](docs/AUDIT_IMPLEMENTATION.md)).
+[Local acceptance](docs/LOCAL_ACCEPTANCE_2026-10-26.md) records verified target-PC
+playback, account and desktop cases; [remaining work](docs/REMAINING_WORK.md) tracks
+broader service and device acceptance and unsupported features.
+</details>
 
-Generate WQHD captures entirely in Rust:
+<details>
+<summary><b>🧪 Development</b></summary>
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+tools/test-youtube.sh auto     # opt-in live public checks
+```
+
+[Live test instructions](docs/LIVE_YOUTUBE_TESTS.md) describe the tools, fixture URLs and CI runner.
+
+Regenerate the WQHD screenshots with the real executable and fictional content:
 
 ```bash
 cargo build -p vidcue --locked
 cargo run -p vidcue --example capture_ui --locked -- --binary target/debug/vidcue
+cargo run -p vidcue --example capture_update --locked -- docs/screenshots/update-popup.png
 ```
 
-The capture tool runs the actual executable in an isolated PTY with fictional
-content. No real account or desktop is captured. A monospaced TTF font is required;
-pass `--font /path/to/your/font.ttf` if DejaVu Sans Mono is installed elsewhere.
+A monospaced TTF font is required; pass `--font /path/to/font.ttf` if DejaVu Sans Mono
+lives elsewhere. The README GIFs are built from those screenshots with FFmpeg.
 
-Licensed under MIT. See [third-party notices](THIRD_PARTY_NOTICES.md).
+The repository is a Rust monorepo: `apps/desktop` (terminal app), `apps/android`
+(Compose UI), `crates/vidcue-core`, `vidcue-services`, `vidcue-providers` and
+`vidcue-mobile` (Android engine).
+</details>
+
+## 📚 Docs
+
+[Documentation index](docs/README.md) · [Usage and settings](docs/RUST.md) · [Theme gallery](docs/UI_THEMES.md) ·
+[Android](docs/android/README.md) · [Remaining work](docs/REMAINING_WORK.md) · [Validation](docs/VALIDATION.md) ·
+[Feature audit](docs/FEATURE_AUDIT.md) · [Rewrite plan](RUST_REWRITE_PLAN.md)
+
+<p align="center"><sub>MIT licensed · <a href="THIRD_PARTY_NOTICES.md">third-party notices</a> · made for people who live in the terminal 💜</sub></p>
