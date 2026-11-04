@@ -14,7 +14,7 @@ to run.
 
 Usage:
   release_channel.py code VERSION_NAME          # version code for a beta/rc/final name
-  release_channel.py check-preview RELEASES.json
+  release_channel.py check-preview RELEASES.json [VERSION_NAME]
 """
 
 import json
@@ -147,12 +147,18 @@ def main(argv):
     if len(argv) == 3 and argv[1] == "code":
         print(version_code(argv[2]))
         return
-    if len(argv) == 3 and argv[1] == "check-preview":
+    if len(argv) in (3, 4) and argv[1] == "check-preview":
         if beta_started(load_releases(argv[2])):
             sys.exit(
                 "The beta channel has started: every published APK must update the installed "
                 "beta, and CI debug-signed Preview APKs cannot. Publish an owner-signed build "
                 "with 'Publish locally signed Android APK' instead (docs/android/SIGNING.md)."
+            )
+        if len(argv) == 4 and VERSION_RE.fullmatch(argv[3]):
+            sys.exit(
+                "Beta, release-candidate and final APKs require the owner's stable signing "
+                "identity, including the first beta. Publish an owner-signed build with "
+                "'Publish locally signed Android APK' instead (docs/android/SIGNING.md)."
             )
         print("No beta release yet; a CI Preview release is still allowed.")
         return

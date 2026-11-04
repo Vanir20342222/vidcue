@@ -47,7 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
-          python3 tools/android/release_channel.py check-preview "$RUNNER_TEMP/releases.json"
+          python3 tools/android/release_channel.py check-preview "$RUNNER_TEMP/releases.json" "$YTUI_PREVIEW_VERSION"
       - name: Require successful checks for the current main revision
         id: checks
         uses: actions/github-script@v7

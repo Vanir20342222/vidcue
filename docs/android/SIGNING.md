@@ -52,6 +52,10 @@ user's account, settings and library. Android allows that only when the new APK 
 
 **CI Preview releases stop at the beta.** CI Preview APKs are debug-signed under another package, so they can never update the beta. *Release verified Android Preview* therefore refuses to publish once any release carries the marker. From then on, publish only through *Publish locally signed Android APK*.
 
+The Preview publisher also rejects beta, release-candidate and final version names
+before the first marked release exists. The first beta requires the same private
+owner identity as every later update.
+
 Release checklist for each beta/rc/final:
 
 1. Pick the name, then `export YTUI_ANDROID_VERSION_NAME=0.3.0-beta.1` and

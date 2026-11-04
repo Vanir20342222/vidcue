@@ -79,6 +79,9 @@ Press `t` for the theme picker. `system` follows your desktop theme (Omarchy, Ca
 
 <sub>From the beta on, the app offers new versions itself (About → Check for updates) and installs them over your current install. A development preview, not a production release. See the [Android notes](docs/android/README.md) and [release validation](docs/android/MOBILE10_RELEASE.md).</sub>
 
+Android `0.3.0-beta.1` is [prepared for signing](docs/android/BETA1_RELEASE.md).
+Publication is pending availability of the existing private signing setup; the download above is the earlier signed alpha.
+
 ## 🚀 Install
 
 You need stable Rust, a C compiler, pkg-config, OpenSSL headers, **mpv** and **FFmpeg**.

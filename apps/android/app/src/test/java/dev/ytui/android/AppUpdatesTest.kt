@@ -2,7 +2,10 @@ package dev.ytui.android
 
 import java.io.File
 import java.security.MessageDigest
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
@@ -150,6 +153,10 @@ class AppUpdatesTest {
         server.enqueue(MockResponse().setResponseCode(503))
         AppUpdates.runCheck(context, manual = false, app = installed())
         assertEquals(UpdateState.Idle, AppUpdates.state.value)
+
+        server.enqueue(MockResponse().setBody("not a release list"))
+        AppUpdates.runCheck(context, manual = true, app = installed())
+        assertTrue((AppUpdates.state.value as UpdateState.Note).text.contains("Could not reach GitHub"))
     }
 
     @Test
@@ -165,7 +172,7 @@ class AppUpdatesTest {
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     @Test
-    fun downloadKeepsOnlyAnApkThatMatchesItsPublishedChecksum() {
+    fun downloadKeepsOnlyAnApkThatMatchesItsPublishedChecksum() = runBlocking {
         val context = RuntimeEnvironment.getApplication()
         val payload = "fake apk bytes".toByteArray()
         val good =
@@ -196,5 +203,28 @@ class AppUpdatesTest {
         val release =
             AppUpdates.parse(JSONArray().put(release("android-x", 300200)).toString()).single()
         assertEquals("The download is not a valid Android app.", AppUpdates.verifyArchive(context, file, release))
+    }
+
+    @Test
+    fun cancellingAnUpdateStopsProgressAndRemovesThePartialApk() = runBlocking {
+        val context = RuntimeEnvironment.getApplication()
+        val payload = ByteArray(256 * 1024) { 7 }
+        val release = AppUpdates.parse(
+            JSONArray().put(release("android-cancel", 30002, sha = sha(payload))).toString()
+        ).single()
+        server.enqueue(MockResponse().setBody(Buffer().write(payload)))
+        val downloadJob = Job()
+        var reports = 0
+        val error = runCatching {
+            withContext(downloadJob) {
+                AppUpdates.download(context, release) {
+                    reports++
+                    downloadJob.cancel()
+                }
+            }
+        }.exceptionOrNull()
+        assertTrue(error is CancellationException)
+        assertEquals(1, reports)
+        assertFalse(File(context.cacheDir, "updates/vidcue-30002.apk").exists())
     }
 }

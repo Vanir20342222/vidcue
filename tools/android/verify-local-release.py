@@ -102,8 +102,9 @@ def main():
     (output / "SHA256SUMS.txt").write_text(f"{digest}  {apk.name}\n")
     (output / "notes.md").write_text(
         f"Vidcue for Android **{version}**, code **{code}**. Android 8+, ARM64/x86-64.\n\n"
-        "Already installed? Vidcue offers this update itself (About → Check for updates) and "
-        "installs it in place, keeping your account, settings and library.\n\n"
+        "Upgrading from an alpha? Download this APK and open it from Files to update the "
+        "owner-signed stable app, keeping its account, settings and library. Starting with "
+        "beta.1, About → Check for updates offers future signed releases in the app.\n\n"
         "New install: download the APK below and open it from Files. It installs as **Vidcue** "
         "(`dev.ytui.android.stable`) alongside older Preview apps; no uninstall is needed. "
         "Every later release uses this same package and signing key, so it updates in place.\n\n"

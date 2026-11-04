@@ -17,6 +17,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -180,6 +182,7 @@ internal object AppUpdates {
     /** Background check when the app opens; quiet, at most every few hours. */
     fun checkOnStart(context: Context) {
         val app = context.applicationContext
+        if (job?.isActive == true || mutable.value is UpdateState.Installing) return
         File(app.cacheDir, "updates").deleteRecursively()
         if (BuildConfig.DEBUG || MediaBridge.offlineUi || !enabled(app)) return
         if (System.currentTimeMillis() - prefs(app).getLong("checked", 0) < AUTO_INTERVAL_MS) return
@@ -200,16 +203,17 @@ internal object AppUpdates {
         app: InstalledApp = installed(context),
     ) {
         mutable.value = UpdateState.Checking
-        val text =
-            runCatching { withContext(Dispatchers.IO) { fetchText(releasesUrl) } }
+        val releases =
+            runCatching { withContext(Dispatchers.IO) { parse(fetchText(releasesUrl)) } }
                 .getOrElse {
+                    if (it is kotlinx.coroutines.CancellationException) throw it
                     mutable.value =
                         if (manual) UpdateState.Note("Could not reach GitHub. Try again later.")
                         else UpdateState.Idle
                     return
                 }
         prefs(context).edit().putLong("checked", System.currentTimeMillis()).apply()
-        val release = runCatching { newest(parse(text), app) }.getOrNull()
+        val release = newest(releases, app)
         mutable.value =
             when {
                 release == null && manual && app.packageName.endsWith(".preview") ->
@@ -281,7 +285,8 @@ internal object AppUpdates {
             if (message == null) UpdateState.Idle else UpdateState.Failed(message, release)
     }
 
-    internal fun download(context: Context, release: AppRelease, progress: (Float) -> Unit): File {
+    internal suspend fun download(context: Context, release: AppRelease, progress: (Float) -> Unit): File {
+        val coroutine = currentCoroutineContext()
         require(release.apkUrl.startsWith(downloadPrefix)) { "Unexpected download address." }
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val file = File(dir, "vidcue-${release.versionCode}.apk")
@@ -301,8 +306,10 @@ internal object AppUpdates {
                     file.outputStream().use { output ->
                         val buffer = ByteArray(64 * 1024)
                         while (true) {
+                            coroutine.ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
+                            coroutine.ensureActive()
                             read += count
                             check(read <= MAX_APK_BYTES) { "The update is unexpectedly large." }
                             digest.update(buffer, 0, count)
@@ -344,8 +351,7 @@ internal object AppUpdates {
         if (code != release.versionCode || code <= BuildConfig.VERSION_CODE)
             return "The download has an unexpected version."
         val archive = certs(info)
-        // Older Android versions may not report archive signers; the installer still checks.
-        if (archive.isNotEmpty() && archive.intersect(installed(context).certs).isEmpty())
+        if (release.certSha256 !in archive || archive.intersect(installed(context).certs).isEmpty())
             return "The download is not signed with Vidcue's key."
         return null
     }

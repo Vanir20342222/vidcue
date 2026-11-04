@@ -78,6 +78,15 @@ class ReleaseChannel(unittest.TestCase):
 
 
 class VersionCodes(unittest.TestCase):
+    def test_first_beta_cannot_be_published_through_the_debug_preview_channel(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "releases.json"
+            path.write_text("[]")
+            for version in ["0.3.0-beta.1", "0.3.0-rc.1", "0.3.0"]:
+                with self.subTest(version=version), self.assertRaises(SystemExit):
+                    channel.main(["release_channel.py", "check-preview", str(path), version])
+            channel.main(["release_channel.py", "check-preview", str(path), "0.2.0-alpha.12-mobile.15"])
+
     def test_codes_increase_through_beta_rc_and_final_and_exceed_the_alphas(self):
         ordered = ["0.3.0-beta.1", "0.3.0-beta.2", "0.3.0-beta.49", "0.3.0-rc.1",
                    "0.3.0-rc.48", "0.3.0", "0.3.1-beta.1", "0.3.1", "0.4.0-beta.1",
