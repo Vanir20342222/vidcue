@@ -96,19 +96,18 @@ internal fun LiquidOrb(
     ink: Color,
     modifier: Modifier = Modifier,
     swatches: List<Color>? = null,
-    particles: OrbParticles? = null,
 ) {
     val palette = remember(swatches, accent, ink) { artPalette(swatches, accent, ink) }
     Canvas(modifier) {
         clock()
-        drawLiquidOrb(levels, palette, particles)
+        drawLiquidOrb(levels, palette)
     }
 }
 
-internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalette, particles: OrbParticles?) {
+internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalette) {
     // A radial analyser after audioMotion-analyzer's radial mode, driven hard by the beat as
     // music-channel visualisers are: the ring jumps out and flashes on each beat, the stage shakes
-    // a little on strong ones, sparks fly out, and the ring spins faster when the music is loud.
+    // a little on strong ones, and the ring spins faster when the music is loud.
     val minDimension = min(size.width, size.height)
     val center = Offset(size.width / 2f, size.height / 2f) + beatShake(levels, 4.dp.toPx())
     val kick = levels.kick
@@ -140,20 +139,6 @@ internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalett
             center = center,
             style = Stroke(width = (3f - 2f * t).dp.toPx()),
         )
-    }
-    particles?.let { sparks ->
-        for (i in sparks.progress.indices) {
-            val p = sparks.progress[i]
-            if (p >= 1f) continue
-            val eased = 1f - (1f - p) * (1f - p)
-            val distance = inner + (outer * 1.08f - inner) * eased
-            val direction = Offset(cos(sparks.angle[i]), sin(sparks.angle[i]))
-            drawCircle(
-                lerp(palette.at(sparks.tone[i]), Color.White, 0.25f).copy(alpha = (1f - p) * 0.9f),
-                radius = sparks.size[i] * (2.2f - 1.2f * p).dp.toPx(),
-                center = center + direction * distance,
-            )
-        }
     }
     val bars = 72
     val stroke = (TAU * inner / bars) * 0.6f

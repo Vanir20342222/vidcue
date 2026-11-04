@@ -118,7 +118,7 @@ internal class LiquidLevels {
     var kick = 0f
         private set
 
-    /** Counts detected beats; a view emits particles when it changes. */
+    /** Counts detected beats. */
     var beats = 0
         private set
 
@@ -207,46 +207,5 @@ internal class LiquidLevels {
                     LEVEL_RELEASE,
                 )
         }
-    }
-}
-
-/**
- * Sparks thrown outwards from the orbit ring: a burst on every beat (bigger for stronger beats)
- * and a light stream that follows the music's energy. Plain arrays, stepped with the levels.
- */
-internal class OrbParticles(private val capacity: Int = 120, seed: Int = 7) {
-    private val random = kotlin.random.Random(seed)
-    /** Distance travelled from the ring outwards, 0..1; values >= 1 are free slots. */
-    val progress = FloatArray(capacity) { 1f }
-    val angle = FloatArray(capacity)
-    val speed = FloatArray(capacity)
-    val size = FloatArray(capacity)
-    /** Position on the cover's palette, 0..1. */
-    val tone = FloatArray(capacity)
-    private var seenBeats = 0
-    private var stream = 0f
-
-    fun step(levels: LiquidLevels, elapsedSeconds: Float) {
-        val step = elapsedSeconds.coerceIn(0f, 0.1f)
-        if (step == 0f) return
-        for (i in 0 until capacity) if (progress[i] < 1f) progress[i] += speed[i] * step
-        if (levels.beats != seenBeats) {
-            seenBeats = levels.beats
-            repeat((10 + 26 * levels.beatStrength).toInt()) { emit(0.9f + 1.3f * levels.beatStrength) }
-        }
-        stream += step * 16f * levels.energy
-        while (stream >= 1f) {
-            stream -= 1f
-            emit(0.35f + 0.5f * levels.energy)
-        }
-    }
-
-    private fun emit(velocity: Float) {
-        val slot = (0 until capacity).firstOrNull { progress[it] >= 1f } ?: return
-        progress[slot] = 0f
-        angle[slot] = random.nextFloat() * 6.2831855f
-        speed[slot] = velocity * (0.6f + 0.8f * random.nextFloat())
-        size[slot] = 0.6f + random.nextFloat()
-        tone[slot] = random.nextFloat()
     }
 }
