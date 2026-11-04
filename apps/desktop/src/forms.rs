@@ -33,7 +33,7 @@ impl Field {
     }
 }
 pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
-    ("General", &[54, 15, 16, 17, 34, 56, 57, 38, 50]),
+    ("General", &[54, 68, 15, 16, 17, 34, 56, 57, 38, 50]),
     ("Appearance", &[0, 1, 2, 3, 55, 61, 62, 63, 64, 65, 66, 67]),
     (
         "Downloads",
@@ -329,6 +329,7 @@ impl Form {
             Field::flag("Show section", c.card_info.section),
             Field::flag("Show likes", c.card_info.likes),
             Field::flag("Show description in details", c.card_info.description),
+            Field::flag("Check GitHub for new releases", c.update_check),
         ];
         Self {
             kind: FormKind::Settings(config),
@@ -645,6 +646,7 @@ impl Form {
             likes: self.value(66) == "yes",
             description: self.value(67) == "yes",
         };
+        c.update_check = self.value(68) == "yes";
         c.validate()?;
         Ok(c)
     }

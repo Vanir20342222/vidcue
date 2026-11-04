@@ -30,6 +30,7 @@ pub mod store;
 mod test_http;
 pub mod theme;
 mod throttle;
+pub mod update;
 pub mod vpn;
 pub use vidcue_providers::watch;
 mod worker_process;

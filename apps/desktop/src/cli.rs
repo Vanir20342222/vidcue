@@ -47,6 +47,12 @@ pub enum Command {
     },
     /// Write a documented TOML configuration (never overwrites an existing file).
     Init,
+    /// Check GitHub for a newer desktop release and, unless --check, install it.
+    Update {
+        /// Only report whether a newer release exists.
+        #[arg(long)]
+        check: bool,
+    },
     /// Locate browser profiles, import a session, or disconnect.
     Auth {
         #[command(subcommand)]
@@ -236,6 +242,31 @@ pub async fn run(command: Command, mut config: Config, paths: Paths) -> Result<(
         }
         Command::NativeWorker { request } => {
             tokio::task::spawn_blocking(move || vidcue_services::native::worker(&request)).await??
+        }
+        Command::Update { check } => {
+            let current = env!("CARGO_PKG_VERSION");
+            let release = vidcue_services::update::check(
+                vidcue_services::update::API_BASE,
+                config.proxy.as_deref(),
+                current,
+            )
+            .await?;
+            let Some(release) = release else {
+                println!("Vidcue {current} is up to date.");
+                return Ok(());
+            };
+            println!("Vidcue {} is available ({}).", release.version, release.url);
+            if !check {
+                let status = vidcue_services::update::install_command(&release)
+                    .map(tokio::process::Command::from)?
+                    .status()
+                    .await?;
+                ensure!(status.success(), "The installer exited with {status}");
+                println!(
+                    "Vidcue {} is installed. Restart vidcue to use it.",
+                    release.version
+                );
+            }
         }
         Command::Init => {
             ensure!(

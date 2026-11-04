@@ -95,6 +95,11 @@ pub struct Config {
     pub clipboard_watcher: bool,
     pub notifications: bool,
     pub notification_sound: bool,
+    /// Ask GitHub at startup whether a newer desktop release exists and offer to install it.
+    /// Only the public release list is read; nothing installs without "Update now".
+    pub update_check: bool,
+    /// A release version the user chose to skip; its popup is not shown again.
+    pub skipped_update: Option<String>,
     pub schedule: crate::schedule::Schedule,
     pub legacy_settings: Option<String>,
     pub legacy_keybindings: BTreeMap<String, String>,
@@ -144,6 +149,8 @@ impl Default for Config {
             clipboard_watcher: false,
             notifications: true,
             notification_sound: false,
+            update_check: true,
+            skipped_update: None,
             schedule: Default::default(),
             legacy_settings: None,
             legacy_keybindings: BTreeMap::new(),

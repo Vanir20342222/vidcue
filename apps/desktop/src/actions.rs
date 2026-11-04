@@ -31,6 +31,7 @@ pub const ENTRIES: &[Entry] = &[
         "music-player-style"
     ),
     entry!("Settings", "General settings", "settings"),
+    entry!("Settings", "Check for a new Vidcue version", "update-check"),
     entry!("Settings", "Replay first-run setup", "setup"),
     entry!("Settings", "Setup & tool capabilities", "capabilities"),
     entry!("Settings", "Inspect thumbnail cache", "thumbnail-cache"),
@@ -309,7 +310,7 @@ pub const ENTRIES: &[Entry] = &[
         &[("Node.js 22+ or Deno 2.9.7 executable", "node")]
     ),
     entry!("Tools", "Diagnostics", "log"),
-    entry!("Tools", "Check for updates", "update"),
+    entry!("Tools", "How updates work", "update"),
     entry!("Tools", "List saved settings profiles", "profiles"),
     entry!(
         "Tools",

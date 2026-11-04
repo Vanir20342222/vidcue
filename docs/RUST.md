@@ -322,9 +322,14 @@ source remains recoverable from Git history. See [remaining work](REMAINING_WORK
 
 `vidcue doctor` checks configuration/tools without provider requests. `doctor --network`
 probes public YouTube/Music/radio without reading browser sessions or changing VPN.
-F2 → Diagnostics reports sanitized recent errors. F2 → Check for updates describes
-the source-build update; it never silently replaces binaries. No signed release
-archives or distribution packages are implemented yet.
+F2 → Diagnostics reports sanitized recent errors. At startup Vidcue asks GitHub for
+a newer desktop release (`v1.2.3` or `desktop-v1.2.3` tags; Android tags are ignored)
+and shows a popup with **Update now**, **Later** and **Skip this version**. Update now
+clones that tag and runs its `install.sh` (needs git and cargo); nothing installs
+without that button or `vidcue update`. `vidcue update --check` only reports. Turn the
+check off in General settings → Check GitHub for new releases; F2 → Check for a new
+Vidcue version checks on demand. No signed release archives or distribution packages
+are implemented yet.
 
 Tests, capture reproduction and actual failures are recorded in
 [VALIDATION.md](VALIDATION.md), [FEATURE_AUDIT.md](FEATURE_AUDIT.md) and the

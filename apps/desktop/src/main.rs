@@ -184,6 +184,9 @@ async fn interface(
     let mut last_draw = Instant::now() - Duration::from_millis(16);
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    if !app.demo && app.config.update_check {
+        app.check_for_updates(false);
+    }
     while !app.quit {
         if let Some(bridge) = &desktop_media {
             bridge.update_queue(&app.snapshot.playback);
@@ -249,8 +252,60 @@ async fn interface(
             };
             app.redraw = true;
         }
+        if let Some(release) = app.run_update.take() {
+            terminal::Guard::suspend()?;
+            let outcome = run_update(&release).await;
+            terminal::Guard::resume()?;
+            terminal.clear()?;
+            app.status = match outcome {
+                Ok(()) => format!(
+                    "Vidcue {} installed · restart vidcue to use it",
+                    release.version
+                ),
+                Err(error) => format!("Update failed: {error} · your current version still works"),
+            };
+            app.redraw = true;
+        }
     }
     Ok(())
+}
+
+/// Run the installer for `release` in the normal terminal so its progress is visible,
+/// then wait for Enter before the interface returns.
+async fn run_update(release: &vidcue_services::update::Release) -> Result<()> {
+    println!(
+        "\n\x1b[1;36m✦ Updating Vidcue to {}\x1b[0m\n",
+        release.version
+    );
+    let status = vidcue_services::update::install_command(release)
+        .map(tokio::process::Command::from)?
+        .status()
+        .await;
+    let result = match status {
+        Ok(s) if s.success() => {
+            println!(
+                "\n\x1b[1;32m✔ Vidcue {} is installed.\x1b[0m Restart vidcue to use it.",
+                release.version
+            );
+            Ok(())
+        }
+        Ok(s) => Err(anyhow::anyhow!("the installer exited with {s}")),
+        Err(e) => Err(anyhow::anyhow!("cannot start bash: {e}")),
+    };
+    if result.is_err() {
+        println!(
+            "\n\x1b[1;31m✘ The update did not finish.\x1b[0m Your current version is unchanged."
+        );
+    }
+    // A child reads the key, as with cliamp, so the interface's input reader is not raced.
+    let _ = tokio::process::Command::new("bash")
+        .args([
+            "-c",
+            "read -r -p 'Press Enter to return to Vidcue… ' _ || true",
+        ])
+        .status()
+        .await;
+    result
 }
 
 #[cfg(test)]

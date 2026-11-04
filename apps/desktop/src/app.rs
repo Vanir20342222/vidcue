@@ -186,6 +186,11 @@ pub enum Modal {
         lines: Vec<String>,
         offset: usize,
     },
+    /// A newer release is on GitHub: Update now · Later · Skip this version.
+    Update {
+        release: Box<vidcue_services::update::Release>,
+        selected: usize,
+    },
 }
 pub struct Input {
     pub editor: Editor,
@@ -248,6 +253,10 @@ pub enum UiEvent {
     },
     CacheCleared(Result<vidcue_services::images::CacheStats>),
     AccountProfiles(Vec<auth::BrowserProfile>),
+    Update {
+        manual: bool,
+        result: Result<Option<vidcue_services::update::Release>>,
+    },
     Collection {
         generation: u64,
         source: String,
@@ -297,6 +306,8 @@ pub struct App {
     pub offline: bool,
     pub quit: bool,
     pub launch_cliamp: bool,
+    /// Set by "Update now"; the event loop suspends the terminal and runs the installer.
+    pub run_update: Option<vidcue_services::update::Release>,
     pub dirty: bool,
     pub redraw: bool,
     pub tasks: JoinSet<UiEvent>,
@@ -651,6 +662,7 @@ impl App {
             offline,
             quit: false,
             launch_cliamp: false,
+            run_update: None,
             dirty: false,
             redraw: true,
             vinyl_motion: Default::default(),
@@ -1017,6 +1029,7 @@ impl App {
                     }
                 }
             }
+            UiEvent::Update { manual, result } => self.update_found(manual, result),
             UiEvent::AccountProfiles(profiles) => {
                 if matches!(self.modal, Some(Modal::Account { .. })) {
                     self.modal = Some(Modal::Account {
@@ -1674,11 +1687,17 @@ impl App {
             self.setup_key(setup, key);
             return;
         }
+        if let Modal::Update { release, selected } = modal {
+            self.update_key(release, selected, key);
+            return;
+        }
         if key.code == KeyCode::Esc {
             return;
         }
         match &mut modal {
-            Modal::PendingText { .. } | Modal::Setup(_) => self.modal = Some(modal),
+            Modal::PendingText { .. } | Modal::Setup(_) | Modal::Update { .. } => {
+                self.modal = Some(modal)
+            }
             Modal::Lyrics(view) => {
                 if !view.loading {
                     let limit = if view.opened {
@@ -2361,6 +2380,12 @@ impl App {
             if let Some(HitTarget::MenuItem(index)) = hit {
                 match &mut self.modal {
                     Some(Modal::Actions { selected, .. }) | Some(Modal::Categories(selected)) => {
+                        *selected = index;
+                        self.modal_key(KeyCode::Enter.into());
+                    }
+                    Some(Modal::Update { selected, .. })
+                        if matches!(mouse.kind, MouseEventKind::Down(_)) =>
+                    {
                         *selected = index;
                         self.modal_key(KeyCode::Enter.into());
                     }
@@ -4687,6 +4712,7 @@ impl App {
                 self.resume_position(position);
             }
             "resume" => self.modal = Some(Modal::Resume(0)),
+            "update-check" => self.check_for_updates(true),
             "thumbnail-cache" | "thumbnail-cache-clear" => {
                 let images = self.images.clone();
                 let clear = cmd == "thumbnail-cache-clear";
@@ -4796,13 +4822,19 @@ impl App {
                 self.modal = Some(Modal::Text {
                     title: "Update vidcue".into(),
                     lines: vec![
+                        "F2 → Check for a new Vidcue version asks GitHub for a newer release."
+                            .into(),
+                        "Update now rebuilds that release with ./install.sh; settings stay."
+                            .into(),
+                        "General settings → Check GitHub for new releases turns the startup popup on or off."
+                            .into(),
                         "Native extraction is compiled into the Rust application.".into(),
-                        "Update the checkout, review changes, then run ./install-rust.sh.".into(),
+                        "From a checkout: update it, review changes, then run ./install.sh.".into(),
                         "Pinned native dependencies are updated with reviewed source changes."
                             .into(),
                         "The optional Python yt-dlp fallback is managed by your package manager."
                             .into(),
-                        "No executable or dependency was downloaded/replaced by this command."
+                        "This panel downloads nothing; only Update now installs a release."
                             .into(),
                     ],
                     offset: 0,

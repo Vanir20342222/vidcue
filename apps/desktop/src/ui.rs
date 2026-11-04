@@ -72,6 +72,7 @@ mod lyrics;
 mod menus;
 mod settings;
 mod setup;
+mod update;
 pub mod vinyl;
 mod visualizer;
 mod workspace;
@@ -171,6 +172,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         Modal::Text { .. } => (90, 28),
         Modal::Setup(_) => (84, 24),
+        Modal::Update { release, .. } => (78, release.notes.len() as u16 + 12),
     };
     let rect = centered(area, size.0, size.1);
     f.render_widget(Clear, rect);
@@ -184,6 +186,10 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Modal::Lyrics(view) => lyrics::render(f, app, view, rect),
         Modal::Setup(view) => setup::render(f, app, view, rect),
+        Modal::Update { release, selected } => {
+            let (release, selected) = (release.clone(), *selected);
+            update::render(f, app, &release, selected, rect);
+        }
         Modal::Actions { selected, query } => {
             let hits = menus::actions(f, app, *selected, query, rect);
             app.hit_targets.extend(hits);
