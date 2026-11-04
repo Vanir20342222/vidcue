@@ -42,6 +42,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
@@ -669,34 +671,52 @@ internal fun MediaDialog(
     }
 }
 
-/** A drifting highlight for content that is still loading. Still under reduced motion. */
+/**
+ * A highlight drifting across content that is still loading. Every skeleton block shares one
+ * clock and one band in window coordinates, so the sweep crosses the whole screen in one smooth
+ * pass instead of each block restarting its own. Still under reduced motion.
+ */
 @Composable
 internal fun Modifier.shimmer(shape: Shape = MediaTokens.medium): Modifier {
     val motion = LocalMotion.current
     val base = MaterialTheme.colorScheme.surfaceContainer
-    val glint = lerp(base, MaterialTheme.colorScheme.onBackground, 0.07f)
-    val phase =
-        if (!motion.animate) remember { mutableStateOf(0.5f) }
+    val glint = lerp(base, MaterialTheme.colorScheme.onBackground, 0.09f)
+    val screen =
+        with(androidx.compose.ui.platform.LocalDensity.current) {
+            androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp.toPx()
+        }
+    // Only ticks the frames; the phase itself comes from the shared uptime clock.
+    val tick =
+        if (!motion.animate) null
         else
             rememberInfiniteTransition(label = "shimmer")
-                .animateFloat(
-                    -0.4f,
-                    1.4f,
-                    infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart),
-                    label = "shimmer-phase",
+                .animateFloat(0f, 1f, infiniteRepeatable(tween(1000, easing = LinearEasing)), label = "shimmer-tick")
+    val origin = remember { floatArrayOf(0f) }
+    return this.onGloballyPositioned { origin[0] = it.positionInWindow().x }
+        .clip(shape)
+        .drawWithContent {
+            tick?.value
+            val period = SHIMMER_PERIOD_MS
+            val t =
+                if (tick == null) 0.5f
+                else (android.os.SystemClock.uptimeMillis() % period) / period.toFloat()
+            // Ease in and out so the band glides rather than snapping back at the edges.
+            val eased = t * t * (3f - 2f * t)
+            val band = screen * 0.7f
+            val centre = -band + (screen + band * 2f) * eased - origin[0]
+            drawRect(base)
+            drawRect(
+                Brush.horizontalGradient(
+                    listOf(base, glint, base),
+                    startX = centre - band / 2f,
+                    endX = centre + band / 2f,
                 )
-    return clip(shape).drawWithContent {
-        val x = size.width * phase.value
-        drawRect(
-            Brush.linearGradient(
-                listOf(base, glint, base),
-                start = Offset(x - size.width * 0.35f, 0f),
-                end = Offset(x + size.width * 0.35f, size.height),
             )
-        )
-        drawContent()
-    }
+            drawContent()
+        }
 }
+
+private const val SHIMMER_PERIOD_MS = 1600L
 
 /** Small rotating arc used wherever the app waits. */
 @Composable
