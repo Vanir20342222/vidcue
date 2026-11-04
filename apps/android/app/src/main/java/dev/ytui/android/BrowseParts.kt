@@ -167,7 +167,7 @@ internal fun FeedSkeleton(square: Boolean, modifier: Modifier = Modifier) {
 
 /** Duration or live marker on artwork. Live gets a pulsing dot instead of capitals. */
 @Composable
-internal fun ArtworkBadge(live: Boolean, text: String, modifier: Modifier = Modifier) {
+internal fun ArtworkBadge(live: Boolean, text: String, modifier: Modifier = Modifier, pulse: Boolean = true) {
     val motion = LocalMotion.current
     Row(
         modifier
@@ -180,7 +180,9 @@ internal fun ArtworkBadge(live: Boolean, text: String, modifier: Modifier = Modi
     ) {
         if (live) {
             val pulse =
-                if (!motion.animate) remember { mutableStateOf(1f) }
+                // A feed of stations would otherwise run one animation per card every frame,
+                // including while scrolling; there the dot stays still.
+                if (!motion.animate || !pulse) remember { mutableStateOf(1f) }
                 else
                     rememberInfiniteTransition(label = "live")
                         .animateFloat(

@@ -398,7 +398,13 @@ internal class YtuiViewModel(
     suspend fun snapshot() =
         withContext(Dispatchers.Main.immediate) {
             snapshotLock.withLock {
-                val value = withContext(Dispatchers.Default) { JSONObject(MediaBridge.snapshot()) }
+                // Parse and fingerprint off the main thread: the service publishes five times a
+                // second, and serialising its JSON on the UI thread costs scroll frames.
+                val (value, playerRaw) =
+                    withContext(Dispatchers.Default) {
+                        val parsed = JSONObject(MediaBridge.snapshot())
+                        parsed to parsed.optJSONObject("player")?.toString()
+                    }
                 value.optJSONObject("player")?.let {
                     val pending = seekTarget
                     if (pending != null) {
@@ -419,7 +425,7 @@ internal class YtuiViewModel(
                             it.optLong("startup_token") == preparing.token
                     // Deduplicate native snapshots without dropping a pending intent;
                     // acceptance and video mode still change in one state emission.
-                    val raw = it.toString()
+                    val raw = if (pending != null) it.toString() else playerRaw ?: it.toString()
                     if (raw != lastPlayer || accepted) {
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
@@ -840,7 +846,12 @@ internal class YtuiViewModel(
     }
 
     /** Prepare at most one settled row, off the touch path and without history/queue effects. */
-    suspend fun prepareVisible(cards: List<MediaCard>) {
+    suspend fun prepareVisible(cards: List<MediaCard>) = withContext(Dispatchers.Default) {
+        prepareVisibleNow(cards)
+    }
+
+    /** Settings, connectivity (a binder call) and JNI checks stay off the main thread. */
+    private suspend fun prepareVisibleNow(cards: List<MediaCard>) {
         if (
             playbackJob?.isActive == true ||
                 playerOpen.value ||

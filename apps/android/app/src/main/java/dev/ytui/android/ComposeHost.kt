@@ -58,6 +58,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -983,6 +984,7 @@ private fun BrowsePane(
         )
     // Cards animate in once per loaded list, not again when scrolled back into view.
     val seen = remember(tab, feed.request) { mutableSetOf<Any>() }
+    var gridWidth by remember { mutableIntStateOf(0) }
     val cardIndex =
         remember(feed.cards) { feed.cards.withIndex().associate { it.value.key to it.index } }
     var query by rememberSaveable(tab) { mutableStateOf("") }
@@ -1200,13 +1202,30 @@ private fun BrowsePane(
                         }
                 },
         ) {
+            val fixedColumns = tab == 2 && LocalConfiguration.current.screenWidthDp < 600
+            val minCell = if (tab in 2..3) 164.dp else 280.dp
+            val sidePadding = if (tab in 2..3) 16.dp else 0.dp
+            val cellGap = if (tab in 2..3) 12.dp else 8.dp
+            // Cover width in pixels, as the grid lays its cells out; covers use it instead of
+            // measuring themselves.
+            val cellPixels =
+                remember(gridWidth, fixedColumns, minCell, density) {
+                    with(density) {
+                        val available = gridWidth - 2 * sidePadding.roundToPx()
+                        val gap = cellGap.roundToPx()
+                        val count =
+                            if (fixedColumns) 2
+                            else maxOf(1, (available + gap) / (minCell.roundToPx() + gap))
+                        if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
+                    }
+                }
             LazyVerticalGrid(
                 columns =
-                    if (tab == 2 && LocalConfiguration.current.screenWidthDp < 600)
-                        GridCells.Fixed(2)
-                    else GridCells.Adaptive(if (tab in 2..3) 164.dp else 280.dp),
+                    if (fixedColumns) GridCells.Fixed(2)
+                    else GridCells.Adaptive(minCell),
                 modifier =
                     Modifier.fillMaxSize()
+                        .onSizeChanged { gridWidth = it.width }
                         .then(swipe)
                         .graphicsLayer {
                             // No offscreen buffer for a screen-sized scrolling grid.
@@ -1310,11 +1329,13 @@ private fun BrowsePane(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
+                                    val shelfWidth = if (tab == 1) 272.dp else 152.dp
                                     CompositionLocalProvider(
-                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
+                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
+                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() },
                                     ) {
                                         Box(
-                                            Modifier.width(if (tab == 1) 272.dp else 152.dp).pressFeedback()
+                                            Modifier.width(shelfWidth).pressFeedback()
                                         ) {
                                             val current = media.url.isNotBlank() && media.url == playingUrl
                                             MediaRow(
@@ -1342,7 +1363,8 @@ private fun BrowsePane(
                 ) { media ->
                     // Scroll state is read in image effects, without recomposing every card.
                     CompositionLocalProvider(
-                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } }
+                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
+                        LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
                     ) {
                         Box(
                             Modifier.then(
@@ -1444,17 +1466,33 @@ internal fun Artwork(
     enabled: Boolean = true,
     shape: androidx.compose.ui.graphics.Shape = MediaTokens.small,
 ) {
-    // Size from constraints, not onSizeChanged: lazy lists reuse layout nodes,
-    // and a reused node of unchanged size never reports its size again.
-    BoxWithConstraints(
+    val frame =
         modifier
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .testTag("artwork-frame-${media.key}")
-    ) {
-        // A shared decode size: a one-pixel width difference between grid columns must not
-        // restart the load or fetch and cache the same cover again.
-        val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
+    // Feed grids say how wide their cells are, so a card needs no subcomposition of its own
+    // (one per cover cost scroll frames). Elsewhere the size comes from the constraints, not
+    // onSizeChanged: lazy lists reuse layout nodes, and a reused node of unchanged size never
+    // reports its size again.
+    val hinted = LocalArtworkPixels.current
+    if (hinted > 0)
+        Box(frame) { ArtworkBody(media, ArtworkCache.decodeSize(hinted), enabled) }
+    else
+        BoxWithConstraints(frame) {
+            // A shared decode size: a one-pixel width difference between grid columns must not
+            // restart the load or fetch and cache the same cover again.
+            val pixels = with(LocalDensity.current) { ArtworkCache.decodeSize(maxWidth.roundToPx()) }
+            ArtworkBody(media, pixels, enabled)
+        }
+}
+
+/** Width in pixels of the artwork cells a feed grid lays out; 0 when unknown. */
+internal val LocalArtworkPixels = staticCompositionLocalOf { 0 }
+
+@Composable
+private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean) {
+    run {
         val source = media.artworkSource
         // A memory-cache hit paints in the first frame (no placeholder flash on scroll-back).
         val bitmapState =
@@ -1856,6 +1894,7 @@ private fun MediaDurationBadge(media: MediaCard, mobile: JSONObject, modifier: M
             media.live,
             if (media.live) "Live" else time(media.value.optLong("duration").toFloat()),
             modifier.testTag("duration-${media.key}"),
+            pulse = false,
         )
 }
 
