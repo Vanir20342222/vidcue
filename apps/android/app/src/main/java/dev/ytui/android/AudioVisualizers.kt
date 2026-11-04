@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -190,7 +191,6 @@ internal fun DrawScope.drawStrings(levels: LiquidLevels, palette: LiquidPalette,
     val strings = 14
     val samples = 72
     val centre = size.height / 2f
-    val amplitudeMax = size.height * 0.4f
     val width = size.width
     val kick = levels.kick
     for (s in 0 until strings) {
@@ -199,8 +199,9 @@ internal fun DrawScope.drawStrings(levels: LiquidLevels, palette: LiquidPalette,
         // Bass strings swing wide and slow; treble strings are finer and quicker. A beat plucks
         // every string at once, hardest in the bass. Their motion speeds up with the music.
         val cycles = 1f + position * 3.5f
-        val pluck = 1f + kick * (0.9f - 0.5f * position)
-        val amplitude = amplitudeMax * (0.05f + 0.95f * level) * (1f - 0.35f * position) * pluck
+        val core = (2.6f - 1.2f * position).dp.toPx()
+        val glow = core * 4f
+        val amplitude = stringAmplitude(size.height, glow, position, level, kick)
         val phase = levels.spin * (1.2f + position * 3f) + s * 0.9f
         path.reset()
         for (i in 0..samples) {
@@ -210,13 +211,12 @@ internal fun DrawScope.drawStrings(levels: LiquidLevels, palette: LiquidPalette,
             if (i == 0) path.moveTo(0f, y) else path.lineTo(u * width, y)
         }
         val colour = lerp(palette.at(position), Color.White, 0.3f * kick)
-        val core = (2.6f - 1.2f * position).dp.toPx()
         // A soft glow under each string, then the string itself.
-        drawPath(path, colour.copy(alpha = 0.12f + 0.2f * level), style = Stroke(width = core * 4f, cap = StrokeCap.Round))
+        drawPath(path, colour.copy(alpha = 0.12f + 0.2f * level), style = Stroke(width = glow, cap = StrokeCap.Round, join = StrokeJoin.Round))
         drawPath(
             path,
             colour.copy(alpha = (0.4f + 0.55f * level + 0.2f * kick).coerceAtMost(1f)),
-            style = Stroke(width = core, cap = StrokeCap.Round),
+            style = Stroke(width = core, cap = StrokeCap.Round, join = StrokeJoin.Round),
         )
     }
 }

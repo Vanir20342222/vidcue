@@ -81,6 +81,14 @@ internal fun orbitOffset(angle: Float, time: Float, groups: FloatArray): Float {
     return sum / LIQUID_GROUPS
 }
 
+/** Keep each plucked string inside the stage, including its glow and antialiasing. */
+internal fun stringAmplitude(height: Float, glowWidth: Float, position: Float, level: Float, kick: Float): Float {
+    val pluck = 1f + kick * (0.9f - 0.5f * position)
+    val amplitude = height * 0.4f * (0.05f + 0.95f * level) * (1f - 0.35f * position) * pluck
+    val available = (height / 2f - glowWidth / 2f - 1f).coerceAtLeast(0f)
+    return amplitude.coerceAtMost(available)
+}
+
 /** Frame-to-frame group energies for the liquid views. Plain state, so it never recomposes. */
 internal class LiquidLevels {
     /** Smoothed energy per group, 0..1: bass, low-mid, high-mid, treble. */

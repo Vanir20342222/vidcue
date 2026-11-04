@@ -47,6 +47,37 @@ class SpectrumMathTest {
     }
 
     @Test
+    fun pluckedStringsAndTheirGlowFitAboveAndBelowTheCentreAtEveryDensity() {
+        for (height in listOf(128f, 360f, 1064f)) {
+            for (density in listOf(0.75f, 1f, 2f, 3f, 4f)) {
+                for (string in 0 until 14) {
+                    val position = string / 13f
+                    val glow = (2.6f - 1.2f * position) * density * 4f
+                    for (level in listOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
+                        for (kick in listOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
+                            val amplitude = stringAmplitude(height, glow, position, level, kick)
+                            val extent = amplitude + glow / 2f + 1f
+                            assertTrue("height=$height density=$density string=$string level=$level kick=$kick", extent <= height / 2f)
+                            assertTrue(amplitude >= 0f)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun stringsStillRespondToTheirBandAndToBeatsBelowTheLimit() {
+        val quiet = stringAmplitude(360f, 10.4f, 0f, 0.1f, 0f)
+        val atRest = stringAmplitude(360f, 10.4f, 0f, 0.5f, 0f)
+        val plucked = stringAmplitude(360f, 10.4f, 0f, 0.5f, 1f)
+        assertTrue(quiet > 0f)
+        assertTrue(quiet < atRest)
+        assertTrue(atRest < plucked)
+        assertTrue(plucked + 10.4f / 2f + 1f < 360f / 2f)
+    }
+
+    @Test
     fun surfaceFlowsSmoothlyBetweenNearbyPositionsAndFrames() {
         val groups = floatArrayOf(0.8f, 0.5f, 0.3f, 0.2f)
         val a = surfaceOffset(0.40f, 3.0f, groups)
