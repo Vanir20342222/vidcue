@@ -45,9 +45,14 @@ Each screen now has at most one primary (inverted) pill.
 - **Downloads.** No page heading. One chip row (the Transfers chip shows a
   count), with save-from-link and new-playlist icons at its end.
   - Offline items are list rows with a bottom-sheet menu: header, Play, Add to
-    playlist, Export, Retry folder save, and Remove (error colour).
-  - Transfers show state and percentage. Their icon matches what
-    `download_toggle` really does: pause, resume, retry, or restart preparation.
+    playlist, Export, Retry folder save, and Remove (error colour). A second
+    line names the kind, quality and size ("Video · 1080p · 1.2 GB").
+  - Transfers are cards, not list rows. The title, a coloured status line, a
+    full-width progress bar and the numbers (percent, "12 MB of 1.2 GB", speed,
+    time left) each get their own line, so nothing is cut off by the buttons.
+    The actions are labelled pills (Pause, Resume, Retry, Restart, Remove) with
+    the spoken names the icon buttons had. A summary line above the cards counts
+    what is downloading, waiting, paused or failed.
   - The playlist sheet has Play all as its primary action, Rename as secondary
     and Delete as a destructive text action. Its actions wrap at 2× text, and
     item actions sit in a menu.

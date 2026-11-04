@@ -21,17 +21,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
-/** Transfer state → the action `download_toggle` actually performs for it. */
-private fun transferAction(item: JSONObject): Pair<Glyph, String> {
-    val state = item.optString("state")
-    return when {
-        item.optString("id").startsWith("job:") -> Glyph.Repeat to "Restart preparation"
-        state.contains("failed", ignoreCase = true) -> Glyph.Repeat to "Retry download"
-        state == "Paused" -> Glyph.Play to "Resume download"
-        else -> Glyph.Pause to "Pause download"
-    }
-}
-
 @Composable
 internal fun OfflineLibrary(vm: YtuiViewModel) {
     val downloads by vm.downloads.collectAsState()
@@ -144,11 +133,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         val media = MediaCard(item.getJSONObject("media"))
                         MediaListRow(
                             item.optString("title"),
-                            listOfNotNull(
-                                    if (item.optBoolean("audio")) "Audio" else "Video",
-                                    media.creator.ifBlank { null },
-                                )
-                                .joinToString(" · "),
+                            media.creator,
                             Modifier.testTag("offline-item-${item.optString("id")}").semantics {
                                 contentDescription = "Play offline ${item.optString("title")}"
                             },
@@ -156,6 +141,20 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                             square = item.optBoolean("audio"),
                             onClick = { vm.playOffline(item) },
                             extra = {
+                                // What the copy is and how much space it takes, on its own line
+                                // so a long channel name cannot push it out of view.
+                                Text(
+                                    offlineDetails(
+                                        item.optBoolean("audio"),
+                                        item.optString("quality"),
+                                        item.optLong("bytes"),
+                                    ),
+                                    Modifier.testTag("offline-details-${item.optString("id")}"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                                 item
                                     .optString("storage_error")
                                     .takeIf { it.isNotBlank() }
@@ -215,15 +214,16 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         transfers.filter {
                             !it.optString("id").startsWith("export:") &&
                                 !it.optString("id").startsWith("job:") &&
-                                transferAction(it).second == "Pause download"
+                                transferAction(it).pauses
                         }
-                    if (active.size > 1)
-                        item(key = "pause-all") {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                QuietAction("Pause all", Modifier.testTag("transfers-pause-all")) {
-                                    for (item in active)
-                                        vm.effect("download_toggle", "id" to item.optString("id"))
-                                }
+                    if (transfers.isNotEmpty())
+                        item(key = "transfers-header") {
+                            TransfersHeader(
+                                transferSummary(transfers.map { transferRowTone(it) }),
+                                canPauseAll = active.size > 1,
+                            ) {
+                                for (item in active)
+                                    vm.effect("download_toggle", "id" to item.optString("id"))
                             }
                         }
                     if (transfers.isEmpty())
@@ -235,42 +235,14 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                             )
                         }
                     items(transfers, key = { it.optString("id") }) { item ->
-                        val progress =
-                            item
-                                .optDouble("progress")
-                                .toFloat()
-                                .takeIf { it.isFinite() }
-                                ?.coerceIn(0f, 1f) ?: 0f
-                        val (glyph, label) = transferAction(item)
-                        val rate = rememberTransferRate(item)
-                        MediaListRow(
-                            item.optString("title"),
-                            listOfNotNull(
-                                    item.optString("state"),
-                                    if (progress > 0f) "${(progress * 100).toInt()}%" else null,
-                                    rate,
-                                )
-                                .joinToString(" · "),
-                            artwork = { modifier ->
-                                item.optJSONObject("media")?.let {
-                                    Artwork(MediaCard(it), modifier, thumbnails)
-                                } ?: GlyphTile(Glyph.Download, modifier)
+                        TransferCard(
+                            item,
+                            thumbnails,
+                            onToggle = {
+                                vm.effect("download_toggle", "id" to item.optString("id"))
                             },
-                            extra = {
-                                MediaProgressBar(
-                                    progress,
-                                    Modifier.fillMaxWidth().padding(top = 6.dp),
-                                )
-                            },
-                        ) {
-                            if (!item.optString("id").startsWith("export:"))
-                                MediaIconButton(glyph, label) {
-                                    vm.effect("download_toggle", "id" to item.optString("id"))
-                                }
-                            MediaIconButton(Glyph.Close, "Remove ${item.optString("title")}") {
-                                removing = item
-                            }
-                        }
+                            onRemove = { removing = item },
+                        )
                     }
                 }
             }
@@ -577,41 +549,4 @@ private fun AddOfflinePanel(vm: YtuiViewModel, close: () -> Unit) {
             Action("Save offline", enabled = url.isNotBlank()) { save() }
         }
     }
-}
-
-internal fun byteLabel(bytes: Long): String =
-    when {
-        bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
-        bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
-        else -> "%.0f KB".format(bytes / 1024.0)
-    }
-
-/**
- * Speed and time left for a running transfer, from how many bytes arrived between snapshots.
- * Smoothed so the label does not flicker; null until there is something honest to show.
- */
-@Composable
-private fun rememberTransferRate(item: JSONObject): String? {
-    val id = item.optString("id")
-    val bytes = item.optLong("bytes")
-    val total = item.optLong("total")
-    var last by remember(id) { mutableStateOf(bytes to android.os.SystemClock.elapsedRealtime()) }
-    var speed by remember(id) { mutableDoubleStateOf(0.0) }
-    LaunchedEffect(bytes) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        val (before, at) = last
-        if (bytes > before && now > at) {
-            val sample = (bytes - before) * 1000.0 / (now - at)
-            speed = if (speed == 0.0) sample else speed * 0.7 + sample * 0.3
-        }
-        last = bytes to now
-    }
-    if (speed <= 0.0 || item.optString("state") == "Paused") return null
-    val perSecond = "${byteLabel(speed.toLong())}/s"
-    if (total <= bytes) return perSecond
-    val seconds = ((total - bytes) / speed).toLong()
-    val left =
-        if (seconds >= 3600) "${seconds / 3600} h ${seconds / 60 % 60} min left"
-        else if (seconds >= 60) "${seconds / 60} min left" else "${seconds.coerceAtLeast(1)} s left"
-    return "$perSecond · $left"
 }

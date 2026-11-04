@@ -303,6 +303,8 @@ public final class OfflineStore {
                 new JSONObject(new String(d.request.data, java.nio.charset.StandardCharsets.UTF_8));
             String state = label(d.state);
             double progress = Math.max(0, d.getPercentDownloaded()) / 100.0;
+            long bytes = Math.max(0, d.getBytesDownloaded());
+            long total = d.contentLength > 0 ? d.contentLength : 0;
             String audio = request.getJSONObject("stream").optString("audio_url", "");
             if (!audio.isEmpty() && !"null".equals(audio)) {
               Download paired = manager.getDownloadIndex().getDownload(d.request.id + "-audio");
@@ -312,6 +314,14 @@ public final class OfflineStore {
                               ? 0
                               : Math.max(0, paired.getPercentDownloaded()) / 100.0))
                       / 2;
+              // One transfer, two parts: report both parts' bytes so the size, speed and
+              // percentage shown for it agree. Unknown until both lengths are known.
+              if (paired != null) bytes += Math.max(0, paired.getBytesDownloaded());
+              total =
+                  paired != null && total > 0 && paired.contentLength > 0
+                      ? total + paired.contentLength
+                      : 0;
+              if (total > 0) progress = Math.min(1.0, (double) bytes / total);
               if (d.state == Download.STATE_COMPLETED
                   && (paired == null || paired.state != Download.STATE_COMPLETED))
                 state =
@@ -335,9 +345,10 @@ public final class OfflineStore {
                     .put(
                         "storage_error",
                         StorageLocations.prefs().getString("error:" + d.request.id, ""))
+                    .put("quality", request.optString("quality", ""))
                     // Byte counts let the library show sizes, live speed and time left.
-                    .put("bytes", Math.max(0, d.getBytesDownloaded()))
-                    .put("total", d.contentLength > 0 ? d.contentLength : 0)
+                    .put("bytes", bytes)
+                    .put("total", total)
                     .put("progress", progress));
           }
         }
