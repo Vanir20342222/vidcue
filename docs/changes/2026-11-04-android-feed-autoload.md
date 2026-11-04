@@ -30,7 +30,8 @@ scope, explicit refresh and bounded transient retry behavior remain in place.
   empty results, readiness/offline guards, and selection during actual ViewModel
   initialization with synthetic JNI replies.
 - Android app Java/Kotlin and instrumentation Kotlin compilation passed.
-- `:app:lintDebug`: passed, zero errors and 41 warnings.
+- `:app:lintDebug`: passed, zero errors, 96 warnings and five informational hints
+  on the PR base `f7feb4a` (the earlier pre-redesign base had 41 warnings).
 - `git diff --check`: passed.
 
 The container initially lacked an Android SDK and Java compiler. Build tools
