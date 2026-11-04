@@ -286,6 +286,65 @@ class NativeUiTest {
     }
 
     @Test
+    fun musicShelvesLoadMoreAutomaticallyNearTheBottom() {
+        checkMusicAutoLoad(shelves = true)
+    }
+
+    @Test
+    fun musicSearchLoadsMoreAutomaticallyNearTheBottom() {
+        checkMusicAutoLoad(shelves = false)
+    }
+
+    private fun checkMusicAutoLoad(shelves: Boolean) {
+        val reference = java.util.concurrent.atomic.AtomicReference<YtuiViewModel>()
+        val cards =
+            (0 until 60).map { index ->
+                MediaCard(
+                    json(
+                        "title" to "Music result $index",
+                        "url" to "https://media.invalid/music-$index",
+                        "kind" to "song",
+                        "section" to "Section ${index / 6}",
+                    )
+                )
+            }
+        scenario.onActivity {
+            val vm = androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java]
+            reference.set(vm)
+            vm.chooseTab(2)
+            vm.feeds[2].value =
+                FeedState(
+                    request = if (shelves) "Home" else json("Search" to "fixture music"),
+                    cards = cards,
+                    // Rejected locally by the provider before HTTP; no real account/feed.
+                    continuation = "fixture:invalid-endpoint",
+                    generation = 500,
+                )
+        }
+        compose.waitForIdle()
+        Assert.assertEquals(
+            "Do not fetch far from the end",
+            500L,
+            reference.get().feeds[2].value.generation,
+        )
+        compose.onNodeWithText("Load more").assertDoesNotExist()
+        // Ten shelves have twenty lazy items despite containing sixty songs.
+        compose.onNodeWithTag("feed-list").performScrollToIndex(if (shelves) 19 else 59)
+        compose.waitUntil(10_000) { reference.get().feeds[2].value.failedAppend }
+        val failed = reference.get().feeds[2].value
+        Assert.assertEquals(501L, failed.generation)
+        Assert.assertTrue(failed.error.orEmpty().contains("Invalid continuation endpoint"))
+        Assert.assertEquals(cards.map { it.key }, failed.cards.map { it.key })
+        compose.waitForIdle()
+        android.os.SystemClock.sleep(600)
+        Assert.assertEquals(
+            "Failed continuation must wait for explicit retry",
+            501L,
+            reference.get().feeds[2].value.generation,
+        )
+    }
+
+    @Test
     fun continuationFailureDoesNotTriggerAnImmediateScrollRetry() {
         val reference = java.util.concurrent.atomic.AtomicReference<YtuiViewModel>()
         scenario.onActivity {
