@@ -176,6 +176,8 @@ internal data class FeedState(
     val errorCode: String = "",
     val notice: String? = null,
     val generation: Long = 0,
+    // Generations also advance on invalidation; they do not prove a load was started.
+    val needsLoad: Boolean = true,
     val scrollIndex: Int = 0,
     val failedRequest: Any? = null,
     val failedAppend: Boolean = false,
@@ -363,7 +365,7 @@ internal class YtuiViewModel(
                 }
                 .onFailure { status.value = it.message ?: "Could not load settings" }
             ready.value = true
-            if (!MediaBridge.offlineUi) navigate(1, "Home", remember = false)
+            loadFeedIfNeeded(tab.value)
         }
     }
 
@@ -485,9 +487,16 @@ internal class YtuiViewModel(
         }
 
     fun chooseTab(index: Int) {
+        if (index !in feeds.indices) return
         categoryJob?.cancel()
         tab.value = index
-        if (index > 0 && feeds[index].value.generation == 0L && !MediaBridge.offlineUi)
+        loadFeedIfNeeded(index)
+    }
+
+    private fun loadFeedIfNeeded(index: Int) {
+        // Wait for account/settings initialization, then load the tab currently on screen.
+        if (index !in 1..3 || !ready.value || MediaBridge.offlineUi) return
+        if (feeds[index].value.needsLoad)
             navigate(index, if (index == 3) "Cliamp" else "Home", remember = false)
         else if (index in 1..2 && !feeds[index].value.loading) preloadCategories(index)
     }
@@ -555,6 +564,7 @@ internal class YtuiViewModel(
                     categories = if (categoryNavigation) previous.categories else emptyList(),
                     loading = true,
                     generation = generation,
+                    needsLoad = false,
                     instantContent = categoryNavigation || cached != null,
                 )
         // Publish prepared cards in the tap itself, before launching any coroutine.
