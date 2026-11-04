@@ -181,7 +181,12 @@ private fun ConfirmationDisc(glyph: Glyph, text: String) {
     val colors = MaterialTheme.colorScheme
     val motion = LocalMotion.current
     val tick = remember { Animatable(if (motion.animate) 0f else 1f) }
-    LaunchedEffect(Unit) { tick.animateTo(1f, motion.enter(360, delay = 120)) }
+    // Replay the badge draw whenever the message changes, including a second confirmation that
+    // arrives while this disc is still visible; otherwise its check would stay frozen.
+    LaunchedEffect(text) {
+        tick.snapTo(if (motion.animate) 0f else 1f)
+        tick.animateTo(1f, motion.enter(360, delay = 120))
+    }
     val ink = colors.background
     Box(
         Modifier.size(56.dp)
@@ -197,9 +202,13 @@ private fun ConfirmationDisc(glyph: Glyph, text: String) {
         MediaIcon(glyph, Modifier.size(22.dp), ink)
         // A check badge draws itself on in the corner.
         Canvas(Modifier.align(Alignment.TopEnd).offset(x = 2.dp, y = (-2).dp).size(22.dp)) {
-            drawCircle(colors.primary)
-            val c = mediaOnAccent(colors.primary)
             val w = size.width
+            // A background-colored ring separates the badge from the light disc it sits on, the
+            // same cutout treatment the glyph uses, so it no longer blends into a smudge.
+            val ring = 2.dp.toPx()
+            drawCircle(colors.background, radius = w / 2f)
+            drawCircle(colors.primary, radius = w / 2f - ring)
+            val c = mediaOnAccent(colors.primary)
             val a = Offset(w * 0.28f, w * 0.52f)
             val b = Offset(w * 0.44f, w * 0.68f)
             val e = Offset(w * 0.74f, w * 0.36f)
