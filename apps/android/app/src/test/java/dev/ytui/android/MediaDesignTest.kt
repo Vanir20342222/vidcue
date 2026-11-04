@@ -11,8 +11,10 @@ class MediaDesignTest {
     @Test
     fun nativeTransportInkHasIconContrastEvenOnWhiteVideo() {
         assertTrue(
-            mediaContrast(MediaTokens.videoInk, MediaTokens.videoDisc.compositeOver(Color.White)) >=
-                3f
+            mediaContrast(
+                MediaTokens.videoInk,
+                MediaTokens.videoChromeDisc.compositeOver(Color.White),
+            ) >= 3f
         )
         for (accent in
             listOf(

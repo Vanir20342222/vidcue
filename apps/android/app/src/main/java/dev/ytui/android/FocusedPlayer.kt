@@ -78,7 +78,7 @@ internal fun VideoSurface(
                     setControllerAnimationEnabled(
                         !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
                     )
-                    setShowSubtitleButton(true)
+                    // Captions use ytui's own on/off button (PlayerChrome.bindCaptions).
                     // Queue modes stay in the app's transport; the video chrome is for watching.
                     setShowShuffleButton(false)
                     setFullscreenButtonClickListener {
@@ -91,6 +91,7 @@ internal fun VideoSurface(
                     VideoGestures.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
                     PlayerChrome.fitTransport(this)
+                    PlayerChrome.bindCaptions(this)
                     VideoGestures.setPanelSwipe(
                         this,
                         object : VideoGestures.PanelSwipe {
@@ -113,6 +114,7 @@ internal fun VideoSurface(
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
             PlayerChrome.showSponsorMarks(view)
+            PlayerChrome.showCaptions(view)
             view.findViewById<android.view.View>(R.id.ytui_collapse)?.apply {
                 tag = "panel-close" // Native View tag; Compose tag remains on music/modal chrome.
                 visibility =

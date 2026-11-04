@@ -71,8 +71,8 @@ internal object MediaTokens {
     val brandOnLight = Color(0xff006f62)
     val videoInk = Color.White
     val videoScrim = Color.Black.copy(alpha = 0.72f)
-    /** Tinted glass behind native video transports: still 3:1 for white icons on white video. */
-    val videoDisc = Color(0x80141A20)
+    /** Flat backing behind the native video transports: 3:1 for white glyphs over white video. */
+    val videoChromeDisc = Color(0x8C0B0D10)
     /** Light hairline that gives glass discs and panels a lit edge. */
     val videoGlassEdge = Color.White.copy(alpha = 0.26f)
     /** Glass sheen at the top of the fullscreen options panel. */

@@ -2055,50 +2055,13 @@ internal fun PlayerPane(
                             page = ""
                         }
                     }
-                "tracks" ->
-                    SubPage("Audio & subtitles") {
-                        AudioLanguageOptions(player.value) { language ->
-                            vm.command("audio_language", "value" to language)
-                        }
-                        SheetAction(
-                            text = { Text("Toggle captions") },
-                            leadingIcon = { MediaIcon(Glyph.Captions) },
-                            onClick = { vm.command("captions_toggle") },
-                        )
-                        val tracks = player.value.optJSONArray("tracks")?.objects() ?: emptyList()
-                        if (tracks.isEmpty())
-                            Text(
-                                "No alternative tracks for this media.",
-                                Modifier.padding(8.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        tracks.forEach { track ->
-                            SheetAction(
-                                text = {
-                                    Text(
-                                        track.optString("label").trim().replace(Regex("\\s+"), " ")
-                                    )
-                                },
-                                leadingIcon = {
-                                    MediaIcon(
-                                        if (track.optString("label").startsWith("Caption"))
-                                            Glyph.Captions
-                                        else if (track.optString("label").startsWith("Audio"))
-                                            Glyph.Volume
-                                        else Glyph.Preview,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                },
-                                onClick = {
-                                    vm.command(
-                                        "track",
-                                        "group" to track.optInt("group"),
-                                        "index" to track.optInt("index"),
-                                    )
-                                },
-                            )
-                        }
+                "captions" ->
+                    SubPage("Captions") {
+                        CaptionsOptions(player.value) { op, fields -> vm.command(op, *fields) }
+                    }
+                "audio" ->
+                    SubPage("Audio") {
+                        AudioTrackOptions(player.value) { op, fields -> vm.command(op, *fields) }
                     }
                 else -> {
                     Row(
@@ -2138,9 +2101,32 @@ internal fun PlayerPane(
                         ) {
                             page = "quality"
                         }
-                    ValueRow("Audio & subtitles", glyph = Glyph.Captions) { page = "tracks" }
+                    ValueRow(
+                        "Captions",
+                        Modifier.testTag("options-captions"),
+                        value = captionSummary(player.value),
+                        glyph = Glyph.Captions,
+                    ) {
+                        page = "captions"
+                    }
+                    if (audioChoices(player.value))
+                        ValueRow(
+                            "Audio",
+                            Modifier.testTag("options-audio"),
+                            value = audioSummary(player.value),
+                            glyph = Glyph.Volume,
+                        ) {
+                            page = "audio"
+                        }
                     ValueRow("Playback queue", glyph = Glyph.Queue) { onQueue() }
-                    ValueRow("Sleep timer", glyph = Glyph.Sleep) { onSleep() }
+                    val sleepLeft = rememberSleepLeft(player)
+                    ValueRow(
+                        "Sleep timer",
+                        value = if (sleepLeft > 0) sleepLabel(sleepLeft) else "Off",
+                        glyph = Glyph.Sleep,
+                    ) {
+                        onSleep()
+                    }
                     val segments = player.value.optJSONArray("segments")?.objects() ?: emptyList()
                     if (segments.isNotEmpty() && player.duration > 0) {
                         SectionHeader("Marked segments")

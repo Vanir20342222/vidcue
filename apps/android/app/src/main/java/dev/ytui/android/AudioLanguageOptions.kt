@@ -1,15 +1,9 @@
 package dev.ytui.android
 
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import org.json.JSONObject
-import java.util.Locale
 
 /** Extractor languages are separate from the one audio stream already in Media3. */
 @Composable
@@ -19,16 +13,26 @@ internal fun AudioLanguageOptions(player: JSONObject, choose: (String) -> Unit) 
     if (tracks.length() == 0) return
     val requested = player.optString("audio_language", "")
     val selected = player.optString("selected_audio_language", "")
-    Text("Audio language", Modifier.padding(8.dp), style = MaterialTheme.typography.titleSmall)
-    TextButton(onClick = { choose("") }, modifier = Modifier.testTag("audio-language-original")) {
-        Text((if (requested.isEmpty()) "✓ " else "") + "Original (automatic)")
+    SectionHeader("Audio language")
+    ChoiceRow(
+        "Original",
+        requested.isEmpty(),
+        Modifier.testTag("audio-language-original"),
+        detail = "Chosen automatically",
+    ) {
+        choose("")
     }
     for (i in 0 until tracks.length()) {
         val track = tracks.optJSONObject(i) ?: continue
         val language = track.optString("language")
-        val name = Locale.forLanguageTag(language).displayName.ifBlank { language }
-        TextButton(onClick = { choose(language) }, modifier = Modifier.testTag("audio-language-$language")) {
-            Text((if (language == selected) "✓ " else "") + track.optString("label", language).replaceFirst(language, name))
+        val original = track.optString("label").contains("Original")
+        ChoiceRow(
+            Captions.displayName(language),
+            requested.isNotEmpty() && language == selected,
+            Modifier.testTag("audio-language-$language"),
+            detail = if (original) "Original audio" else "",
+        ) {
+            choose(language)
         }
     }
 }

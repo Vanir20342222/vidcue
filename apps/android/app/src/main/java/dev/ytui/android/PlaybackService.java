@@ -79,6 +79,8 @@ public final class PlaybackService extends MediaSessionService {
   long streamMetadataUpdates;
   String sponsorMode = "skip";
   String error = "", streamTitle = "", captionText = "", pendingQueueUrl = "", errorTrace = "";
+  /** Kind (uploaded, generated, translated) of each attached caption label; see Captions. */
+  final Map<String, String> captionKinds = new HashMap<>();
   JSONObject previewRestore;
   long previewPosition;
   boolean previewPlaying;
@@ -764,22 +766,12 @@ public final class PlaybackService extends MediaSessionService {
             .setTitle(media.optString("title"))
             .setArtist(media.optString("creator"))
             .build();
-    java.util.List<MediaItem.SubtitleConfiguration> captions = new java.util.ArrayList<>();
     JSONObject catalog = stream.optJSONObject("catalog");
     JSONArray choices = catalog == null ? null : catalog.optJSONArray("captions");
-    if (choices != null && !request.optBoolean("offline")) {
-      for (int i = 0; i < Math.min(choices.length(), 40); i++) {
-        JSONObject choice = choices.optJSONObject(i);
-        if (choice != null)
-          captions.add(
-              new MediaItem.SubtitleConfiguration.Builder(
-                      android.net.Uri.parse(choice.optString("url")))
-                  .setMimeType(MimeTypes.TEXT_VTT)
-                  .setLabel(choice.optString("label"))
-                  .setLanguage(choice.optString("label").split(" ")[0])
-                  .build());
-      }
-    }
+    // Ordered by use (uploader, spoken-language automatic, translations the user reads)
+    // and named readably; see Captions.
+    java.util.List<MediaItem.SubtitleConfiguration> captions =
+        Captions.configurations(request.optBoolean("offline") ? null : choices, captionKinds);
     String hlsMaster = request.optBoolean("offline") ? "" : stream.optString("hls_master");
     String dash = request.optBoolean("offline") ? "" : stream.optString("dash_manifest");
     boolean indexed = !dash.isEmpty() && dash.length() <= 65536;
@@ -1311,20 +1303,51 @@ public final class PlaybackService extends MediaSessionService {
         }
         break;
       case "captions_toggle":
-        boolean disabled =
-            player.getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT);
-        player.setTrackSelectionParameters(
-            player
-                .getTrackSelectionParameters()
-                .buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !disabled)
-                .build());
+        if (captionsShowing()) captionsOff();
+        else captionsOn();
+        break;
+      case "captions_on":
+        captionsOn();
+        break;
+      case "captions_off":
+        captionsOff();
         break;
       case "sleep":
         sleepDeadline = SystemClock.elapsedRealtime() + command.optLong("seconds", 1800) * 1000;
         break;
     }
     publish();
+  }
+
+  /** Whether a caption track is enabled and selected right now. */
+  boolean captionsShowing() {
+    if (player.getTrackSelectionParameters().disabledTrackTypes.contains(C.TRACK_TYPE_TEXT))
+      return false;
+    for (Tracks.Group group : player.getCurrentTracks().getGroups())
+      if (group.getType() == C.TRACK_TYPE_TEXT && group.isSelected()) return true;
+    return false;
+  }
+
+  /** Show captions, choosing the most useful track when none was chosen (Captions.best). */
+  private void captionsOn() {
+    TrackSelectionParameters.Builder next =
+        player.getTrackSelectionParameters().buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false);
+    int[] best = Captions.best(player.getCurrentTracks(), captionKinds);
+    if (best != null) {
+      Tracks.Group group = player.getCurrentTracks().getGroups().get(best[0]);
+      next.setOverrideForType(new TrackSelectionOverride(group.getMediaTrackGroup(), best[1]));
+    }
+    player.setTrackSelectionParameters(next.build());
+  }
+
+  private void captionsOff() {
+    player.setTrackSelectionParameters(
+        player
+            .getTrackSelectionParameters()
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build());
   }
 
   private void changeQuality(String quality) throws JSONException {
@@ -1931,10 +1954,22 @@ public final class PlaybackService extends MediaSessionService {
             && group.getType() != C.TRACK_TYPE_TEXT) continue;
         for (int i = 0; i < group.length; i++) {
           Format format = group.getTrackFormat(i);
-          tracks.put(
+          String type =
+              group.getType() == C.TRACK_TYPE_AUDIO
+                  ? "audio"
+                  : group.getType() == C.TRACK_TYPE_TEXT ? "text" : "video";
+          JSONObject track =
               new JSONObject()
                   .put("group", g)
                   .put("index", i)
+                  .put("type", type)
+                  .put("language", format.language == null ? "" : Captions.base(format.language))
+                  .put("name", format.label == null ? "" : format.label)
+                  .put("height", Math.max(0, format.height))
+                  .put("selected", group.isTrackSelected(i));
+          if ("text".equals(type)) track.put("kind", Captions.kind(format, captionKinds));
+          tracks.put(
+              track
                   .put(
                       "label",
                       (group.getType() == C.TRACK_TYPE_AUDIO
@@ -1948,6 +1983,7 @@ public final class PlaybackService extends MediaSessionService {
         }
       }
       status.put("tracks", tracks);
+      status.put("captions_on", captionsShowing());
       MediaBridge.playerSnapshot = status.toString();
       MediaBridge.notifyUi();
     } catch (JSONException ignored) {
