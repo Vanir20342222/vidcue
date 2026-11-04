@@ -123,9 +123,22 @@ internal data class UpNextState(
 /** Treated as immutable: media JSON is copied (`copyJson`) before any change. */
 @androidx.compose.runtime.Immutable
 internal data class MediaCard(val value: JSONObject) {
+    /** Artwork-only metadata, including a public cover URL when YouTube omitted one. */
+    val artwork: JSONObject by lazy {
+        val fallback =
+            youtubeArtworkFallback(
+                url,
+                kind,
+                value.optString("thumbnail"),
+                (value.optJSONArray("thumbnails")?.length() ?: 0) > 0,
+            )
+        // Copy only the artwork request. Queue/history/playback metadata stays untouched.
+        if (fallback == null) value else value.copyJson().put("thumbnail", fallback)
+    }
+
     /** Thumbnail identity, computed once instead of re-serialising arrays per frame. */
     val artworkSource: String by lazy {
-        "${value.optString("thumbnail")}:${value.optJSONArray("thumbnails")}"
+        "${artwork.optString("thumbnail")}:${artwork.optJSONArray("thumbnails")}"
     }
 
     val title: String
@@ -240,8 +253,8 @@ internal object ArtworkCache {
         decodeSizes.firstOrNull { it >= pixels } ?: decodeSizes.last()
 
     fun hasArtwork(media: MediaCard): Boolean =
-        media.value.optString("thumbnail").isNotBlank() ||
-            (media.value.optJSONArray("thumbnails")?.length() ?: 0) > 0
+        media.artwork.optString("thumbnail").let { it.isNotBlank() && it != "null" } ||
+            (media.artwork.optJSONArray("thumbnails")?.length() ?: 0) > 0
 
     /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
     fun cached(media: MediaCard, pixels: Int): Bitmap? {
@@ -264,7 +277,7 @@ internal object ArtworkCache {
             return it
         }
         return loader.load(key) fetch@{
-            val data = NativeBridge.thumbnail(media.value.toString(), size) ?: return@fetch null
+            val data = NativeBridge.thumbnail(media.artwork.toString(), size) ?: return@fetch null
             if (
                 data.size < 3 ||
                     data[0] !in 1..768 ||
