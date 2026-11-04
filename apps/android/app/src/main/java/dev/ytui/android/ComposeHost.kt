@@ -1591,9 +1591,12 @@ private fun MediaRow(
             verticalAlignment = Alignment.Top,
         ) {
             if (bleed) {
+                val showChannel = mobile.optBoolean("show_channel", true)
                 ChannelAvatar(
-                    if (mobile.optBoolean("show_channel", true)) media.creator else "",
+                    if (showChannel) media.creator else "",
                     36.dp,
+                    imageUrl = if (showChannel) media.channelThumbnail else "",
+                    loadImage = thumbnails,
                 )
                 Spacer(Modifier.width(12.dp))
             }
@@ -1825,7 +1828,12 @@ private fun WideMediaRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    ChannelAvatar(media.creator, 24.dp)
+                    ChannelAvatar(
+                        media.creator,
+                        24.dp,
+                        imageUrl = media.channelThumbnail,
+                        loadImage = thumbnails,
+                    )
                     Text(
                         media.creator,
                         style = MaterialTheme.typography.bodySmall,

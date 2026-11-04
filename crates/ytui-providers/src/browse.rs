@@ -804,8 +804,14 @@ fn thumbnails(value: &Value) -> Vec<ytui_core::Thumbnail> {
                     });
                 }
                 for (name, child) in m {
-                    if !["avatar", "avatarViewModel", "channelThumbnail", "menu"]
-                        .contains(&name.as_str())
+                    if ![
+                        "avatar",
+                        "avatarViewModel",
+                        "channelThumbnail",
+                        "channelThumbnailSupportedRenderers",
+                        "menu",
+                    ]
+                    .contains(&name.as_str())
                     {
                         walk(child, images);
                     }
@@ -827,6 +833,15 @@ fn thumb(value: &Value) -> String {
         .into_iter()
         .max_by_key(|t| t.width as u64 * t.height as u64)
         .map(|t| t.url)
+        .unwrap_or_default()
+}
+/// Creator avatar from the channel-thumbnail slot that classic renderers carry.
+/// Avatars are kept out of `thumbnails`, so they never replace the video artwork.
+fn channel_avatar(value: &Value) -> String {
+    value
+        .pointer("/channelThumbnailSupportedRenderers/channelThumbnailWithLinkRenderer/thumbnail")
+        .or_else(|| value.pointer("/channelThumbnail"))
+        .map(thumb)
         .unwrap_or_default()
 }
 fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
@@ -904,6 +919,7 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
             .map(text)
             .unwrap_or_default();
     }
+    item.channel_thumbnail = channel_avatar(r);
     item.description = r.get("descriptionSnippet").map(text).unwrap_or_default();
     item.views_text = r
         .get("viewCountText")
@@ -1825,6 +1841,45 @@ mod category_tests {
         assert_eq!(endpoint, "browse");
         assert_eq!(payload["params"], "server-filter");
         assert_eq!(page.continuation.as_deref(), Some("next"));
+    }
+
+    #[test]
+    fn channel_avatar_is_kept_for_the_creator_and_never_used_as_video_artwork() {
+        let page = parse_page(
+            &json!({"contents":[{"videoRenderer":{
+                "videoId":"aaaaaaaaaaa", "title":{"simpleText":"Video"},
+                "thumbnail":{"thumbnails":[{"url":"https://i.ytimg.com/vi/aaaaaaaaaaa/hq.jpg","width":480,"height":360}]},
+                "ownerText":{"runs":[{"text":"Synthetic Channel"}]},
+                "channelThumbnailSupportedRenderers":{"channelThumbnailWithLinkRenderer":{"thumbnail":{"thumbnails":[
+                    {"url":"https://yt3.ggpht.com/synthetic=s48-c-k","width":48,"height":48},
+                    {"url":"https://yt3.ggpht.com/synthetic=s88-c-k","width":88,"height":88}
+                ]}}}
+            }}]}),
+            false,
+        );
+        let item = &page.items[0];
+        assert_eq!(item.creator, "Synthetic Channel");
+        assert_eq!(
+            item.channel_thumbnail,
+            "https://yt3.ggpht.com/synthetic=s88-c-k"
+        );
+        assert_eq!(item.thumbnail, "https://i.ytimg.com/vi/aaaaaaaaaaa/hq.jpg");
+        assert!(
+            item.thumbnails.iter().all(|t| !t.url.contains("ggpht")),
+            "avatar URLs must not leak into video artwork: {:?}",
+            item.thumbnails
+        );
+    }
+
+    #[test]
+    fn missing_channel_avatar_stays_empty_so_the_model_serializes_as_before() {
+        let page = parse_page(
+            &json!({"contents":[{"videoRenderer":{"videoId":"bbbbbbbbbbb","title":{"simpleText":"Plain"}}}]}),
+            false,
+        );
+        assert!(page.items[0].channel_thumbnail.is_empty());
+        let value = serde_json::to_value(&page.items[0]).unwrap();
+        assert!(value.get("channel_thumbnail").is_none());
     }
 }
 

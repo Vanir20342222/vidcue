@@ -147,6 +147,10 @@ internal data class MediaCard(val value: JSONObject) {
     val creator: String
         get() = value.optString("creator")
 
+    /** Creator picture URL advertised by the provider; blank when the response had none. */
+    val channelThumbnail: String
+        get() = value.optString("channel_thumbnail")
+
     val url: String
         get() = value.optString("url")
 
