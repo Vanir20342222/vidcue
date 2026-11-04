@@ -485,7 +485,13 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
                                 Column(Modifier.weight(1f).fillMaxHeight()) {
                                 if (tablet) Toolbar()
-                                Box(Modifier.weight(1f).fillMaxWidth()) {
+                                Box(
+                                    Modifier.weight(1f)
+                                        .fillMaxWidth()
+                                        .tabSwipe(tab, enabled = mobile.gesture("gesture_swipe_tabs") && !searchMode) {
+                                            vm.chooseTab(it)
+                                        }
+                                ) {
                                     if (tab == 0) OfflineLibrary(vm)
                                     else
                                         key(tab) {
@@ -901,6 +907,41 @@ internal fun Panel(
 /** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
 private var pendingTabEntry = 0
 
+/**
+ * Sideways swipes anywhere on the page move between the bottom destinations in their display
+ * order (Home, Music, Radio, Downloads). The page follows the finger; rows that scroll sideways
+ * themselves (filter chips, shelves) keep their own drags.
+ */
+@Composable
+private fun Modifier.tabSwipe(tab: Int, enabled: Boolean, choose: (Int) -> Unit): Modifier {
+    val motion = LocalMotion.current
+    val density = LocalDensity.current
+    val width = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+    val pull = remember { Animatable(0f) }
+    val current by rememberUpdatedState(tab)
+    val select by rememberUpdatedState(choose)
+    return this.swipeAxis(
+            enabled = enabled,
+            horizontal = true,
+            offset = pull,
+            threshold = with(density) { 96.dp.toPx() },
+            // Dragging left (negative) moves forward.
+            allow = { neighbourTab(current, -it) != null },
+            onSwipe = { direction ->
+                val next = neighbourTab(current, -direction) ?: return@swipeAxis
+                pull.animateTo(direction * width * 0.35f, motion.exit(160))
+                pendingTabEntry = -direction
+                select(next)
+                pull.snapTo(0f)
+            },
+        )
+        .graphicsLayer {
+            val dragged = (abs(pull.value) / width).coerceIn(0f, 1f)
+            translationX = pull.value * 0.6f
+            alpha = 1f - dragged * 0.6f
+        }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BrowsePane(
@@ -933,16 +974,14 @@ private fun BrowsePane(
             (feed.request as? JSONObject)?.has("Search") == true
     val motion = LocalMotion.current
     val density = LocalDensity.current
-    val paneWidth = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
-    // Feed content follows a horizontal drag; a committed swipe slides the next tab or
-    // category in from the side it was pulled from.
-    val pull = remember { Animatable(0f) }
+    // A committed tab swipe (handled around the whole content area) slides the next tab in
+    // from the side it was pulled from.
     val entry = remember { Animatable(if (motion.animate && !feed.instantContent) 0f else 1f) }
     // A tab swipe recreates this pane (key(tab)); the direction is handed over once.
     var enterFrom by remember { mutableIntStateOf(pendingTabEntry.also { pendingTabEntry = 0 }) }
     LaunchedEffect(tab, feed.request, reduced, feed.instantContent) {
-        // Plain feed changes are animated by the cards themselves (appearance); only a tab or
-        // category swipe slides the whole grid, so the grid is not faded a second time.
+        // Plain feed changes are animated by the cards themselves (appearance); only a tab
+        // swipe slides the whole grid, so the grid is not faded a second time.
         if (!motion.animate || enterFrom == 0 || feed.instantContent) entry.snapTo(1f)
         else {
             entry.snapTo(0f)
@@ -950,38 +989,6 @@ private fun BrowsePane(
         }
         enterFrom = 0
     }
-    // +1 = forward (next tab/category), -1 = back; null when nothing lies that way.
-    fun swipeTarget(forward: Int): (() -> Unit)? {
-        if (feed.categories.isEmpty()) {
-            val next = (tab + forward).coerceIn(1, 3)
-            return if (next == tab) null else ({ vm.chooseTab(next) })
-        }
-        val at =
-            feed.categories.indexOfFirst {
-                it.opt("request")?.toString() == feed.request.toString()
-            }
-        val next = (at + forward).coerceIn(0, feed.categories.lastIndex)
-        return if (next == at) null
-        else ({ vm.navigate(tab, feed.categories[next].get("request")) })
-    }
-    val swipe =
-        Modifier.swipeAxis(
-            enabled = mobile.gesture("gesture_swipe_tabs"),
-            horizontal = true,
-            offset = pull,
-            threshold = with(density) { 96.dp.toPx() },
-            // Dragging left (negative) moves forward.
-            allow = { swipeTarget(-it) != null },
-            onSwipe = { direction ->
-                val go = swipeTarget(-direction) ?: return@swipeAxis
-                pull.animateTo(direction * paneWidth * 0.35f, motion.exit(160))
-                enterFrom = -direction
-                if (feed.categories.isEmpty()) pendingTabEntry = -direction
-                entry.snapTo(0f)
-                go()
-                pull.snapTo(0f)
-            },
-        )
     // Cards animate in once per loaded list, not again when scrolled back into view.
     val seen = remember(tab, feed.request) { mutableSetOf<Any>() }
     var gridWidth by remember { mutableIntStateOf(0) }
@@ -1226,15 +1233,12 @@ private fun BrowsePane(
                 modifier =
                     Modifier.fillMaxSize()
                         .onSizeChanged { gridWidth = it.width }
-                        .then(swipe)
                         .graphicsLayer {
                             // No offscreen buffer for a screen-sized scrolling grid.
                             compositingStrategy = CompositingStrategy.ModulateAlpha
                             val settle = if (feed.instantContent) 0f else 1f - entry.value
-                            val dragged = (abs(pull.value) / paneWidth).coerceIn(0f, 1f)
-                            alpha = (1f - settle.coerceIn(0f, 1f)) * (1f - dragged * 0.6f)
-                            translationX =
-                                pull.value * 0.6f + settle * enterFrom * 64.dp.toPx()
+                            alpha = 1f - settle.coerceIn(0f, 1f)
+                            translationX = settle * enterFrom * 64.dp.toPx()
                         }
                         .testTag("feed-list")
                         .focusRequester(browseFocus)
@@ -2877,7 +2881,7 @@ private val GESTURE_SETTINGS =
         Triple(
             "gesture_swipe_tabs",
             "Swipe between tabs",
-            "Swipe the feed sideways to change tab or category",
+            "Swipe sideways to move between Home, Music, Radio and Downloads",
         ),
         Triple(
             "gesture_swipe_dismiss",

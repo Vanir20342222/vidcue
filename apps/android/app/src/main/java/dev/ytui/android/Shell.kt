@@ -65,6 +65,13 @@ private val DESTINATIONS =
         Triple(0, "Downloads", Glyph.Download),
     )
 
+/** The destination beside [tab] in display order ([forward] = +1 or -1), or null at an end. */
+internal fun neighbourTab(tab: Int, forward: Int): Int? {
+    val at = DESTINATIONS.indexOfFirst { it.first == tab }
+    if (at < 0) return null
+    return DESTINATIONS.getOrNull(at + forward)?.first
+}
+
 /** Page name in the display face; a new destination rises in as the old one sinks away. */
 @Composable
 internal fun PageTitle(title: String, modifier: Modifier = Modifier) {
