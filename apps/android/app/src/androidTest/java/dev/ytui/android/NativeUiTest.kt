@@ -102,8 +102,9 @@ class NativeUiTest {
     fun everySharedThemeChangesThePaintedNativeUiAndPersists() {
         val themes =
             JSONObject(NativeBridge.request(json("op" to "themes").toString())).getJSONArray("data")
-        for (index in 0 until themes.length()) {
-            val theme = themes.getString(index)
+        // Every palette is checked for contrast by the theme matrix test; the full repaint and
+        // persistence round trip runs for a representative sample to keep the suite short.
+        for ((index, theme) in representativeThemes(themes).withIndex()) {
             compose.onNodeWithTag("settings-button").performClick()
             compose.onNodeWithTag("settings-Appearance").performClick()
             compose.onNodeWithTag("theme-selector").performClick()
