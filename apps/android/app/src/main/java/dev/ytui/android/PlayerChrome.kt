@@ -126,7 +126,7 @@ internal object PlayerChrome {
                 view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)?.apply {
                     val density = resources.displayMetrics.density
                     val size = ((if (wide) 64 else 56) * density).toInt()
-                    val pad = ((if (wide) 19 else 16) * density).toInt()
+                    val pad = ((if (wide) 17 else 15) * density).toInt()
                     layoutParams = layoutParams.apply {
                         width = size
                         height = size
@@ -193,6 +193,17 @@ internal object PlayerChrome {
                 background =
                     if (foreground != null || glyph == null) disc
                     else LayerDrawable(arrayOf(disc, glyph)).apply { setId(1, android.R.id.icon) }
+                // Media3 writes the seek amount ("10") as button text; centre it inside the
+                // ring in the app's face instead of leaving it on the disc's lower edge.
+                (this as? android.widget.TextView)?.apply {
+                    gravity = Gravity.CENTER
+                    setPadding(0, 0, 0, 0)
+                    includeFontPadding = false
+                    textSize = 10f
+                    typeface =
+                        androidx.core.content.res.ResourcesCompat.getFont(context, R.font.instrument_sans)
+                            ?.let { android.graphics.Typeface.create(it, android.graphics.Typeface.BOLD) }
+                }
             }
         }
         view.findViewById<DefaultTimeBar>(androidx.media3.ui.R.id.exo_progress)?.apply {
