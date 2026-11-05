@@ -270,7 +270,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val background = palette.color("background", Color(0xff101418), neutralPreset)
     val surface = palette.color("surface", Color(0xff202830), neutralPreset)
     val foreground = palette.color("text", Color(0xffd5dee6), neutralPreset)
-    val accent = palette.color("accent", Color(0xff80cbc4), neutralPreset)
+    // A palette without an accent stays neutral rather than borrowing a fixed hue.
+    val accent = palette.color("accent", foreground, neutralPreset)
     val light = palette.optBoolean("light")
     val base = if (light) lightColorScheme() else darkColorScheme()
     val colors =

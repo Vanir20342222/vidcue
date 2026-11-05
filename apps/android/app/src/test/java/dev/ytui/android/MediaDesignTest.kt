@@ -18,7 +18,7 @@ class MediaDesignTest {
         )
         for (accent in
             listOf(
-                MediaTokens.brandOnDark,
+                Color(0xff6ddbc1),
                 Color(0xff9d0006),
                 Color(0xff006f62),
                 Color(0xff8839ef),
@@ -33,7 +33,9 @@ class MediaDesignTest {
     @Test
     fun secondaryInkStaysReadableOnRaisedImportedSurfaces() {
         for (surface in (0..255 step 8).map { Color(it, it, it) }) {
-            assertTrue(mediaContrast(mediaBrand(surface), surface) >= 4.5f)
+            for (accent in listOf(Color(0xff6ddbc1), Color(0xff9d0006), Color(0xff8839ef), Color.Gray)) {
+                assertTrue(mediaContrast(mediaBrand(accent, surface), surface) >= 4.5f)
+            }
             for (ink in listOf(Color.Black, Color.White, Color.Gray, Color.Cyan, Color.Magenta)) {
                 assertTrue(mediaContrast(mediaReadableText(ink, surface), surface) >= 4.5f)
             }
