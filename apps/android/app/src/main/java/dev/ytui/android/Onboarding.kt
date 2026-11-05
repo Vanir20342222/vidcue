@@ -737,6 +737,10 @@ private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
                     vm.updateMobile("color_grade", next)
                 }
             }
+            // Saving writes the whole settings document; wait until it has loaded (see LookPage).
+            Staggered(4 + rows.size, Modifier.fillMaxWidth()) {
+                EqualizerSettings(vm, dark, config, enabled = ready && config.length() > 0)
+            }
         }
     }
 }
@@ -770,11 +774,6 @@ private fun SettingCycleRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            }
-            // Saving writes the whole settings document; wait until it has loaded (see LookPage).
-            Staggered(4 + rows.size, Modifier.fillMaxWidth()) {
-                EqualizerSettings(vm, dark, config, enabled = ready && config.length() > 0)
-            }
         }
         Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
