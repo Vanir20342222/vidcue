@@ -328,39 +328,57 @@ impl Engine {
             "offline_playlists" => Ok(serde_json::to_value(
                 &self.state.lock().expect("state").offline_playlists,
             )?),
-            "offline_playlist_create" | "offline_playlist_update" | "offline_playlist_delete" => {
-                self.mutate(|state| {
-                    match r["op"].as_str().unwrap_or_default() {
-                        "offline_playlist_create" => {
-                            state
-                                .offline_playlists
-                                .push(vidcue_core::offline::OfflinePlaylist {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    title: r["title"].as_str().unwrap_or_default().trim().into(),
-                                    items: vec![],
-                                });
-                        }
-                        "offline_playlist_update" => {
-                            let playlist = state
-                                .offline_playlists
-                                .iter_mut()
-                                .find(|p| Some(p.id.as_str()) == r["id"].as_str())
-                                .context("Offline playlist is no longer available")?;
-                            if let Some(title) = r["title"].as_str() {
-                                playlist.title = title.trim().into();
-                            }
-                            if let Some(items) = r.get("items") {
-                                playlist.items = serde_json::from_value(items.clone())?;
-                            }
-                        }
-                        _ => state
+            "offline_playlist_create"
+            | "offline_playlist_update"
+            | "offline_playlist_delete"
+            | "offline_playlist_download" => self.mutate(|state| {
+                match r["op"].as_str().unwrap_or_default() {
+                    "offline_playlist_download" => {
+                        let playlist = vidcue_core::offline::OfflinePlaylist {
+                            id: r["id"].as_str().unwrap_or_default().into(),
+                            title: r["title"].as_str().unwrap_or_default().trim().into(),
+                            items: serde_json::from_value(r["items"].clone())?,
+                        };
+                        playlist.validate()?;
+                        if let Some(existing) = state
                             .offline_playlists
-                            .retain(|p| Some(p.id.as_str()) != r["id"].as_str()),
+                            .iter_mut()
+                            .find(|p| p.id == playlist.id)
+                        {
+                            *existing = playlist;
+                        } else {
+                            state.offline_playlists.push(playlist);
+                        }
                     }
-                    vidcue_core::offline::validate_library(&state.offline_playlists)?;
-                    Ok(serde_json::to_value(&state.offline_playlists)?)
-                })
-            }
+                    "offline_playlist_create" => {
+                        state
+                            .offline_playlists
+                            .push(vidcue_core::offline::OfflinePlaylist {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                title: r["title"].as_str().unwrap_or_default().trim().into(),
+                                items: vec![],
+                            });
+                    }
+                    "offline_playlist_update" => {
+                        let playlist = state
+                            .offline_playlists
+                            .iter_mut()
+                            .find(|p| Some(p.id.as_str()) == r["id"].as_str())
+                            .context("Offline playlist is no longer available")?;
+                        if let Some(title) = r["title"].as_str() {
+                            playlist.title = title.trim().into();
+                        }
+                        if let Some(items) = r.get("items") {
+                            playlist.items = serde_json::from_value(items.clone())?;
+                        }
+                    }
+                    _ => state
+                        .offline_playlists
+                        .retain(|p| Some(p.id.as_str()) != r["id"].as_str()),
+                }
+                vidcue_core::offline::validate_library(&state.offline_playlists)?;
+                Ok(serde_json::to_value(&state.offline_playlists)?)
+            }),
             "save_media" => {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
                 ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
@@ -1489,6 +1507,39 @@ mod format_tests {
             "https://media.test/c"
         );
         assert_eq!(engine.request(json!({"op":"queue_peek","context_id":"collection","preferred_url":"https://media.test/c"})).await.unwrap()["url"], "https://media.test/b");
+    }
+
+    #[tokio::test]
+    async fn downloaded_playlist_upsert_preserves_order_and_deduplicates_retries() {
+        let temp = tempfile::tempdir().unwrap();
+        let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let request = json!({"op":"offline_playlist_download","id":id,"title":"Music trip",
+        "items":[
+            {"url":"https://media.test/b","title":"First","kind":"song","offline_id":"b".repeat(64)},
+            {"url":"https://media.test/a","title":"Second","kind":"song","offline_id":"a".repeat(64)}
+        ]});
+        let first = engine.request(request.clone()).await.unwrap();
+        assert_eq!(engine.request(request.clone()).await.unwrap(), first);
+        assert_eq!(first.as_array().unwrap().len(), 1);
+        assert_eq!(first[0]["items"][0]["title"], "First");
+        let mut invalid = request.clone();
+        invalid["items"][0]["offline_id"] = json!("bad-id");
+        assert!(engine.request(invalid).await.is_err());
+        let restored = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        assert_eq!(
+            restored
+                .request(json!({"op":"offline_playlists"}))
+                .await
+                .unwrap(),
+            first
+        );
+        let mut updated = request;
+        updated["items"].as_array_mut().unwrap().remove(0);
+        let result = restored.request(updated).await.unwrap();
+        assert_eq!(result.as_array().unwrap().len(), 1);
+        assert_eq!(result[0]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(result[0]["items"][0]["title"], "Second");
     }
 
     #[tokio::test]

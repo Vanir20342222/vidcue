@@ -1416,7 +1416,24 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
             _ => {}
         }
     }
-    walk(data, music, &mut page, &mut seen, &mut hidden, "");
+    // Playlist responses also contain recommendation carousels with their own
+    // continuations. Only the track list defines membership and pagination.
+    let playlist = [
+        "musicPlaylistShelfRenderer",
+        "musicPlaylistShelfContinuation",
+        "playlistVideoListRenderer",
+        "playlistVideoListContinuation",
+    ]
+    .into_iter()
+    .find_map(|key| find_key(data, key));
+    walk(
+        playlist.unwrap_or(data),
+        music,
+        &mut page,
+        &mut seen,
+        &mut hidden,
+        "",
+    );
     // A duplicate elsewhere on this page may omit the badge. A positive
     // membership marker wins regardless of the order the cards were returned.
     page.items.retain(|item| {
