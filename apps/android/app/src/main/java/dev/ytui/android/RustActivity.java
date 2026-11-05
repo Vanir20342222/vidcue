@@ -1,7 +1,6 @@
 package dev.ytui.android;
 
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import androidx.activity.ComponentActivity;
@@ -64,10 +63,8 @@ public final class RustActivity extends ComponentActivity {
               return insets;
             });
     getWindow().getDecorView().requestApplyInsets();
-    if (Build.VERSION.SDK_INT >= 33
-        && checkSelfPermission("android.permission.POST_NOTIFICATIONS")
-            != PackageManager.PERMISSION_GRANTED)
-      requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 21);
+    // First-run setup asks once it is finished or skipped (Onboarding); otherwise ask now.
+    if (!OnboardingStore.showsAtLaunch(this)) NotificationPermission.requestOnce(this);
     onNewIntent(getIntent());
   }
 

@@ -388,6 +388,7 @@ internal class YtuiViewModel(
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
+        val engineError = EngineStartup.current.error()
         viewModelScope.launch {
             runCatching {
                     mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
@@ -403,7 +404,8 @@ internal class YtuiViewModel(
                         .takeUnless { it.isBlank() || it == "null" }
                         ?.let { status.value = it }
                 }
-                .onFailure { status.value = it.message ?: "Could not load settings" }
+                .onFailure { status.value = engineError ?: it.message ?: "Could not load settings" }
+            EngineStartup.current.claimNotice()?.let { actionError.value = it }
             ready.value = true
             loadFeedIfNeeded(tab.value)
         }
