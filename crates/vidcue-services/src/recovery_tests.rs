@@ -70,6 +70,7 @@ async fn finished(actor: &mut Actor, success: bool, message: &str) {
     actor.full = Some(Active {
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
+        equalizer: None,
         marks: None,
         last_position: None,
         cancel: CancellationToken::new(),
@@ -551,6 +552,7 @@ async fn sponsor_segments_are_published_once_to_the_mpv_timeline() {
     actor.full = Some(Active {
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
+        equalizer: None,
         marks: None,
         last_position: None,
         cancel: CancellationToken::new(),
