@@ -121,6 +121,15 @@ internal fun mediaBrand(background: Color): Color {
 internal fun mediaOnAccent(accent: Color): Color =
     if (accent.luminance() > 0.179f) Color.Black else Color.White
 
+/**
+ * Keyline behind the video timebar. It sits on the dark bottom scrim, so it stays black while
+ * the played accent keeps 3:1 against black; only accents too dark for that get a white line.
+ * [mediaOnAccent] is for ink drawn *on* the accent and turned mid-dark accents such as
+ * Nothing red or dark teal into a bright white bar with a grey outline.
+ */
+internal fun mediaTimeBarBacking(accent: Color): Color =
+    if (mediaContrast(accent, Color.Black) >= 3f) Color.Black else Color.White
+
 internal fun mediaProgress(position: Float, duration: Float): Float =
     if (!position.isFinite() || !duration.isFinite() || duration <= 0f) 0f
     else (position / duration).coerceIn(0f, 1f)

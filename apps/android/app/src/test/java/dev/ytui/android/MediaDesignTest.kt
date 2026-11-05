@@ -77,4 +77,21 @@ class MediaDesignTest {
             assertTrue("Accent $color needs WCAG AA text contrast; was $contrast", contrast >= 4.5f)
         }
     }
+
+    @Test
+    fun videoTimebarKeylineStaysDarkForMidToneAccents() {
+        // Nothing red, vidcue-light teal, catppuccin-latte mauve and flexoki-light blue all
+        // previously got a white keyline because white ink suits text on them.
+        for (hex in listOf(0xffd71921, 0xff006f62, 0xff8839ef, 0xff205ea6, 0xff80cbc4, 0xfffabd2f)) {
+            val accent = Color(hex)
+            assertEquals("keyline for ${hex.toString(16)}", Color.Black, mediaTimeBarBacking(accent))
+            assertTrue(mediaContrast(accent, mediaTimeBarBacking(accent)) >= 3f)
+        }
+        // Very dark imported accents still get a light keyline so the played part reads.
+        for (hex in listOf(0xff000000, 0xff1a1a40, 0xff3a0a0a)) {
+            val accent = Color(hex)
+            assertEquals(Color.White, mediaTimeBarBacking(accent))
+            assertTrue(mediaContrast(accent, mediaTimeBarBacking(accent)) >= 3f)
+        }
+    }
 }
