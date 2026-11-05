@@ -55,6 +55,8 @@ public final class PlaybackService extends MediaSessionService {
 
   Player controlsPlayer;
   MediaSession session;
+  /** Loads the current cover for the notification and system media controls. */
+  SessionArtwork artwork;
   LiveMetadataPlayer sessionPlayer;
   final ExecutorService worker = Executors.newFixedThreadPool(3);
   final Handler handler = new Handler(Looper.getMainLooper());
@@ -307,6 +309,7 @@ public final class PlaybackService extends MediaSessionService {
                         return com.google.common.util.concurrent.Futures.immediateVoidFuture();
                       }
                     })
+            .setBitmapLoader(new CacheBitmapLoader(artwork = new SessionArtwork(this)))
             .setSessionActivity(
                 PendingIntent.getActivity(
                     this,
@@ -765,6 +768,7 @@ public final class PlaybackService extends MediaSessionService {
         new MediaMetadata.Builder()
             .setTitle(media.optString("title"))
             .setArtist(media.optString("creator"))
+            .setArtworkUri(artwork.register(media))
             .build();
     JSONObject catalog = stream.optJSONObject("catalog");
     JSONArray choices = catalog == null ? null : catalog.optJSONArray("captions");
@@ -2018,6 +2022,7 @@ public final class PlaybackService extends MediaSessionService {
     handler.removeCallbacksAndMessages(null);
     worker.shutdownNow();
     session.release();
+    artwork.release();
     player.release();
     MediaBridge.playerSnapshot = "{}";
     super.onDestroy();
