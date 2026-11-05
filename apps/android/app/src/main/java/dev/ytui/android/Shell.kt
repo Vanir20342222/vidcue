@@ -439,9 +439,14 @@ internal fun PlayerDock(vm: YtuiViewModel) {
                         PlayPauseIcon(player.playing, Modifier.size(20.dp), card)
                     }
                 }
-                // The mini player can be dismissed; this is the existing stop command.
-                MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
-                    vm.command("stop")
+                if (player.video) {
+                    MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
+                        vm.command("stop")
+                    }
+                } else {
+                    MediaIconButton(Glyph.Next, "Next track", "dock-next") {
+                        vm.command("next")
+                    }
                 }
             }
             if (player.duration > 0)
