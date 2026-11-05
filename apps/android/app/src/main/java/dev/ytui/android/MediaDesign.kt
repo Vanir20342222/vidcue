@@ -142,6 +142,8 @@ internal enum class Glyph {
     Close,
     Queue,
     UpNext,
+    Bluetooth,
+    Headphones,
     Save,
     Preview,
     Expand,
@@ -227,62 +229,55 @@ internal fun MediaIcon(
                     line(5f, 5f, 5f, 19f)
                 }
                 Glyph.Home -> {
-                    outline(3f to 10f, 12f to 3f, 21f to 10f)
-                    outline(
-                        5f to 9f,
-                        5f to 21f,
-                        10f to 21f,
-                        10f to 14f,
-                        14f to 14f,
-                        14f to 21f,
-                        19f to 21f,
-                        19f to 9f,
-                        closed = filled,
-                    )
+                    // House with rounded footings and a door; the door is cut out when filled.
+                    val r = androidx.compose.ui.geometry.Rect(0f, 0f, 4f, 4f)
+                    val house =
+                        Path().apply {
+                            moveTo(4f, 10f)
+                            lineTo(12f, 3.5f)
+                            lineTo(20f, 10f)
+                            lineTo(20f, 19f)
+                            arcTo(r.translate(16f, 17f), 0f, 90f, false)
+                            lineTo(6f, 21f)
+                            arcTo(r.translate(4f, 17f), 90f, 90f, false)
+                            close()
+                        }
+                    val ink = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    if (filled) drawPath(house, tint) else drawPath(house, tint, style = ink)
+                    val door =
+                        Path().apply {
+                            moveTo(10f, 21f)
+                            lineTo(10f, 15.5f)
+                            lineTo(14f, 15.5f)
+                            lineTo(14f, 21f)
+                        }
+                    if (filled) drawPath(door, cutout)
+                    drawPath(door, if (filled) cutout else tint, style = ink)
                 }
                 Glyph.Music -> {
-                    outline(10f to 17f, 10f to 5f, 20f to 3f, 20f to 15f)
-                    line(10f, 8f, 20f, 6f)
-                    drawOval(
+                    // Two beamed notes, drawn like the lyrics note: ring heads, stems on their edge.
+                    for (head in listOf(Offset(6.5f, 18f), Offset(16.5f, 16f))) drawCircle(
                         tint,
-                        Offset(3f, 15f),
-                        Size(7f, 5f),
-                        style =
-                            if (filled) androidx.compose.ui.graphics.drawscope.Fill
-                            else Stroke(1.8f),
+                        2.5f,
+                        head,
+                        style = if (filled) Fill else Stroke(1.8f),
                     )
-                    drawOval(
-                        tint,
-                        Offset(13f, 13f),
-                        Size(7f, 5f),
-                        style =
-                            if (filled) androidx.compose.ui.graphics.drawscope.Fill
-                            else Stroke(1.8f),
-                    )
+                    outline(9f to 18f, 9f to 6.5f, 19f to 4.5f, 19f to 16f)
+                    line(9f, 10f, 19f, 8f)
                 }
                 Glyph.Radio -> {
                     drawRoundRect(
                         tint,
                         Offset(3f, 8f),
                         Size(18f, 13f),
-                        style =
-                            if (filled) androidx.compose.ui.graphics.drawscope.Fill
-                            else Stroke(1.8f),
+                        CornerRadius(2.5f),
+                        style = if (filled) Fill else Stroke(1.8f),
                     )
-                    line(5f, 8f, 18f, 3f)
-                    drawCircle(
-                        if (filled) cutout else tint,
-                        3f,
-                        Offset(8f, 15f),
-                        style = Stroke(1.8f),
-                    )
-                    for (y in listOf(13f, 17f)) drawLine(
-                        if (filled) cutout else tint,
-                        Offset(14f, y),
-                        Offset(18f, y),
-                        1.8f,
-                        StrokeCap.Round,
-                    )
+                    line(7f, 8f, 17f, 3.5f)
+                    val inner = if (filled) cutout else tint
+                    drawCircle(inner, 2.5f, Offset(8.5f, 14.5f), style = Stroke(1.8f))
+                    for (y in listOf(12.5f, 16.5f))
+                        drawLine(inner, Offset(14f, y), Offset(18f, y), 1.8f, StrokeCap.Round)
                 }
                 Glyph.Download -> {
                     if (filled)
@@ -353,18 +348,42 @@ internal fun MediaIcon(
                     line(3f, 20f, 11f, 20f)
                     outline(15f to 14f, 21f to 17.5f, 15f to 21f, closed = true)
                 }
-                Glyph.Lyrics -> {
-                    // Microphone: reads as "sung words" rather than a generic text block.
-                    drawRoundRect(
+                Glyph.Bluetooth ->
+                    // The rune: one stroke, same weight as the other tray glyphs.
+                    outline(7f to 7.5f, 17f to 16.5f, 12f to 21f, 12f to 3f, 17f to 7.5f, 7f to 16.5f)
+                Glyph.Headphones -> {
+                    drawArc(tint, 180f, 180f, false, Offset(4f, 5f), Size(16f, 16f), style = Stroke(1.8f, cap = StrokeCap.Round))
+                    line(4f, 13f, 4f, 15f)
+                    line(20f, 13f, 20f, 15f)
+                    for (x in listOf(4f, 15f)) drawRoundRect(
                         tint,
-                        Offset(9f, 3f),
-                        Size(6f, 11f),
-                        CornerRadius(3f),
+                        Offset(x, 13f),
+                        Size(5f, 8f),
+                        CornerRadius(2f),
                         style = if (filled) Fill else Stroke(1.8f),
                     )
-                    drawArc(tint, 0f, 180f, false, Offset(5.5f, 5f), Size(13f, 13f), style = Stroke(1.8f, cap = StrokeCap.Round))
-                    line(12f, 18f, 12f, 21f)
-                    line(9f, 21f, 15f, 21f)
+                }
+                Glyph.Lyrics -> {
+                    // Lines of words beside an eighth note: the head is a ring like the other
+                    // outlined glyphs, the stem rises from its right edge and the flag curves.
+                    line(3f, 6f, 12f, 6f)
+                    line(3f, 11f, 12f, 11f)
+                    line(3f, 16f, 9f, 16f)
+                    drawCircle(
+                        tint,
+                        2.5f,
+                        Offset(15.5f, 17.5f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(18f, 17.5f)
+                            lineTo(18f, 4f)
+                            cubicTo(18f, 6.5f, 21f, 6.8f, 21f, 9.5f)
+                        },
+                        tint,
+                        style = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                    )
                 }
                 Glyph.Save ->
                     outline(6f to 3f, 18f to 3f, 18f to 21f, 12f to 17f, 6f to 21f, closed = true)

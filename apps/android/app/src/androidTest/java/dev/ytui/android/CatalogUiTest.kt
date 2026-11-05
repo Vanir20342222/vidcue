@@ -693,7 +693,7 @@ class CatalogUiTest {
             }
             val cards = populate(1)
             captureSettled("restyle-large-text-feed.png")
-            assertNavigationLabelsFit()
+            assertNavigationTabsNamed()
             compose
                 .onNodeWithTag("search-field")
                 .assertIsDisplayed()
@@ -733,7 +733,7 @@ class CatalogUiTest {
             }
             val tabletCards = populate(1)
             captureSettled("restyle-fidelity-large-text-tablet-feed.png")
-            assertNavigationLabelsFit()
+            assertNavigationTabsNamed()
             compose.onNodeWithTag("navigation-rail").assertIsDisplayed()
             awaitDecodedCovers(tabletCards)
             captureSettled("restyle-fidelity-large-text-tablet-feed.png")
@@ -1496,38 +1496,23 @@ class CatalogUiTest {
         }
     }
 
-    private fun assertNavigationLabelsFit() {
-        for (index in 0..3) {
+    private fun assertNavigationTabsNamed() {
+        // The dock is icon-only; every tab must still be a named, reachable 48dp tab.
+        for ((index, name) in listOf(0 to "Downloads", 1 to "Home", 2 to "Music", 3 to "Radio")) {
             compose
                 .onNodeWithTag("tab-$index")
                 .assertIsDisplayed()
                 .assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f))
+                .assertWidthIsAtLeast(androidx.compose.ui.unit.Dp(48f))
                 .assert(
                     SemanticsMatcher.expectValue(
                         SemanticsProperties.Role,
                         androidx.compose.ui.semantics.Role.Tab,
                     )
                 )
-            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-            compose
-                .onNodeWithTag("navigation-label-$index", useUnmergedTree = true)
-                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            Assert.assertEquals(
-                "A full scaled navigation word must fit on one line",
-                1,
-                layouts.single().lineCount,
-            )
-            Assert.assertFalse(
-                "Navigation $index must not clip or ellipsize: " +
-                    "text=${layouts.single().layoutInput.text}, size=${layouts.single().size}, " +
-                    "constraints=${layouts.single().layoutInput.constraints}, " +
-                    "paragraphWidth=${layouts.single().multiParagraph.width}, " +
-                    "intrinsicWidth=${layouts.single().multiParagraph.maxIntrinsicWidth}, " +
-                    "lineRight=${layouts.single().getLineRight(0)}, " +
-                    "widthOverflow=${layouts.single().didOverflowWidth}, " +
-                    "heightOverflow=${layouts.single().didOverflowHeight}",
-                layouts.single().hasVisualOverflow,
-            )
+                .assert(
+                    SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf(name))
+                )
         }
         compose.onNodeWithTag("tab-1").assertIsSelected()
     }
