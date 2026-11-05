@@ -2,6 +2,7 @@ package dev.ytui.android
 
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,6 +67,32 @@ class LyricSweepTest {
         karaokeLine("Picking up", 0f, sung, unsung).spanStyles.forEach {
             assertSameColour(unsung, it.item.color)
         }
+    }
+
+    private val words =
+        listOf(LyricWord(10_000, "Hold "), LyricWord(10_400, "me "), LyricWord(10_700, "now"))
+
+    @Test
+    fun lineSyncedLyricsLightUpWholeInsteadOfGuessingAFill() {
+        assertNull(lyricSweep(10_500.0, emptyList(), null, 19_000))
+    }
+
+    @Test
+    fun fillReachesEachWordWhenItIsSungNotWhenTheMusicMoves() {
+        // "Hold " is 5 of 11 characters; it is crossed between 10.0 s and 10.4 s.
+        assertEquals(0f, lyricSweep(9_900.0, words, 11_200, 19_000)!!, 0f)
+        assertEquals(2.5f / 11, lyricSweep(10_200.0, words, 11_200, 19_000)!!, 0.001f)
+        assertEquals(5f / 11, lyricSweep(10_400.0, words, 11_200, 19_000)!!, 0.001f)
+        // The closing tag ends the line at 11.2 s, long before the next line at 19 s.
+        assertEquals(1f, lyricSweep(11_200.0, words, 11_200, 19_000)!!, 0f)
+        assertEquals(1f, lyricSweep(15_000.0, words, 11_200, 19_000)!!, 0f)
+    }
+
+    @Test
+    fun lastWordWithoutAClosingTimeFillsBrieflyAndNeverPassesTheNextLine() {
+        assertEquals(1f, lyricSweep(10_700.0 + LYRIC_LAST_WORD_MS, words, null, 19_000)!!, 0f)
+        assertEquals(1f, lyricSweep(10_800.0, words, null, 10_800)!!, 0f)
+        assertTrue(lyricSweep(10_750.0, words, null, 19_000)!! < 1f)
     }
 
     /** Colour lerp can differ from its end point by float rounding, so compare channels. */

@@ -132,6 +132,7 @@ fn timed_lines(data: &Value) -> Option<Vec<Line>> {
         lines.push(Line {
             at_ms: at,
             text: vidcue_core::clean_text(text),
+            ..Line::default()
         });
     }
     if lines.iter().any(|l| l.at_ms.is_none()) {
@@ -155,6 +156,7 @@ fn plain_lines(data: &Value) -> Option<(Vec<Line>, String)> {
         .map(|line| Line {
             at_ms: None,
             text: vidcue_core::clean_text(line),
+            ..Line::default()
         })
         .collect();
     let footer = shelf
