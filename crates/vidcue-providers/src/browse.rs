@@ -673,6 +673,21 @@ impl Browser {
         }
         Ok(page)
     }
+    /// Publication date, likes and subscribers for one video, which the fast playback path
+    /// does not return (see `crate::watch_details`). One `next` request; no watch-page HTML.
+    pub async fn watch_details(&self, id: &str) -> Result<Value> {
+        ensure!(
+            id.len() == 11
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+            "Invalid video ID"
+        );
+        let data = self
+            .post(false, "next", crate::watch_details::request(id))
+            .await?;
+        Ok(crate::watch_details::parse(&data))
+    }
     async fn watch_response(&self, music: bool, id: &str) -> Result<Value> {
         ensure!(
             id.len() == 11

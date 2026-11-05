@@ -695,6 +695,16 @@ impl Engine {
                 self.activate_context(None);
                 Ok(json!({"connected":session.is_some(),"notice":stored.notice}))
             }
+            "watch_details" => {
+                // Watch-page extras for the playing video: date, likes, subscribers.
+                let media: Media = serde_json::from_value(r["media"].clone())?;
+                let Some(id) = vidcue_providers::music_lyrics::video_id(&media.id, &media.url)
+                else {
+                    return Ok(json!({}));
+                };
+                let browser = self.browser.lock().expect("browser").clone();
+                browser.watch_details(&id).await
+            }
             "lyrics" => {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
                 let proxy = self.config.lock().expect("config").proxy.clone();

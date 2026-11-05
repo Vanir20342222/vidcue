@@ -169,6 +169,9 @@ internal fun FocusedPlayer(
     val mediaUrl = player.media?.optString("url")
     // Keep the inline Up next list current as playback advances.
     LaunchedEffect(mediaUrl) { vm.loadUpNext() }
+    // Date, likes and subscribers arrive after the video starts (see loadWatchDetails).
+    LaunchedEffect(mediaUrl, player.video) { if (player.video) vm.loadWatchDetails(player.media) }
+    val watchDetails by vm.watchDetails.collectAsState()
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val motion = LocalMotion.current
     val panelDrag = LocalPanelDrag.current
@@ -297,9 +300,9 @@ internal fun FocusedPlayer(
             }
             @Composable
             fun ActionRow() {
-                // Labelled pill actions under the title (YouTube watch-page pattern), with
-                // More pinned to the trailing edge. Every entry maps to an existing action;
-                // fullscreen lives on the video itself. Narrow columns scroll the pills.
+                // One soft tray of evenly spaced icons, music and video alike, so nothing has to
+                // be scrolled sideways on a phone. Each icon keeps its spoken name; video puts
+                // ⋮ in the tray so the first and last icons line up with the title's edges.
                 val media = player.media
                 val canSave =
                     media != null &&
@@ -309,30 +312,27 @@ internal fun FocusedPlayer(
                 Row(
                     Modifier.fillMaxWidth()
                         .then(
-                            // Music: one soft tray, the same shape language as the dock, instead
-                            // of loose icons floating above the gesture bar.
-                            if (player.video) Modifier
-                            else
-                                Modifier.clip(MediaTokens.card)
-                                    .background(LocalContentColor.current.copy(alpha = 0.07f))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            // One soft tray, the same shape language as the dock, instead of
+                            // loose icons or pills that overflow a narrow screen.
+                            Modifier.clip(MediaTokens.card)
+                                .background(LocalContentColor.current.copy(alpha = 0.07f))
+                                .padding(
+                                    horizontal = if (player.video) 0.dp else 4.dp,
+                                    vertical = 2.dp,
+                                )
                         )
                         .testTag("player-actions"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
-                        Modifier.weight(1f)
-                            .then(
-                                if (player.video) Modifier.horizontalScroll(rememberScrollState())
-                                else Modifier
-                            ),
-                        horizontalArrangement =
-                            if (player.video) Arrangement.spacedBy(8.dp)
-                            else Arrangement.SpaceEvenly,
+                        Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val compact = !player.video
-                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, action = onQueue)
+                        val compact = true
+                        // Video: equal cells, so five or six actions always fit the width.
+                        val cell = if (player.video) Modifier.weight(1f) else Modifier
+                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, modifier = cell, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
                         if (canSave && media != null) {
@@ -343,7 +343,7 @@ internal fun FocusedPlayer(
                                 "Save offline",
                                 "player-download",
                                 compact,
-                                modifier = Modifier.trackCentre { saveCentre = it },
+                                modifier = cell.trackCentre { saveCentre = it },
                             ) {
                                 val card = MediaCard(media)
                                 DownloadFlight.launch(card, saveCentre)
@@ -359,12 +359,13 @@ internal fun FocusedPlayer(
                                 "player-output",
                                 compact,
                                 active = output.bluetooth,
+                                modifier = cell,
                                 action = onOutput,
                             )
                         }
                         val shareUrl = media?.optString("url").orEmpty()
                         if (player.video && shareUrl.startsWith("http"))
-                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact) {
+                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact, modifier = cell) {
                                 val send =
                                     Intent(Intent.ACTION_SEND)
                                         .setType("text/plain")
@@ -387,16 +388,29 @@ internal fun FocusedPlayer(
                             compact = compact,
                             active = sleepLeft > 0,
                             countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
+                            modifier = cell,
                             action = onSleep,
                         )
+                        if (player.video)
+                            PlayerAction(
+                                Glyph.More,
+                                "More",
+                                "Playback options",
+                                "player-options",
+                                compact,
+                                modifier = cell,
+                                action = onMore,
+                            )
                     }
-                    Spacer(Modifier.width(4.dp))
-                    MediaIconButton(
-                        Glyph.More,
-                        "Playback options",
-                        "player-options",
-                        action = onMore,
-                    )
+                    if (!player.video) {
+                        Spacer(Modifier.width(4.dp))
+                        MediaIconButton(
+                            Glyph.More,
+                            "Playback options",
+                            "player-options",
+                            action = onMore,
+                        )
+                    }
                 }
             }
             Column(
@@ -416,7 +430,13 @@ internal fun FocusedPlayer(
                         }
                     WatchDetails(
                         title = player.title,
-                        media = player.media,
+                        media =
+                            remember(player.media, watchDetails) {
+                                withWatchDetails(
+                                    player.media,
+                                    watchDetails?.takeIf { it.first == mediaUrl }?.second,
+                                )
+                            },
                         creator = creator,
                         showCreator =
                             creator.isNotBlank() &&
