@@ -3752,9 +3752,8 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         val at = line.optLong("at_ms")
                         val next =
                             lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms")
-                                ?: (at + 4000)
-                        val nowMs = smooth * 1000 - (offset.toLongOrNull() ?: 0)
-                        ((nowMs - at) / (next - at).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
+                        val nowMs = smooth * 1000.0 - (offset.toLongOrNull() ?: 0)
+                        lyricSweep(nowMs, at, next, line.optString("text"))
                     }
                 val text = line.optString("text").ifBlank { "♪" }
                 Text(

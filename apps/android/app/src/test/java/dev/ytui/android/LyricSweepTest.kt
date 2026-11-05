@@ -68,6 +68,41 @@ class LyricSweepTest {
         }
     }
 
+    @Test
+    fun instrumentalGapAfterALineDoesNotSlowTheFill() {
+        // "Hold me now" is three syllables sung in ~1 s, then eight seconds of music.
+        val text = "Hold me now"
+        val sungMs = lyricSyllables(text) * LYRIC_MS_PER_SYLLABLE
+        assertEquals(3, lyricSyllables(text))
+        assertEquals(1f, lyricSweep(10_000.0 + sungMs, 10_000, 19_000, text), 0f)
+        assertEquals(0.5f, lyricSweep(10_000.0 + sungMs / 2, 10_000, 19_000, text), 0.001f)
+    }
+
+    @Test
+    fun aNextLineSoonerThanTheEstimateStillFinishesTheFillOnTime() {
+        val text = "a long line with very many syllables in it, sung quickly"
+        assertTrue(lyricSyllables(text) * LYRIC_MS_PER_SYLLABLE > 2000)
+        assertEquals(0.5f, lyricSweep(1_000.0, 0, 2_000, text), 0.001f)
+        assertEquals(1f, lyricSweep(2_000.0, 0, 2_000, text), 0f)
+    }
+
+    @Test
+    fun sweepStaysWithinRangeBeforeTheLineAndForTheLastLine() {
+        assertEquals(0f, lyricSweep(500.0, 1_000, null, "Oh"), 0f)
+        assertEquals(1f, lyricSweep(1_000.0 + LYRIC_LAST_LINE_MS, 1_000, null, "a ".repeat(40)), 0f)
+        // Shortest lines still take a moment so the fill is visible.
+        assertEquals(0.5f, lyricSweep(LYRIC_MIN_SUNG_MS / 2.0, 0, 10_000, "Oh"), 0.001f)
+    }
+
+    @Test
+    fun syllablesCountVowelGroupsAndCharactersInScriptsWithoutVowels() {
+        assertEquals(1, lyricSyllables("rhythm"))
+        assertEquals(4, lyricSyllables("Café au lait"))
+        assertEquals(3, lyricSyllables("Привет мир"))
+        assertEquals(4, lyricSyllables("君の名は"))
+        assertEquals(0, lyricSyllables("♪ ... !"))
+    }
+
     /** Colour lerp can differ from its end point by float rounding, so compare channels. */
     private fun assertSameColour(expected: Color, actual: Color) {
         assertEquals(expected.red, actual.red, 0.001f)
