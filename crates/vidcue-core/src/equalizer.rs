@@ -103,6 +103,95 @@ pub fn filter(gains: &[f64; 10]) -> Option<String> {
     Some(format!("@vidcue-eq:lavfi=[{chain}]"))
 }
 
+/// One peaking band, the same RBJ design FFmpeg's `equalizer` filter uses with an
+/// octave width of 1, so Android sounds like desktop mpv.
+#[derive(Clone, Copy, Debug)]
+struct Biquad {
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+}
+impl Biquad {
+    fn peaking(frequency: f64, gain: f64, sample_rate: f64) -> Self {
+        let w0 = std::f64::consts::TAU * frequency / sample_rate;
+        let (sin, cos) = w0.sin_cos();
+        let alpha = sin * (std::f64::consts::LN_2 / 2.0 * w0 / sin).sinh();
+        let a = 10f64.powf(gain / 40.0);
+        let a0 = 1.0 + alpha / a;
+        Self {
+            b0: ((1.0 + alpha * a) / a0) as f32,
+            b1: (-2.0 * cos / a0) as f32,
+            b2: ((1.0 - alpha * a) / a0) as f32,
+            a1: (-2.0 * cos / a0) as f32,
+            a2: ((1.0 - alpha / a) / a0) as f32,
+        }
+    }
+}
+
+/// A ten-band filter bank for interleaved PCM with per-channel state.
+#[derive(Clone, Debug)]
+pub struct Bank {
+    filters: Vec<Biquad>,
+    /// Transposed direct form II state: two values per filter per channel.
+    state: Vec<[f32; 2]>,
+    channels: usize,
+    /// Linear pre-gain that leaves headroom for the largest boost, so 16-bit output
+    /// does not hard-clip.
+    preamp: f32,
+}
+impl Bank {
+    /// Returns `None` for a flat curve or an unusable format.
+    pub fn new(gains: &[f64; 10], sample_rate: u32, channels: usize) -> Option<Self> {
+        if channels == 0 || sample_rate == 0 || gains.iter().all(|g| *g == 0.0) {
+            return None;
+        }
+        let rate = f64::from(sample_rate);
+        let filters = BANDS
+            .iter()
+            .zip(gains)
+            // Bands at or above Nyquist cannot be represented at this rate.
+            .filter(|(f, g)| **g != 0.0 && f64::from(**f) < rate * 0.45)
+            .map(|(f, g)| Biquad::peaking(f64::from(*f), g.clamp(-MAX_GAIN, MAX_GAIN), rate))
+            .collect::<Vec<_>>();
+        if filters.is_empty() {
+            return None;
+        }
+        let boost = gains.iter().copied().fold(0.0, f64::max).min(MAX_GAIN);
+        Some(Self {
+            state: vec![[0.0; 2]; filters.len() * channels],
+            filters,
+            channels,
+            preamp: 10f64.powf(-boost / 20.0) as f32,
+        })
+    }
+    /// Clears filter memory, e.g. after a seek.
+    pub fn reset(&mut self) {
+        self.state.iter_mut().for_each(|s| *s = [0.0; 2]);
+    }
+    /// Filters interleaved little-endian signed 16-bit samples in place.
+    pub fn process_pcm16(&mut self, bytes: &mut [u8]) {
+        let bands = self.filters.len();
+        for (index, sample) in bytes.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let channel = index % self.channels;
+            let mut x = f32::from(i16::from_le_bytes(*sample)) * self.preamp;
+            for (filter, state) in self
+                .filters
+                .iter()
+                .zip(&mut self.state[channel * bands..(channel + 1) * bands])
+            {
+                let y = filter.b0 * x + state[0];
+                state[0] = filter.b1 * x - filter.a1 * y + state[1];
+                state[1] = filter.b2 * x - filter.a2 * y;
+                x = y;
+            }
+            let out = x.round().clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
+            *sample = out.to_le_bytes();
+        }
+    }
+}
+
 /// Validates a preset name and the custom table.
 pub fn validate(name: &str, custom: &BTreeMap<String, Vec<f64>>) -> Result<()> {
     ensure!(
@@ -174,6 +263,68 @@ pub fn parse_custom(text: &str) -> Result<BTreeMap<String, Vec<f64>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn tone(frequency: f64, rate: u32, seconds: f64, amplitude: f64) -> Vec<u8> {
+        (0..(f64::from(rate) * seconds) as usize)
+            .flat_map(|n| {
+                let v = (amplitude
+                    * (std::f64::consts::TAU * frequency * n as f64 / f64::from(rate)).sin())
+                    as i16;
+                // Stereo: the same sample on both channels.
+                [v.to_le_bytes(), v.to_le_bytes()].concat()
+            })
+            .collect()
+    }
+    fn rms_db(bytes: &[u8]) -> f64 {
+        // Skip the first half so the filters have settled.
+        let samples = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .skip(bytes.len() / 4)
+            .map(|s| f64::from(i16::from_le_bytes(*s)))
+            .collect::<Vec<_>>();
+        let mean = samples.iter().map(|s| s * s).sum::<f64>() / samples.len() as f64;
+        10.0 * mean.log10()
+    }
+    #[test]
+    fn filter_bank_applies_band_gains_with_headroom_and_skips_flat_curves() {
+        assert!(Bank::new(&[0.0; 10], 48_000, 2).is_none());
+        assert!(Bank::new(&[3.0; 10], 48_000, 0).is_none());
+        let rate = 48_000;
+        let mut cut = [0.0; 10];
+        cut[5] = -12.0; // 1 kHz
+        for (frequency, expected) in [(1000.0, -12.0), (62.0, 0.0), (8000.0, 0.0)] {
+            let input = tone(frequency, rate, 0.5, 8000.0);
+            let mut output = input.clone();
+            let mut bank = Bank::new(&cut, rate, 2).unwrap();
+            // Odd chunk sizes: state carries across buffers.
+            for chunk in output.chunks_mut(1234) {
+                bank.process_pcm16(chunk);
+            }
+            let change = rms_db(&output) - rms_db(&input);
+            assert!(
+                (change - expected).abs() < 0.5,
+                "{frequency} Hz changed by {change} dB"
+            );
+        }
+        // A boost is offset by the pre-gain, so the boosted band stays at its level
+        // and the rest is quieter instead of clipping.
+        let mut boost = [0.0; 10];
+        boost[0] = 6.0;
+        let input = tone(31.0, rate, 1.0, 30000.0);
+        let mut output = input.clone();
+        let mut bank = Bank::new(&boost, rate, 2).unwrap();
+        bank.process_pcm16(&mut output);
+        assert!((rms_db(&output) - rms_db(&input)).abs() < 0.6);
+        bank.reset();
+        // 16 kHz cannot be represented at 22.05 kHz; the band is dropped.
+        let mut high = [0.0; 10];
+        high[9] = 6.0;
+        assert!(Bank::new(&high, 22_050, 1).is_none());
+        let mut odd = vec![1u8, 2, 3];
+        Bank::new(&cut, rate, 1).unwrap().process_pcm16(&mut odd);
+        assert_eq!(odd[2], 3, "a trailing partial sample is left alone");
+    }
     #[test]
     fn presets_are_valid_and_off_or_flat_add_no_filter() {
         let none = BTreeMap::new();

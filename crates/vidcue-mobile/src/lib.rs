@@ -14,6 +14,7 @@ use vidcue_providers::{
 };
 mod account;
 mod audio_tracks;
+pub mod equalizer;
 mod indexed_playback;
 mod lyrics;
 mod resolution;
@@ -86,6 +87,7 @@ impl Engine {
             account_notice=Some("An older private session staging file could not be removed; reconnect or clear the app cache after stopping playback.".into());
         }
         let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+        equalizer::configure(&config);
         Ok(Self {
             settings_commit: Mutex::new(()),
             resolver: Arc::new(resolution::Resolver::default()),
@@ -183,6 +185,7 @@ impl Engine {
             "settings" => Ok(serde_json::to_value(
                 self.config.lock().expect("config").clone(),
             )?),
+            "equalizer_presets" => Ok(equalizer::catalog()),
             "save_settings" => {
                 let _commit = self.settings_commit.lock().expect("settings commit");
                 let config: Config = serde_json::from_value(r["config"].clone())?;
@@ -224,6 +227,7 @@ impl Engine {
                             ImageCache::new(client, self.cache.join("images"));
                     }
                 }
+                equalizer::configure(&config);
                 *self.config.lock().expect("config") = config;
                 Ok(json!({"saved":true}))
             }
@@ -2096,6 +2100,52 @@ mod android {
             });
         }
         let _ = env.set_int_array_region(&out, 0, &bands);
+    }
+    /// Filters 16-bit PCM in place in a direct buffer the processor owns.
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_equalize(
+        env: JNIEnv,
+        _class: JClass,
+        buffer: jni::objects::JByteBuffer,
+        offset: jni::sys::jint,
+        length: jni::sys::jint,
+        channels: jni::sys::jint,
+        sample_rate: jni::sys::jint,
+    ) {
+        if channels < 1 || sample_rate <= 0 || offset < 0 || length < 0 {
+            return;
+        }
+        let Ok(capacity) = env.get_direct_buffer_capacity(&buffer) else {
+            return;
+        };
+        let Some(end) = (offset as usize).checked_add(length as usize) else {
+            return;
+        };
+        if end > capacity {
+            return;
+        }
+        let Ok(pointer) = env.get_direct_buffer_address(&buffer) else {
+            return;
+        };
+        // EqualizerProcessor owns this output buffer and does not touch it during the call.
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(pointer.add(offset as usize), length as usize)
+        };
+        crate::equalizer::process_pcm16(bytes, channels as usize, sample_rate as u32);
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_equalizerEnabled(
+        _env: JNIEnv,
+        _class: JClass,
+    ) -> jni::sys::jboolean {
+        crate::equalizer::enabled() as jni::sys::jboolean
+    }
+    #[unsafe(no_mangle)]
+    pub extern "system" fn Java_dev_ytui_android_NativeBridge_equalizerReset(
+        _env: JNIEnv,
+        _class: JClass,
+    ) {
+        crate::equalizer::reset();
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_cancel(

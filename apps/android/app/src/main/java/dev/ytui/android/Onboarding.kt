@@ -237,7 +237,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) 
                 when (page) {
                     OnboardingSteps.WELCOME -> WelcomePage(background)
                     OnboardingSteps.LOOK -> LookPage(vm, dark)
-                    OnboardingSteps.PLAYBACK -> PlaybackPage(vm)
+                    OnboardingSteps.PLAYBACK -> PlaybackPage(vm, dark)
                     OnboardingSteps.ACCOUNT -> AccountPage(vm)
                     else -> ReadyPage(vm)
                 }
@@ -693,8 +693,10 @@ private fun ThemeChip(
 // ---------------------------------------------------------------- 3 Playback
 
 @Composable
-private fun PlaybackPage(vm: YtuiViewModel) {
+private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
     val mobile by vm.mobile.collectAsState()
+    val config by vm.config.collectAsState()
+    val ready by vm.ready.collectAsState()
     PageColumn {
         PageBadge(Glyph.Play)
         PageTitle("Playback", "Choose how ytui plays. Every option is also in Settings later.")
@@ -718,6 +720,10 @@ private fun PlaybackPage(vm: YtuiViewModel) {
                         vm.updateMobile(key, value)
                     }
                 }
+            }
+            // Saving writes the whole settings document; wait until it has loaded (see LookPage).
+            Staggered(3 + rows.size, Modifier.fillMaxWidth()) {
+                EqualizerSettings(vm, dark, config, enabled = ready && config.length() > 0)
             }
         }
     }
@@ -821,6 +827,7 @@ private fun ReadyPage(vm: YtuiViewModel) {
                 SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
                 SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
                 SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))
+                SummaryRow("Equalizer", EqualizerModel.label(EqualizerModel.selected(config)))
                 SummaryRow("Account", if (account.optBoolean("connected")) "Signed in" else "Not signed in")
             }
         }
