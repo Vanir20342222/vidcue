@@ -497,6 +497,7 @@ internal class YtuiViewModel(
                         }
                         "show_player" -> playerOpen.value = true
                         "shared" -> sharedQuery.value = text
+                        "offline_playlists_changed" -> loadOfflinePlaylists()
                         "error" -> {
                             status.value = text
                             actionError.value = text
@@ -977,6 +978,8 @@ internal class YtuiViewModel(
                     "music" to (tab.value == 2 || media.musicSource),
                     "audio" to audio,
                     "quality" to quality,
+                    "title" to media.title,
+                    "create_offline_playlist" to (media.kind == "playlist"),
                 )
             else navigate(request = json("Collection" to media.collectionId))
             return

@@ -81,6 +81,16 @@ public final class PrepareWorker extends Worker {
       SharedPreferences progress =
           getApplicationContext()
               .getSharedPreferences("preparations-progress", Context.MODE_PRIVATE);
+      if (request.optBoolean("create_offline_playlist")) {
+        JSONObject saved = call(offlinePlaylist(request, items));
+        if (!saved.optBoolean("ok")) {
+          String error = saved.optString("error", "Cannot create offline playlist");
+          status(getApplicationContext(), id, error, raw);
+          MediaBridge.event("error", error);
+          return Result.failure();
+        }
+        MediaBridge.event("offline_playlists_changed", "");
+      }
       int start = PreparationPolicy.checkedCursor(progress.getInt(id, 0), items.length()),
           failed = progress.getInt(id + "-failed", 0);
       for (int i = start; i < items.length(); i++) {
@@ -186,6 +196,33 @@ public final class PrepareWorker extends Worker {
     activeRequest = System.nanoTime() & Long.MAX_VALUE;
     request.put("request_id", activeRequest);
     return new JSONObject(NativeBridge.request(request.toString()));
+  }
+
+  /** The same collection updates one playlist on retries and repeat downloads. */
+  static JSONObject offlinePlaylist(JSONObject request, JSONArray items) throws Exception {
+    String source = request.getJSONObject("request").getString("Collection");
+    String playlistId = java.util.UUID.nameUUIDFromBytes(
+        ("vidcue:download-playlist:" + source)
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+    JSONArray members = new JSONArray();
+    java.util.HashSet<String> seen = new java.util.HashSet<>();
+    for (int i = 0; i < items.length(); i++) {
+      JSONObject media = new JSONObject(items.getJSONObject(i).toString());
+      if (media.optBoolean("live") || PreparationPolicy.collection(media.optString("kind"))
+          || !seen.add(media.getString("url"))) continue;
+      JSONObject download = new JSONObject().put("media", media)
+          .put("audio", request.optBoolean("audio"))
+          .put("quality", request.optString("quality", "1080"));
+      media.put("offline_id", OfflineStore.id(download));
+      members.put(media);
+    }
+    String title = request.optString("title", "Downloaded playlist").trim();
+    title = title.codePoints().filter(c -> !Character.isISOControl(c)).limit(120)
+        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+        .toString().trim();
+    if (title.isEmpty()) title = "Downloaded playlist";
+    return new JSONObject().put("op", "offline_playlist_download").put("id", playlistId)
+        .put("title", title).put("items", members);
   }
 
   @Override

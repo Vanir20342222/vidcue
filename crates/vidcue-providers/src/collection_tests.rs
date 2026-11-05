@@ -182,3 +182,63 @@ async fn playable_collection_expands_nested_playlists_into_single_videos() {
     );
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn playlist_download_ignores_recommendations_and_their_continuations() {
+    for music in [false, true] {
+        let (browser, calls, task) = provider(move |n| {
+            assert!(n < 2, "Followed a recommendation continuation");
+            let key = match (music, n) {
+                (true, 0) => "musicPlaylistShelfRenderer",
+                (true, _) => "musicPlaylistShelfContinuation",
+                (false, 0) => "playlistVideoListRenderer",
+                (false, _) => "playlistVideoListContinuation",
+            };
+            let mut tracks = page(if n == 0 { 19 } else { 20 }, None);
+            if n == 1 {
+                tracks["contents"] = json!([tracks["contents"][19].clone()]);
+            } else {
+                tracks["continuations"] =
+                    json!([{"nextContinuationData":{"continuation":"tracks-page-2"}}]);
+            }
+            // Recommendations can appear before the actual track list and can
+            // include both individual songs and expandable playlists.
+            json!({"contents":[
+                {"musicCarouselShelfRenderer":{
+                    "contents":page(300, Some("recommendations")),
+                    "items":[{"playlistRenderer":{"playlistId":"PLunrelated",
+                        "title":{"simpleText":"Suggested playlist"}}}]
+                }},
+                {key: tracks}
+            ]})
+        })
+        .await;
+        let result = crate::watch::collect_playable(
+            browser,
+            watch(music),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+        task.abort();
+        let items = result.unwrap();
+        assert_eq!(items.len(), 20);
+        assert_eq!(items[19].id, "fixture-19");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn terminal_playlist_does_not_follow_a_recommendation_token() {
+    let (browser, calls, task) = provider(|n| {
+        assert_eq!(n, 0, "Terminal playlist followed recommendations");
+        json!({"contents":[
+            {"musicPlaylistShelfRenderer":page(20, None)},
+            {"musicCarouselShelfRenderer":page(300, Some("recommendations"))}
+        ]})
+    })
+    .await;
+    let items = collect(browser, true).await.unwrap();
+    task.abort();
+    assert_eq!(items.len(), 20);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}

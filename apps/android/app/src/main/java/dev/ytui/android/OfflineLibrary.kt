@@ -191,7 +191,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                             EmptyMediaState(
                                 Glyph.Queue,
                                 "No offline playlists",
-                                "Create a playlist, then add media from Offline.",
+                                "Download a playlist to save it here, or create your own.",
                             )
                         }
                     items(playlists, key = { it.optString("id") }) { playlist ->
