@@ -380,17 +380,18 @@ internal fun FocusedPlayer(
                             }
                         val sleepLeft = rememberSleepLeft(player)
                         // Video keeps the row short: the timer lives in ⋮ until it is running.
-                        if (!player.video || sleepLeft > 0)
-                        PlayerAction(
-                            Glyph.Sleep,
-                            if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
-                            if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
-                            compact = compact,
-                            active = sleepLeft > 0,
-                            countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
-                            modifier = cell,
-                            action = onSleep,
-                        )
+                        if (!player.video || sleepLeft > 0) {
+                            PlayerAction(
+                                Glyph.Sleep,
+                                if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
+                                if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
+                                compact = compact,
+                                active = sleepLeft > 0,
+                                countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
+                                modifier = cell,
+                                action = onSleep,
+                            )
+                        }
                         if (player.video)
                             PlayerAction(
                                 Glyph.More,
