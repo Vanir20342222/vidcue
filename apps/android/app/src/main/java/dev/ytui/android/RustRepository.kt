@@ -1204,9 +1204,9 @@ internal class YtuiViewModel(
         offlinePlaylists.value = RustRpc.arrayCall("offline_playlists").objects()
     }
 
-    fun createOfflinePlaylist(title: String) = task {
+    fun createOfflinePlaylist(title: String, items: List<JSONObject> = emptyList()) = task {
         offlinePlaylists.value =
-            RustRpc.arrayCall("offline_playlist_create", "title" to title).objects()
+            RustRpc.arrayCall("offline_playlist_create", "title" to title, "items" to JSONArray(items)).objects()
     }
 
     fun updateOfflinePlaylist(id: String, title: String? = null, items: List<JSONObject>? = null) =

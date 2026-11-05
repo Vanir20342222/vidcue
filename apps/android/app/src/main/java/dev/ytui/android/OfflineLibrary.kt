@@ -1,5 +1,6 @@
 package dev.ytui.android
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -15,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,7 +32,11 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     var section by rememberSaveable { mutableStateOf("Offline") }
     var add by remember { mutableStateOf(false) }
     var newPlaylist by remember { mutableStateOf(false) }
-    var addTo by remember { mutableStateOf<JSONObject?>(null) }
+    var addTo by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var selecting by rememberSaveable { mutableStateOf(false) }
+    var selectedIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var removingSelected by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var playlistItems by remember { mutableStateOf(emptyList<JSONObject>()) }
     var options by remember { mutableStateOf<JSONObject?>(null) }
     var opened by rememberSaveable { mutableStateOf("") }
     var removing by remember { mutableStateOf<JSONObject?>(null) }
@@ -44,6 +50,22 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         downloads.filter {
             it.optString("state") != "Complete" || it.optJSONObject("media") == null
         }
+    val selectedItems = available.filter { it.optString("id") in selectedIds }
+    fun clearSelection() {
+        selectedIds = emptyList()
+        selecting = false
+    }
+    fun toggleSelection(id: String) {
+        selectedIds = if (id in selectedIds) selectedIds - id else selectedIds + id
+    }
+    BackHandler(
+        selecting && !playerOpen && !add && addTo == null && !newPlaylist && removingSelected == null
+    ) {
+        clearSelection()
+    }
+    LaunchedEffect(available.map { it.optString("id") }) {
+        selectedIds = selectedItems.map { it.optString("id") }
+    }
     LaunchedEffect(Unit) { vm.loadOfflinePlaylists() }
     DisposableEffect(playerOpen) {
         vm.effect("library_visible", "value" to !playerOpen)
@@ -73,6 +95,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         modifier = Modifier.testTag("library-$title"),
                     ) {
                         section = title
+                        clearSelection()
                     }
                 }
             }
@@ -82,23 +105,72 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Pill(
-                "Save a link",
-                Modifier.testTag("add-download").semantics {
-                    contentDescription = "Save a video or playlist offline"
-                },
-                glyph = Glyph.Link,
-            ) {
-                add = true
+            if (!selecting) {
+                Pill(
+                    "Save a link",
+                    Modifier.testTag("add-download").semantics {
+                        contentDescription = "Save a video or playlist offline"
+                    },
+                    glyph = Glyph.Link,
+                ) {
+                    add = true
+                }
+                Pill(
+                    "New playlist",
+                    Modifier.testTag("create-offline-playlist").semantics {
+                        contentDescription = "Create offline playlist"
+                    },
+                    glyph = Glyph.Plus,
+                ) {
+                    playlistItems = emptyList()
+                    newPlaylist = true
+                }
             }
-            Pill(
-                "New playlist",
-                Modifier.testTag("create-offline-playlist").semantics {
-                    contentDescription = "Create offline playlist"
-                },
-                glyph = Glyph.Plus,
-            ) {
-                newPlaylist = true
+            if (section == "Offline" && (selecting || available.isNotEmpty())) {
+                Pill(
+                    if (selecting) "Cancel selection" else "Select",
+                    Modifier.testTag("offline-select"),
+                ) {
+                    if (selecting) clearSelection() else selecting = true
+                }
+            }
+        }
+        if (section == "Offline" && selecting) {
+            Column(Modifier.padding(horizontal = MediaTokens.textInset)) {
+                Text("${selectedItems.size} selected", Modifier.testTag("offline-selection-count"))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val allSelected = selectedItems.size == available.size
+                    Pill(
+                        if (allSelected) "Deselect all" else "Select all",
+                        Modifier.testTag("offline-select-all"),
+                    ) {
+                        selectedIds =
+                            if (allSelected) emptyList() else available.map { it.optString("id") }
+                    }
+                    Pill(
+                        "Add to playlist",
+                        Modifier.testTag("offline-add-selected"),
+                        enabled = selectedItems.isNotEmpty(),
+                    ) {
+                        addTo = selectedItems
+                    }
+                    Pill(
+                        "New playlist",
+                        Modifier.testTag("offline-playlist-selected"),
+                        enabled = selectedItems.isNotEmpty(),
+                    ) {
+                        playlistItems = offlinePlaylistMembers(selectedItems)
+                        newPlaylist = true
+                    }
+                    Pill(
+                        "Delete",
+                        Modifier.testTag("offline-delete-selected"),
+                        style = PillStyle.Destructive,
+                        enabled = selectedItems.isNotEmpty(),
+                    ) {
+                        removingSelected = selectedItems
+                    }
+                }
             }
         }
         LazyColumn(
@@ -141,11 +213,18 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                             item.optString("title"),
                             media.creator,
                             Modifier.testTag("offline-item-${item.optString("id")}").semantics {
-                                contentDescription = "Play offline ${item.optString("title")}"
+                                contentDescription =
+                                    if (selecting) "Select offline ${item.optString("title")}"
+                                    else "Play offline ${item.optString("title")}"
+                                if (selecting) selected = item.optString("id") in selectedIds
                             },
                             artwork = { Artwork(media, it, thumbnails) },
                             square = item.optBoolean("audio"),
-                            onClick = { vm.playOffline(item) },
+                            highlighted = selecting && item.optString("id") in selectedIds,
+                            onClick = {
+                                if (selecting) toggleSelection(item.optString("id"))
+                                else vm.playOffline(item)
+                            },
                             extra = {
                                 // What the copy is and how much space it takes, on its own line
                                 // so a long channel name cannot push it out of view.
@@ -175,7 +254,15 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                     }
                             },
                         ) {
-                            MediaIconButton(
+                            if (selecting) {
+                                Checkbox(
+                                    checked = item.optString("id") in selectedIds,
+                                    onCheckedChange = { toggleSelection(item.optString("id")) },
+                                    modifier = Modifier.testTag("offline-checkbox-${item.optString("id")}").semantics {
+                                        contentDescription = "Select ${item.optString("title")}"
+                                    },
+                                )
+                            } else MediaIconButton(
                                 Glyph.More,
                                 "Offline media options",
                                 "offline-menu-${item.optString("id")}",
@@ -270,7 +357,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             SheetAction(
                 text = { Text("Add to offline playlist") },
                 leadingIcon = { MediaIcon(Glyph.Queue) },
-                onClick = { execute { addTo = item } },
+                onClick = { execute { addTo = listOf(item) } },
             )
             SheetAction(
                 text = { Text("Export file") },
@@ -300,14 +387,16 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             SheetAction(
                 text = { Text("New playlist") },
                 leadingIcon = { MediaIcon(Glyph.Plus) },
-                onClick = { newPlaylist = true },
+                onClick = {
+                    playlistItems = offlinePlaylistMembers(addTo.orEmpty())
+                    addTo = null
+                    newPlaylist = true
+                },
             )
             for (playlist in playlists) {
                 val members = playlist.optJSONArray("items")?.objects() ?: emptyList()
-                val contained =
-                    members.any {
-                        it.optString("url") == addTo!!.getJSONObject("media").optString("url")
-                    }
+                val merged = mergeOfflinePlaylistMembers(members, addTo.orEmpty())
+                val contained = merged.size == members.size
                 SheetAction(
                     text = {
                         Column {
@@ -321,16 +410,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     },
                     leadingIcon = { MediaIcon(if (contained) Glyph.Check else Glyph.Queue) },
                     onClick = {
-                        val item =
-                            addTo!!
-                                .getJSONObject("media")
-                                .copyJson()
-                                .put("offline_id", addTo!!.optString("id"))
                         if (!contained)
-                            vm.updateOfflinePlaylist(
-                                playlist.optString("id"),
-                                items = members + item,
-                            )
+                            vm.updateOfflinePlaylist(playlist.optString("id"), items = merged)
+                        clearSelection()
                         addTo = null
                     },
                 )
@@ -338,7 +420,16 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         }
     if (newPlaylist) {
         var name by remember { mutableStateOf("") }
+        fun create() {
+            if (name.isBlank()) return
+            vm.createOfflinePlaylist(name.trim(), playlistItems)
+            newPlaylist = false
+            playlistItems = emptyList()
+            clearSelection()
+            section = "Playlists"
+        }
         Panel("New offline playlist", { newPlaylist = false }) {
+            if (playlistItems.isNotEmpty()) Text("${playlistItems.size} selected items")
             MediaTextField(
                 name,
                 { if (it.length <= 120) name = it },
@@ -348,19 +439,13 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 keyboardActions =
                     KeyboardActions(
                         onDone = {
-                            if (name.isNotBlank()) {
-                                vm.createOfflinePlaylist(name.trim())
-                                newPlaylist = false
-                                section = "Playlists"
-                            }
+                            create()
                         }
                     ),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Action("Create", enabled = name.isNotBlank()) {
-                    vm.createOfflinePlaylist(name.trim())
-                    newPlaylist = false
-                    section = "Playlists"
+                    create()
                 }
             }
         }
@@ -482,6 +567,22 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 }
             }
         }
+    removingSelected?.let { targets ->
+        MediaDialog(
+            { removingSelected = null },
+            "Delete ${targets.size} offline items?",
+            actions = {
+                QuietAction("Cancel") { removingSelected = null }
+                QuietAction("Delete", destructive = true) {
+                    targets.forEach { vm.effect("download_remove", "id" to it.optString("id")) }
+                    removingSelected = null
+                    clearSelection()
+                }
+            },
+        ) {
+            Text("The selected items will be removed from app storage and their saved folder copies. Your playlists keep their references.")
+        }
+    }
     if (removing != null)
         MediaDialog(
             { removing = null },
