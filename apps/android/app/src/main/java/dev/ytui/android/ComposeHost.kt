@@ -1333,16 +1333,29 @@ private fun BrowsePane(
                             key = "shelf-head:$section",
                             contentType = "shelf-head",
                         ) {
-                            Text(
-                                section.ifBlank { "More for you" },
-                                Modifier.padding(
-                                        start = if (tab == 1) MediaTokens.textInset else 0.dp,
-                                        top = 4.dp,
-                                    )
-                                    .semantics { heading() }
-                                    .testTag("shelf-$section"),
-                                style = MaterialTheme.typography.titleLarge,
-                            )
+                            val inset = if (tab == 1) MediaTokens.textInset else 0.dp
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = inset, end = inset, top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    section.ifBlank { "More for you" },
+                                    Modifier.weight(1f)
+                                        .semantics { heading() }
+                                        .testTag("shelf-$section"),
+                                    style = MaterialTheme.typography.titleLarge,
+                                )
+                                // Albums and playlists open as their own pages, so a shelf of
+                                // only collections or live entries has nothing to play in order.
+                                if (cards.any { !it.collection && !it.live && it.url.isNotBlank() })
+                                    SecondaryAction(
+                                        "Play all",
+                                        Modifier.testTag("shelf-play-all-$section"),
+                                    ) {
+                                        vm.playAll(cards)
+                                    }
+                            }
                         }
                         item(
                             span = { GridItemSpan(maxLineSpan) },
