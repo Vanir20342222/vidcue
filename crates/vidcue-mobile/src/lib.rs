@@ -356,7 +356,11 @@ impl Engine {
                             .push(vidcue_core::offline::OfflinePlaylist {
                                 id: uuid::Uuid::new_v4().to_string(),
                                 title: r["title"].as_str().unwrap_or_default().trim().into(),
-                                items: vec![],
+                                items: r
+                                    .get("items")
+                                    .map(|items| serde_json::from_value(items.clone()))
+                                    .transpose()?
+                                    .unwrap_or_default(),
                             });
                     }
                     "offline_playlist_update" => {
@@ -1546,11 +1550,33 @@ mod format_tests {
     async fn offline_playlists_are_transactional_persisted_and_prepare_without_network() {
         let temp = tempfile::tempdir().unwrap();
         let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
+        let initial_items = json!([
+            {"url":"https://media.test/selected","title":"Selected song","kind":"song","offline_id":"c".repeat(64)}
+        ]);
         let created = engine
-            .request(json!({"op":"offline_playlist_create","title":"Road trip"}))
+            .request(
+                json!({"op":"offline_playlist_create","title":"Road trip","items":initial_items}),
+            )
             .await
             .unwrap();
+        assert_eq!(created[0]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(created[0]["items"][0]["url"], initial_items[0]["url"]);
+        assert_eq!(
+            created[0]["items"][0]["offline_id"],
+            initial_items[0]["offline_id"]
+        );
         let id = created[0]["id"].as_str().unwrap();
+        let initial_file = std::fs::read(temp.path().join("library.json")).unwrap();
+        assert!(
+            engine
+                .request(json!({"op":"offline_playlist_create","title":"Invalid","items":[{}]}))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            initial_file,
+            std::fs::read(temp.path().join("library.json")).unwrap()
+        );
         let items = json!([
             {"url":"https://media.test/a","title":"First","kind":"song","offline_id":"a".repeat(64)},
             {"url":"https://media.test/b","title":"Second","kind":"song","offline_id":"b".repeat(64)}

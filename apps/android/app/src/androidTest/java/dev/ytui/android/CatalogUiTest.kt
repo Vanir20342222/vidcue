@@ -348,6 +348,70 @@ class CatalogUiTest {
     }
 
     @Test
+    fun offlineSelectionCreatesPopulatedPlaylistsAndAddsOnlyMissingSongs() {
+        val title = "Selection fixture " + java.util.UUID.randomUUID().toString().take(8)
+        val copies = (1..3).map { index ->
+            json(
+                "id" to index.toString().repeat(64),
+                "title" to "Selected song $index",
+                "state" to "Complete",
+                "audio" to true,
+                "media" to json("url" to "https://media.invalid/selected-$index", "title" to "Selected song $index", "kind" to "song"),
+            )
+        }
+        compose.onNodeWithTag("tab-0").performClick()
+        settleUi()
+        scenario.onActivity {
+            ViewModelProvider(it)[YtuiViewModel::class.java].downloads.value = copies
+        }
+        try {
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-add-selected").assertIsNotEnabled()
+            copies.take(2).forEach {
+                compose.onNodeWithTag("offline-item-${it.getString("id")}").performClick()
+            }
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("2 selected")
+            compose.onNodeWithTag("offline-delete-selected").performClick()
+            compose.onNodeWithText("Delete 2 offline items?").assertIsDisplayed()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("2 selected")
+            compose.onNodeWithTag("offline-playlist-selected").performClick()
+            compose.onNodeWithTag("offline-playlist-name").performTextInput(title)
+            settleUi()
+            compose.onNodeWithText("Create").performClick()
+            compose.waitUntil(10_000) {
+                PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                    .any { it.optString("title") == title && it.getJSONArray("items").length() == 2 }
+            }
+            compose.onNodeWithTag("library-Offline").performClick()
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("3 selected")
+            compose.onNodeWithTag("offline-add-selected").performClick()
+            settleUi()
+            compose.onNodeWithText(title).performClick()
+            compose.waitUntil(10_000) {
+                PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                    .any { playlist ->
+                        playlist.optString("title") == title &&
+                            playlist.getJSONArray("items").objects().map { it.optString("offline_id") } == copies.map { it.optString("id") }
+                    }
+            }
+            compose.onNodeWithTag("offline-select").assertTextContains("Select")
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("0 selected")
+            compose.onNodeWithTag("offline-delete-selected").assertIsNotEnabled()
+        } finally {
+            PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                .filter { it.optString("title") == title }
+                .forEach { PlaybackService.rpcArray(json("op" to "offline_playlist_delete", "id" to it.optString("id"))) }
+            OfflineStore.dirty = true
+        }
+    }
+
+    @Test
     fun offlinePlaylistsUseEditableNativeFieldsAndRealRustPersistence() {
         compose.onNodeWithTag("tab-0").performClick()
         compose.onNodeWithTag("create-offline-playlist").performClick()
