@@ -17,15 +17,92 @@ public final class PrepareWorker extends Worker {
   }
 
   static void enqueue(JSONObject request) {
-    Data input = new Data.Builder().putString("request", request.toString()).build();
-    OneTimeWorkRequest work =
+    enqueue(request, null);
+  }
+
+  /**
+   * Queues preparation of [request] under the job key [key] (a new key when null). The key names
+   * the downloads row, checkpoint and progress cursor, so re-queuing an existing key replaces its
+   * work and resumes where it stopped instead of adding a second row that starts over.
+   */
+  static void enqueue(JSONObject request, String key) {
+    OneTimeWorkRequest.Builder builder =
         new OneTimeWorkRequest.Builder(PrepareWorker.class)
-            .setInputData(input)
+            .setConstraints(
+                new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 60, TimeUnit.SECONDS)
-            .addTag("ytui-prepare")
+            .addTag("ytui-prepare");
+    if (key == null) key = java.util.UUID.randomUUID().toString();
+    OneTimeWorkRequest work =
+        builder
+            .setInputData(
+                new Data.Builder()
+                    .putString("request", request.toString())
+                    .putString("key", key)
+                    .build())
             .build();
-    status(MediaBridge.context, work.getId().toString(), "Preparing playlist", request.toString());
-    WorkManager.getInstance(MediaBridge.context).enqueue(work);
+    status(MediaBridge.context, key, "Preparing playlist", request.toString());
+    WorkManager manager = WorkManager.getInstance(MediaBridge.context);
+    // Rows from before job keys ran as plain work whose id is the key.
+    cancelLegacy(manager, key);
+    manager.enqueueUniqueWork(
+        PreparationPolicy.uniqueWork(key), ExistingWorkPolicy.REPLACE, work);
+  }
+
+  /** Stops the work behind job [key] without touching its row or checkpoint. */
+  static void cancel(Context context, String key) {
+    WorkManager manager = WorkManager.getInstance(context);
+    manager.cancelUniqueWork(PreparationPolicy.uniqueWork(key));
+    cancelLegacy(manager, key);
+  }
+
+  private static void cancelLegacy(WorkManager manager, String key) {
+    try {
+      manager.cancelWorkById(java.util.UUID.fromString(key));
+    } catch (IllegalArgumentException notAWorkId) {
+    }
+  }
+
+  /** Deletes job [key]'s checkpoint file and progress cursor (its row is separate). */
+  static void purge(Context context, String key) {
+    SharedPreferences.Editor progress =
+        context.getSharedPreferences("preparations-progress", Context.MODE_PRIVATE).edit();
+    for (String name : PreparationPolicy.progressKeys(key)) progress.remove(name);
+    progress.apply();
+    java.io.File checkpoint = checkpoint(context, key);
+    if (checkpoint.exists()) checkpoint.delete();
+  }
+
+  static java.io.File checkpoint(Context context, String key) {
+    return new java.io.File(context.getFilesDir(), "prepare-" + key + ".json");
+  }
+
+  /** Status updates from a cancelled or replaced run are dropped. */
+  private void report(String id, String text, String request) {
+    if (!isStopped()) status(getApplicationContext(), id, text, request);
+  }
+
+  /** A stopped run exits; when its row was removed meanwhile, clean what it may have written. */
+  private Result stopped(String id) {
+    if (!getApplicationContext()
+        .getSharedPreferences("preparations", Context.MODE_PRIVATE)
+        .contains(id + "-request")) purge(getApplicationContext(), id);
+    return Result.retry();
+  }
+
+  /** Retries with backoff, or after the last allowed run stops with a final status. */
+  private Result retryOrStop(String id, String retrying, String raw) {
+    if (PreparationPolicy.retryAllowed(getRunAttemptCount())) {
+      report(id, retrying, raw);
+      return Result.retry();
+    }
+    report(
+        id,
+        "Playlist preparation stopped after "
+            + PreparationPolicy.MAX_RUNS
+            + " attempts; retry from downloads",
+        raw);
+    return Result.failure();
   }
 
   static void status(Context context, String id, String text, String request) {
@@ -39,10 +116,10 @@ public final class PrepareWorker extends Worker {
 
   @Override
   public Result doWork() {
-    String id = getId().toString(), raw = getInputData().getString("request");
+    String raw = getInputData().getString("request"), id = getInputData().getString("key");
+    if (id == null) id = getId().toString();
     if (raw == null) return Result.failure();
-    java.io.File checkpoint =
-        new java.io.File(getApplicationContext().getFilesDir(), "prepare-" + id + ".json");
+    java.io.File checkpoint = checkpoint(getApplicationContext(), id);
     try {
       setForegroundAsync(foreground()).get(15, TimeUnit.SECONDS);
       JSONObject request = new JSONObject(raw);
@@ -85,8 +162,9 @@ public final class PrepareWorker extends Worker {
         JSONObject saved = call(offlinePlaylist(request, items));
         if (!saved.optBoolean("ok")) {
           String error = saved.optString("error", "Cannot create offline playlist");
-          status(getApplicationContext(), id, error, raw);
+          report(id, error, raw);
           MediaBridge.event("error", error);
+          purge(getApplicationContext(), id);
           return Result.failure();
         }
         MediaBridge.event("offline_playlists_changed", "");
@@ -94,7 +172,7 @@ public final class PrepareWorker extends Worker {
       int start = PreparationPolicy.checkedCursor(progress.getInt(id, 0), items.length()),
           failed = progress.getInt(id + "-failed", 0);
       for (int i = start; i < items.length(); i++) {
-        if (isStopped()) return Result.retry();
+        if (isStopped()) return stopped(id);
         JSONObject media = items.getJSONObject(i);
         if (PreparationPolicy.collection(media.optString("kind"))) {
           // Older checkpoints may list nested playlists; they are not single videos.
@@ -102,11 +180,8 @@ public final class PrepareWorker extends Worker {
             throw new java.io.IOException("Cannot persist playlist progress");
           continue;
         }
-        status(
-            getApplicationContext(),
-            id,
-            "Preparing " + (i + 1) + " / " + items.length() + " · " + failed + " failed",
-            raw);
+        report(
+            id, "Preparing " + (i + 1) + " / " + items.length() + " · " + failed + " failed", raw);
         JSONObject resolved =
             call(
                 new JSONObject()
@@ -114,21 +189,15 @@ public final class PrepareWorker extends Worker {
                     .put("media", media)
                     .put("audio", request.optBoolean("audio"))
                     .put("quality", request.optString("quality", "1080")));
-        if (isStopped()) return Result.retry();
+        if (isStopped()) return stopped(id);
         if (resolved.optBoolean("ok")
             && (media.optBoolean("live") || resolved.getJSONObject("data").optBoolean("live"))) {
           failed++;
           MediaBridge.event("error", "Skipped a live entry: recording is not supported");
         } else if (!resolved.optBoolean("ok")) {
           String error = resolved.optString("error").toLowerCase(java.util.Locale.ROOT);
-          if (PreparationPolicy.rateLimited(error)) {
-            status(
-                getApplicationContext(),
-                id,
-                "Service cooldown; playlist preparation will retry",
-                raw);
-            return Result.retry();
-          }
+          if (PreparationPolicy.rateLimited(error))
+            return retryOrStop(id, "Service cooldown; playlist preparation will retry", raw);
           failed++;
           MediaBridge.event(
               "error",
@@ -143,17 +212,20 @@ public final class PrepareWorker extends Worker {
                   .put("stream", resolved.getJSONObject("data"))
                   .put("quality", request.optString("quality", "1080"))
                   .put("audio", request.optBoolean("audio"));
-          CompletableFuture<Void> accepted = new CompletableFuture<>();
+          CompletableFuture<Boolean> accepted = new CompletableFuture<>();
           MediaBridge.main.post(
               () -> {
                 try {
-                  OfflineStore.add(ready);
-                  accepted.complete(null);
+                  accepted.complete(OfflineStore.add(ready));
                 } catch (Exception e) {
                   accepted.completeExceptionally(e);
                 }
               });
-          accepted.get(15, TimeUnit.SECONDS);
+          if (!accepted.get(15, TimeUnit.SECONDS)) {
+            // Low storage: keep the checkpoint so a retry resumes at this entry.
+            report(id, "Not enough free space; free some space and retry from downloads", raw);
+            return Result.failure();
+          }
           String downloadId = OfflineStore.id(ready);
           long deadline = android.os.SystemClock.elapsedRealtime() + 15000;
           while (!OfflineStore.persisted(downloadId, ready)) {
@@ -166,29 +238,21 @@ public final class PrepareWorker extends Worker {
         if (!progress.edit().putInt(id, i + 1).putInt(id + "-failed", failed).commit())
           throw new java.io.IOException("Cannot persist playlist progress");
       }
-      status(
-          getApplicationContext(),
+      report(
           id,
           failed == 0
               ? "Playlist queued: " + items.length() + " entries"
               : "Playlist queued with " + failed + " failures; review before retrying",
           raw);
-      if (checkpoint.exists()) checkpoint.delete();
+      purge(getApplicationContext(), id);
       return failed == 0 ? Result.success() : Result.failure();
     } catch (IllegalArgumentException error) {
-      status(
-          getApplicationContext(),
-          id,
-          "Invalid playlist checkpoint; remove and add the playlist again",
-          raw);
+      report(id, "Invalid playlist checkpoint; remove and add the playlist again", raw);
+      purge(getApplicationContext(), id);
       return Result.failure();
     } catch (Exception error) {
-      status(
-          getApplicationContext(),
-          id,
-          "Playlist preparation interrupted; retry from downloads",
-          raw);
-      return Result.retry();
+      if (isStopped()) return stopped(id);
+      return retryOrStop(id, "Playlist preparation interrupted; it will retry", raw);
     }
   }
 

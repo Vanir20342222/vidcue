@@ -8,13 +8,15 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- In-app updates: hands a verified, same-key APK to Android's installer, which asks the user. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
-    <application android:name=".YtuiApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/YtuiTheme" android:allowBackup="false" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:enableOnBackInvokedCallback="true" android:usesCleartextTraffic="true" android:supportsRtl="true">
+    <application android:name=".YtuiApplication" android:label="@string/app_name" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/YtuiTheme" android:allowBackup="false" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:enableOnBackInvokedCallback="true" android:networkSecurityConfig="@xml/network_security_config" android:supportsRtl="true">
         <activity android:name=".RustActivity" android:launchMode="singleTask" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|uiMode|density|smallestScreenSize" android:windowSoftInputMode="adjustResize">
-            <meta-data android:name="android.app.lib_name" android:value="vidcue_mobile"/>
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="text/plain"/></intent-filter>
+            <!-- YouTube links opened from other apps (AR-08); not verified App Links, so Android offers Vidcue only where the user allows it. -->
+            <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https"/><data android:scheme="http"/><data android:host="youtube.com"/><data android:host="www.youtube.com"/><data android:host="m.youtube.com"/><data android:host="music.youtube.com"/><data android:path="/watch"/><data android:path="/playlist"/><data android:pathPrefix="/shorts/"/><data android:pathPrefix="/live/"/></intent-filter>
+            <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https"/><data android:scheme="http"/><data android:host="youtu.be"/><data android:pathPattern="/..*"/></intent-filter>
         </activity>
-        <activity android:name=".FullscreenActivity" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|screenLayout|uiMode|density|smallestScreenSize"/>
+        <activity android:name=".FullscreenActivity" android:exported="false" android:configChanges="orientation|screenSize|screenLayout|uiMode|density|smallestScreenSize"/>
         <activity android:name=".AuthActivity" android:exported="false" android:launchMode="singleTask"/>
         <receiver android:name=".AppUpdateReceiver" android:exported="false"/>
         <service android:name=".PlaybackService" android:foregroundServiceType="mediaPlayback" android:exported="false">
@@ -24,5 +26,7 @@
         <service android:name=".OfflineService" android:foregroundServiceType="dataSync" android:exported="false">
             <intent-filter><action android:name="androidx.media3.exoplayer.downloadService.action.RESTART"/><category android:name="android.intent.category.DEFAULT"/></intent-filter>
         </service>
+        <!-- Restarts downloads once their network requirement is met (OfflineService.getScheduler). -->
+        <service android:name="androidx.media3.exoplayer.scheduler.PlatformScheduler$PlatformSchedulerService" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="false"/>
     </application>
 </manifest>

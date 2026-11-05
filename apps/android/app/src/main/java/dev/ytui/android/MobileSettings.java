@@ -38,7 +38,12 @@ final class MobileSettings {
         }) values.put(key, true);
     for (String key :
         new String[] {
-          "preload_mobile", "show_description", "show_section", "show_likes", "auto_color_grade"
+          "preload_mobile",
+          "show_description",
+          "show_section",
+          "show_likes",
+          "auto_color_grade",
+          "download_unmetered"
         })
       values.put(key, false);
     BOOLEANS = Collections.unmodifiableMap(values);
@@ -148,6 +153,7 @@ final class MobileSettings {
         () -> {
           if (OfflineStore.manager != null)
             OfflineStore.manager.setMaxParallelDownloads(integer("download_parallel"));
+          OfflineStore.applyNetworkRequirement();
           if (PlaybackService.current != null) PlaybackService.current.refreshPrefetch();
           if (value.optBoolean("auto_save_folders")) OfflineStore.exportPending();
         });

@@ -2,6 +2,7 @@ package dev.ytui.android
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -108,6 +109,15 @@ internal object OnboardingStore {
     fun shouldShow(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY, 0) < VERSION
 
+    /**
+     * Whether this launch opens on setup. Mirrors ComposeHost: instrumented offline launches
+     * only show setup when they opt in with ytui.onboarding.
+     */
+    @JvmStatic
+    fun showsAtLaunch(activity: android.app.Activity): Boolean =
+        shouldShow(activity) &&
+            (!MediaBridge.offlineUi || activity.intent.getBooleanExtra("ytui.onboarding", false))
+
     fun complete(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY, VERSION).apply()
     }
@@ -173,9 +183,15 @@ internal fun themeLabel(id: String): String =
         }
         .ifEmpty { id }
 
-/** Full-screen first-run setup. Calls [onFinish] on skip and on completion; callers persist. */
+/** Full-screen first-run setup. Calls [onSetupDone] on skip and on completion; callers persist. */
 @Composable
-internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) {
+internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Unit) {
+    val activity = LocalActivity.current
+    // Notifications are asked for only once setup is finished or skipped, never on top of it.
+    val onFinish: () -> Unit = {
+        onSetupDone()
+        activity?.let(NotificationPermission::requestOnce)
+    }
     val reduced = LocalReducedMotion.current
     val mobile by vm.mobile.collectAsState()
     var step by rememberSaveable { mutableIntStateOf(0) }

@@ -67,7 +67,15 @@ public final class PlaybackService extends MediaSessionService {
   final Set<Long> contextJobs = ConcurrentHashMap.newKeySet();
   volatile long generation = 0;
   long qualityIntent = 0;
-  long skipUntil = 0, lastSkipped = -1, lastPositionSave = 0, sleepDeadline = 0, sleepTotal = 0;
+  long skipUntil = 0, lastSkipped = -1, lastPositionSave = 0;
+  final SleepTimer sleep = new SleepTimer();
+  /** Resume saves run in order and finish even after the service is destroyed. */
+  final ExecutorService positions = Executors.newSingleThreadExecutor();
+  /** A saved-position lookup is in flight; the item's start must not overwrite it. */
+  boolean resumePending;
+  /** Uptime of the scheduled ticker run, 0 when none is scheduled. */
+  long tickerDueAt;
+  int audioContentType = C.AUDIO_CONTENT_TYPE_MUSIC;
   boolean pendingStart, navigationPending, contextReady, contextPreparing, waitingForContext;
   int queuedNext;
   JSONObject failedNavigation;
@@ -89,7 +97,7 @@ public final class PlaybackService extends MediaSessionService {
   final Map<String, String> captionKinds = new HashMap<>();
   JSONObject previewRestore;
   long previewPosition;
-  boolean previewPlaying;
+  boolean previewPlaying, previewPendingStart, previewRecorded;
   JSONObject currentRequest = new JSONObject();
   JSONArray sponsors = new JSONArray();
   boolean skipSponsors = true, historyEnabled = true, pausedByUser = false, playbackRecorded;
@@ -216,7 +224,7 @@ public final class PlaybackService extends MediaSessionService {
     player.setVideoFrameMetadataListener(
         (presentationTimeUs, releaseTimeNs, format, mediaFormat) ->
             MediaBridge.videoFrames.incrementAndGet());
-    player.setVolume(prefs.getFloat("volume", 0.7f));
+    player.setVolume(PlaybackLifecycle.savedVolume(prefs));
     player.setPlaybackSpeed(prefs.getFloat("speed", 1f));
     player.addAnalyticsListener(
         new androidx.media3.exoplayer.analytics.AnalyticsListener() {
@@ -379,6 +387,13 @@ public final class PlaybackService extends MediaSessionService {
           @Override
           public void onPositionDiscontinuity(
               Player.PositionInfo oldPosition, Player.PositionInfo newPosition, int reason) {
+            // Repeat-one restarts the item without ENDED: an end-of-track timer pauses here.
+            if (reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION
+                && !currentRequest.optBoolean("preview")
+                && sleep.itemEnded()) {
+              pausedByUser = true;
+              player.pause();
+            }
             publish();
           }
 
@@ -452,7 +467,7 @@ public final class PlaybackService extends MediaSessionService {
                 if (historyEnabled) {
                   JSONObject media = currentRequest.optJSONObject("media");
                   if (media != null)
-                    worker.execute(
+                    positions.execute(
                         () -> {
                           try {
                             rpc(
@@ -464,12 +479,17 @@ public final class PlaybackService extends MediaSessionService {
                           }
                         });
                 }
-                next();
+                // "End of this track" stops here instead of advancing.
+                if (sleep.itemEnded()) {
+                  pausedByUser = true;
+                  player.pause();
+                } else next();
               } else {
                 error = "Stream ended before completion; retry the connection";
                 publish();
               }
             }
+            scheduleTicker();
             publish();
           }
 
@@ -481,7 +501,21 @@ public final class PlaybackService extends MediaSessionService {
                 && pendingStart) {
               recordStarted();
             }
+            scheduleTicker();
             publish();
+          }
+
+          @Override
+          public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+            scheduleTicker();
+            if (playWhenReady) return;
+            // Store where the pause happened. Posted, so a seek that belongs to the same
+            // handoff (preview restore, quality change) is applied first.
+            long version = generation;
+            handler.post(
+                () -> {
+                  if (version == generation && !player.getPlayWhenReady()) savePosition();
+                });
           }
         });
     worker.execute(
@@ -690,10 +724,14 @@ public final class PlaybackService extends MediaSessionService {
       previewRestore = currentRequest;
       previewPosition = player.getCurrentPosition();
       previewPlaying = player.getPlayWhenReady();
+      previewPendingStart = pendingStart;
+      previewRecorded = playbackRecorded;
     } else if (!request.optBoolean("preview")) {
       previewRestore = null;
     }
     if (!request.optBoolean("reconnect")) {
+      // The item being left keeps where it was for a later resume.
+      savePosition();
       reconnectCount = 0;
       streamRefreshCount = 0;
       playbackRecorded = false;
@@ -720,6 +758,7 @@ public final class PlaybackService extends MediaSessionService {
     startupToken = request.optLong("startup_token");
     StartupTimings.handoff(startupToken, startupAt);
     pendingStart = !request.optBoolean("preview");
+    resumePending = request.optBoolean("resume");
     navigationPending = false;
     playbackQuality = request.optString("quality", playbackQuality);
     error = "";
@@ -865,12 +904,21 @@ public final class PlaybackService extends MediaSessionService {
                               ? null
                               : stream.optString("audio_cache_key"))
                       .build()));
+    int audioContent = PlaybackLifecycle.contentType(request.optBoolean("audio", true));
+    if (audioContent != audioContentType) {
+      audioContentType = audioContent;
+      player.setAudioAttributes(
+          new AudioAttributes.Builder()
+              .setUsage(C.USAGE_MEDIA)
+              .setContentType(audioContent)
+              .build(),
+          true);
+    }
     player.setMediaSource(source);
     // Next must remain usable even if this item never reaches READY/playing.
     if (!request.optBoolean("preview")) prepareContext(request.optJSONObject("context"));
     player.prepare();
-    handler.removeCallbacks(ticker);
-    handler.post(ticker);
+    restartTicker();
     if (pausedByUser) player.pause();
     else player.play();
     if (request.optBoolean("preview")) {
@@ -881,24 +929,33 @@ public final class PlaybackService extends MediaSessionService {
             if (version == generation) finishPreview();
           },
           10000);
-    } else player.setVolume(prefs.getFloat("volume", 0.7f));
+    } else player.setVolume(PlaybackLifecycle.savedVolume(prefs));
     long version = generation;
     worker.execute(
         () -> {
           try {
             if (request.optBoolean("resume")) {
-              JSONObject value =
-                  rpc(new JSONObject().put("op", "position").put("url", media.optString("url")));
-              long ms = value.optLong("milliseconds");
+              long ms = -1;
+              try {
+                ms =
+                    rpc(new JSONObject().put("op", "position").put("url", media.optString("url")))
+                        .optLong("milliseconds");
+              } catch (Exception unavailable) {
+                // Start from the beginning; the item can still store new positions.
+              }
               // Automatic resume (desktop parity) ignores positions near the start;
               // finished items were reset to 0 at their end.
-              if (!request.optBoolean("auto_resume") || ms >= AUTO_RESUME_MIN_MS)
-                handler.post(
-                    () -> {
-                      if (version == generation) player.seekTo(ms);
-                    });
+              long target = PlaybackLifecycle.resumeTarget(ms, request.optBoolean("auto_resume"));
+              handler.post(
+                  () -> {
+                    if (version != generation) return;
+                    resumePending = false;
+                    if (target >= 0) player.seekTo(target);
+                  });
             }
-            if (request.optBoolean("offline") || request.optBoolean("local")) return;
+            if (!PlaybackLifecycle.fetchesSponsorMarks(
+                request.optBoolean("offline"), request.optBoolean("local"), media.optString("url")))
+              return;
             JSONArray marks = rpcArray(new JSONObject().put("op", "sponsor").put("media", media));
             handler.post(
                 () -> {
@@ -1114,19 +1171,23 @@ public final class PlaybackService extends MediaSessionService {
     JSONObject restore = previewRestore;
     long position = previewPosition;
     boolean wasPlaying = previewPlaying;
+    boolean restorePending = previewPendingStart, restoreRecorded = previewRecorded;
     previewRestore = null;
     try {
       if (restore != null) {
-        play(restore);
-        player.seekTo(position);
+        // Continue the interrupted item as it was: paused stays silent, its start is not
+        // recorded again, and no saved-position lookup moves it away from this position.
         pausedByUser = !wasPlaying;
-        if (!wasPlaying) player.pause();
+        play(PlaybackLifecycle.previewRestoreRequest(restore));
+        pendingStart = restorePending;
+        playbackRecorded = restoreRecorded;
+        player.seekTo(position);
       } else {
         generation++;
         currentRequest.remove("preview");
         pausedByUser = true;
         player.pause();
-        player.setVolume(prefs.getFloat("volume", 0.7f));
+        player.setVolume(PlaybackLifecycle.savedVolume(prefs));
       }
     } catch (Exception error) {
       player.pause();
@@ -1232,14 +1293,17 @@ public final class PlaybackService extends MediaSessionService {
         currentRequest.put("context", command.opt("context"));
         pendingStart = true;
         pausedByUser = false;
-        player.setVolume(prefs.getFloat("volume", 0.7f));
+        player.setVolume(PlaybackLifecycle.savedVolume(prefs));
         player.seekTo(0);
         player.play();
         if (player.isPlaying()) recordStarted();
         break;
       case "volume":
         if (currentRequest.optBoolean("preview")) break;
-        float volume = (float) Math.max(0, Math.min(1, command.optDouble("value", 0.7)));
+        float volume =
+            (float)
+                Math.max(
+                    0, Math.min(1, command.optDouble("value", PlaybackLifecycle.DEFAULT_VOLUME)));
         player.setVolume(volume);
         prefs.edit().putFloat("volume", volume).apply();
         break;
@@ -1293,7 +1357,7 @@ public final class PlaybackService extends MediaSessionService {
         player.seekTo((long) (command.optDouble("start") * 1000));
         break;
       case "sleep_cancel":
-        sleepDeadline = 0;
+        sleep.cancel();
         break;
       case "sponsor_replay":
         if (lastSkipped >= 0) {
@@ -1360,10 +1424,11 @@ public final class PlaybackService extends MediaSessionService {
         player.setPreferredAudioDevice(preferredOutput);
         break;
       case "sleep":
-        sleepTotal = Math.max(1, command.optLong("seconds", 1800)) * 1000;
-        sleepDeadline = SystemClock.elapsedRealtime() + sleepTotal;
+        if (command.optBoolean("end_of_track")) sleep.endOfTrack();
+        else sleep.countdown(SystemClock.elapsedRealtime(), command.optLong("seconds", 1800));
         break;
     }
+    scheduleTicker();
     publish();
   }
 
@@ -1578,7 +1643,11 @@ public final class PlaybackService extends MediaSessionService {
                           new JSONObject()
                               .put("op", "resolve")
                               .put("media", media)
-                              .put("audio", currentRequest.optBoolean("audio")));
+                              .put("audio", currentRequest.optBoolean("audio"))
+                              .put("quality", currentRequest.optString("quality", playbackQuality))
+                              .put(
+                                  "audio_language",
+                                  currentRequest.optString("audio_language", "")));
                   JSONObject request =
                       new JSONObject(currentRequest.toString())
                           .put("stream", stream)
@@ -1853,6 +1922,10 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   void stopAndClear() {
+    savePosition();
+    handler.removeCallbacks(ticker);
+    tickerDueAt = 0;
+    resumePending = false;
     generation++;
     streamRefreshing = false;
     NativeBridge.activateContext("");
@@ -1880,10 +1953,68 @@ public final class PlaybackService extends MediaSessionService {
     for (long id : jobs) NativeBridge.cancel(id);
   }
 
+  /** Store the current item's resume position (history on, not a preview or live stream). */
+  void savePosition() {
+    JSONObject media = currentRequest.optJSONObject("media");
+    long position = player.getCurrentPosition();
+    if (media == null
+        || !PlaybackLifecycle.savesPosition(
+            historyEnabled,
+            currentRequest.optBoolean("preview"),
+            isLive(),
+            resumePending,
+            player.getPlaybackState(),
+            position)) return;
+    lastPositionSave = SystemClock.elapsedRealtime();
+    String url = media.optString("url");
+    try {
+      positions.execute(
+          () -> {
+            try {
+              rpc(
+                  new JSONObject()
+                      .put("op", "position")
+                      .put("url", url)
+                      .put("milliseconds", position));
+            } catch (Exception ignored) {
+            }
+          });
+    } catch (RejectedExecutionException destroyed) {
+      // The service is gone; the last periodic save stands.
+    }
+  }
+
+  /** Run the ticker immediately, for a new item. */
+  void restartTicker() {
+    handler.removeCallbacks(ticker);
+    tickerDueAt = SystemClock.uptimeMillis();
+    handler.post(ticker);
+  }
+
+  /**
+   * Keep the ticker running only while it has work (see PlaybackLifecycle.tickDelay). A paused
+   * or stopped player is published by the listeners; the ticker then lapses after one more run.
+   */
+  void scheduleTicker() {
+    if (current != this) return;
+    long delay =
+        PlaybackLifecycle.tickDelay(
+            PlaybackLifecycle.tickActive(player.getPlayWhenReady(), player.getPlaybackState()),
+            sleep.deadline(),
+            SystemClock.elapsedRealtime());
+    if (delay < 0) return;
+    long due = SystemClock.uptimeMillis() + delay;
+    if (tickerDueAt != 0 && tickerDueAt <= due) return;
+    handler.removeCallbacks(ticker);
+    tickerDueAt = due;
+    handler.postAtTime(ticker, due);
+  }
+
   final Runnable ticker =
       new Runnable() {
         @Override
         public void run() {
+          tickerDueAt = 0;
           if (current != PlaybackService.this) return;
           long pos = player.getCurrentPosition();
           if (player.isPlaying() && skipSponsors && pos >= skipUntil) {
@@ -1900,34 +2031,15 @@ public final class PlaybackService extends MediaSessionService {
               }
             }
           }
-          if (sleepDeadline > 0 && SystemClock.elapsedRealtime() >= sleepDeadline) {
+          if (sleep.expire(SystemClock.elapsedRealtime())) {
             player.pause();
             pausedByUser = true;
-            sleepDeadline = 0;
           }
-          if (historyEnabled
-              && player.isPlaying()
-              && !currentRequest.optBoolean("preview")
-              && SystemClock.elapsedRealtime() - lastPositionSave > 5000) {
-            lastPositionSave = SystemClock.elapsedRealtime();
-            JSONObject media = currentRequest.optJSONObject("media");
-            if (media != null) {
-              String url = media.optString("url");
-              worker.execute(
-                  () -> {
-                    try {
-                      rpc(
-                          new JSONObject()
-                              .put("op", "position")
-                              .put("url", url)
-                              .put("milliseconds", pos));
-                    } catch (Exception ignored) {
-                    }
-                  });
-            }
-          }
+          if (player.isPlaying()
+              && SystemClock.elapsedRealtime() - lastPositionSave
+                  > PlaybackLifecycle.POSITION_SAVE_MS) savePosition();
           publish();
-          handler.postDelayed(this, 200);
+          scheduleTicker();
         }
       };
 
@@ -1958,9 +2070,11 @@ public final class PlaybackService extends MediaSessionService {
               .put("suppression", player.getPlaybackSuppressionReason())
               .put("paused", pausedByUser)
               // Elapsed-realtime deadline (0 = off); the UI counts down from it locally.
-              .put("sleep_deadline", sleepDeadline)
+              .put("sleep_deadline", sleep.deadline())
               // Length of the running timer in ms, so the UI can draw how much of it is left.
-              .put("sleep_total", sleepTotal)
+              .put("sleep_total", sleep.total())
+              // Pauses when the current item ends; the UI shows the item's remaining time.
+              .put("sleep_end_of_track", sleep.pausesAtEndOfTrack())
               .put("output", AudioOutputs.describe(audio, preferredOutput))
               .put("navigation_pending", navigationPending || queuedNext > 0)
               .put("next_preloaded", PlaybackCache.isReady())
@@ -1986,7 +2100,7 @@ public final class PlaybackService extends MediaSessionService {
               .put("video_height", player.getVideoSize().height)
               .put("captions", captionText)
               .put("segments", sponsors)
-              .put("volume", prefs.getFloat("volume", 0.7f))
+              .put("volume", PlaybackLifecycle.savedVolume(prefs))
               .put("actual_volume", player.getVolume())
               .put("preview", currentRequest.optBoolean("preview"))
               .put("speed", player.getPlaybackParameters().speed)
@@ -2047,6 +2161,8 @@ public final class PlaybackService extends MediaSessionService {
 
   @Override
   public void onDestroy() {
+    savePosition();
+    positions.shutdown();
     initialized = false;
     NativeBridge.activateContext("");
     cancelContextJobs();

@@ -22,12 +22,6 @@ public final class NativeBridge {
 
   public static native void activateContext(String id);
 
-  public static native void frameAvailable();
-
-  public static native long uiGeneration();
-
-  public static native long uiShutdowns();
-
   public static native long meter(java.nio.ByteBuffer buffer, int offset, int length, int channels);
 
   /** Filters 16-bit PCM in place with the saved equalizer curve; a no-op when it is off. */
