@@ -63,4 +63,21 @@ class PlaybackContextsTest {
         assertEquals("bbbbbbbbbbb", video.getJSONObject("request").getString("Related"))
         assertNull(PlaybackContexts.create(card("live", "video", true), FeedState(), 1, true))
     }
+
+    @Test
+    fun shelfPlayAllStartsAtTheFirstPlayableEntryAndKeepsShelfOrder() {
+        val album = card("album", "album")
+        val live = card("live", "video", true)
+        val a = card("a", "video")
+        val b = card("b", "video")
+        val (first, context) = PlaybackContexts.shelf(listOf(album, live, a, b, a))!!
+        assertEquals(a.url, first.url)
+        assertEquals("radio_context", context.getString("op"))
+        assertEquals(a.url, context.getString("source_url"))
+        assertEquals(
+            listOf(a.url, b.url),
+            context.getJSONArray("items").objects().map { it.getString("url") },
+        )
+        assertNull(PlaybackContexts.shelf(listOf(album, live)))
+    }
 }

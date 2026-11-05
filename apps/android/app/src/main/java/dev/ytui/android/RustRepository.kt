@@ -863,6 +863,17 @@ internal class YtuiViewModel(
             forceRelated,
         )
 
+    /** Plays a home shelf from its first playable entry, continuing in shelf order. */
+    fun playAll(cards: List<MediaCard>) {
+        val (first, shelf) =
+            PlaybackContexts.shelf(cards)
+                ?: run {
+                    actionError.value = "Nothing in this section can be played in order"
+                    return
+                }
+        play(first, playContext = shelf)
+    }
+
     fun playCollection(media: MediaCard) {
         if (media.collection)
             navigate(request = json("Collection" to media.collectionId), autoPlay = true)
@@ -941,6 +952,7 @@ internal class YtuiViewModel(
         queued: Boolean = false,
         related: Boolean = false,
         continueContext: String? = null,
+        playContext: JSONObject? = null,
     ) {
         val quality = config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
         val audio =
@@ -977,7 +989,7 @@ internal class YtuiViewModel(
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context =
             if (!preview && !download && !queued && continueContext == null)
-                context(media, related)
+                playContext ?: context(media, related)
             else null
         // Desktop parity (`resume_on_play`): ordinary video plays continue from the
         // saved position; music, live media, previews and downloads start at 0.
