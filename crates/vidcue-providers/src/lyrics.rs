@@ -9,9 +9,22 @@ const MAX_TEXT: usize = 512 * 1024;
 const MAX_LINES: usize = 10_000;
 const DAY_MS: u64 = 86_400_000;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, Deserialize)]
 pub struct Line {
     pub at_ms: Option<u64>,
+    pub text: String,
+    /// Word start times from enhanced LRC (`<mm:ss.xx>` tags). The word texts joined in order
+    /// equal `text`. Empty when the source only times whole lines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<Word>,
+    /// When the last word ends, from a closing word tag. Only set alongside `words`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_ms: Option<u64>,
+}
+/// One timed word (with its following space) of an enhanced LRC line.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, Deserialize)]
+pub struct Word {
+    pub at_ms: u64,
     pub text: String,
 }
 #[derive(Clone, Debug, serde::Serialize, Deserialize)]
@@ -50,6 +63,57 @@ fn timestamp(text: &str) -> Option<u64> {
         .checked_add((seconds * 1000.0).round() as u64)?;
     (at <= DAY_MS).then_some(at)
 }
+/// Splits enhanced LRC word tags out of a line body. Returns the plain text, the timed words
+/// and the closing time of a trailing empty tag. A body without word tags keeps no words.
+fn words(body: &str) -> (String, Vec<Word>, Option<u64>) {
+    let mut rest = body;
+    let mut lead = String::new();
+    let mut words: Vec<Word> = Vec::new();
+    while let Some(open) = rest.find('<') {
+        let tag = rest[open + 1..]
+            .split_once('>')
+            .and_then(|(tag, tail)| Some((timestamp(tag.trim())?, tail)));
+        // A `<` that is not a time tag is lyric text.
+        let (text, next) = match tag {
+            Some((_, tail)) => (&rest[..open], tail),
+            None => rest.split_at(open + 1),
+        };
+        match words.last_mut() {
+            Some(word) => word.text.push_str(text),
+            None => lead.push_str(text),
+        }
+        rest = next;
+        if let Some((at_ms, _)) = tag {
+            words.push(Word {
+                at_ms,
+                text: String::new(),
+            });
+        }
+    }
+    match words.last_mut() {
+        Some(word) => word.text.push_str(rest),
+        None => return (body.trim().to_owned(), Vec::new(), None),
+    }
+    // A closing tag with no text after it marks when the line's singing ends.
+    let end = if words.len() > 1 && words.last().is_some_and(|w| w.text.trim().is_empty()) {
+        words.pop().map(|w| w.at_ms)
+    } else {
+        None
+    };
+    // Text before the first tag belongs to the first word; trim the line's outer spaces.
+    if let Some(first) = words.first_mut() {
+        first.text.insert_str(0, &lead);
+        first
+            .text
+            .drain(..first.text.len() - first.text.trim_start().len());
+    }
+    if let Some(last) = words.last_mut() {
+        last.text.truncate(last.text.trim_end().len());
+    }
+    words.retain(|w| !w.text.is_empty());
+    let text = words.iter().map(|w| w.text.as_str()).collect();
+    (text, words, end)
+}
 pub fn parse(text: &str) -> Result<Vec<Line>> {
     ensure!(text.len() <= MAX_TEXT, "Lyrics exceed the 512 KiB limit");
     let mut offset = 0i64;
@@ -79,13 +143,17 @@ pub fn parse(text: &str) -> Result<Vec<Line>> {
                 plain.push(Line {
                     at_ms: None,
                     text: raw.to_owned(),
+                    ..Line::default()
                 });
             }
         } else {
+            let (body, words, end_ms) = words(rest);
             for at in times {
                 synced.push(Line {
                     at_ms: Some(at),
-                    text: rest.trim().to_owned(),
+                    text: body.clone(),
+                    words: words.clone(),
+                    end_ms,
                 });
             }
         }
@@ -97,10 +165,13 @@ pub fn parse(text: &str) -> Result<Vec<Line>> {
     if synced.is_empty() {
         return Ok(plain);
     }
+    let shift = |at: u64| at.saturating_add_signed(offset).min(DAY_MS);
     for line in &mut synced {
-        line.at_ms = line
-            .at_ms
-            .map(|at| at.saturating_add_signed(offset).min(DAY_MS));
+        line.at_ms = line.at_ms.map(shift);
+        line.end_ms = line.end_ms.map(shift);
+        for word in &mut line.words {
+            word.at_ms = shift(word.at_ms);
+        }
     }
     synced.sort_by_key(|line| line.at_ms);
     Ok(synced)
@@ -233,6 +304,37 @@ mod tests {
         assert!(parse("[offset:999999999999999]").is_err());
         assert!(parse(&"[00:00.01]a\n".repeat(MAX_LINES + 1)).is_err());
         assert_eq!(parse("first\nsecond").unwrap()[0].at_ms, None);
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.words.is_empty() && l.end_ms.is_none())
+        );
+    }
+    #[test]
+    fn enhanced_lrc_word_times_are_kept_and_hidden_from_text() {
+        let lines = parse(
+            "[offset:+100]\n[00:10.00]<00:10.00>Hold <00:10.40>me <00:10.70>now<00:11.20>\n\
+             [00:20.00] <00:20.10> a < b <00:20.50>c",
+        )
+        .unwrap();
+        assert_eq!(lines[0].text, "Hold me now");
+        assert_eq!(
+            lines[0]
+                .words
+                .iter()
+                .map(|w| (w.at_ms, w.text.as_str()))
+                .collect::<Vec<_>>(),
+            [(10_100, "Hold "), (10_500, "me "), (10_800, "now")]
+        );
+        assert_eq!(lines[0].end_ms, Some(11_300));
+        // A `<` that is not a time tag stays in the text; outer spaces are trimmed.
+        assert_eq!(lines[1].text, "a < b c");
+        assert_eq!(lines[1].words.len(), 2);
+        assert_eq!(lines[1].end_ms, None);
+        assert_eq!(
+            lines[1].words.iter().map(|w| w.text.len()).sum::<usize>(),
+            lines[1].text.len()
+        );
     }
     #[tokio::test]
     async fn lookup_sends_only_reviewed_metadata_and_never_cookies() {

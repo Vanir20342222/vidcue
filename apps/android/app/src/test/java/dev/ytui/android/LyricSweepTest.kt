@@ -2,6 +2,7 @@ package dev.ytui.android
 
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -68,39 +69,30 @@ class LyricSweepTest {
         }
     }
 
+    private val words =
+        listOf(LyricWord(10_000, "Hold "), LyricWord(10_400, "me "), LyricWord(10_700, "now"))
+
     @Test
-    fun instrumentalGapAfterALineDoesNotSlowTheFill() {
-        // "Hold me now" is three syllables sung in ~1 s, then eight seconds of music.
-        val text = "Hold me now"
-        val sungMs = lyricSyllables(text) * LYRIC_MS_PER_SYLLABLE
-        assertEquals(3, lyricSyllables(text))
-        assertEquals(1f, lyricSweep(10_000.0 + sungMs, 10_000, 19_000, text), 0f)
-        assertEquals(0.5f, lyricSweep(10_000.0 + sungMs / 2, 10_000, 19_000, text), 0.001f)
+    fun lineSyncedLyricsLightUpWholeInsteadOfGuessingAFill() {
+        assertNull(lyricSweep(10_500.0, emptyList(), null, 19_000))
     }
 
     @Test
-    fun aNextLineSoonerThanTheEstimateStillFinishesTheFillOnTime() {
-        val text = "a long line with very many syllables in it, sung quickly"
-        assertTrue(lyricSyllables(text) * LYRIC_MS_PER_SYLLABLE > 2000)
-        assertEquals(0.5f, lyricSweep(1_000.0, 0, 2_000, text), 0.001f)
-        assertEquals(1f, lyricSweep(2_000.0, 0, 2_000, text), 0f)
+    fun fillReachesEachWordWhenItIsSungNotWhenTheMusicMoves() {
+        // "Hold " is 5 of 11 characters; it is crossed between 10.0 s and 10.4 s.
+        assertEquals(0f, lyricSweep(9_900.0, words, 11_200, 19_000)!!, 0f)
+        assertEquals(2.5f / 11, lyricSweep(10_200.0, words, 11_200, 19_000)!!, 0.001f)
+        assertEquals(5f / 11, lyricSweep(10_400.0, words, 11_200, 19_000)!!, 0.001f)
+        // The closing tag ends the line at 11.2 s, long before the next line at 19 s.
+        assertEquals(1f, lyricSweep(11_200.0, words, 11_200, 19_000)!!, 0f)
+        assertEquals(1f, lyricSweep(15_000.0, words, 11_200, 19_000)!!, 0f)
     }
 
     @Test
-    fun sweepStaysWithinRangeBeforeTheLineAndForTheLastLine() {
-        assertEquals(0f, lyricSweep(500.0, 1_000, null, "Oh"), 0f)
-        assertEquals(1f, lyricSweep(1_000.0 + LYRIC_LAST_LINE_MS, 1_000, null, "a ".repeat(40)), 0f)
-        // Shortest lines still take a moment so the fill is visible.
-        assertEquals(0.5f, lyricSweep(LYRIC_MIN_SUNG_MS / 2.0, 0, 10_000, "Oh"), 0.001f)
-    }
-
-    @Test
-    fun syllablesCountVowelGroupsAndCharactersInScriptsWithoutVowels() {
-        assertEquals(1, lyricSyllables("rhythm"))
-        assertEquals(4, lyricSyllables("Café au lait"))
-        assertEquals(3, lyricSyllables("Привет мир"))
-        assertEquals(4, lyricSyllables("君の名は"))
-        assertEquals(0, lyricSyllables("♪ ... !"))
+    fun lastWordWithoutAClosingTimeFillsBrieflyAndNeverPassesTheNextLine() {
+        assertEquals(1f, lyricSweep(10_700.0 + LYRIC_LAST_WORD_MS, words, null, 19_000)!!, 0f)
+        assertEquals(1f, lyricSweep(10_800.0, words, null, 10_800)!!, 0f)
+        assertTrue(lyricSweep(10_750.0, words, null, 19_000)!! < 1f)
     }
 
     /** Colour lerp can differ from its end point by float rounding, so compare channels. */

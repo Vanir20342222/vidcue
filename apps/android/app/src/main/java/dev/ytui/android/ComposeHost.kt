@@ -3731,14 +3731,7 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                                             "\n"
                                         ) { line ->
                                             if (line.isNull("at_ms")) line.optString("text")
-                                            else
-                                                "[%02d:%02d.%03d]%s"
-                                                    .format(
-                                                        line.optLong("at_ms") / 60000,
-                                                        line.optLong("at_ms") / 1000 % 60,
-                                                        line.optLong("at_ms") % 1000,
-                                                        line.optString("text"),
-                                                    )
+                                            else lrcLine(line)
                                         } ?: ""
                                 },
                             )
@@ -3785,16 +3778,19 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                 val current = index == active
                 val ink = MaterialTheme.colorScheme.onSurface
                 val unsung = ink.copy(alpha = LYRIC_UNSUNG_ALPHA)
-                // Karaoke sweep: the playing line fills with ink as its time passes.
+                // Karaoke sweep: only lines with word timings fill as they are sung; others
+                // light up whole, as in YouTube Music.
                 val sweep =
                     if (!current || !matching) null
-                    else {
-                        val at = line.optLong("at_ms")
-                        val next =
-                            lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms")
-                        val nowMs = smooth * 1000.0 - (offset.toLongOrNull() ?: 0)
-                        lyricSweep(nowMs, at, next, line.optString("text"))
-                    }
+                    else
+                        lyricSweep(
+                            smooth * 1000.0 - (offset.toLongOrNull() ?: 0),
+                            line.optJSONArray("words")?.objects()?.map {
+                                LyricWord(it.optLong("at_ms"), it.optString("text"))
+                            } ?: emptyList(),
+                            line.takeUnless { it.isNull("end_ms") }?.optLong("end_ms"),
+                            lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms"),
+                        )
                 val text = line.optString("text").ifBlank { "♪" }
                 Text(
                     if (sweep != null && LocalMotion.current.animate)
