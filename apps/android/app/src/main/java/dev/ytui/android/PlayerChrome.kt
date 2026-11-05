@@ -225,9 +225,9 @@ internal object PlayerChrome {
             // SponsorBlock ticks: a fixed warm marker stays distinct from any accent.
             setAdMarkerColor(MediaTokens.sponsorMark.toArgb())
             setPlayedAdMarkerColor(MediaTokens.sponsorMark.toArgb())
-            // Choose the narrow keyline from the actual accent: fixed dark
-            // backing would hide dark accents from light/imported palettes.
-            val backing = mediaOnAccent(Color(accent))
+            // Choose the narrow keyline from the actual accent: dark over the scrim,
+            // light only when a dark accent from a light/imported palette needs it.
+            val backing = mediaTimeBarBacking(Color(accent))
             val ink = mediaOnAccent(backing)
             setUnplayedColor(lerp(backing, ink, 0.45f).toArgb())
             setBufferedColor(lerp(backing, ink, 0.65f).toArgb())

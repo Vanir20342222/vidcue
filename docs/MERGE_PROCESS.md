@@ -55,8 +55,8 @@ the ruleset, use Mode B. Moving the repository to a free organization is the way
    - Require status checks: `Android gate`, `Rust gate`, `secrets` (the job in "Secret scan"), `PR hygiene`.
    - **Do not** tick "Require branches to be up to date before merging". That setting is what forced
      every PR to merge main and rebuild after each neighbour merged.
-3. Enable auto-merge on a PR (button on the PR page, or `enable_pr_auto_merge`). It merges as soon as
-   its own four checks pass.
+3. Enable auto-merge on every ready PR (button on the PR page, or `enable_pr_auto_merge`). It merges as
+   soon as its own four checks pass. Draft PRs are not auto-merged.
 
 The trade-off: a PR is tested against the `main` it branched from, not the latest. Two PRs that are
 each green can break each other. The run on `main` after each merge, which the release workflow
