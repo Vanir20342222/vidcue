@@ -2,6 +2,9 @@ package dev.ytui.android;
 
 import static org.junit.Assert.*;
 
+import android.content.Context;
+import android.content.SharedPreferences;
+import java.io.File;
 import org.json.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -9,6 +12,25 @@ import org.robolectric.RobolectricTestRunner;
 
 @RunWith(RobolectricTestRunner.class)
 public final class PrepareWorkerTest {
+  @Test
+  public void purgeRemovesOnlyThatJobsCheckpointAndProgress() throws Exception {
+    Context context = org.robolectric.RuntimeEnvironment.getApplication();
+    SharedPreferences progress =
+        context.getSharedPreferences("preparations-progress", Context.MODE_PRIVATE);
+    progress.edit().putInt("a", 3).putInt("a-failed", 1).putInt("b", 2).commit();
+    File a = PrepareWorker.checkpoint(context, "a"), b = PrepareWorker.checkpoint(context, "b");
+    assertTrue(a.createNewFile());
+    assertTrue(b.createNewFile());
+    PrepareWorker.purge(context, "a");
+    assertFalse(a.exists());
+    assertFalse(progress.contains("a"));
+    assertFalse(progress.contains("a-failed"));
+    assertTrue(b.exists());
+    assertEquals(2, progress.getInt("b", 0));
+    // Purging a job with nothing stored is harmless.
+    PrepareWorker.purge(context, "missing");
+  }
+
   @Test
   public void downloadedPlaylistKeepsOrderAndLinksToTheExactAudioDownloads() throws Exception {
     JSONObject request = new JSONObject()

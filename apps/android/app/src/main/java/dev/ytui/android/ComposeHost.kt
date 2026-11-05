@@ -2997,6 +2997,13 @@ private fun SettingsPanel(
                 ) {
                     vm.updateMobile("download_parallel", it.toInt())
                 }
+                SettingToggle(
+                    "Download on Wi-Fi only",
+                    mobile.optBoolean("download_unmetered", false),
+                    "Downloads wait for Wi-Fi or another unmetered network.",
+                ) {
+                    vm.updateMobile("download_unmetered", it)
+                }
                 SectionHeader("Folders")
                 SettingToggle(
                     "Save completed media to selected folders",

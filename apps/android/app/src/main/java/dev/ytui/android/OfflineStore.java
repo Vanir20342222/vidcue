@@ -104,6 +104,8 @@ public final class OfflineStore {
               dirty = true;
               if (download.state == Download.STATE_DOWNLOADING
                   || download.state == Download.STATE_QUEUED) watchProgress();
+              if (download.state == Download.STATE_FAILED
+                  && DownloadPolicy.expiredStream(error)) refreshExpired(download);
               if (download.state == Download.STATE_COMPLETED) {
                 String id =
                     download.request.id.endsWith("-audio")
@@ -128,11 +130,20 @@ public final class OfflineStore {
             }
           });
       manager.setMaxParallelDownloads(MobileSettings.integer("download_parallel"));
+      applyNetworkRequirement();
       manager.setMinRetryCount(0);
       manager.resumeDownloads();
       watchProgress();
     }
     return manager;
+  }
+
+  /** Wi-Fi-only downloads wait for an unmetered network; otherwise any network will do. */
+  static void applyNetworkRequirement() {
+    if (manager == null) return;
+    int network = DownloadPolicy.networkRequirement(MobileSettings.enabled("download_unmetered"));
+    if (manager.getRequirements().getRequirements() != network)
+      manager.setRequirements(new androidx.media3.exoplayer.scheduler.Requirements(network));
   }
 
   static DataSource.Factory offlineFactory() {
@@ -209,7 +220,11 @@ public final class OfflineStore {
             + uri.getQueryParameter("lmt"));
   }
 
-  static void add(JSONObject request) throws Exception {
+  /**
+   * Queues [request]'s stream(s). Returns false, after reporting why, when the device lacks the
+   * free space the stream needs; the download is then not started.
+   */
+  static boolean add(JSONObject request) throws Exception {
     if (request.getJSONObject("media").optBoolean("live")
         || request.getJSONObject("stream").optBoolean("live"))
       throw new IllegalArgumentException("Live recording is not available");
@@ -218,8 +233,19 @@ public final class OfflineStore {
     String id = id(request);
     StorageLocations.prefs().edit().remove("removed:" + id).apply();
     try {
-      if (cachedRequest(id) != null) return;
+      if (cachedRequest(id) != null) return true;
     } catch (Exception incomplete) {
+    }
+    long already = 0;
+    for (String part : new String[] {id, id + DownloadPolicy.AUDIO_SUFFIX}) {
+      Download existing = manager.getDownloadIndex().getDownload(part);
+      if (existing != null) already += Math.max(0, existing.getBytesDownloaded());
+    }
+    long usable = freeBytes(MediaBridge.context.getFilesDir());
+    long required = DownloadPolicy.requiredBytes(stream, already);
+    if (!DownloadPolicy.hasRoom(usable, required)) {
+      MediaBridge.event("error", DownloadPolicy.spaceError(usable, required));
+      return false;
     }
     // Persist the selected streams, not the entire format/caption catalog.
     // Snapshot polling parses this data; large catalogs multiplied by a playlist
@@ -243,6 +269,18 @@ public final class OfflineStore {
               .setData(data)
               .build(),
           true);
+    }
+    return true;
+  }
+
+  /** Space a download can use, counting cache files the system may clear for it. */
+  private static long freeBytes(java.io.File dir) {
+    try {
+      android.os.storage.StorageManager storage =
+          MediaBridge.context.getSystemService(android.os.storage.StorageManager.class);
+      return storage.getAllocatableBytes(storage.getUuidForPath(dir));
+    } catch (Exception unavailable) {
+      return dir.getUsableSpace();
     }
   }
 
@@ -496,14 +534,14 @@ public final class OfflineStore {
     }
     if (id.startsWith("job:")) {
       String job = id.substring(4);
-      androidx.work.WorkManager.getInstance(MediaBridge.context)
-          .cancelWorkById(java.util.UUID.fromString(job));
+      PrepareWorker.cancel(MediaBridge.context, job);
       MediaBridge.context
           .getSharedPreferences("preparations", Context.MODE_PRIVATE)
           .edit()
           .remove(job)
           .remove(job + "-request")
           .apply();
+      PrepareWorker.purge(MediaBridge.context, job);
       return;
     }
     DownloadService.sendRemoveDownload(MediaBridge.context, OfflineService.class, id, false);
@@ -519,9 +557,9 @@ public final class OfflineStore {
           MediaBridge.context
               .getSharedPreferences("preparations", Context.MODE_PRIVATE)
               .getString(job + "-request", null);
-      androidx.work.WorkManager.getInstance(MediaBridge.context)
-          .cancelWorkById(java.util.UUID.fromString(job));
-      if (raw != null) PrepareWorker.enqueue(new JSONObject(raw));
+      // Same job key: the replacement keeps this row, the checkpoint and the progress cursor.
+      if (raw != null) PrepareWorker.enqueue(new JSONObject(raw), job);
+      else PrepareWorker.cancel(MediaBridge.context, job);
       return;
     }
     Download main = manager().getDownloadIndex().getDownload(id);
@@ -531,29 +569,7 @@ public final class OfflineStore {
             || (paired != null && paired.state == Download.STATE_FAILED))) {
       JSONObject request =
           new JSONObject(new String(main.request.data, java.nio.charset.StandardCharsets.UTF_8));
-      IO.execute(
-          () -> {
-            try {
-              JSONObject stream =
-                  PlaybackService.rpc(
-                      new JSONObject()
-                          .put("op", "resolve")
-                          .put("media", request.getJSONObject("media"))
-                          .put("audio", request.optBoolean("audio"))
-                          .put("quality", request.opt("quality")));
-              request.put("stream", stream);
-              MediaBridge.main.post(
-                  () -> {
-                    try {
-                      add(request);
-                    } catch (Exception e) {
-                      MediaBridge.event("error", "Could not restart download");
-                    }
-                  });
-            } catch (Exception error) {
-              MediaBridge.event("error", "Download retry could not refresh the stream");
-            }
-          });
+      refresh(id, request, false);
       return;
     }
     for (String key : new String[] {id, id + "-audio"}) {
@@ -565,6 +581,67 @@ public final class OfflineStore {
         DownloadService.sendSetStopReason(
             MediaBridge.context, OfflineService.class, key, d.stopReason == 0 ? 1 : 0, true);
     }
+  }
+
+  /** Download ids with an automatic stream refresh in flight (main and audio fail together). */
+  private static final java.util.Set<String> refreshingStreams =
+      java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+  /** A part failed because its signed URL expired: re-resolve once, then re-add the download. */
+  private static void refreshExpired(Download failed) {
+    String id = DownloadPolicy.baseId(failed.request.id);
+    JSONObject request;
+    try {
+      request =
+          new JSONObject(new String(failed.request.data, java.nio.charset.StandardCharsets.UTF_8));
+    } catch (Exception invalid) {
+      return;
+    }
+    if (!DownloadPolicy.autoRefreshAllowed(request) || !refreshingStreams.add(id)) return;
+    refresh(id, request, true);
+  }
+
+  /**
+   * Resolves [request]'s media again and re-adds it with the fresh stream (manual retry and the
+   * automatic expired-link refresh). An automatic refresh marks the request so it is not
+   * refreshed again; a manual retry clears that mark.
+   */
+  private static void refresh(String id, JSONObject request, boolean automatic) {
+    IO.execute(
+        () -> {
+          try {
+            JSONObject stream =
+                PlaybackService.rpc(
+                    new JSONObject()
+                        .put("op", "resolve")
+                        .put("media", request.getJSONObject("media"))
+                        .put("audio", request.optBoolean("audio"))
+                        .put("quality", request.opt("quality")));
+            request.put("stream", stream);
+            if (automatic) request.put(DownloadPolicy.AUTO_REFRESHED, true);
+            else request.remove(DownloadPolicy.AUTO_REFRESHED);
+            MediaBridge.main.post(
+                () -> {
+                  try {
+                    // A download removed while its link was refreshed stays removed.
+                    if (automatic && StorageLocations.prefs().getBoolean("removed:" + id, false))
+                      return;
+                    add(request);
+                  } catch (Exception e) {
+                    MediaBridge.event("error", "Could not restart download");
+                  } finally {
+                    if (automatic) refreshingStreams.remove(id);
+                  }
+                });
+          } catch (Exception error) {
+            if (automatic) refreshingStreams.remove(id);
+            MediaBridge.event(
+                "error",
+                automatic
+                    ? "A download link expired and could not be refreshed; retry it from downloads"
+                    : "Download retry could not refresh the stream");
+          }
+        });
   }
 
   private OfflineStore() {}
