@@ -90,6 +90,7 @@ internal fun VideoSurface(
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    ColorGrade.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
                     PlayerChrome.fitTransport(this)
                     PlayerChrome.bindCaptions(this)
@@ -155,6 +156,7 @@ internal fun FocusedPlayer(
     onMore: () -> Unit,
     onLyrics: () -> Unit = {},
     onSleep: () -> Unit = {},
+    onOutput: () -> Unit = {},
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -338,6 +340,18 @@ internal fun FocusedPlayer(
                                 DownloadFlight.launch(card, saveCentre)
                                 vm.play(card, download = true)
                             }
+                        }
+                        player.output?.let { output ->
+                            // Accent while audio goes to Bluetooth; opens the output picker.
+                            PlayerAction(
+                                Glyph.Bluetooth,
+                                output.name,
+                                "Audio output, ${output.name}",
+                                "player-output",
+                                compact,
+                                active = output.bluetooth,
+                                action = onOutput,
+                            )
                         }
                         val sleepLeft = rememberSleepLeft(player)
                         PlayerAction(

@@ -26,6 +26,10 @@ public final class PlaybackService extends MediaSessionService {
   /** Matches desktop resume: positions under 5 s start from the beginning. */
   static final long AUTO_RESUME_MIN_MS = 5000;
   ExoPlayer player;
+  android.media.AudioManager audio;
+  /** Output the listener picked in the app; null follows the system route. */
+  android.media.AudioDeviceInfo preferredOutput;
+  android.media.AudioDeviceCallback outputCallback;
   private volatile boolean initialized;
   private int lastStartId;
 
@@ -319,6 +323,27 @@ public final class PlaybackService extends MediaSessionService {
                     new Intent(this, RustActivity.class).setAction("dev.ytui.OPEN_PLAYER"),
                     PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT))
             .build();
+    audio = getSystemService(android.media.AudioManager.class);
+    outputCallback =
+        new android.media.AudioDeviceCallback() {
+          @Override
+          public void onAudioDevicesAdded(android.media.AudioDeviceInfo[] added) {
+            publish();
+          }
+
+          @Override
+          public void onAudioDevicesRemoved(android.media.AudioDeviceInfo[] removed) {
+            // A chosen device that disconnects returns playback to the system route.
+            if (preferredOutput != null)
+              for (android.media.AudioDeviceInfo device : removed)
+                if (device.getId() == preferredOutput.getId()) {
+                  preferredOutput = null;
+                  player.setPreferredAudioDevice(null);
+                }
+            publish();
+          }
+        };
+    audio.registerAudioDeviceCallback(outputCallback, handler);
     player.addListener(
         new Player.Listener() {
           @Override
@@ -1329,6 +1354,11 @@ public final class PlaybackService extends MediaSessionService {
       case "captions_off":
         captionsOff();
         break;
+      case "output_device":
+        // id 0 (or a device that has gone) clears the choice and follows the system route.
+        preferredOutput = AudioOutputs.find(audio, command.optInt("id"));
+        player.setPreferredAudioDevice(preferredOutput);
+        break;
       case "sleep":
         sleepTotal = Math.max(1, command.optLong("seconds", 1800)) * 1000;
         sleepDeadline = SystemClock.elapsedRealtime() + sleepTotal;
@@ -1931,6 +1961,7 @@ public final class PlaybackService extends MediaSessionService {
               .put("sleep_deadline", sleepDeadline)
               // Length of the running timer in ms, so the UI can draw how much of it is left.
               .put("sleep_total", sleepTotal)
+              .put("output", AudioOutputs.describe(audio, preferredOutput))
               .put("navigation_pending", navigationPending || queuedNext > 0)
               .put("next_preloaded", PlaybackCache.isReady())
               .put("start_ms", startMs)
@@ -2021,6 +2052,7 @@ public final class PlaybackService extends MediaSessionService {
     cancelContextJobs();
     PlaybackCache.cancel();
     current = null;
+    if (audio != null && outputCallback != null) audio.unregisterAudioDeviceCallback(outputCallback);
     handler.removeCallbacksAndMessages(null);
     worker.shutdownNow();
     session.release();

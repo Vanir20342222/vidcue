@@ -51,7 +51,7 @@ pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
     ("Schedule", &[18, 19, 20]),
     ("Tools", &[13, 14, 7, 8, 9, 35, 46, 47, 31]),
     ("Radio", &[48, 49]),
-    ("Playback", &[53, 51, 52, 58, 59, 60, 69, 70]),
+    ("Playback", &[53, 51, 52, 58, 59, 60, 69, 70, 71, 72]),
 ];
 pub enum FormKind {
     Download(Media, DownloadOptions),
@@ -106,6 +106,12 @@ impl Form {
             }
             "Playback backend" => {
                 "Native never starts Python yt-dlp. Auto permits fallback. Changes apply to the next playback; tools are never installed automatically."
+            }
+            "Color grading" => {
+                "A look for video playback: warm, cool, vivid or cinematic. Off leaves the picture untouched. Changes apply to the playing video; audio-only playback is never graded."
+            }
+            "Auto color grade" => {
+                "Briefly measures the playing picture (exposure, contrast, saturation, colour cast) and adds a slight correction, checking again every 30 seconds. Combines with Color grading. Needs mpv with FFmpeg's signalstats filter."
             }
             "Image protocol" => {
                 "Auto uses detected terminal capability. Saved changes rebuild visible cards immediately; Ghostty supports Kitty graphics."
@@ -343,6 +349,8 @@ impl Form {
             Field::flag("Show likes", c.card_info.likes),
             Field::flag("Show description in details", c.card_info.description),
             Field::flag("Check GitHub for new releases", c.update_check),
+            Field::choice("Color grading", &c.color_grade, vidcue_core::COLOR_GRADES),
+            Field::flag("Auto color grade", c.auto_color_grade),
             Field::choices(
                 "Equalizer",
                 &c.equalizer,
@@ -471,7 +479,7 @@ impl Form {
         }
         if field.label == "Equalizer"
             && matches!(self.kind, FormKind::Settings(_))
-            && let Ok(custom) = vidcue_core::equalizer::parse_custom(&self.fields[70].value.text)
+            && let Ok(custom) = vidcue_core::equalizer::parse_custom(&self.fields[72].value.text)
         {
             // Offer presets typed into "Custom equalizers" before they are saved.
             self.fields[self.selected].choices = vidcue_core::equalizer::names(&custom);
@@ -677,8 +685,10 @@ impl Form {
             description: self.value(67) == "yes",
         };
         c.update_check = self.value(68) == "yes";
-        c.equalizer = self.value(69).into();
-        c.equalizer_custom = vidcue_core::equalizer::parse_custom(self.value(70))?;
+        c.color_grade = self.value(69).into();
+        c.auto_color_grade = self.value(70) == "yes";
+        c.equalizer = self.value(71).into();
+        c.equalizer_custom = vidcue_core::equalizer::parse_custom(self.value(72))?;
         c.validate()?;
         Ok(c)
     }
@@ -708,15 +718,15 @@ mod tests {
     #[test]
     fn equalizer_settings_offer_typed_custom_presets_and_validate_gains() {
         let mut form = Form::settings(Config::default());
-        assert!(SETTINGS_SECTIONS[8].1.contains(&69) && SETTINGS_SECTIONS[8].1.contains(&70));
-        form.selected = 69;
+        assert!(SETTINGS_SECTIONS[8].1.contains(&71) && SETTINGS_SECTIONS[8].1.contains(&72));
+        form.selected = 71;
         form.cycle_choice(1);
-        assert_eq!(form.value(69), "flat");
-        form.fields[70].value = Editor::new("night=-3,-2,0,0,1,2,2,1,0,-1");
+        assert_eq!(form.value(71), "flat");
+        form.fields[72].value = Editor::new("night=-3,-2,0,0,1,2,2,1,0,-1");
         form.cycle_choice(-1);
         form.cycle_choice(-1);
         assert_eq!(
-            form.value(69),
+            form.value(71),
             "night",
             "presets typed but not yet saved are offered"
         );
@@ -724,14 +734,34 @@ mod tests {
         assert_eq!(saved.equalizer, "night");
         assert_eq!(saved.equalizer_custom["night"][0], -3.0);
         let reopened = Form::settings(saved);
-        assert_eq!(reopened.value(70), "night=-3,-2,0,0,1,2,2,1,0,-1");
-        form.fields[70].value = Editor::new("night=30,0,0,0,0,0,0,0,0,0");
+        assert_eq!(reopened.value(72), "night=-3,-2,0,0,1,2,2,1,0,-1");
+        form.fields[72].value = Editor::new("night=30,0,0,0,0,0,0,0,0,0");
         assert!(form.config_values().is_err());
-        form.fields[70].value = Editor::new("");
+        form.fields[72].value = Editor::new("");
         assert!(
             form.config_values().is_err(),
             "the chosen preset was removed"
         );
+    }
+    #[test]
+    fn color_grading_settings_are_off_by_default_and_roundtrip() {
+        let mut form = Form::settings(Config::default());
+        let playback = SETTINGS_SECTIONS
+            .iter()
+            .find(|(name, _)| *name == "Playback")
+            .unwrap()
+            .1;
+        assert!(playback.contains(&69) && playback.contains(&70));
+        assert_eq!(form.fields[69].label, "Color grading");
+        assert_eq!(form.value(69), "off");
+        assert_eq!(form.value(70), "no");
+        form.fields[69].value = Editor::new("vivid");
+        form.fields[70].value = Editor::new("yes");
+        let saved = form.config_values().unwrap();
+        assert_eq!(saved.color_grade, "vivid");
+        assert!(saved.auto_color_grade);
+        form.fields[69].value = Editor::new("sepia");
+        assert!(form.config_values().is_err());
     }
     #[test]
     fn schedule_settings_roundtrip_and_reject_invalid_windows() {

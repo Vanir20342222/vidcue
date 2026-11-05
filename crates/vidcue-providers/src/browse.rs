@@ -918,6 +918,28 @@ fn channel_avatar(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// A card for a broadcast that is on air now. Classic cards mark it with a
+/// LIVE_NOW badge or a LIVE time-status overlay, lockup cards with a LIVE
+/// thumbnail badge. Upcoming premieres ("UPCOMING") and archived broadcasts (a
+/// duration) carry other styles and stay ordinary videos. Only style fields
+/// count, so a title or description that says "LIVE" never marks a card.
+fn live_now(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(name, child)| {
+            (matches!(name.as_str(), "style" | "badgeStyle")
+                && matches!(
+                    child.as_str(),
+                    Some(
+                        "BADGE_STYLE_TYPE_LIVE_NOW" | "LIVE" | "THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE"
+                    )
+                ))
+                || live_now(child)
+        }),
+        Value::Array(items) => items.iter().any(live_now),
+        _ => false,
+    }
+}
+
 /// Inspect content badges, not titles/creator text, verification badges or
 /// membership buttons in menus. Classic and lockup cards use different styles.
 fn members_only(value: &Value) -> bool {
@@ -1027,7 +1049,17 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
         },
         browse_id: collection.then(|| format!("VL{id}")),
         channel_thumbnail: channel_avatar(r),
+        live: !collection && live_now(r),
         ..Default::default()
+    })
+}
+/// Video ID behind a podcast episode page (`MPED` followed by the 11-character video ID).
+fn episode_video(browse_id: &str) -> Option<&str> {
+    browse_id.strip_prefix("MPED").filter(|id| {
+        id.len() == 11
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     })
 }
 fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
@@ -1147,6 +1179,11 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
         .or_else(||r.pointer("/title/runs/0/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str))
         .or_else(||r.pointer("/flexColumns/0/musicResponsiveListItemFlexColumnRenderer/text/runs/0/navigationEndpoint/browseEndpoint/browseId").and_then(Value::as_str))
     };
+    // Episode rows in show playlists and episode tiles link to `MPED<video ID>`, a page with
+    // no playable items. Unlike albums or playlists, the row itself is the playable episode.
+    let episode_page = browse.and_then(episode_video);
+    let browse = browse.filter(|_| episode_page.is_none());
+    let video = video.or(episode_page);
     let playlist = r.get("playlistId").and_then(Value::as_str);
     if let Some(list) = browse.and_then(|id| id.strip_prefix("MPSP")) {
         // A podcast show is a playlist; its detail page id wraps the playlist id.
@@ -1202,7 +1239,7 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
     } else {
         return None;
     }
-    item.live = r.to_string().contains("BADGE_STYLE_TYPE_LIVE_NOW");
+    item.live = !item.collection() && live_now(r);
     Some(item)
 }
 pub fn parse_page(data: &Value, music: bool) -> Page {
@@ -1239,11 +1276,15 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
             hidden.insert(id.to_owned());
             return;
         }
-        if let Some(mut item) = item
-            && seen.insert(item.id.clone())
-        {
+        let Some(mut item) = item else { return };
+        if seen.insert(item.id.clone()) {
             item.section = section.into();
             page.items.push(item);
+        } else if item.live
+            && let Some(first) = page.items.iter_mut().find(|first| first.id == item.id)
+        {
+            // A duplicate elsewhere on the page may be the only card with the LIVE badge.
+            first.live = true;
         }
     }
     fn walk(
@@ -1420,6 +1461,51 @@ mod tests {
         assert_eq!(show.url, "https://www.youtube.com/playlist?list=PLfixture");
         assert_eq!(spoken_duration("45 min"), Some(2700));
         assert_eq!(spoken_duration("Played"), None);
+    }
+    #[test]
+    fn show_episode_rows_play_instead_of_opening_their_episode_page() {
+        // Shape of a show playlist (`VLPL…`) row and a home episode tile: the title links to the
+        // episode page, the second column to the show. Neither is a collection.
+        let episode_link = |id: &str| {
+            json!({"browseEndpoint":{"browseId":format!("MPED{id}"),
+            "browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":
+                {"pageType":"MUSIC_PAGE_TYPE_NON_MUSIC_AUDIO_TRACK_PAGE"}}}})
+        };
+        let data = json!({"contents":[
+            {"musicResponsiveListItemRenderer":{
+                "flexColumns":[
+                    {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+                        {"text":"Episode in a show","navigationEndpoint":episode_link("episode0001")}]}}},
+                    {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+                        {"text":"Fixture show","navigationEndpoint":{"browseEndpoint":{"browseId":"MPSPPLfixture"}}}]}}}],
+                "fixedColumns":[{"musicResponsiveListItemFixedColumnRenderer":{"text":{"runs":[{"text":"3:34:27"}]}}}],
+                "playlistItemData":{"playlistSetVideoId":"SET1","videoId":"episode0001"}}},
+            {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Episode tile"}]},
+                "navigationEndpoint":episode_link("episode0002")}},
+            {"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Album"}]},
+                "navigationEndpoint":{"browseEndpoint":{"browseId":"MPREalbum"}}}}
+        ]});
+        let page = parse_page(&data, true);
+        assert_eq!(page.items.len(), 3);
+        let row = &page.items[0];
+        assert_eq!(
+            (row.kind, row.id.as_str()),
+            (MediaKind::Song, "episode0001")
+        );
+        assert_eq!(row.url, "https://www.youtube.com/watch?v=episode0001");
+        assert_eq!(row.browse_id, None);
+        assert_eq!(row.creator, "Fixture show");
+        assert_eq!(row.duration, Some(3 * 3600 + 34 * 60 + 27));
+        let tile = &page.items[1];
+        assert_eq!(
+            (tile.kind, tile.id.as_str()),
+            (MediaKind::Song, "episode0002")
+        );
+        assert_eq!(page.items[2].kind, MediaKind::Album);
+        // Only a well-formed video ID makes an episode page playable.
+        assert_eq!(episode_video("MPEDepisode0001"), Some("episode0001"));
+        assert_eq!(episode_video("MPEDshort"), None);
+        assert_eq!(episode_video("MPREalbum0001"), None);
     }
     #[test]
     fn parses_music_album_and_song_without_overlay_duplicates() {
@@ -2234,6 +2320,72 @@ mod category_tests {
             );
             assert!(item.thumbnails.iter().all(|t| !t.url.contains("ggpht")));
         }
+    }
+
+    #[test]
+    fn current_broadcast_cards_are_live_but_premieres_and_archives_are_not() {
+        let badge = |style: &str, text: &str| {
+            json!({"thumbnailOverlayBadgeViewModel":{"thumbnailBadges":[
+                {"thumbnailBadgeViewModel":{"text":text,"badgeStyle":style}}
+            ]}})
+        };
+        let lockup = |id: &str, kind: &str, title: &str, overlays: Value| {
+            json!({"lockupViewModel":{
+                "contentId":id, "contentType":kind,
+                "contentImage":{"thumbnailViewModel":{"overlays":overlays}},
+                "metadata":{"lockupMetadataViewModel":{"title":{"content":title}}}
+            }})
+        };
+        let classic = |id: &str, title: &str, extra: Value| {
+            let mut card = json!({"videoId":id,"title":{"runs":[{"text":title}]}});
+            card.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            json!({"videoRenderer":card})
+        };
+        let page = parse_page(
+            &json!({"contents":[
+                lockup("aaaaaaaaaaa", "LOCKUP_CONTENT_TYPE_VIDEO", "Lockup on air",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")])),
+                lockup("bbbbbbbbbbb", "LOCKUP_CONTENT_TYPE_VIDEO", "LIVE in the title only",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT", "1:02:03")])),
+                lockup("ccccccccccc", "LOCKUP_CONTENT_TYPE_VIDEO", "Lockup premiere",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT", "UPCOMING")])),
+                lockup("PLsynthetic", "LOCKUP_CONTENT_TYPE_PLAYLIST", "Playlist",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")])),
+                classic("ddddddddddd", "Classic badge", json!({"badges":[
+                    {"metadataBadgeRenderer":{"style":"BADGE_STYLE_TYPE_LIVE_NOW","label":"LIVE"}}
+                ]})),
+                classic("eeeeeeeeeee", "Classic overlay", json!({"thumbnailOverlays":[
+                    {"thumbnailOverlayTimeStatusRenderer":{"style":"LIVE","text":{"simpleText":"LIVE"}}}
+                ]})),
+                classic("fffffffffff", "Classic premiere", json!({"thumbnailOverlays":[
+                    {"thumbnailOverlayTimeStatusRenderer":{"style":"UPCOMING"}}
+                ]})),
+                classic("ggggggggggg", "Unbadged first", json!({})),
+                lockup("ggggggggggg", "LOCKUP_CONTENT_TYPE_VIDEO", "Badged duplicate",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")]))
+            ]}),
+            false,
+        );
+        let live = page
+            .items
+            .iter()
+            .map(|item| (item.id.as_str(), item.live))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            live,
+            [
+                ("aaaaaaaaaaa", true),
+                ("bbbbbbbbbbb", false),
+                ("ccccccccccc", false),
+                ("PLsynthetic", false),
+                ("ddddddddddd", true),
+                ("eeeeeeeeeee", true),
+                ("fffffffffff", false),
+                ("ggggggggggg", true),
+            ]
+        );
     }
 
     #[test]

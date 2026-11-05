@@ -126,6 +126,8 @@ struct Active {
     meter_enabled: Option<bool>,
     /// The `@vidcue-eq` filter this mpv currently has; `None` when the equalizer is off.
     equalizer: Option<String>,
+    /// Colour grading applied to this mpv window.
+    grade: crate::color_grade::State,
     /// SponsorBlock marks last published to this mpv window's timeline.
     marks: Option<Vec<crate::sponsorblock::Segment>>,
     last_position: Option<f64>,
@@ -215,6 +217,7 @@ const PROPERTY_NAMES: &[&str] = &[
     "video-codec",
     "audio-codec",
     "af-metadata/vidcue-meter",
+    crate::color_grade::PROBE_METADATA,
 ];
 async fn properties(path: &Path) -> Result<Value> {
     tokio::time::timeout(Duration::from_millis(90), async {
@@ -571,6 +574,7 @@ async fn start_prepared(
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
         equalizer,
+        grade: Default::default(),
         marks: None,
         last_position: None,
         cancel,
@@ -1508,6 +1512,20 @@ impl Actor {
             {
                 p.marks = Some(self.state.segments.clone());
             }
+            let grading = p.grade.commands(crate::color_grade::Input {
+                preset: &self.config.color_grade,
+                auto: self.config.auto_color_grade,
+                video: self.playing.as_ref().is_some_and(|(_, audio, _)| !*audio),
+                playing: v["time-pos"].is_number()
+                    && v["pause"] == false
+                    && v["paused-for-cache"] != true,
+                metadata: &v[crate::color_grade::PROBE_METADATA],
+                pixel_format: v["video-params"]["pixelformat"].as_str(),
+                now: tokio::time::Instant::now(),
+            });
+            for command in grading {
+                let _ = p.command(command).await;
+            }
             if let Some(action) = v["user-data/vidcue/action"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -2010,6 +2028,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             progress_at: tokio::time::Instant::now(),
             meter_enabled: None,
             equalizer: None,
+            grade: Default::default(),
             marks: None,
             last_position: None,
             cancel: token,
@@ -2444,6 +2463,7 @@ sleep 30
                     progress_at: tokio::time::Instant::now(),
                     meter_enabled: None,
                     equalizer: None,
+                    grade: Default::default(),
                     marks: None,
                     last_position: None,
                     cancel: CancellationToken::new(),
@@ -2597,6 +2617,7 @@ mod responsiveness_tests {
                     progress_at: tokio::time::Instant::now() - Duration::from_secs(91),
                     meter_enabled: None,
                     equalizer: None,
+                    grade: Default::default(),
                     marks: None,
                     last_position: position,
                     cancel,
@@ -2684,6 +2705,7 @@ mod responsiveness_tests {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
                 equalizer: None,
+                grade: Default::default(),
                 marks: None,
                 last_position: None,
                 cancel: CancellationToken::new(),
@@ -2781,6 +2803,7 @@ mod responsiveness_tests {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
                 equalizer: None,
+                grade: Default::default(),
                 marks: None,
                 last_position: None,
                 cancel,

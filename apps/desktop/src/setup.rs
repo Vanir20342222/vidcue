@@ -21,8 +21,9 @@ pub const TITLES: [&str; 5] = [
     "You're all set",
 ];
 const SPONSORBLOCK: [&str; 3] = ["skip", "mark", "off"];
+use vidcue_core::COLOR_GRADES;
 /// Playback-step row of the equalizer preset; band rows follow it for custom presets.
-const EQUALIZER_ROW: usize = 4;
+const EQUALIZER_ROW: usize = 6;
 const BAND_LABELS: [&str; 10] = [
     "31 Hz", "62 Hz", "125 Hz", "250 Hz", "500 Hz", "1 kHz", "2 kHz", "4 kHz", "8 kHz", "16 kHz",
 ];
@@ -122,6 +123,16 @@ impl Setup {
                     hint: "skip, mark or off",
                 },
                 Row {
+                    label: "Color grading",
+                    value: c.color_grade.clone(),
+                    hint: "A look for videos: warm, cool, vivid or cinematic",
+                },
+                Row {
+                    label: "Auto color grade",
+                    value: on_off(c.auto_color_grade),
+                    hint: "Analyses each video and adds a slight fitting grade",
+                },
+                Row {
                     label: "Equalizer",
                     value: c.equalizer.clone(),
                     hint: "Presets, or \"custom\" to shape your own curve below",
@@ -185,6 +196,8 @@ impl Setup {
             (PLAYBACK, 3) => {
                 c.playback_sponsorblock = cycle(&SPONSORBLOCK, &c.playback_sponsorblock)
             }
+            (PLAYBACK, 4) => c.color_grade = cycle(COLOR_GRADES, &c.color_grade),
+            (PLAYBACK, 5) => c.auto_color_grade = !c.auto_color_grade,
             (PLAYBACK, EQUALIZER_ROW) => {
                 // Offer a fresh "custom" curve (flat) alongside saved custom presets,
                 // and drop it again when the user moves on without shaping it.
@@ -231,6 +244,8 @@ impl Setup {
             ("Autoplay related", on_off(c.autoplay_related)),
             ("Resume videos", on_off(c.resume_on_play)),
             ("SponsorBlock", c.playback_sponsorblock.clone()),
+            ("Color grading", c.color_grade.clone()),
+            ("Auto color grade", on_off(c.auto_color_grade)),
             ("Equalizer", c.equalizer.clone()),
             (
                 "Account",
@@ -297,6 +312,25 @@ mod tests {
         assert_eq!(s.draft.playback_sponsorblock, "off");
         assert!(s.changed(&config));
         assert!(config.autoplay_related && !config.reduced_motion);
+        // Colour grading and auto grade are off by default and can be enabled here.
+        assert_eq!(config.color_grade, "off");
+        assert!(!config.auto_color_grade);
+        s.move_row(1, false);
+        assert_eq!(s.rows(false)[4].label, "Color grading");
+        s.change(1);
+        assert_eq!(s.draft.color_grade, "warm");
+        s.change(-1);
+        s.change(-1);
+        assert_eq!(s.draft.color_grade, "cinematic");
+        s.move_row(1, false);
+        assert_eq!(s.rows(false)[5].value, "Off");
+        s.change(1);
+        assert!(s.draft.auto_color_grade);
+        assert!(
+            s.summary(false)
+                .iter()
+                .any(|(k, v)| *k == "Auto color grade" && v == "On")
+        );
         s.draft.validate().unwrap();
     }
     #[test]
@@ -304,14 +338,14 @@ mod tests {
         let config = Config::default();
         let mut s = setup();
         s.step = PLAYBACK;
-        assert_eq!(s.rows(false).len(), 5);
+        assert_eq!(s.rows(false).len(), 7);
         s.move_row(EQUALIZER_ROW as isize, false);
         assert_eq!(s.rows(false)[EQUALIZER_ROW].value, "off");
         s.change(1);
         assert_eq!(s.draft.equalizer, "flat");
         s.change(1);
         assert_eq!(s.draft.equalizer, "bass-boost");
-        assert_eq!(s.rows(false).len(), 5, "built-in presets have no band rows");
+        assert_eq!(s.rows(false).len(), 7, "built-in presets have no band rows");
         assert!(s.changed(&config));
         s.draft.validate().unwrap();
         // Back from "off" wraps to the new custom curve, which shows ten band rows.
@@ -320,15 +354,15 @@ mod tests {
         s.change(-1);
         assert_eq!(s.draft.equalizer, "custom");
         let rows = s.rows(false);
-        assert_eq!(rows.len(), 15);
-        assert_eq!((rows[5].label, rows[5].value.as_str()), ("31 Hz", "+0 dB"));
+        assert_eq!(rows.len(), 17);
+        assert_eq!((rows[7].label, rows[7].value.as_str()), ("31 Hz", "+0 dB"));
         s.move_row(1, false);
         for _ in 0..20 {
             s.change(1);
         }
-        assert_eq!(s.rows(false)[5].value, "+12 dB", "gains are clamped");
+        assert_eq!(s.rows(false)[7].value, "+12 dB", "gains are clamped");
         s.move_row(20, false);
-        assert_eq!(s.row, 14);
+        assert_eq!(s.row, 16);
         s.change(-1);
         assert_eq!(s.draft.equalizer_custom["custom"][9], -1.0);
         s.draft.validate().unwrap();

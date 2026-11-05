@@ -10,7 +10,7 @@ The music player's secondary action tray (queue, lyrics, save, sleep, more) drop
 captions and shows icons only, at a uniform 24dp. The icons were redrawn on the same 24-unit
 grid with the same 1.8 stroke so they read on their own: the playback queue uses a new
 `Glyph.UpNext` (list with a play marker, kept separate from the add-to-queue plus), lyrics is a
-microphone, save keeps the download tray, and sleep is the crescent moon with a small "z".
+text lines beside an outlined eighth note (the owner chose this over microphone and speech-bubble drafts), save keeps the download tray, and sleep is the crescent moon with a small "z".
 Accessible names are unchanged ("Playback queue", "Lyrics", "Save offline", "Sleep timer, N left");
 while a sleep timer runs, the moon shrinks inside a round clock ring whose accent arc drains
 clockwise from twelve o'clock (eased between the once-a-second ticks), with a dot at its end like a

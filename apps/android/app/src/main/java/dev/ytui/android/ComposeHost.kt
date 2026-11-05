@@ -612,6 +612,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     vm.player.value.media?.let(vm::lyricLoad)
                                 },
                                 onSleep = { dialog = "sleep" },
+                                onOutput = { dialog = "output" },
                             )
                         }
                     }
@@ -679,6 +680,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     "sleep" ->
                         Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
+                    "output" ->
+                        Panel("Audio output", { dialog = "" }) { OutputOptions(vm) { dialog = "" } }
                     "about" ->
                         Panel("About Vidcue", { dialog = "" }) {
                             Text(
@@ -2936,6 +2939,20 @@ private fun SettingsPanel(
                     ) {
                         vm.updateMobile(key, it)
                     }
+                }
+                Choice(
+                    "Color grading",
+                    mobile.optString("color_grade", "off"),
+                    ColorGradeMath.PRESETS,
+                ) {
+                    vm.updateMobile("color_grade", it)
+                }
+                SettingToggle(
+                    "Auto color grade",
+                    mobile.optBoolean("auto_color_grade", false),
+                    "Analyses the playing video and adds a slight fitting grade",
+                ) {
+                    vm.updateMobile("auto_color_grade", it)
                 }
                 Choice(
                     "Seek interval",
