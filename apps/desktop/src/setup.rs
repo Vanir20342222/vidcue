@@ -21,6 +21,7 @@ pub const TITLES: [&str; 5] = [
     "You're all set",
 ];
 const SPONSORBLOCK: [&str; 3] = ["skip", "mark", "off"];
+use vidcue_core::COLOR_GRADES;
 
 pub struct Setup {
     pub step: usize,
@@ -112,6 +113,16 @@ impl Setup {
                     value: c.playback_sponsorblock.clone(),
                     hint: "skip, mark or off",
                 },
+                Row {
+                    label: "Color grading",
+                    value: c.color_grade.clone(),
+                    hint: "A look for videos: warm, cool, vivid or cinematic",
+                },
+                Row {
+                    label: "Auto color grade",
+                    value: on_off(c.auto_color_grade),
+                    hint: "Analyses each video and adds a slight fitting grade",
+                },
             ],
             ACCOUNT => vec![Row {
                 label: if connected {
@@ -157,6 +168,8 @@ impl Setup {
             (PLAYBACK, 3) => {
                 c.playback_sponsorblock = cycle(&SPONSORBLOCK, &c.playback_sponsorblock)
             }
+            (PLAYBACK, 4) => c.color_grade = cycle(COLOR_GRADES, &c.color_grade),
+            (PLAYBACK, 5) => c.auto_color_grade = !c.auto_color_grade,
             _ => {}
         }
         false
@@ -170,6 +183,8 @@ impl Setup {
             ("Autoplay related", on_off(c.autoplay_related)),
             ("Resume videos", on_off(c.resume_on_play)),
             ("SponsorBlock", c.playback_sponsorblock.clone()),
+            ("Color grading", c.color_grade.clone()),
+            ("Auto color grade", on_off(c.auto_color_grade)),
             (
                 "Account",
                 if connected {
@@ -235,6 +250,25 @@ mod tests {
         assert_eq!(s.draft.playback_sponsorblock, "off");
         assert!(s.changed(&config));
         assert!(config.autoplay_related && !config.reduced_motion);
+        // Colour grading and auto grade are off by default and can be enabled here.
+        assert_eq!(config.color_grade, "off");
+        assert!(!config.auto_color_grade);
+        s.move_row(1, false);
+        assert_eq!(s.rows(false)[4].label, "Color grading");
+        s.change(1);
+        assert_eq!(s.draft.color_grade, "warm");
+        s.change(-1);
+        s.change(-1);
+        assert_eq!(s.draft.color_grade, "cinematic");
+        s.move_row(1, false);
+        assert_eq!(s.rows(false)[5].value, "Off");
+        s.change(1);
+        assert!(s.draft.auto_color_grade);
+        assert!(
+            s.summary(false)
+                .iter()
+                .any(|(k, v)| *k == "Auto color grade" && v == "On")
+        );
         s.draft.validate().unwrap();
     }
     #[test]

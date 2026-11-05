@@ -12,6 +12,9 @@ pub const MUSIC_PLAYER_STYLES: &[&str] = &[
     "orbit-fullscreen",
 ];
 
+/// Video colour grading looks for normal playback. "off" leaves the picture untouched.
+pub const COLOR_GRADES: &[&str] = &["off", "warm", "cool", "vivid", "cinematic"];
+
 /// Details shown on catalog rows. Defaults keep the established desktop rows
 /// (channel, duration and section); Android exposes the same choices.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,6 +70,10 @@ pub struct Config {
     pub prefer_offline: bool,
     /// Resolve the next item's streams shortly before the current one ends.
     pub preload_next: bool,
+    /// Colour grading look applied to video playback (one of [`COLOR_GRADES`]).
+    pub color_grade: String,
+    /// Analyse the playing video and add a slight fitting correction. Off by default.
+    pub auto_color_grade: bool,
     /// Which details catalog rows show (Android: Settings → Video information).
     pub card_info: CardInfo,
     pub show_hints: bool,
@@ -122,6 +129,8 @@ impl Default for Config {
             seek_seconds: 5,
             prefer_offline: true,
             preload_next: true,
+            color_grade: "off".into(),
+            auto_color_grade: false,
             card_info: CardInfo::default(),
             show_hints: true,
             playback_sponsorblock: "skip".into(),
@@ -247,6 +256,11 @@ impl Config {
         ensure!(
             ["skip", "mark", "off"].contains(&self.playback_sponsorblock.as_str()),
             "SponsorBlock playback must be skip, mark or off"
+        );
+        ensure!(
+            COLOR_GRADES.contains(&self.color_grade.as_str()),
+            "Color grading must be one of {}",
+            COLOR_GRADES.join(", ")
         );
         let mut sponsor = self.download.clone();
         sponsor.sponsorblock = self.playback_sponsor_categories.clone();
