@@ -266,7 +266,30 @@ private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color
  */
 @Composable
 internal fun PlayerDock(vm: YtuiViewModel) {
-    val player by vm.player.collectAsState()
+    val live by vm.player.collectAsState()
+    // Keep drawing the last item while the card leaves, so Stop or the close button slide it
+    // away instead of it vanishing between frames.
+    // A plain holder, not state: this function recomposes whenever `live` changes anyway.
+    val last = remember { arrayOf(live) }
+    if (live.media != null) last[0] = live
+    val motion = LocalMotion.current
+    androidx.compose.animation.AnimatedVisibility(
+        live.media != null,
+        // The card runs its own rise (see `appear`).
+        enter = androidx.compose.animation.EnterTransition.None,
+        exit =
+            if (motion.animate)
+                androidx.compose.animation.fadeOut(motion.fade(200)) +
+                    androidx.compose.animation.slideOutVertically(motion.exit(260)) { it / 2 } +
+                    androidx.compose.animation.shrinkVertically(motion.exit(300))
+            else androidx.compose.animation.ExitTransition.None,
+    ) {
+        PlayerDockCard(vm, last[0])
+    }
+}
+
+@Composable
+private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     val media = player.media?.let(::MediaCard) ?: return

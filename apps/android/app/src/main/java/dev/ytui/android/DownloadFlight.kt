@@ -12,26 +12,30 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableLongStateOf
@@ -44,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -55,6 +60,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -145,6 +151,7 @@ internal fun Modifier.trackCentre(into: (Offset) -> Unit): Modifier =
 internal fun DownloadFlightHost(
     thumbnails: Boolean,
     navigationHidden: Boolean,
+    downloads: kotlinx.coroutines.flow.StateFlow<List<org.json.JSONObject>>,
     openDownloads: () -> Unit,
 ) {
     SideEffect { DownloadFlight.navigationHidden = navigationHidden }
@@ -154,7 +161,16 @@ internal fun DownloadFlightHost(
     // Root-coordinate centre of the shortcut, so a cover can aim at it.
     var shortcutCentre by remember { mutableStateOf<Offset?>(null) }
     Box(Modifier.fillMaxSize()) {
-        DownloadsShortcut(shortcut, { shortcutCentre = it }) {
+        // What the shortcut shows: the item whose flight claimed it.
+        val shortcutMedia = remember { arrayOfNulls<MediaCard>(1) }
+        if (flight != null && flight.toShortcut && flight.id == shortcut) shortcutMedia[0] = flight.media
+        DownloadsShortcut(
+            shortcut,
+            shortcutMedia[0].takeIf { shortcut != null },
+            downloads,
+            thumbnails,
+            { shortcutCentre = it },
+        ) {
             shortcut?.let(DownloadFlight::dismissShortcut)
             openDownloads()
         }
@@ -178,11 +194,20 @@ internal fun DownloadFlightHost(
 }
 
 /**
- * A floating "Downloads" pill near the bottom of the screen. It appears as the cover sets off,
- * catches it, stays [DownloadFlight.SHORTCUT_MILLIS] after the landing, then fades out.
+ * The download that was just saved, with its real progress, in the bottom-right corner. It
+ * appears as the cover sets off, catches it, follows the actual transfer (queued, percent,
+ * finished), stays [DownloadFlight.SHORTCUT_MILLIS] after the landing, then slips away. Tapping
+ * it opens Downloads.
  */
 @Composable
-private fun DownloadsShortcut(id: Long?, onCentre: (Offset) -> Unit, open: () -> Unit) {
+private fun DownloadsShortcut(
+    id: Long?,
+    media: MediaCard?,
+    downloads: kotlinx.coroutines.flow.StateFlow<List<org.json.JSONObject>>,
+    thumbnails: Boolean,
+    onCentre: (Offset) -> Unit,
+    open: () -> Unit,
+) {
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     if (id != null)
@@ -196,56 +221,134 @@ private fun DownloadsShortcut(id: Long?, onCentre: (Offset) -> Unit, open: () ->
     val bounce = remember { Animatable(1f) }
     LaunchedEffect(DownloadFlight.shortcutLanded) {
         if (DownloadFlight.shortcutLanded > 0 && motion.animate) {
-            bounce.snapTo(1.12f)
-            bounce.animateTo(1f, spring(0.4f, Spring.StiffnessMediumLow))
+            bounce.snapTo(1.08f)
+            bounce.animateTo(1f, spring(0.45f, Spring.StiffnessMediumLow))
         }
     }
+    // Keep showing the last item while the card slides away (a holder, not state: a new
+    // item always arrives through a recomposition of this function).
+    val last = remember { arrayOfNulls<MediaCard>(1) }
+    if (media != null) last[0] = media
+    val shown = last[0]
     Box(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(bottom = 28.dp),
-        contentAlignment = Alignment.BottomCenter,
+        Modifier.fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing)
+            .padding(end = 16.dp, bottom = 24.dp),
+        contentAlignment = Alignment.BottomEnd,
     ) {
         AnimatedVisibility(
             visible = id != null,
             enter =
-                if (motion.animate) fadeIn(motion.fade(160)) + scaleIn(motion.enter(260), 0.85f)
+                if (motion.animate)
+                    fadeIn(motion.fade(160)) +
+                        scaleIn(motion.spring(), 0.6f, TransformOrigin(1f, 1f)) +
+                        slideInHorizontally(motion.enter(320)) { it / 3 }
                 else EnterTransition.None,
             exit =
-                if (motion.animate) fadeOut(motion.fade(420)) + scaleOut(motion.exit(420), 0.92f)
+                if (motion.animate)
+                    fadeOut(motion.fade(320)) +
+                        slideOutHorizontally(motion.exit(360)) { it / 2 } +
+                        scaleOut(motion.exit(360), 0.9f, TransformOrigin(1f, 1f))
                 else ExitTransition.None,
         ) {
-            val shape = CircleShape
-            Row(
+            val list by downloads.collectAsState()
+            val item = shown?.let { card -> downloadFor(list, card) }
+            val state = item?.optString("state").orEmpty()
+            val tone = item?.let(::transferRowTone)
+            val progress =
+                item?.optDouble("progress")?.toFloat()?.takeIf { it.isFinite() }?.coerceIn(0f, 1f)
+            val complete = state == "Complete"
+            val glide by
+                androidx.compose.animation.core.animateFloatAsState(
+                    if (complete) 1f else progress ?: 0f,
+                    if (motion.animate) tween(520, easing = androidx.compose.animation.core.LinearEasing)
+                    else androidx.compose.animation.core.snap(),
+                    label = "shortcut-progress",
+                )
+            val status =
+                when {
+                    item == null -> "Queued"
+                    complete -> "Saved offline"
+                    tone == TransferTone.Failed -> state
+                    progress != null && progress > 0f -> "${state.ifBlank { "Downloading" }} · ${percentLabel(progress)}"
+                    else -> state.ifBlank { "Queued" }
+                }
+            val shape = RoundedCornerShape(22.dp)
+            Column(
                 Modifier.graphicsLayer {
                         scaleX = bounce.value
                         scaleY = bounce.value
+                        transformOrigin = TransformOrigin(1f, 1f)
                     }
-                    .trackCentre(onCentre)
-                    .shadow(12.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                    .widthIn(min = 220.dp, max = 300.dp)
+                    .shadow(18.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
                     .clip(shape)
                     .background(colors.surfaceContainerHigh)
-                    .border(1.dp, colors.outlineVariant, shape)
+                    .border(1.dp, colors.outlineVariant.copy(alpha = 0.6f), shape)
                     .clickable(role = Role.Button, onClick = open)
-                    .heightIn(min = 48.dp)
-                    .padding(start = 14.dp, end = 18.dp)
+                    .padding(start = 10.dp, end = 14.dp, top = 10.dp, bottom = 12.dp)
                     .testTag("download-shortcut")
                     .semantics {
-                        contentDescription = "Download queued. Open Downloads"
+                        contentDescription = "Download ${status.lowercase()}. Open Downloads"
                         liveRegion = LiveRegionMode.Polite
                     },
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                MediaIcon(Glyph.Download, tint = colors.onSurface)
-                Text(
-                    "Downloads",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.onSurface,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // The flying cover lands exactly on this tile.
+                    Box(Modifier.size(40.dp).trackCentre(onCentre)) {
+                        val card = shown
+                        if (card != null)
+                            Artwork(card, Modifier.fillMaxSize(), thumbnails, shape = RoundedCornerShape(10.dp))
+                        else GlyphTile(Glyph.Download, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
+                    }
+                    Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            shown?.title?.ifBlank { null } ?: "Download",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.labelMedium,
+                            color =
+                                if (tone == TransferTone.Failed) colors.error
+                                else colors.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    MediaIcon(
+                        if (complete) Glyph.Check else Glyph.ArrowRight,
+                        Modifier.size(18.dp),
+                        colors.onSurfaceVariant,
+                    )
+                }
+                // The real transfer: indeterminate until the first bytes arrive.
+                MediaProgressBar(
+                    if (item == null || (progress ?: 0f) <= 0f && !complete) null else glide,
+                    Modifier.fillMaxWidth().testTag("download-shortcut-progress"),
+                    color = if (tone == TransferTone.Failed) colors.error else colors.primary,
+                    thickness = 4.dp,
                 )
             }
         }
     }
 }
+
+/** The transfer saving [card], newest first, or null until the engine has queued it. */
+internal fun downloadFor(downloads: List<org.json.JSONObject>, card: MediaCard): org.json.JSONObject? =
+    downloads.lastOrNull { item ->
+        val media = item.optJSONObject("media")
+        (card.url.isNotBlank() && media?.optString("url") == card.url) ||
+            (media == null && card.title.isNotBlank() && item.optString("title") == card.title)
+    }
 
 @Composable
 private fun FlyingCover(
@@ -265,7 +368,10 @@ private fun FlyingCover(
             val start = flight.from ?: Offset(hostSize.width / 2, hostSize.height * 0.55f)
             // Until the shortcut has been laid out, aim at where it will appear.
             val end =
-                target ?: Offset(hostSize.width / 2, hostSize.height - with(density) { 64.dp.toPx() })
+                target
+                    ?: with(density) {
+                        Offset(hostSize.width - 260.dp.toPx(), hostSize.height - 72.dp.toPx())
+                    }
             // An arc: up and over, then down into the tab.
             val lift = with(density) { 140.dp.toPx() }
             val control = Offset((start.x + end.x) / 2, minOf(start.y, end.y) - lift)
@@ -280,11 +386,12 @@ private fun FlyingCover(
                         val y = u * u * start.y + 2 * u * t * control.y + t * t * end.y
                         translationX = x - half
                         translationY = y - half
-                        val scale = 1f - 0.7f * t
+                        // Shrinks onto the 40dp tile of the shortcut, or into the tab icon.
+                        val scale = 1f - (if (flight.toShortcut) 0.375f else 0.7f) * t
                         scaleX = scale
                         scaleY = scale
-                        rotationZ = -12f * t
-                        alpha = if (t < 0.85f) 1f else (1f - t) / 0.15f
+                        rotationZ = if (flight.toShortcut) -12f * t * (1f - t) * 4f else -12f * t
+                        alpha = if (t < 0.85f || flight.toShortcut) 1f else (1f - t) / 0.15f
                     }
                     .shadow(12.dp, RoundedCornerShape(14.dp), ambientColor = Color.Black, spotColor = Color.Black)
                     .testTag("download-flight")

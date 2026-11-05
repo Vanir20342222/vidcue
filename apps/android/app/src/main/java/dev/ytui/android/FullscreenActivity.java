@@ -71,6 +71,8 @@ public final class FullscreenActivity extends ComponentActivity {
             && android.animation.ValueAnimator.areAnimatorsEnabled());
     // Captions use ytui's own on/off button instead of Media3's track list.
     PlayerChrome.bindCaptions(view);
+    PlayerChrome.setReducedMotion(getIntent().getBooleanExtra("reduced_motion", false));
+    PlayerChrome.softenPresses(view);
     // Queue modes live in the app's player; the fullscreen chrome is for watching.
     view.setShowShuffleButton(false);
     view.setFullscreenButtonState(true);
