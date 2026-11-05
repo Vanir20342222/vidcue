@@ -42,7 +42,7 @@ into the new playlist.
   an existing playlist, and deselecting all.
 
 - `:app:compileDebugKotlin :app:compileDebugAndroidTestKotlin :app:testDebugUnitTest :app:lintDebug`: passed;
-  170 JVM tests, no failures or skips. Lint reported 0 errors and 96 warnings; the UI regression
+  170 JVM tests, no failures or skips. Lint reported 0 errors and 97 warnings; the UI regression
   test compiled but was not executed.
 
 ## Not verified and limits
