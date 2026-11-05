@@ -2937,6 +2937,20 @@ private fun SettingsPanel(
                     }
                 }
                 Choice(
+                    "Color grading",
+                    mobile.optString("color_grade", "off"),
+                    ColorGradeMath.PRESETS,
+                ) {
+                    vm.updateMobile("color_grade", it)
+                }
+                SettingToggle(
+                    "Auto color grade",
+                    mobile.optBoolean("auto_color_grade", false),
+                    "Analyses the playing video and adds a slight fitting grade",
+                ) {
+                    vm.updateMobile("auto_color_grade", it)
+                }
+                Choice(
                     "Seek interval",
                     mobile.optInt("seek_seconds", 10).toString(),
                     listOf("5", "10", "15", "30"),

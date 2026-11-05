@@ -90,6 +90,7 @@ internal fun VideoSurface(
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    ColorGrade.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
                     PlayerChrome.fitTransport(this)
                     PlayerChrome.bindCaptions(this)
