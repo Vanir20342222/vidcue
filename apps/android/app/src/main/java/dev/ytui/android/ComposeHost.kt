@@ -2979,7 +2979,7 @@ private fun SettingsPanel(
                 SettingToggle(
                     "Audio-only saves",
                     config.optJSONObject("download")?.optBoolean("audio") == true,
-                    "Save music without the video",
+                    "Save YouTube Music without video. YouTube videos always keep video.",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
                 }

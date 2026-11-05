@@ -22,6 +22,31 @@ public final class PlaybackPolicyTest {
   }
 
   @Test
+  public void ordinaryYouTubeVideosAndCollectionsKeepVideoWithEitherSavePreference() {
+    for (boolean enabled : new boolean[] {false, true})
+      for (String kind : new String[] {"video", "playlist", "album", "artist", "channel"})
+        assertFalse(kind, PlaybackPolicy.audioForSave(kind, false, enabled));
+  }
+
+  @Test
+  public void musicSongsLinksAndCollectionsFollowTheSavePreference() {
+    for (boolean enabled : new boolean[] {false, true}) {
+      // Songs remain Music even when downloaded from history or a saved list.
+      assertEquals(enabled, PlaybackPolicy.audioForSave("song", false, enabled));
+      for (String kind : new String[] {"song", "video", "playlist", "album", "artist", "channel"})
+        assertEquals(kind, enabled, PlaybackPolicy.audioForSave(kind, true, enabled));
+      // The download preference never changes normal song playback.
+      assertTrue(PlaybackPolicy.audioOnly("song"));
+    }
+  }
+
+  @Test
+  public void radioRemainsAudioRegardlessOfTheMusicSavePreference() {
+    for (boolean enabled : new boolean[] {false, true})
+      assertTrue(PlaybackPolicy.audioForSave("station", false, enabled));
+  }
+
+  @Test
   public void liveMetadataIsBoundedWithoutControlCodesOrBrokenUnicode() {
     assertEquals("First second", PlaybackPolicy.liveTitle("First\nsecond\t\033"));
     String title = PlaybackPolicy.liveTitle("🎵".repeat(600));
