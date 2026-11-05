@@ -433,7 +433,7 @@ internal fun FocusedPlayer(
                     }
                     // Breathing room above Up next.
                     Spacer(Modifier.height(4.dp))
-                } else
+                } else {
                 Column(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
@@ -534,6 +534,7 @@ internal fun FocusedPlayer(
                     ActionRow()
                 }
             }
+                }
         }
         @Composable
         fun Art(modifier: Modifier) {
