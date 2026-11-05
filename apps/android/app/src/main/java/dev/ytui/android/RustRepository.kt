@@ -814,8 +814,11 @@ internal class YtuiViewModel(
     fun search(raw: String) {
         val query = raw.trim()
         if (query.isBlank()) return
-        if (query.startsWith("https://") || query.startsWith("http://")) {
-            runCatching { linked(query) }
+        val link =
+            if (query.startsWith("https://", true) || query.startsWith("http://", true)) query
+            else SharedLinks.mediaLink(query)
+        if (link != null) {
+            runCatching { linked(link) }
                 .onSuccess { play(it) }
                 .onFailure {
                     status.value = "Enter a valid HTTP(S) video or playlist URL"
@@ -824,26 +827,16 @@ internal class YtuiViewModel(
         } else navigate(request = json((if (tab.value == 3) "RadioSearch" else "Search") to query))
     }
 
+    /** The media kind comes from the URL; the tab only decides for non-YouTube links (AR-07). */
     fun linked(raw: String): MediaCard {
-        val uri = java.net.URI(raw)
-        require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null)
-        val parsed = Uri.parse(raw)
-        val host = uri.host.lowercase(java.util.Locale.ROOT)
-        val youtube = host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be"
-        val playlist =
-            youtube &&
-                parsed.path?.trimEnd('/') == "/playlist" &&
-                !parsed.getQueryParameter("list").isNullOrBlank()
+        val link = SharedLinks.classify(raw, radioTab = tab.value == 3)
         return MediaCard(
             json(
-                "url" to raw,
-                "title" to raw,
-                "id" to if (playlist) parsed.getQueryParameter("list") else "",
-                "kind" to
-                    if (playlist) "playlist"
-                    else if (tab.value == 3) "station"
-                    else if (tab.value == 2 || host == "music.youtube.com") "song" else "video",
-                "live" to (tab.value == 3),
+                "url" to link.url,
+                "title" to link.url,
+                "id" to link.id,
+                "kind" to link.kind,
+                "live" to link.live,
             )
         )
     }

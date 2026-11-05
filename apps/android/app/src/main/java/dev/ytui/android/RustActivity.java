@@ -17,6 +17,8 @@ public final class RustActivity extends ComponentActivity {
   private int documentRequest;
   private long documentAccountIntent;
   private String documentToken;
+  /** The launch intent was consumed before this activity was recreated. */
+  private boolean restoredIntent;
   static volatile java.lang.ref.WeakReference<RustActivity> reference =
       new java.lang.ref.WeakReference<>(null);
 
@@ -33,6 +35,7 @@ public final class RustActivity extends ComponentActivity {
     generations.incrementAndGet();
     ComposeHost.attach(this);
     if (state != null) {
+      restoredIntent = true;
       exportDownload = state.getString("ytui-export-download");
       documentRequest = state.getInt("ytui-document-request");
       documentAccountIntent = state.getLong("ytui-document-account-intent");
@@ -112,8 +115,19 @@ public final class RustActivity extends ComponentActivity {
     super.onNewIntent(intent);
     setIntent(intent);
     if ("dev.ytui.OPEN_PLAYER".equals(intent.getAction())) MediaBridge.event("show_player", "");
-    if (Intent.ACTION_SEND.equals(intent.getAction()))
-      MediaBridge.event("shared", intent.getStringExtra(Intent.EXTRA_TEXT));
+    // A recreated activity (or a relaunch from Recents) gets the share or link it already
+    // handled; only a newly delivered intent is played or searched again (AR-08).
+    boolean replayed =
+        restoredIntent || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
+    restoredIntent = false;
+    if (replayed) return;
+    String shared = null;
+    if (Intent.ACTION_SEND.equals(intent.getAction())) {
+      CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
+      if (text != null) shared = text.toString();
+    } else if (Intent.ACTION_VIEW.equals(intent.getAction()) && intent.getData() != null)
+      shared = intent.getData().toString();
+    if (shared != null && !shared.trim().isEmpty()) MediaBridge.event("shared", shared.trim());
   }
 
   @Override

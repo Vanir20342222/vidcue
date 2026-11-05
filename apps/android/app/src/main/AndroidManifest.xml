@@ -13,8 +13,11 @@
             <meta-data android:name="android.app.lib_name" android:value="vidcue_mobile"/>
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="text/plain"/></intent-filter>
+            <!-- YouTube links opened from other apps (AR-08); not verified App Links, so Android offers Vidcue only where the user allows it. -->
+            <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https"/><data android:scheme="http"/><data android:host="youtube.com"/><data android:host="www.youtube.com"/><data android:host="m.youtube.com"/><data android:host="music.youtube.com"/><data android:path="/watch"/><data android:path="/playlist"/><data android:pathPrefix="/shorts/"/><data android:pathPrefix="/live/"/></intent-filter>
+            <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https"/><data android:scheme="http"/><data android:host="youtu.be"/><data android:pathPattern="/..*"/></intent-filter>
         </activity>
-        <activity android:name=".FullscreenActivity" android:exported="false" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|screenLayout|uiMode|density|smallestScreenSize"/>
+        <activity android:name=".FullscreenActivity" android:exported="false" android:configChanges="orientation|screenSize|screenLayout|uiMode|density|smallestScreenSize"/>
         <activity android:name=".AuthActivity" android:exported="false" android:launchMode="singleTask"/>
         <receiver android:name=".AppUpdateReceiver" android:exported="false"/>
         <service android:name=".PlaybackService" android:foregroundServiceType="mediaPlayback" android:exported="false">

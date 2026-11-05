@@ -726,6 +726,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             } + if (playerOpen || tabletLayoutOf()) 24.dp else if (hasPlayer) 156.dp else 92.dp,
                     )
                 if (!onboarding && !fullscreen) AppUpdateHost()
+                SharedLinkPlayer(vm, blocked = onboarding)
                 val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,
@@ -1152,7 +1153,8 @@ private fun BrowsePane(
         if (grid.firstVisibleItemIndex != feed.scrollIndex) grid.scrollToItem(feed.scrollIndex)
     }
     LaunchedEffect(shared) {
-        if (shared.isNotBlank()) {
+        // YouTube links are played by SharedLinkPlayer; other shared text is a search.
+        if (shared.isNotBlank() && SharedLinks.mediaLink(shared) == null) {
             query = shared
             vm.sharedQuery.value = ""
         }
