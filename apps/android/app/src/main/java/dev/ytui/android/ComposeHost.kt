@@ -478,7 +478,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         }
                                         for ((label, name, icon) in
                                             listOf(
-                                                Triple("Playback queue", "queue", Glyph.Queue),
+                                                Triple("Playback queue", "queue", Glyph.UpNext),
                                                 Triple("Recently played", "history", Glyph.History),
                                                 Triple("Lyrics", "lyrics", Glyph.Lyrics),
                                                 Triple("Sleep timer", "sleep", Glyph.Sleep),
@@ -2172,7 +2172,7 @@ internal fun PlayerPane(
                     ) {
                         vm.command("repeat")
                     }
-                    MediaIconButton(Glyph.Queue, "Playback queue") { onQueue() }
+                    MediaIconButton(Glyph.UpNext, "Playback queue") { onQueue() }
                     MediaIconButton(Glyph.Stop, "Stop playback") { vm.command("stop") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -2297,7 +2297,7 @@ internal fun PlayerPane(
                         ) {
                             page = "audio"
                         }
-                    ValueRow("Playback queue", glyph = Glyph.Queue) { onQueue() }
+                    ValueRow("Playback queue", glyph = Glyph.UpNext) { onQueue() }
                     val sleepLeft = rememberSleepLeft(player)
                     ValueRow(
                         "Sleep timer",

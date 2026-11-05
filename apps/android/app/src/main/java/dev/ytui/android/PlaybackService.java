@@ -61,7 +61,7 @@ public final class PlaybackService extends MediaSessionService {
   final Set<Long> contextJobs = ConcurrentHashMap.newKeySet();
   volatile long generation = 0;
   long qualityIntent = 0;
-  long skipUntil = 0, lastSkipped = -1, lastPositionSave = 0, sleepDeadline = 0;
+  long skipUntil = 0, lastSkipped = -1, lastPositionSave = 0, sleepDeadline = 0, sleepTotal = 0;
   boolean pendingStart, navigationPending, contextReady, contextPreparing, waitingForContext;
   int queuedNext;
   JSONObject failedNavigation;
@@ -1324,7 +1324,8 @@ public final class PlaybackService extends MediaSessionService {
         captionsOff();
         break;
       case "sleep":
-        sleepDeadline = SystemClock.elapsedRealtime() + command.optLong("seconds", 1800) * 1000;
+        sleepTotal = Math.max(1, command.optLong("seconds", 1800)) * 1000;
+        sleepDeadline = SystemClock.elapsedRealtime() + sleepTotal;
         break;
     }
     publish();
@@ -1922,6 +1923,8 @@ public final class PlaybackService extends MediaSessionService {
               .put("paused", pausedByUser)
               // Elapsed-realtime deadline (0 = off); the UI counts down from it locally.
               .put("sleep_deadline", sleepDeadline)
+              // Length of the running timer in ms, so the UI can draw how much of it is left.
+              .put("sleep_total", sleepTotal)
               .put("navigation_pending", navigationPending || queuedNext > 0)
               .put("next_preloaded", PlaybackCache.isReady())
               .put("start_ms", startMs)

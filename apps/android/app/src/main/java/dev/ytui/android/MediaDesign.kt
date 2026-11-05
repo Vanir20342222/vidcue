@@ -142,6 +142,7 @@ internal enum class Glyph {
     Back,
     Close,
     Queue,
+    UpNext,
     Save,
     Preview,
     Expand,
@@ -338,15 +339,33 @@ internal fun MediaIcon(
                     line(6f, 6f, 18f, 18f)
                     line(18f, 6f, 6f, 18f)
                 }
-                Glyph.Queue,
-                Glyph.Lyrics -> {
+                Glyph.Queue -> {
                     line(3f, 5f, 21f, 5f)
                     line(3f, 10f, 17f, 10f)
                     line(3f, 15f, 13f, 15f)
-                    if (glyph == Glyph.Queue) {
-                        line(18f, 14f, 18f, 22f)
-                        line(14f, 18f, 22f, 18f)
-                    } else line(3f, 20f, 19f, 20f)
+                    line(18f, 14f, 18f, 22f)
+                    line(14f, 18f, 22f, 18f)
+                }
+                Glyph.UpNext -> {
+                    // Playback queue: a list with the playing item marked, not the "add" plus.
+                    line(3f, 5f, 21f, 5f)
+                    line(3f, 10f, 21f, 10f)
+                    line(3f, 15f, 11f, 15f)
+                    line(3f, 20f, 11f, 20f)
+                    outline(15f to 14f, 21f to 17.5f, 15f to 21f, closed = true)
+                }
+                Glyph.Lyrics -> {
+                    // Microphone: reads as "sung words" rather than a generic text block.
+                    drawRoundRect(
+                        tint,
+                        Offset(9f, 3f),
+                        Size(6f, 11f),
+                        CornerRadius(3f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                    drawArc(tint, 0f, 180f, false, Offset(5.5f, 5f), Size(13f, 13f), style = Stroke(1.8f, cap = StrokeCap.Round))
+                    line(12f, 18f, 12f, 21f)
+                    line(9f, 21f, 15f, 21f)
                 }
                 Glyph.Save ->
                     outline(6f to 3f, 18f to 3f, 18f to 21f, 12f to 17f, 6f to 21f, closed = true)
@@ -389,7 +408,7 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Check -> outline(4f to 12f, 10f to 18f, 21f to 6f)
-                Glyph.Sleep ->
+                Glyph.Sleep -> {
                     // Crescent moon: distinct from the History clock in shared menus.
                     drawPath(
                         Path().apply {
@@ -404,6 +423,9 @@ internal fun MediaIcon(
                         tint,
                         style = if (filled) Fill else Stroke(1.8f, join = StrokeJoin.Round),
                     )
+                    // Small "z" so the moon reads as sleep rather than a dark-theme toggle.
+                    outline(15f to 3.5f, 20f to 3.5f, 15f to 8.5f, 20f to 8.5f)
+                }
                 Glyph.Browse -> {
                     val round = CornerRadius(1.5f)
                     for (x in listOf(3.5f, 13.5f)) for (y in listOf(3.5f, 13.5f)) drawRoundRect(

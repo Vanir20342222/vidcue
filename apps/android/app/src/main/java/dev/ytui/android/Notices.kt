@@ -236,6 +236,13 @@ internal fun rememberSleepLeft(player: PlayerState): Long {
     return if (deadline <= 0) 0 else (deadline - now).coerceAtLeast(0)
 }
 
+/** Share of the running sleep timer still left (1 = just started, 0 = off or finished). */
+internal fun sleepFraction(player: PlayerState, left: Long): Float {
+    if (left <= 0) return 0f
+    val total = player.value.optLong("sleep_total").coerceAtLeast(left)
+    return (left.toFloat() / total).coerceIn(0f, 1f)
+}
+
 internal fun sleepLabel(ms: Long): String {
     val minutes = (ms + 59_999) / 60_000
     return if (minutes >= 60) "${minutes / 60}:%02d".format(minutes % 60) else "$minutes min"

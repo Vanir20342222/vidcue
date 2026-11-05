@@ -321,7 +321,7 @@ internal fun FocusedPlayer(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         val compact = !player.video
-                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
+                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
                         if (canSave && media != null) {
@@ -346,6 +346,7 @@ internal fun FocusedPlayer(
                             if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
                             compact = compact,
                             active = sleepLeft > 0,
+                            countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
                             action = onSleep,
                         )
                     }
@@ -717,14 +718,16 @@ internal fun PlayerAction(
     tag: String = "",
     compact: Boolean = false,
     active: Boolean = false,
+    /** Remaining share of a running timer; draws a draining clock ring around the icon. */
+    countdown: Float? = null,
     modifier: Modifier = Modifier,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
     val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     if (compact) {
-        // Music: an evenly spaced icon row with small captions, like a transport's second line.
-        Column(
+        // Music: an evenly spaced, icon-only row; the accessible name carries the label.
+        Box(
             modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
@@ -732,21 +735,11 @@ internal fun PlayerAction(
                 .clip(MediaTokens.medium)
                 .clickable(source, SoftIndication, role = Role.Button, onClick = action)
                 .semantics { contentDescription = description }
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(6.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
-            Text(
-                label,
-                Modifier.clearAndSetSemantics {},
-                style =
-                    MaterialTheme.typography.labelSmall.merge(
-                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
-                    ),
-                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+            if (countdown != null) CountdownRing(glyph, countdown, accent)
+            else MediaIcon(glyph, Modifier.size(24.dp), if (active) accent else LocalContentColor.current, filled = active)
         }
         return
     }
@@ -942,5 +935,64 @@ internal fun SeekJump(label: String, description: String, action: () -> Unit) {
                 ),
             modifier = Modifier.clearAndSetSemantics {},
         )
+    }
+}
+
+/**
+ * Clock-face countdown: a faint full track with an accent arc that drains clockwise from
+ * twelve o'clock, a dot at its leading end like a clock hand, and the glyph in the middle.
+ */
+@Composable
+private fun CountdownRing(glyph: Glyph, fraction: Float, accent: Color) {
+    val ink = LocalContentColor.current
+    // The service ticks once a second; ease between ticks so the ring drains continuously.
+    val sweep by
+        animateFloatAsState(
+            fraction.coerceIn(0f, 1f),
+            androidx.compose.animation.core.tween(1000, easing = androidx.compose.animation.core.LinearEasing),
+            label = "sleep-countdown",
+        )
+    Box(Modifier.size(28.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize()) {
+            val stroke = 2.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(
+                ink.copy(alpha = 0.18f),
+                0f,
+                360f,
+                false,
+                topLeft,
+                arcSize,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+            )
+            if (sweep > 0f) {
+                drawArc(
+                    accent,
+                    -90f,
+                    360f * sweep,
+                    false,
+                    topLeft,
+                    arcSize,
+                    style =
+                        androidx.compose.ui.graphics.drawscope.Stroke(
+                            stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                )
+                val angle = Math.toRadians((-90f + 360f * sweep).toDouble())
+                val r = arcSize.width / 2
+                drawCircle(
+                    accent,
+                    stroke * 1.1f,
+                    center + androidx.compose.ui.geometry.Offset(
+                        (r * kotlin.math.cos(angle)).toFloat(),
+                        (r * kotlin.math.sin(angle)).toFloat(),
+                    ),
+                )
+            }
+        }
+        MediaIcon(glyph, Modifier.size(15.dp), accent, filled = true)
     }
 }
