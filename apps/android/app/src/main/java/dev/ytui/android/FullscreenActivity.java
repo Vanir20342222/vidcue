@@ -60,6 +60,7 @@ public final class FullscreenActivity extends ComponentActivity {
         });
     frames = new VisibleFrameTracker(view);
     VideoGestures.attach(view);
+    ColorGrade.attach(view);
     PlayerChrome.trackSponsorMarks(view);
     // The options layer sits above the video in this same window: every playback
     // option is reachable without leaving fullscreen or revealing system bars.

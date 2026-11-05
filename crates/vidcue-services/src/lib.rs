@@ -2,6 +2,7 @@ mod audio;
 pub mod auth;
 pub use vidcue_providers::browse;
 pub(crate) use vidcue_providers::cache;
+pub mod color_grade;
 pub mod desktop;
 pub mod diagnostics;
 pub mod download;

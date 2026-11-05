@@ -32,6 +32,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -704,6 +705,7 @@ private fun PlaybackPage(vm: YtuiViewModel) {
                 Triple("autoplay_related", Glyph.Next, "Autoplay related videos" to "Keep going when the queue ends"),
                 Triple("preload_next", Glyph.Download, "Preload the next item" to "Start the next video sooner"),
                 Triple("gestures", Glyph.Expand, "Swipe gestures" to "Swipe to seek and move between pages"),
+                Triple("auto_color_grade", Glyph.Palette, "Auto color grade" to "Analyses each video and adds a slight fitting grade"),
             )
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             rows.forEachIndexed { index, (key, glyph, text) ->
@@ -712,14 +714,62 @@ private fun PlaybackPage(vm: YtuiViewModel) {
                         glyph,
                         text.first,
                         text.second,
-                        mobile.optBoolean(key, true),
+                        mobile.optBoolean(key, MobileSettings.BOOLEANS[key] ?: true),
                         "onboarding-toggle-$key",
                     ) { value ->
                         vm.updateMobile(key, value)
                     }
                 }
             }
+            Staggered(3 + rows.size, Modifier.fillMaxWidth()) {
+                val grade = mobile.optString("color_grade", "off")
+                val presets = ColorGradeMath.PRESETS
+                SettingCycleRow(
+                    Glyph.Palette,
+                    "Color grading",
+                    "A look for videos: warm, cool, vivid or cinematic",
+                    grade.replaceFirstChar(Char::titlecase),
+                    "onboarding-color-grade",
+                ) {
+                    val next = presets[(presets.indexOf(grade) + 1).mod(presets.size)]
+                    vm.updateMobile("color_grade", next)
+                }
+            }
         }
+    }
+}
+
+/** A setup row that steps through a short list of choices on each tap. */
+@Composable
+private fun SettingCycleRow(
+    glyph: Glyph,
+    title: String,
+    subtitle: String,
+    value: String,
+    tag: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        MediaIcon(glyph, Modifier.size(24.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -821,6 +871,8 @@ private fun ReadyPage(vm: YtuiViewModel) {
                 SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
                 SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
                 SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))
+                SummaryRow("Color grading", mobile.optString("color_grade", "off").replaceFirstChar(Char::titlecase))
+                SummaryRow("Auto color grade", onOff(mobile.optBoolean("auto_color_grade", false)))
                 SummaryRow("Account", if (account.optBoolean("connected")) "Signed in" else "Not signed in")
             }
         }

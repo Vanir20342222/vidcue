@@ -5,4 +5,6 @@
     <item name="ytui_transport_wide" type="id" />
     <!-- Tag slot for the inline player's vertical-swipe (minimize / fullscreen) listener. -->
     <item name="ytui_panel_swipe" type="id" />
+    <!-- Tag slot for the PlayerView's colour grading controller (ColorGrade.kt). -->
+    <item name="ytui_color_grade" type="id" />
 </resources>
