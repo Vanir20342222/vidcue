@@ -612,6 +612,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     vm.player.value.media?.let(vm::lyricLoad)
                                 },
                                 onSleep = { dialog = "sleep" },
+                                onOutput = { dialog = "output" },
                             )
                         }
                     }
@@ -679,6 +680,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     "sleep" ->
                         Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
+                    "output" ->
+                        Panel("Audio output", { dialog = "" }) { OutputOptions(vm) { dialog = "" } }
                     "about" ->
                         Panel("About Vidcue", { dialog = "" }) {
                             Text(
