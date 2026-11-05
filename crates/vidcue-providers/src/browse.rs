@@ -837,8 +837,16 @@ fn thumbnails(value: &Value) -> Vec<vidcue_core::Thumbnail> {
     fn walk(v: &Value, images: &mut Vec<vidcue_core::Thumbnail>) {
         match v {
             Value::Object(m) => {
+                // Channel pictures are often protocol-relative (`//yt3.ggpht.com/...`).
+                let url = m.get("url").and_then(Value::as_str).map(|url| {
+                    if url.starts_with("//") {
+                        format!("https:{url}")
+                    } else {
+                        url.to_owned()
+                    }
+                });
                 if let (Some(url), Some(width), Some(height)) = (
-                    m.get("url").and_then(Value::as_str),
+                    url.as_deref(),
                     m.get("width").and_then(Value::as_u64),
                     m.get("height").and_then(Value::as_u64),
                 ) && vidcue_core::http_url(url).is_ok()
@@ -886,12 +894,26 @@ fn thumb(value: &Value) -> String {
         .map(|t| t.url)
         .unwrap_or_default()
 }
-/// Creator avatar from the channel-thumbnail slot that classic renderers carry.
-/// Avatars are kept out of `thumbnails`, so they never replace the video artwork.
+/// Creator avatar from the channel-thumbnail slot that classic renderers carry,
+/// or from the avatar beside a modern lockup's metadata (the first creator of a
+/// collaboration stack). Avatars are kept out of `thumbnails`, so they never
+/// replace the video artwork.
 fn channel_avatar(value: &Value) -> String {
+    const LOCKUP: &str = "/metadata/lockupMetadataViewModel/image";
     value
         .pointer("/channelThumbnailSupportedRenderers/channelThumbnailWithLinkRenderer/thumbnail")
         .or_else(|| value.pointer("/channelThumbnail"))
+        .or_else(|| {
+            value.pointer(&format!(
+                "{LOCKUP}/decoratedAvatarViewModel/avatar/avatarViewModel/image"
+            ))
+        })
+        .or_else(|| value.pointer(&format!("{LOCKUP}/avatarViewModel/image")))
+        .or_else(|| {
+            value.pointer(&format!(
+                "{LOCKUP}/avatarStackViewModel/avatars/0/avatarViewModel/image"
+            ))
+        })
         .map(thumb)
         .unwrap_or_default()
 }
@@ -1004,6 +1026,7 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
             format!("https://www.youtube.com/watch?v={id}")
         },
         browse_id: collection.then(|| format!("VL{id}")),
+        channel_thumbnail: channel_avatar(r),
         ..Default::default()
     })
 }
@@ -2156,6 +2179,77 @@ mod category_tests {
             item.thumbnails.iter().all(|t| !t.url.contains("ggpht")),
             "avatar URLs must not leak into video artwork: {:?}",
             item.thumbnails
+        );
+    }
+
+    #[test]
+    fn lockup_cards_keep_their_creator_avatar_apart_from_the_video_artwork() {
+        let avatar = |url: &str| {
+            json!({"avatarViewModel":{"image":{"sources":[
+                {"url":url,"width":68,"height":68}
+            ]}}})
+        };
+        let lockup = |id: &str, image: Value| {
+            json!({"lockupViewModel":{
+                "contentId":id, "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                    {"url":format!("https://i.ytimg.com/vi/{id}/hq.jpg"),"width":480,"height":270}
+                ]}}},
+                "metadata":{"lockupMetadataViewModel":{
+                    "title":{"content":"Modern card"},
+                    "image":image,
+                    "metadata":{"contentMetadataViewModel":{"metadataRows":[
+                        {"metadataParts":[{"text":{"content":"Synthetic Channel"}}]}
+                    ]}}
+                }}
+            }})
+        };
+        let page = parse_page(
+            &json!({"contents":[
+                lockup("aaaaaaaaaaa", json!({"decoratedAvatarViewModel":{
+                    "avatar":avatar("https://yt3.ggpht.com/synthetic=s68-c-k")
+                }})),
+                lockup("bbbbbbbbbbb", json!({"avatarStackViewModel":{"avatars":[
+                    avatar("//yt3.ggpht.com/first=s68-c-k"),
+                    avatar("https://yt3.ggpht.com/second=s68-c-k")
+                ]}})),
+                lockup("ccccccccccc", json!({}))
+            ]}),
+            false,
+        );
+        assert_eq!(page.items.len(), 3);
+        assert_eq!(
+            page.items[0].channel_thumbnail,
+            "https://yt3.ggpht.com/synthetic=s68-c-k"
+        );
+        assert_eq!(
+            page.items[1].channel_thumbnail,
+            "https://yt3.ggpht.com/first=s68-c-k"
+        );
+        assert!(page.items[2].channel_thumbnail.is_empty());
+        for item in &page.items {
+            assert_eq!(
+                item.thumbnail,
+                format!("https://i.ytimg.com/vi/{}/hq.jpg", item.id)
+            );
+            assert!(item.thumbnails.iter().all(|t| !t.url.contains("ggpht")));
+        }
+    }
+
+    #[test]
+    fn channel_search_results_accept_protocol_relative_pictures() {
+        let page = parse_page(
+            &json!({"contents":[{"channelRenderer":{
+                "channelId":"UCsynthetic", "title":{"simpleText":"Synthetic Channel"},
+                "thumbnail":{"thumbnails":[
+                    {"url":"//yt3.googleusercontent.com/synthetic=s176-c-k","width":176,"height":176}
+                ]}
+            }}]}),
+            false,
+        );
+        assert_eq!(
+            page.items[0].thumbnail,
+            "https://yt3.googleusercontent.com/synthetic=s176-c-k"
         );
     }
 
