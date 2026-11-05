@@ -29,6 +29,7 @@ package() {
   ln -s vidcue "$pkgdir/usr/bin/ytui"
   ln -s vidcue "$pkgdir/usr/bin/ytui-rs"
   install -Dm644 "$srcdir/vidcue/packaging/vidcue.desktop" "$pkgdir/usr/share/applications/vidcue.desktop"
+  install -Dm644 "$srcdir/vidcue/packaging/vidcue.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/vidcue.svg"
   install -Dm644 "$srcdir/vidcue/LICENSE" "$pkgdir/usr/share/licenses/vidcue/LICENSE"
   cp -r "$srcdir/licenses" "$pkgdir/usr/share/licenses/vidcue/dependencies"
   install -Dm644 "$srcdir/vidcue/docs/RUST.md" "$pkgdir/usr/share/doc/vidcue/RUST.md"

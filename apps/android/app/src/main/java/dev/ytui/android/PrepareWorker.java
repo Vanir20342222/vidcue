@@ -245,7 +245,7 @@ public final class PrepareWorker extends Worker {
             "ytui-prepare", "Playlist preparation", NotificationManager.IMPORTANCE_LOW));
     Notification n =
         new Notification.Builder(getApplicationContext(), "ytui-prepare")
-            .setSmallIcon(dev.ytui.android.R.drawable.ic_ytui)
+            .setSmallIcon(dev.ytui.android.R.drawable.ic_vidcue_notification)
             .setContentTitle("Vidcue: preparing playlist")
             .setContentText("Preparing every entry for offline download")
             .setOngoing(true)

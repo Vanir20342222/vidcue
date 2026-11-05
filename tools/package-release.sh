@@ -21,7 +21,7 @@ mkdir -- "$release_stage/$release_name"
 install -m755 "${CARGO_TARGET_DIR:-target}/release/vidcue" "$release_stage/$release_name/vidcue"
 ln -s vidcue "$release_stage/$release_name/ytui"
 ln -s vidcue "$release_stage/$release_name/ytui-rs"
-cp -- LICENSE Cargo.lock docs/RUST.md packaging/vidcue.desktop "$release_stage/$release_name/"
+cp -- LICENSE Cargo.lock docs/RUST.md packaging/vidcue.desktop packaging/vidcue.svg "$release_stage/$release_name/"
 cargo metadata --locked --format-version 1 > "$release_stage/dependencies.json"
 cargo run --release --locked -p vidcue --example license_bundle -- "$release_stage/dependencies.json" "$release_stage/$release_name/licenses"
 {

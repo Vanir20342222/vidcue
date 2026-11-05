@@ -653,7 +653,7 @@ public final class PlaybackService extends MediaSessionService {
         startForeground(
             NotificationIds.PLAYBACK,
             new android.app.Notification.Builder(this, "ytui-playback")
-                .setSmallIcon(R.drawable.ic_ytui)
+                .setSmallIcon(R.drawable.ic_vidcue_notification)
                 .setContentTitle("Playback could not start")
                 .setOnlyAlertOnce(true)
                 .build());
