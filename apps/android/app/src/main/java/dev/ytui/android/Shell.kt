@@ -511,7 +511,9 @@ internal fun PlayerDock(vm: YtuiViewModel) {
                         Text(
                             media.creator.ifBlank {
                                 if (player.preview) "Muted preview"
-                                else if (media.live) "Live radio" else "Now playing"
+                                else if (media.live && media.kind == "station") "Live radio"
+                                else if (media.live) "Live stream"
+                                else "Now playing"
                             },
                             Modifier.weight(1f, fill = false),
                             maxLines = 1,
