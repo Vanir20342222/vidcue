@@ -61,6 +61,7 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
     };
     lines.push(Line::styled(app.tr(body), text));
     lines.push(Line::default());
+    let mut selected_line = 0;
     for (index, row) in setup.rows(connected).iter().enumerate() {
         let selected = index == setup.row;
         let style = if selected {
@@ -73,7 +74,12 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
             Span::styled(format!("{:<34}", app.tr(row.label)), style),
             Span::styled(app.tr(&row.value).to_string(), accent),
         ]));
-        lines.push(Line::styled(format!("     {}", app.tr(row.hint)), muted));
+        if !row.hint.is_empty() {
+            lines.push(Line::styled(format!("     {}", app.tr(row.hint)), muted));
+        }
+        if selected {
+            selected_line = lines.len();
+        }
     }
     if setup.step == READY {
         for (label, value) in setup.summary(connected) {
@@ -83,5 +89,13 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
             ]));
         }
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    // Long steps (a custom equalizer's band rows) scroll to keep the selection visible;
+    // the margin allows for wrapped text above it.
+    let scroll = (selected_line as u16 + 3).saturating_sub(inner.height);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        inner,
+    );
 }

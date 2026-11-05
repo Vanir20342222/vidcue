@@ -548,3 +548,8 @@
 "Later" = "Später"
 "Skip this version" = "Diese Version überspringen"
 "How updates work" = "So funktionieren Updates"
+"Equalizer" = "Equalizer"
+"Custom equalizers" = "Eigene Equalizer"
+"Presets, or \"custom\" to shape your own curve below" = "Voreinstellungen oder \"custom\", um unten eine eigene Kurve zu formen"
+"Shapes playback audio with a ten-band equalizer (31 Hz–16 kHz). Off adds no filter. Custom presets from the next field appear here; saved changes apply to the current player right away." = "Formt den Wiedergabeton mit einem Zehnband-Equalizer (31 Hz–16 kHz). Off fügt keinen Filter hinzu. Eigene Voreinstellungen aus dem nächsten Feld erscheinen hier; gespeicherte Änderungen wirken sofort im laufenden Player."
+"name=g1,…,g10 in dB (-12 to 12) from 31 Hz to 16 kHz; separate presets with ';'. Example: night=-3,-2,0,0,1,2,2,1,0,-1" = "name=g1,…,g10 in dB (-12 bis 12) von 31 Hz bis 16 kHz; Voreinstellungen mit ';' trennen. Beispiel: night=-3,-2,0,0,1,2,2,1,0,-1"

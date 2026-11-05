@@ -30,6 +30,15 @@ public final class NativeBridge {
 
   public static native long meter(java.nio.ByteBuffer buffer, int offset, int length, int channels);
 
+  /** Filters 16-bit PCM in place with the saved equalizer curve; a no-op when it is off. */
+  public static native void equalize(
+      java.nio.ByteBuffer buffer, int offset, int length, int channels, int sampleRate);
+
+  public static native boolean equalizerEnabled();
+
+  /** Clears equalizer filter memory, e.g. after a seek. */
+  public static native void equalizerReset();
+
   /**
    * Writes {@code out.length} log-spaced band levels (0..65535, low to high frequency) from the
    * same PCM window. The Rust side keeps a rolling mono window across calls.

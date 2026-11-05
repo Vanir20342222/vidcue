@@ -110,6 +110,11 @@ pub enum PlayerEvent {
     Ended(Box<Media>),
     Error(String),
 }
+/// The equalizer filter for `config`, or `None` when it is off or flat.
+fn equalizer_filter(config: &Config) -> Option<String> {
+    vidcue_core::equalizer::gains(&config.equalizer, &config.equalizer_custom)
+        .and_then(|gains| vidcue_core::equalizer::filter(&gains))
+}
 pub struct Player {
     pub commands: mpsc::Sender<PlayerCommand>,
     pub status: watch::Receiver<PlayerStatus>,
@@ -119,6 +124,8 @@ pub struct Player {
 struct Active {
     progress_at: tokio::time::Instant,
     meter_enabled: Option<bool>,
+    /// The `@vidcue-eq` filter this mpv currently has; `None` when the equalizer is off.
+    equalizer: Option<String>,
     /// Colour grading applied to this mpv window.
     grade: crate::color_grade::State,
     /// SponsorBlock marks last published to this mpv window's timeline.
@@ -412,6 +419,10 @@ async fn start_prepared(
     if let Some(proxy) = &config.proxy {
         args.push(format!("--http-proxy={proxy}"));
     }
+    let equalizer = (!preview).then(|| equalizer_filter(config)).flatten();
+    if let Some(filter) = &equalizer {
+        args.push(format!("--af={filter}"));
+    }
     args.push("--".into());
     args.push(target);
     let cancel = preparation
@@ -562,6 +573,7 @@ async fn start_prepared(
     Ok(Active {
         progress_at: tokio::time::Instant::now(),
         meter_enabled: None,
+        equalizer,
         grade: Default::default(),
         marks: None,
         last_position: None,
@@ -1470,6 +1482,20 @@ impl Actor {
                 }
                 p.meter_enabled = None;
             }
+            let equalizer = equalizer_filter(&self.config);
+            if equalizer != p.equalizer {
+                let removed = p.equalizer.is_none()
+                    || p.command(json!(["af", "remove", "@vidcue-eq"]))
+                        .await
+                        .is_ok();
+                let added = match &equalizer {
+                    Some(filter) => p.command(json!(["af", "add", filter])).await.is_ok(),
+                    None => true,
+                };
+                if removed && added {
+                    p.equalizer = equalizer;
+                }
+            }
             self.state.audio_levels = if metering && p.meter_enabled == Some(true) {
                 crate::visualizer::levels(&v["af-metadata/vidcue-meter"])
             } else {
@@ -1730,6 +1756,22 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
                 .any(|line| line.starts_with("--audio-file"))
         );
     }
+    #[test]
+    fn equalizer_filter_is_absent_when_off_or_flat_and_follows_custom_presets() {
+        let mut config = Config::default();
+        assert_eq!(equalizer_filter(&config), None);
+        config.equalizer = "flat".into();
+        assert_eq!(equalizer_filter(&config), None);
+        config.equalizer_custom.insert(
+            "night".into(),
+            vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -3.0],
+        );
+        config.equalizer = "night".into();
+        assert_eq!(
+            equalizer_filter(&config).as_deref(),
+            Some("@vidcue-eq:lavfi=[equalizer=f=16000:t=o:w=1:g=-3]")
+        );
+    }
     #[tokio::test]
     async fn saved_copy_source_opens_the_local_file_without_resolving_the_youtube_url() {
         use std::os::unix::fs::PermissionsExt;
@@ -1751,6 +1793,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
             mpv: mpv.display().to_string(),
             // Resolution would fail loudly: a saved copy must never reach it.
             native_js_runtime: Some("/must-not-run-a-runtime".into()),
+            equalizer: "bass-boost".into(),
             ..Default::default()
         };
         let paths = Paths {
@@ -1800,6 +1843,11 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         let lines = lines.lines().collect::<Vec<_>>();
         assert_eq!(lines.last(), Some(&saved.to_str().unwrap()));
         assert!(lines.contains(&"--start=42.000"));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("--af=@vidcue-eq:lavfi=[equalizer=f=31:"))
+        );
         assert!(!lines.iter().any(|l| l.contains("youtube.com")));
         assert!(
             !lines.iter().any(|l| l.starts_with("--user-agent")),
@@ -1979,6 +2027,7 @@ printf '%s\n' '{"url":"https://synthetic.test/video.webm","vcodec":"vp9","acodec
         let full = Active {
             progress_at: tokio::time::Instant::now(),
             meter_enabled: None,
+            equalizer: None,
             grade: Default::default(),
             marks: None,
             last_position: None,
@@ -2413,6 +2462,7 @@ sleep 30
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now(),
                     meter_enabled: None,
+                    equalizer: None,
                     grade: Default::default(),
                     marks: None,
                     last_position: None,
@@ -2566,6 +2616,7 @@ mod responsiveness_tests {
                 full: Some(Active {
                     progress_at: tokio::time::Instant::now() - Duration::from_secs(91),
                     meter_enabled: None,
+                    equalizer: None,
                     grade: Default::default(),
                     marks: None,
                     last_position: position,
@@ -2653,6 +2704,7 @@ mod responsiveness_tests {
             actor.full = Some(Active {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
+                equalizer: None,
                 grade: Default::default(),
                 marks: None,
                 last_position: None,
@@ -2750,6 +2802,7 @@ mod responsiveness_tests {
             preview: Some(Active {
                 progress_at: tokio::time::Instant::now(),
                 meter_enabled: None,
+                equalizer: None,
                 grade: Default::default(),
                 marks: None,
                 last_position: None,

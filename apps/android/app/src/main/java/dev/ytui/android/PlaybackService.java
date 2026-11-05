@@ -171,7 +171,9 @@ public final class PlaybackService extends MediaSessionService {
                       android.content.Context ctx, boolean floating, boolean playbackParams) {
                     return new androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(ctx)
                         .setAudioProcessors(
-                            new androidx.media3.common.audio.AudioProcessor[] {new AudioTap()})
+                            new androidx.media3.common.audio.AudioProcessor[] {
+                              new EqualizerProcessor(), new AudioTap()
+                            })
                         .setEnableFloatOutput(false)
                         .setEnableAudioTrackPlaybackParams(playbackParams)
                         .build();

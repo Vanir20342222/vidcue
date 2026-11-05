@@ -79,6 +79,10 @@ pub struct Config {
     pub show_hints: bool,
     pub playback_sponsorblock: String,
     pub playback_sponsor_categories: Vec<String>,
+    /// Audio equalizer preset: "off", a built-in name or a key of `equalizer_custom`.
+    pub equalizer: String,
+    /// User-named equalizer curves: ten gains in dB (see `crate::equalizer::BANDS`).
+    pub equalizer_custom: BTreeMap<String, Vec<f64>>,
     pub download: DownloadOptions,
     pub concurrency: usize,
     pub max_retries: u32,
@@ -135,6 +139,8 @@ impl Default for Config {
             show_hints: true,
             playback_sponsorblock: "skip".into(),
             playback_sponsor_categories: vec!["sponsor".into()],
+            equalizer: crate::equalizer::OFF.into(),
+            equalizer_custom: BTreeMap::new(),
             download: DownloadOptions::default(),
             concurrency: 3,
             max_retries: 3,
@@ -257,6 +263,7 @@ impl Config {
             ["skip", "mark", "off"].contains(&self.playback_sponsorblock.as_str()),
             "SponsorBlock playback must be skip, mark or off"
         );
+        crate::equalizer::validate(&self.equalizer, &self.equalizer_custom)?;
         ensure!(
             COLOR_GRADES.contains(&self.color_grade.as_str()),
             "Color grading must be one of {}",

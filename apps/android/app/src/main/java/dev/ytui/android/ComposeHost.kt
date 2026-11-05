@@ -2778,6 +2778,7 @@ private fun SettingsPanel(
                 ) { value ->
                     vm.updateConfig(dark) { it.put("playback_sponsorblock", value) }
                 }
+                EqualizerSettings(vm, dark, config)
             }
         if (shown == "Privacy")
             SettingGroup("Privacy", showTitle = false) {

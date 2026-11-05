@@ -6,7 +6,7 @@ pub struct Field {
     pub label: &'static str,
     pub value: Editor,
     pub toggle: bool,
-    pub choices: &'static [&'static str],
+    pub choices: Vec<String>,
 }
 impl Field {
     fn text(label: &'static str, value: impl ToString) -> Self {
@@ -14,7 +14,7 @@ impl Field {
             label,
             value: Editor::new(value.to_string()),
             toggle: false,
-            choices: &[],
+            choices: Vec::new(),
         }
     }
     fn flag(label: &'static str, value: bool) -> Self {
@@ -22,10 +22,17 @@ impl Field {
             label,
             value: Editor::new(if value { "yes" } else { "no" }),
             toggle: true,
-            choices: &[],
+            choices: Vec::new(),
         }
     }
     fn choice(label: &'static str, value: impl ToString, choices: &'static [&'static str]) -> Self {
+        Self::choices(
+            label,
+            value,
+            choices.iter().map(|c| c.to_string()).collect(),
+        )
+    }
+    fn choices(label: &'static str, value: impl ToString, choices: Vec<String>) -> Self {
         Self {
             choices,
             ..Self::text(label, value)
@@ -44,7 +51,7 @@ pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
     ("Schedule", &[18, 19, 20]),
     ("Tools", &[13, 14, 7, 8, 9, 35, 46, 47, 31]),
     ("Radio", &[48, 49]),
-    ("Playback", &[53, 51, 52, 58, 59, 60, 69, 70]),
+    ("Playback", &[53, 51, 52, 58, 59, 60, 69, 70, 71, 72]),
 ];
 pub enum FormKind {
     Download(Media, DownloadOptions),
@@ -120,6 +127,12 @@ impl Form {
             }
             "Resume videos where you left off" => {
                 "Playing a partly watched video continues from its locally saved position. Music, stations and finished videos start at the beginning. Use :player-seek 0 to start over. Requires saved playback positions."
+            }
+            "Equalizer" => {
+                "Shapes playback audio with a ten-band equalizer (31 Hz–16 kHz). Off adds no filter. Custom presets from the next field appear here; saved changes apply to the current player right away."
+            }
+            "Custom equalizers" => {
+                "name=g1,…,g10 in dB (-12 to 12) from 31 Hz to 16 kHz; separate presets with ';'. Example: night=-3,-2,0,0,1,2,2,1,0,-1"
             }
             "Limit KiB/s (0=off)" => {
                 "Per-job transfer cap in KiB/s; 0 disables this cap. Global/schedule caps may also apply."
@@ -338,6 +351,15 @@ impl Form {
             Field::flag("Check GitHub for new releases", c.update_check),
             Field::choice("Color grading", &c.color_grade, vidcue_core::COLOR_GRADES),
             Field::flag("Auto color grade", c.auto_color_grade),
+            Field::choices(
+                "Equalizer",
+                &c.equalizer,
+                vidcue_core::equalizer::names(&c.equalizer_custom),
+            ),
+            Field::text(
+                "Custom equalizers",
+                vidcue_core::equalizer::format_custom(&c.equalizer_custom),
+            ),
         ];
         Self {
             kind: FormKind::Settings(config),
@@ -455,6 +477,14 @@ impl Form {
             self.toggle();
             return;
         }
+        if field.label == "Equalizer"
+            && matches!(self.kind, FormKind::Settings(_))
+            && let Ok(custom) = vidcue_core::equalizer::parse_custom(&self.fields[72].value.text)
+        {
+            // Offer presets typed into "Custom equalizers" before they are saved.
+            self.fields[self.selected].choices = vidcue_core::equalizer::names(&custom);
+        }
+        let field = &mut self.fields[self.selected];
         if !field.choices.is_empty() {
             let current = field
                 .choices
@@ -463,7 +493,7 @@ impl Form {
                 .unwrap_or(0);
             let index =
                 (current as isize + delta).rem_euclid(field.choices.len() as isize) as usize;
-            field.value = Editor::new(field.choices[index]);
+            field.value = Editor::new(field.choices[index].clone());
         }
     }
     pub fn toggle(&mut self) {
@@ -657,6 +687,8 @@ impl Form {
         c.update_check = self.value(68) == "yes";
         c.color_grade = self.value(69).into();
         c.auto_color_grade = self.value(70) == "yes";
+        c.equalizer = self.value(71).into();
+        c.equalizer_custom = vidcue_core::equalizer::parse_custom(self.value(72))?;
         c.validate()?;
         Ok(c)
     }
@@ -681,6 +713,34 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("more than once")
+        );
+    }
+    #[test]
+    fn equalizer_settings_offer_typed_custom_presets_and_validate_gains() {
+        let mut form = Form::settings(Config::default());
+        assert!(SETTINGS_SECTIONS[8].1.contains(&71) && SETTINGS_SECTIONS[8].1.contains(&72));
+        form.selected = 71;
+        form.cycle_choice(1);
+        assert_eq!(form.value(71), "flat");
+        form.fields[72].value = Editor::new("night=-3,-2,0,0,1,2,2,1,0,-1");
+        form.cycle_choice(-1);
+        form.cycle_choice(-1);
+        assert_eq!(
+            form.value(71),
+            "night",
+            "presets typed but not yet saved are offered"
+        );
+        let saved = form.config_values().unwrap();
+        assert_eq!(saved.equalizer, "night");
+        assert_eq!(saved.equalizer_custom["night"][0], -3.0);
+        let reopened = Form::settings(saved);
+        assert_eq!(reopened.value(72), "night=-3,-2,0,0,1,2,2,1,0,-1");
+        form.fields[72].value = Editor::new("night=30,0,0,0,0,0,0,0,0,0");
+        assert!(form.config_values().is_err());
+        form.fields[72].value = Editor::new("");
+        assert!(
+            form.config_values().is_err(),
+            "the chosen preset was removed"
         );
     }
     #[test]
