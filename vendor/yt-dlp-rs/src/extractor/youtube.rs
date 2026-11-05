@@ -1,5 +1,5 @@
 //! Narrow watch-page slice of YoutubeIE at the pinned upstream revision.
-//! Bounded WEB API fallback, native HLS VOD and explicit offline JS runtime.
+//! Bounded WEB API fallback, HLS VOD/live playback and explicit offline JS runtime.
 mod challenge;
 mod chapters;
 pub(crate) use chapters::from_description as chapters_from_description;
@@ -498,7 +498,9 @@ fn extract_acquired(
     } else {
         None
     };
-    if matches!(live_status, Some("is_live" | "is_upcoming" | "post_live")) {
+    if matches!(live_status, Some("is_upcoming" | "post_live"))
+        || (live_status == Some("is_live") && !playback)
+    {
         return Err(unsupported("live, upcoming and post-live videos"));
     }
     let context = streams::Context {
@@ -515,7 +517,9 @@ fn extract_acquired(
         skip_player_js: false,
         // A usable direct playback response must not wait for optional HLS/DASH
         // discovery. Only enumerate manifests when direct selection needs them.
-        skip_manifests: if direct_streams_only {
+        // Live playback needs the rolling HLS playlist, even if the player
+        // response also advertises direct URLs. Media3 owns playlist refreshes.
+        skip_manifests: if direct_streams_only && live_status != Some("is_live") {
             ["hls".into(), "dash".into()].into()
         } else {
             Default::default()
@@ -852,6 +856,11 @@ fn validate_playback(
         .map_err(|error| Error::FormatSelection(error.0))?;
     crate::info::sort_formats(&mut selected.formats, &sorter);
     selected.select_format(Some(format))?;
+    // Live formats already come exclusively from HLS. Direct HTTPS offers
+    // cannot improve playback quality or provide a usable audio-only source.
+    if info.metadata.live_status.as_deref() == Some("is_live") {
+        return Ok(info);
+    }
     if offered
         .0
         .is_some_and(|height| selected.height.unwrap_or(0) < height)
