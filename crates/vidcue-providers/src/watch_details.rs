@@ -80,7 +80,7 @@ fn full_count(label: &str) -> Option<u64> {
     }
     // A unit right after the number marks a compact count.
     let rest: String = chars[end..].iter().collect();
-    let unit = rest.trim_start().split_whitespace().next().unwrap_or("");
+    let unit = rest.split_whitespace().next().unwrap_or("");
     let unit = unit
         .trim_end_matches(|c: char| !c.is_alphanumeric())
         .to_lowercase();
