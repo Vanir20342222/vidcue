@@ -24,7 +24,7 @@ public final class OfflineService extends DownloadService {
   @Override
   protected Notification getForegroundNotification(List<Download> downloads, int requirements) {
     return new Notification.Builder(this, "ytui-downloads")
-        .setSmallIcon(dev.ytui.android.R.drawable.ic_ytui)
+        .setSmallIcon(dev.ytui.android.R.drawable.ic_vidcue_notification)
         .setContentTitle("ytui downloads")
         .setContentText(downloads.size() + " media entries")
         .setOngoing(true)

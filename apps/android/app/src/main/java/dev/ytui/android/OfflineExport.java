@@ -435,7 +435,7 @@ public final class OfflineExport extends Worker {
             "ytui-exports", "Media exports", NotificationManager.IMPORTANCE_LOW));
     Notification notification =
         new Notification.Builder(getApplicationContext(), "ytui-exports")
-            .setSmallIcon(R.drawable.ic_ytui)
+            .setSmallIcon(R.drawable.ic_vidcue_notification)
             .setContentTitle("ytui: exporting offline media")
             .setContentText("Writing the completed file to your chosen destination")
             .setOngoing(true)
