@@ -7,11 +7,11 @@
 
 ## What it does
 Titled shelves on the Android Home and Music tabs ("Quick picks", "Listen again", …) now
-show a **Play all** pill next to the heading. It starts the shelf's first playable entry
+show a round **Play all** icon button (play glyph, labelled "Play all <shelf>" for TalkBack) next to the heading. It starts the shelf's first playable entry
 and continues through the rest of the shelf in order, using the existing finite
 visible-list context (`radio_context`), so Next and auto-advance stay inside the shelf
 instead of switching to related recommendations. Albums, playlists, channels and live
-entries are skipped, and the pill is hidden on a shelf that has none of the remaining kinds.
+entries are skipped, and the button is hidden on a shelf that has none of the remaining kinds.
 
 ## Evidence
 | Check | Command or procedure | Result | Level |

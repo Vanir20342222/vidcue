@@ -1349,9 +1349,18 @@ private fun BrowsePane(
                                 // Albums and playlists open as their own pages, so a shelf of
                                 // only collections or live entries has nothing to play in order.
                                 if (cards.any { !it.collection && !it.live && it.url.isNotBlank() })
-                                    SecondaryAction(
-                                        "Play all",
-                                        Modifier.testTag("shelf-play-all-$section"),
+                                    // Icon only, sized to the title; the label stays for TalkBack.
+                                    RoundIconButton(
+                                        Glyph.Play,
+                                        "Play all ${section.ifBlank { "More for you" }}",
+                                        Modifier.border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outlineVariant,
+                                                CircleShape,
+                                            )
+                                            .testTag("shelf-play-all-$section"),
+                                        size = 40.dp,
+                                        iconSize = 20.dp,
                                     ) {
                                         vm.playAll(cards)
                                     }
