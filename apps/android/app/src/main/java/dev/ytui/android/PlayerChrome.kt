@@ -139,6 +139,59 @@ internal object PlayerChrome {
 
     private const val COMPACT_WIDTH_DP = 560f
 
+    /** Reduced motion (the app setting); system animator scale is checked per touch. */
+    @JvmStatic var reducedMotion = false
+
+    /**
+     * Springy press feedback for the video controls, matching the app's Compose buttons: a
+     * control sinks while held and springs back with a little overshoot when released. The
+     * listener only observes touches; Media3 keeps handling the clicks.
+     */
+    @JvmStatic
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    fun softenPresses(view: PlayerView) {
+        val ids =
+            listOf(
+                androidx.media3.ui.R.id.exo_play_pause,
+                androidx.media3.ui.R.id.exo_prev,
+                androidx.media3.ui.R.id.exo_next,
+                androidx.media3.ui.R.id.exo_rew_with_amount,
+                androidx.media3.ui.R.id.exo_ffwd_with_amount,
+                androidx.media3.ui.R.id.exo_fullscreen,
+                androidx.media3.ui.R.id.exo_minimal_fullscreen,
+                R.id.ytui_collapse,
+                R.id.ytui_captions,
+                R.id.ytui_settings,
+            )
+        for (id in ids) {
+            val button = view.findViewById<View>(id) ?: continue
+            button.setOnTouchListener { v, event ->
+                if (reducedMotion || !android.animation.ValueAnimator.areAnimatorsEnabled())
+                    return@setOnTouchListener false
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN ->
+                        v.animate()
+                            .scaleX(PRESSED)
+                            .scaleY(PRESSED)
+                            .setDuration(110)
+                            .setInterpolator(android.view.animation.DecelerateInterpolator())
+                            .start()
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL ->
+                        v.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(360)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(2.4f))
+                            .start()
+                }
+                false
+            }
+        }
+    }
+
+    private const val PRESSED = 0.84f
+
     /**
      * Flat dark disc behind a transport: no glass edge, so the controls sit quietly on the
      * picture. [insetDp] draws it slightly inside a 48dp touch target; the disc still reaches the
@@ -160,10 +213,12 @@ internal object PlayerChrome {
         view.setTag(R.id.ytui_top_scrim, accent)
         val clear = MediaTokens.transparent.toArgb()
         val scrim = MediaTokens.videoScrim.toArgb()
+        // Ease out of the scrim: full at the edge, under half by the middle, clear at the end.
+        val half = MediaTokens.videoScrim.copy(alpha = MediaTokens.videoScrim.alpha * 0.4f).toArgb()
         view.findViewById<View>(R.id.ytui_top_scrim)?.background =
-            GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(scrim, clear))
+            GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(scrim, half, clear))
         view.findViewById<View>(R.id.ytui_bottom_scrim)?.background =
-            GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(scrim, clear))
+            GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(scrim, half, clear))
         // Keep every transport legible even over a uniformly bright frame.
         // Each view needs its own drawable; shared drawable bounds are mutable.
         for (id in

@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.selection.selectable
@@ -1005,6 +1006,7 @@ internal fun SectionHeader(title: String, modifier: Modifier = Modifier) = Group
  * Quiet list row for queues, history, offline media and playlists: a rounded thumbnail,
  * two-line title, one-line metadata and an optional trailing control.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun MediaListRow(
     title: String,
@@ -1016,6 +1018,8 @@ internal fun MediaListRow(
     enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
     extra: @Composable (ColumnScope.() -> Unit)? = null,
+    /** Press and hold, e.g. to start selecting. */
+    onLongClick: (() -> Unit)? = null,
     trailing: @Composable (() -> Unit)? = null,
 ) {
     val motion = LocalMotion.current
@@ -1033,7 +1037,14 @@ internal fun MediaListRow(
             .clip(MediaTokens.medium)
             .background(wash)
             .then(
-                if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick)
+                if (onClick != null && onLongClick != null)
+                    Modifier.combinedClickable(
+                        enabled = enabled,
+                        onLongClickLabel = "Select",
+                        onLongClick = onLongClick,
+                        onClick = onClick,
+                    )
+                else if (onClick != null) Modifier.clickable(enabled = enabled, onClick = onClick)
                 else Modifier
             )
             .padding(vertical = 6.dp, horizontal = 6.dp),

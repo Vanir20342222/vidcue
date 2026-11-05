@@ -2,7 +2,12 @@ package dev.ytui.android
 
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -14,8 +19,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.*
@@ -595,6 +598,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             showHeader = !videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.gesture("gesture_swipe_dismiss"),
+                            enterFromBottom = true,
                             backdrop =
                                 if (videoPlayer) Modifier else Modifier.ambientGlow(glow, background),
                         ) {
@@ -623,17 +627,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     } else {
                         AnimatedVisibility(
                             visible = playerOpen,
-                            // Rises from the mini player: slide most of the way with a
-                            // slight scale, so it reads as the dock expanding.
-                            enter =
-                                if (motion.animate)
-                                    fadeIn(motion.fade(160)) +
-                                        slideInVertically(motion.enter(320)) { it / 3 }
-                                else EnterTransition.None,
+                            // The panel itself rises from the bottom and flies back down
+                            // (Panel enterFromBottom), mirroring the swipe-away. Only a close
+                            // that bypasses the panel (Stop, a shortcut) fades it here.
+                            enter = EnterTransition.None,
                             exit =
-                                if (motion.animate)
-                                    fadeOut(motion.exit(200)) +
-                                        slideOutVertically(motion.exit(240)) { it / 3 }
+                                if (motion.animate) fadeOut(motion.exit(200))
                                 else ExitTransition.None,
                         ) {
                             PlaybackPanel(allowVideoSurface = false)
@@ -712,6 +711,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         config.optBoolean("thumbnails", true),
                         // The full-screen player and panels cover the Downloads tab.
                         navigationHidden = playerOpen || dialog.isNotEmpty(),
+                        downloads = vm.downloads,
                     ) {
                         dialog = ""
                         vm.playerOpen.value = false
@@ -770,25 +770,39 @@ internal fun Panel(
     headerBackTag: String = "",
     showHeader: Boolean = true,
     backdrop: Modifier = Modifier,
+    enterFromBottom: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val motion = LocalMotion.current
+    val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     // Full-screen panels follow a downward drag and fly off when released past the threshold.
-    val drag = remember { Animatable(0f) }
+    // A player panel also rises the same way it leaves: it starts one screen down, slightly
+    // shrunk, and settles into place, the exact reverse of the swipe-away.
+    val rise = full && enterFromBottom && motion.animate
+    val drag = remember { Animatable(if (rise) height else 0f) }
+    if (rise) LaunchedEffect(Unit) { drag.animateTo(0f, motion.enter(460)) }
     // Tell the app shell while a full panel is pulled away, so the page behind can show.
     if (full) {
         LaunchedEffect(drag) { snapshotFlow { drag.value != 0f }.collect { PanelPull.active.value = it } }
         DisposableEffect(Unit) { onDispose { PanelPull.active.value = false } }
     }
-    val motion = LocalMotion.current
-    val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
     val dismissThreshold = with(LocalDensity.current) { 96.dp.toPx() }
-    val flyOff: suspend kotlinx.coroutines.CoroutineScope.(Int) -> Unit = {
-        drag.animateTo(height, motion.exit(240))
+    var leaving by remember { mutableStateOf(false) }
+    val flyOff: suspend kotlinx.coroutines.CoroutineScope.(Int) -> Unit = flyOff@{
+        if (leaving) return@flyOff
+        leaving = true
+        drag.animateTo(height, motion.exit(300))
         close()
     }
+    val panelScope = rememberCoroutineScope()
+    // Every way out of a full panel (header button, system Back) leaves like the swipe does.
+    val animatedClose: () -> Unit = {
+        if (full && motion.animate) panelScope.launch { flyOff(1) } else if (!leaving) close()
+    }
+    if (full && enterFromBottom) BackHandler(enabled = motion.animate && !leaving) { animatedClose() }
     @Composable
-    fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
+    fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = if (full) animatedClose else close) {
         Column(modifier.testTag("panel-body")) {
             if (showHeader && title.isNotBlank())
                 Row(
@@ -2073,6 +2087,7 @@ internal fun PlayerPane(
     val tab by vm.tab.collectAsState()
     // In-sheet sub-pages (YouTube's quality/speed menus) keep one sheet and one Close.
     var page by remember { mutableStateOf("") }
+    val optionsMotion = LocalMotion.current
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = if (player.video) 840.dp else 480.dp).fillMaxWidth(),
@@ -2252,17 +2267,25 @@ internal fun PlayerPane(
                 player.video &&
                     !player.value.optBoolean("offline") &&
                     player.media?.optBoolean("live") != true
-            when (page) {
-                "speed" ->
-                    SubPage("Playback speed") {
-                        for (value in listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) Option(
-                            speedLabel(value),
-                            value == speed,
-                        ) {
-                            vm.command("speed", "value" to value)
-                            page = ""
-                        }
+            // Sub-pages slide in from the side and back, like a navigation stack, and the
+            // sheet's height eases to fit instead of jumping.
+            AnimatedContent(
+                page,
+                transitionSpec = {
+                    if (!optionsMotion.animate) EnterTransition.None togetherWith ExitTransition.None
+                    else {
+                        val forward = targetState.isNotEmpty()
+                        (fadeIn(optionsMotion.fade(180)) +
+                            slideInHorizontally(optionsMotion.enter(300)) { if (forward) it / 3 else -it / 3 }) togetherWith
+                            (fadeOut(optionsMotion.fade(120)) +
+                                slideOutHorizontally(optionsMotion.exit(220)) { if (forward) -it / 4 else it / 4 }) using
+                            SizeTransform(clip = false) { _, _ -> optionsMotion.spring() }
                     }
+                },
+                label = "player-options-page",
+            ) { shownPage ->
+            Column {
+            when (shownPage) {
                 "quality" ->
                     SubPage("Video quality") {
                         for (value in listOf("best", "1080", "720", "480", "360")) Option(
@@ -2308,9 +2331,8 @@ internal fun PlayerPane(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    ValueRow("Playback speed", value = speedLabel(speed), glyph = Glyph.Speed) {
-                        page = "speed"
-                    }
+                    // The common speeds are one tap away; the full list stays a row below.
+                    SpeedChips(speed, ::speedLabel) { vm.command("speed", "value" to it) }
                     if (qualityAvailable)
                         ValueRow(
                             "Video quality",
@@ -2401,6 +2423,8 @@ internal fun PlayerPane(
                         onDone()
                     }
                 }
+            }
+            }
             }
         }
     }

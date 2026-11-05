@@ -13,6 +13,8 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.togetherWith
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -50,7 +52,12 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         downloads.filter {
             it.optString("state") != "Complete" || it.optJSONObject("media") == null
         }
+    var query by rememberSaveable { mutableStateOf("") }
+    val shown = if (query.isBlank()) available else available.filter { offlineMatches(it, query) }
+    val shownPlaylists =
+        if (query.isBlank()) playlists else playlists.filter { offlinePlaylistMatches(it, query) }
     val selectedItems = available.filter { it.optString("id") in selectedIds }
+    val haptic = rememberGestureHaptic()
     fun clearSelection() {
         selectedIds = emptyList()
         selecting = false
@@ -71,7 +78,38 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         vm.effect("library_visible", "value" to !playerOpen)
         onDispose { vm.effect("library_visible", "value" to false) }
     }
+    val motion = LocalMotion.current
+    val selectionBar = 88.dp
+    Box(Modifier.fillMaxSize()) {
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        // While selecting, the filter row and actions give way to a selection header.
+        androidx.compose.animation.AnimatedContent(
+            selecting && section == "Offline",
+            transitionSpec = {
+                if (!motion.animate)
+                    androidx.compose.animation.EnterTransition.None togetherWith
+                        androidx.compose.animation.ExitTransition.None
+                else
+                    (androidx.compose.animation.fadeIn(motion.fade(180)) +
+                        androidx.compose.animation.slideInVertically(motion.enter(260)) { -it / 4 }) togetherWith
+                        androidx.compose.animation.fadeOut(motion.fade(120)) using
+                        androidx.compose.animation.SizeTransform(clip = false) { _, _ -> motion.spring() }
+            },
+            label = "offline-header",
+        ) { selectingNow ->
+        if (selectingNow) {
+            val allSelected = shown.isNotEmpty() && shown.all { it.optString("id") in selectedIds }
+            OfflineSelectionHeader(
+                selectedItems.size,
+                allSelected,
+                onClose = ::clearSelection,
+            ) {
+                val visibleIds = shown.map { it.optString("id") }
+                selectedIds =
+                    if (allSelected) selectedIds - visibleIds.toSet()
+                    else (selectedIds + visibleIds).distinct()
+            }
+        } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // No page heading: the tab label already names this screen. One filter
         // row carries the sections, with the two creation actions at its end.
         Row(
@@ -100,78 +138,49 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 }
             }
         }
+        if (section != "Transfers" && (available.isNotEmpty() || playlists.isNotEmpty()))
+            OfflineSearchField(
+                query,
+                { query = it },
+                if (section == "Playlists") "Search offline playlists" else "Search offline media",
+                Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
+            )
         // Labelled actions instead of two look-alike icons, plus what the library holds.
         FlowRow(
             Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (!selecting) {
-                Pill(
-                    "Save a link",
-                    Modifier.testTag("add-download").semantics {
-                        contentDescription = "Save a video or playlist offline"
-                    },
-                    glyph = Glyph.Link,
-                ) {
-                    add = true
-                }
-                Pill(
-                    "New playlist",
-                    Modifier.testTag("create-offline-playlist").semantics {
-                        contentDescription = "Create offline playlist"
-                    },
-                    glyph = Glyph.Plus,
-                ) {
-                    playlistItems = emptyList()
-                    newPlaylist = true
-                }
+            Pill(
+                "Save a link",
+                Modifier.testTag("add-download").semantics {
+                    contentDescription = "Save a video or playlist offline"
+                },
+                glyph = Glyph.Link,
+            ) {
+                add = true
             }
-            if (section == "Offline" && (selecting || available.isNotEmpty())) {
+            Pill(
+                "New playlist",
+                Modifier.testTag("create-offline-playlist").semantics {
+                    contentDescription = "Create offline playlist"
+                },
+                glyph = Glyph.Plus,
+            ) {
+                playlistItems = emptyList()
+                newPlaylist = true
+            }
+            if (section == "Offline" && available.isNotEmpty()) {
                 Pill(
-                    if (selecting) "Cancel selection" else "Select",
+                    "Select",
                     Modifier.testTag("offline-select"),
+                    style = PillStyle.Quiet,
+                    glyph = Glyph.Check,
                 ) {
-                    if (selecting) clearSelection() else selecting = true
+                    selecting = true
                 }
             }
         }
-        if (section == "Offline" && selecting) {
-            Column(Modifier.padding(horizontal = MediaTokens.textInset)) {
-                Text("${selectedItems.size} selected", Modifier.testTag("offline-selection-count"))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val allSelected = selectedItems.size == available.size
-                    Pill(
-                        if (allSelected) "Deselect all" else "Select all",
-                        Modifier.testTag("offline-select-all"),
-                    ) {
-                        selectedIds =
-                            if (allSelected) emptyList() else available.map { it.optString("id") }
-                    }
-                    Pill(
-                        "Add to playlist",
-                        Modifier.testTag("offline-add-selected"),
-                        enabled = selectedItems.isNotEmpty(),
-                    ) {
-                        addTo = selectedItems
-                    }
-                    Pill(
-                        "New playlist",
-                        Modifier.testTag("offline-playlist-selected"),
-                        enabled = selectedItems.isNotEmpty(),
-                    ) {
-                        playlistItems = offlinePlaylistMembers(selectedItems)
-                        newPlaylist = true
-                    }
-                    Pill(
-                        "Delete",
-                        Modifier.testTag("offline-delete-selected"),
-                        style = PillStyle.Destructive,
-                        enabled = selectedItems.isNotEmpty(),
-                    ) {
-                        removingSelected = selectedItems
-                    }
-                }
-            }
+        }
         }
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
@@ -180,17 +189,22 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     start = MediaTokens.textInset,
                     end = MediaTokens.textInset,
                     top = 4.dp,
-                    bottom = 4.dp + LocalBottomOverlay.current,
+                    bottom =
+                        4.dp + LocalBottomOverlay.current +
+                            if (selecting && section == "Offline") selectionBar else 0.dp,
                 ),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             when (section) {
                 "Offline" -> {
-                    if (available.isNotEmpty())
+                    if (available.isNotEmpty() && shown.isEmpty())
+                        item(key = "no-matches") { OfflineNoMatches(query.trim()) }
+                    if (shown.isNotEmpty())
                         item(key = "summary") {
-                            val stored = available.sumOf { it.optLong("bytes") }
+                            val stored = shown.sumOf { it.optLong("bytes") }
                             Text(
-                                (if (available.size == 1) "1 item" else "${available.size} items") +
+                                (if (query.isNotBlank()) "${shown.size} of ${available.size} · " else "") +
+                                (if (shown.size == 1) "1 item" else "${shown.size} items") +
                                     if (stored > 0) " · ${byteLabel(stored)} on this device" else "",
                                 Modifier.padding(horizontal = 6.dp, vertical = 4.dp).testTag("library-summary"),
                                 style = MaterialTheme.typography.bodySmall,
@@ -207,8 +221,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 Action("Save from a link") { add = true }
                             }
                         }
-                    items(available, key = { it.optString("id") }) { item ->
+                    items(shown, key = { it.optString("id") }) { item ->
                         val media = MediaCard(item.getJSONObject("media"))
+                        val chosen = item.optString("id") in selectedIds
                         MediaListRow(
                             item.optString("title"),
                             media.creator,
@@ -216,14 +231,37 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 contentDescription =
                                     if (selecting) "Select offline ${item.optString("title")}"
                                     else "Play offline ${item.optString("title")}"
-                                if (selecting) selected = item.optString("id") in selectedIds
+                                if (selecting) selected = chosen
+                            }.then(if (motion.animate) Modifier.animateItem() else Modifier),
+                            artwork = { art ->
+                                // Chosen covers ease back a little, like a pressed card.
+                                val inset by
+                                    androidx.compose.animation.core.animateFloatAsState(
+                                        if (selecting && chosen) 0.9f else 1f,
+                                        motion.spring(),
+                                        label = "offline-chosen",
+                                    )
+                                Artwork(
+                                    media,
+                                    art.graphicsLayer {
+                                        scaleX = inset
+                                        scaleY = inset
+                                    },
+                                    thumbnails,
+                                )
                             },
-                            artwork = { Artwork(media, it, thumbnails) },
                             square = item.optBoolean("audio"),
-                            highlighted = selecting && item.optString("id") in selectedIds,
+                            highlighted = selecting && chosen,
                             onClick = {
                                 if (selecting) toggleSelection(item.optString("id"))
                                 else vm.playOffline(item)
+                            },
+                            onLongClick = {
+                                haptic()
+                                if (!selecting) {
+                                    selecting = true
+                                    selectedIds = listOf(item.optString("id"))
+                                } else toggleSelection(item.optString("id"))
                             },
                             extra = {
                                 // What the copy is and how much space it takes, on its own line
@@ -255,12 +293,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                             },
                         ) {
                             if (selecting) {
-                                Checkbox(
-                                    checked = item.optString("id") in selectedIds,
-                                    onCheckedChange = { toggleSelection(item.optString("id")) },
-                                    modifier = Modifier.testTag("offline-checkbox-${item.optString("id")}").semantics {
-                                        contentDescription = "Select ${item.optString("title")}"
-                                    },
+                                SelectionMark(
+                                    chosen,
+                                    Modifier.testTag("offline-checkbox-${item.optString("id")}"),
                                 )
                             } else MediaIconButton(
                                 Glyph.More,
@@ -281,7 +316,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 "Download a playlist to save it here, or create your own.",
                             )
                         }
-                    items(playlists, key = { it.optString("id") }) { playlist ->
+                    else if (shownPlaylists.isEmpty())
+                        item(key = "no-matches") { OfflineNoMatches(query.trim()) }
+                    items(shownPlaylists, key = { it.optString("id") }) { playlist ->
                         val members = playlist.optJSONArray("items")?.objects() ?: emptyList()
                         val first = members.firstOrNull()
                         MediaListRow(
@@ -331,6 +368,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         TransferCard(
                             item,
                             thumbnails,
+                            modifier = if (motion.animate) Modifier.animateItem() else Modifier,
                             onToggle = {
                                 vm.effect("download_toggle", "id" to item.optString("id"))
                             },
@@ -340,6 +378,18 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 }
             }
         }
+    }
+    OfflineSelectionActions(
+        visible = selecting && section == "Offline",
+        enabled = selectedItems.isNotEmpty(),
+        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = LocalBottomOverlay.current + 8.dp),
+        onAdd = { addTo = selectedItems },
+        onNewPlaylist = {
+            playlistItems = offlinePlaylistMembers(selectedItems)
+            newPlaylist = true
+        },
+        onDelete = { removingSelected = selectedItems },
+    )
     }
     options?.let { item ->
         val media = MediaCard(item.getJSONObject("media"))

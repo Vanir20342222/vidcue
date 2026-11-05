@@ -94,6 +94,7 @@ internal fun VideoSurface(
                     PlayerChrome.trackSponsorMarks(this)
                     PlayerChrome.fitTransport(this)
                     PlayerChrome.bindCaptions(this)
+                    PlayerChrome.softenPresses(this)
                     VideoGestures.setPanelSwipe(
                         this,
                         object : VideoGestures.PanelSwipe {
@@ -113,6 +114,7 @@ internal fun VideoSurface(
             view.setControllerAnimationEnabled(
                 !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
             )
+            PlayerChrome.reducedMotion = reduced
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
             PlayerChrome.showSponsorMarks(view)
@@ -214,6 +216,11 @@ internal fun FocusedPlayer(
                 )
         }
     val scope = rememberCoroutineScope()
+    // The collapse buttons leave the way the swipe does: the panel glides down off screen.
+    val animatedMinimize: () -> Unit = {
+        if (panelDrag != null && motion.animate) scope.launch { panelDrag.dismiss(this, 1) }
+        else minimize()
+    }
     val openFullscreen = {
         context.startActivity(
             Intent(context, FullscreenActivity::class.java)
@@ -259,6 +266,8 @@ internal fun FocusedPlayer(
         val landscape = maxWidth > maxHeight * 1.25f
         val portraitVideoHeight =
             minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
+        // Details may open their description; Up next always keeps some room.
+        val portraitDetailsMax = ((maxHeight - portraitVideoHeight) * 0.68f).coerceAtLeast(120.dp)
         @Composable
         fun Controls(modifier: Modifier) {
             val preparing = player.preparing
@@ -353,7 +362,24 @@ internal fun FocusedPlayer(
                                 action = onOutput,
                             )
                         }
+                        val shareUrl = media?.optString("url").orEmpty()
+                        if (player.video && shareUrl.startsWith("http"))
+                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact) {
+                                val send =
+                                    Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_SUBJECT, player.title)
+                                        .putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, null)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
                         val sleepLeft = rememberSleepLeft(player)
+                        // Video keeps the row short: the timer lives in ⋮ until it is running.
+                        if (!player.video || sleepLeft > 0)
                         PlayerAction(
                             Glyph.Sleep,
                             if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
@@ -383,13 +409,33 @@ internal fun FocusedPlayer(
                     ),
                 verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
             ) {
+                if (player.video) {
+                    val creator =
+                        player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        }
+                    WatchDetails(
+                        title = player.title,
+                        media = player.media,
+                        creator = creator,
+                        showCreator =
+                            creator.isNotBlank() &&
+                                (mobile.optBoolean("show_channel", true) ||
+                                    player.media?.optBoolean("live") == true),
+                        mobile = mobile,
+                        thumbnails = config.optBoolean("thumbnails", true),
+                        headerModifier =
+                            Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
+                        error =
+                            player.value.optString("error").takeUnless { it.isBlank() || it == "null" },
+                    ) {
+                        ActionRow()
+                    }
+                    // Breathing room above Up next.
+                    Spacer(Modifier.height(4.dp))
+                } else
                 Column(
-                    Modifier.fillMaxWidth()
-                        .then(
-                            if (player.video)
-                                Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss)
-                            else Modifier
-                        ),
+                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
                 ) {
                     // Music keeps one line (long titles scroll) so the controls below never move
@@ -444,11 +490,11 @@ internal fun FocusedPlayer(
                             )
                         }
                 }
-                player.value
-                    .optString("error")
-                    .takeUnless { it.isBlank() || it == "null" }
-                    ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                if (player.video) ActionRow()
+                if (!player.video)
+                    player.value
+                        .optString("error")
+                        .takeUnless { it.isBlank() || it == "null" }
+                        ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 if (!player.video)
                     // Fixed height: a track change (no duration yet) or a live station must not
                     // shrink this slot and shift the title above it.
@@ -503,10 +549,20 @@ internal fun FocusedPlayer(
                     Box(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
                             .aspectRatio(16f / 9f)
+                            // Soft corners: full bleed at the top edge in portrait, a rounded
+                            // pane beside the details in landscape.
+                            .clip(
+                                if (landscape) androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                                else
+                                    androidx.compose.foundation.shape.RoundedCornerShape(
+                                        bottomStart = 16.dp,
+                                        bottomEnd = 16.dp,
+                                    )
+                            )
                     ) {
                         VideoSurface(
                             Modifier.fillMaxSize(),
-                            onCollapse = minimize,
+                            onCollapse = animatedMinimize,
                             onSettings = onMore,
                             onPanelDrag = videoDrag,
                             onPanelEnd = videoEnd,
@@ -541,7 +597,7 @@ internal fun FocusedPlayer(
                                             Glyph.Down,
                                             "Minimize player",
                                             "panel-close",
-                                            minimize,
+                                            animatedMinimize,
                                         )
                                     }
                                 }
@@ -590,7 +646,7 @@ internal fun FocusedPlayer(
             } else {
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Art(Modifier.fillMaxWidth().height(portraitVideoHeight))
-                    Controls(Modifier.fillMaxWidth())
+                    Controls(Modifier.fillMaxWidth().heightIn(max = portraitDetailsMax))
                     UpNext(
                         queue,
                         upNext,
