@@ -321,7 +321,7 @@ internal fun FocusedPlayer(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         val compact = !player.video
-                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
+                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
                         if (canSave && media != null) {
@@ -723,8 +723,8 @@ internal fun PlayerAction(
     val source = remember { MutableInteractionSource() }
     val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     if (compact) {
-        // Music: an evenly spaced icon row with small captions, like a transport's second line.
-        Column(
+        // Music: an evenly spaced, icon-only row; the accessible name carries the label.
+        Box(
             modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
@@ -732,21 +732,10 @@ internal fun PlayerAction(
                 .clip(MediaTokens.medium)
                 .clickable(source, SoftIndication, role = Role.Button, onClick = action)
                 .semantics { contentDescription = description }
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(6.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
-            Text(
-                label,
-                Modifier.clearAndSetSemantics {},
-                style =
-                    MaterialTheme.typography.labelSmall.merge(
-                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
-                    ),
-                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+            MediaIcon(glyph, Modifier.size(24.dp), if (active) accent else LocalContentColor.current, filled = active)
         }
         return
     }
