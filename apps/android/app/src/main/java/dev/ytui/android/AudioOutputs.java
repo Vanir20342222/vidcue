@@ -1,10 +1,7 @@
 package dev.ytui.android;
 
-import android.media.AudioAttributes;
-import android.media.AudioDeviceAttributes;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
-import android.os.Build;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -73,25 +70,21 @@ final class AudioOutputs {
     return null;
   }
 
-  /** The chosen device while connected; otherwise what the system routes media to. */
+  /**
+   * The chosen device while connected; otherwise the output media most likely uses. Only public
+   * API is used here: the routing query for media (getAudioDevicesForAttributes) is not in the
+   * public SDK this build compiles against, so Bluetooth is judged by whether A2DP is on.
+   */
+  @SuppressWarnings("deprecation")
   static AudioDeviceInfo active(AudioManager audio, AudioDeviceInfo preferred) {
     List<AudioDeviceInfo> devices = list(audio);
     if (preferred != null)
       for (AudioDeviceInfo device : devices) if (device.getId() == preferred.getId()) return device;
-    if (Build.VERSION.SDK_INT >= 33) {
-      AudioAttributes media =
-          new AudioAttributes.Builder()
-              .setUsage(AudioAttributes.USAGE_MEDIA)
-              .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-              .build();
-      for (AudioDeviceAttributes routed : audio.getAudioDevicesForAttributes(media))
-        for (AudioDeviceInfo device : devices)
-          if (device.getType() == routed.getType()
-              && (routed.getAddress().isEmpty() || routed.getAddress().equals(device.getAddress())))
-            return device;
-    }
-    // Older releases: media follows the newest accessory, which is nearly always one of these.
-    for (String kind : new String[] {"bluetooth", "wired", "usb", "speaker"})
+    String[] order =
+        audio.isBluetoothA2dpOn()
+            ? new String[] {"bluetooth", "wired", "usb", "speaker"}
+            : new String[] {"wired", "usb", "speaker"};
+    for (String kind : order)
       for (AudioDeviceInfo device : devices) if (kind(device).equals(kind)) return device;
     return null;
   }

@@ -17,9 +17,11 @@ Android 14+, the settings media-output panel before that, then Bluetooth setting
 devices that are not connected yet.
 
 `PlaybackService` registers an `AudioDeviceCallback` and publishes `output`
-(`id`, `kind`, `name`, `automatic`, `devices`) in the player snapshot. The active route comes from
-`AudioManager.getAudioDevicesForAttributes` on Android 13+; older releases use a heuristic
-(Bluetooth, then wired, USB, speaker). No new permission is needed.
+(`id`, `kind`, `name`, `automatic`, `devices`) in the player snapshot. The active route is
+judged with public API only: Bluetooth is "active" while `AudioManager.isBluetoothA2dpOn()` is
+true, otherwise wired, USB and then the speaker are tried in that order. No new permission is
+needed. `getAudioDevicesForAttributes` was dropped because CI's compile SDK does not expose it
+(first CI run failed on it).
 
 ## Evidence
 | Check | Command or procedure | Result | Level |
@@ -27,9 +29,10 @@ devices that are not connected yet.
 | Glyph | Bluetooth rune rendered as SVG next to the other tray icons | Same stroke and height | visual mock |
 
 ## Not verified and limits
-- No Android SDK in the session: not compiled, linted, or run on an emulator or device.
-- Route detection before Android 13 is a guess and can be wrong when several accessories are
-  connected. Bluetooth product names depend on the vendor/OS and fall back to "Bluetooth device".
+- No Android SDK in the session: not compiled, linted, or run on an emulator or device. The first
+  CI compile caught the removed API; the fix is compiled only by the next CI run.
+- Route detection is approximate. It cannot tell which of several connected wired or USB outputs
+  is in use, and it treats any active Bluetooth A2DP route as the Bluetooth output. Bluetooth product names depend on the vendor/OS and fall back to "Bluetooth device".
 - Not yet in the fullscreen video options or the "Playback options" sheet.
 - Needs a physical check with a Bluetooth headset: tint on connect/disconnect, switching to the
   speaker and back, and the system switcher on the Galaxy Tab S9.
