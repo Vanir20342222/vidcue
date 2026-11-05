@@ -113,11 +113,8 @@ internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalett
     val center = Offset(size.width / 2f, size.height / 2f) + beatShake(levels, 4.dp.toPx())
     val kick = levels.kick
     val energy = levels.energy
-    val cover = minDimension * 0.28f
-    val outer = minDimension * 0.5f
-    // The cover itself swells by up to 8%; the ring stays just outside it.
-    val inner = cover * (1f + 0.08f * kick + 0.05f * energy) + 8.dp.toPx()
-    val reach = outer - inner - 2.dp.toPx()
+    val (inner, outer, stroke, reach) = orbitGeometry(minDimension, density, kick, energy)
+    if (outer <= 0f) return
     drawCircle(
         Brush.radialGradient(
             listOf(
@@ -141,8 +138,7 @@ internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalett
             style = Stroke(width = (3f - 2f * t).dp.toPx()),
         )
     }
-    val bars = 72
-    val stroke = (TAU * inner / bars) * 0.6f
+    val bars = ORBIT_BARS
     for (i in 0 until bars) {
         val angle = TAU / 4f + i.toFloat() / bars * TAU + levels.spin
         val height = if (i <= bars / 2) i / (bars / 2f) else (bars - i) / (bars / 2f)
@@ -167,7 +163,7 @@ internal fun DrawScope.drawLiquidOrb(levels: LiquidLevels, palette: LiquidPalett
     }
     drawCircle(
         lerp(palette.at(0.5f), Color.White, 0.3f * kick).copy(alpha = 0.55f + 0.4f * kick),
-        radius = inner - 4.dp.toPx(),
+        radius = (inner - 4.dp.toPx()).coerceAtLeast(0f),
         center = center,
         style = Stroke(width = (1.5f + 2.5f * kick).dp.toPx()),
     )
