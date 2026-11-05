@@ -10,6 +10,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use vidcue_core::*;
 
+/// HLS/DASH fragments fetched at once by external yt-dlp when downloads are uncapped.
+const CONCURRENT_FRAGMENTS: u32 = 4;
 pub fn args(job: &Job, config: &Config, cookie_file: Option<&Path>) -> Result<Vec<String>> {
     let o = &job.options;
     o.validate()?;
@@ -129,6 +131,13 @@ pub fn args(job: &Job, config: &Config, cookie_file: Option<&Path>) -> Result<Ve
     let rate = schedule::rate_bytes(o.bandwidth_kib, o.global_bandwidth_kib, config.concurrency);
     if rate > 0 {
         args.extend(["--limit-rate".into(), rate.to_string()]);
+    } else {
+        // yt-dlp applies --limit-rate per fragment thread, so parallel fragments
+        // are used only when no bandwidth cap is set.
+        args.extend([
+            "--concurrent-fragments".into(),
+            CONCURRENT_FRAGMENTS.to_string(),
+        ]);
     }
     if o.skip_duplicates {
         args.push("--no-overwrites".into());
@@ -622,6 +631,7 @@ mod tests {
         );
         let a = args(&job, &Config::default(), None).unwrap();
         assert!(a.contains(&"--ignore-config".into()));
+        assert!(a.windows(2).any(|w| w == ["--concurrent-fragments", "4"]));
         assert!(a.windows(2).any(|w| w == ["--retries", "0"]));
         assert!(a.iter().any(|v| v.starts_with("after_move:")));
         let mut job = job;
@@ -632,6 +642,7 @@ mod tests {
         };
         let a = args(&job, &c, None).unwrap();
         assert!(a.windows(2).any(|w| w == ["--limit-rate", "64"]));
+        assert!(!a.contains(&"--concurrent-fragments".into()));
     }
     #[test]
     fn progress_handles_unknown_totals_and_permanent_errors() {

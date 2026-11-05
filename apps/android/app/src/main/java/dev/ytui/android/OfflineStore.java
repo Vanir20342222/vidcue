@@ -89,7 +89,9 @@ public final class OfflineStore {
             return new DefaultDownloaderFactory(
                     new CacheDataSource.Factory()
                         .setCache(cache)
-                        .setUpstreamDataSourceFactory(http),
+                        // Bounded CDN chunks avoid YouTube's playback-rate pacing of a
+                        // single open-ended progressive request.
+                        .setUpstreamDataSourceFactory(ChunkedRangeDataSource.factory(http)),
                     IO)
                 .createDownloader(request);
           };
