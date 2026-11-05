@@ -756,6 +756,7 @@ internal fun Panel(
     headerBackTag: String = "",
     showHeader: Boolean = true,
     backdrop: Modifier = Modifier,
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     // Full-screen panels follow a downward drag and fly off when released past the threshold.
@@ -808,6 +809,7 @@ internal fun Panel(
                             else MaterialTheme.typography.titleLarge,
                         textAlign = if (full) TextAlign.Center else TextAlign.Start,
                     )
+                    actions()
                     if (full) Spacer(Modifier.size(48.dp))
                     // Sub-pages go back one level; only the top page and sheets close.
                     if (!full && !page) SheetClose(dismiss)
@@ -3574,7 +3576,57 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
     val showEditor = editing
     // Between one-second snapshots the playhead is extrapolated per frame, so the sweep glides.
     val smooth = rememberSmoothPosition(player)
-    Panel("Lyrics", close, scroll = false) {
+    val source =
+        stored.optJSONObject("track")?.let { "Saved on this device" }
+            ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
+    val timed = lines.any { !it.isNull("at_ms") }
+    var menu by remember { mutableStateOf(false) }
+    Panel(
+        "Lyrics",
+        close,
+        scroll = false,
+        actions = {
+            // Settings live behind ⋮ so the panel shows only the song and its lyrics.
+            if (lines.isNotEmpty() || editing)
+                Box {
+                    MediaIconButton(Glyph.More, "Lyrics options", "lyrics-menu") { menu = true }
+                    MediaMenu(menu, { menu = false }) {
+                        if (lines.isNotEmpty() && source != null)
+                            Text(
+                                source,
+                                Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .testTag("lyrics-source"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        if (timed)
+                            MediaMenuItem(
+                                if (follow) "Stop auto-scroll" else "Auto-scroll with the song",
+                                if (follow) Glyph.Stop else Glyph.Down,
+                                Modifier.testTag("lyrics-follow"),
+                            ) {
+                                follow = !follow
+                                menu = false
+                            }
+                        MediaMenuItem(
+                            if (editing) "Hide editor" else "Edit or find lyrics",
+                            if (editing) Glyph.Up else Glyph.Edit,
+                            Modifier.testTag("lyrics-editor"),
+                        ) {
+                            editing = !editing
+                            menu = false
+                        }
+                        if (stored.optJSONObject("track") != null) {
+                            MenuRule()
+                            MediaMenuItem("Remove saved lyrics", Glyph.Close, destructive = true) {
+                                vm.lyricRemove(media)
+                                menu = false
+                            }
+                        }
+                    }
+                }
+        },
+    ) {
         if (media.length() > 0)
             Column(Modifier.padding(horizontal = 8.dp)) {
                 Text(
@@ -3593,18 +3645,6 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                 )
             }
         else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
-        val source =
-            stored.optJSONObject("track")?.let { "Saved on this device" }
-                ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
-        if (lines.isNotEmpty() && source != null)
-            Text(
-                source,
-                Modifier.padding(horizontal = 8.dp).testTag("lyrics-source"),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        if (lines.isNotEmpty() && lines.any { !it.isNull("at_ms") })
-            SettingToggle("Follow playing line", follow) { follow = it }
         if (lines.isEmpty() && searching && !editing)
             Box(
                 Modifier.fillMaxWidth().padding(32.dp).testTag("lyrics-loading"),
@@ -3634,12 +3674,12 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item {
-                if (lines.isNotEmpty() || editing)
+                if (editing)
                     SheetAction(
-                        text = { Text(if (editing) "Hide editor" else "Edit or find lyrics") },
+                        text = { Text("Hide editor") },
                         leadingIcon = {
                             MediaIcon(
-                                if (editing) Glyph.Up else Glyph.Edit,
+                                Glyph.Up,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         },
