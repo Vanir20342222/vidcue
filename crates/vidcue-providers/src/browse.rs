@@ -918,6 +918,28 @@ fn channel_avatar(value: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// A card for a broadcast that is on air now. Classic cards mark it with a
+/// LIVE_NOW badge or a LIVE time-status overlay, lockup cards with a LIVE
+/// thumbnail badge. Upcoming premieres ("UPCOMING") and archived broadcasts (a
+/// duration) carry other styles and stay ordinary videos. Only style fields
+/// count, so a title or description that says "LIVE" never marks a card.
+fn live_now(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(name, child)| {
+            (matches!(name.as_str(), "style" | "badgeStyle")
+                && matches!(
+                    child.as_str(),
+                    Some(
+                        "BADGE_STYLE_TYPE_LIVE_NOW" | "LIVE" | "THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE"
+                    )
+                ))
+                || live_now(child)
+        }),
+        Value::Array(items) => items.iter().any(live_now),
+        _ => false,
+    }
+}
+
 /// Inspect content badges, not titles/creator text, verification badges or
 /// membership buttons in menus. Classic and lockup cards use different styles.
 fn members_only(value: &Value) -> bool {
@@ -1027,6 +1049,7 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
         },
         browse_id: collection.then(|| format!("VL{id}")),
         channel_thumbnail: channel_avatar(r),
+        live: !collection && live_now(r),
         ..Default::default()
     })
 }
@@ -1216,7 +1239,7 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
     } else {
         return None;
     }
-    item.live = r.to_string().contains("BADGE_STYLE_TYPE_LIVE_NOW");
+    item.live = !item.collection() && live_now(r);
     Some(item)
 }
 pub fn parse_page(data: &Value, music: bool) -> Page {
@@ -1253,11 +1276,15 @@ pub fn parse_page(data: &Value, music: bool) -> Page {
             hidden.insert(id.to_owned());
             return;
         }
-        if let Some(mut item) = item
-            && seen.insert(item.id.clone())
-        {
+        let Some(mut item) = item else { return };
+        if seen.insert(item.id.clone()) {
             item.section = section.into();
             page.items.push(item);
+        } else if item.live
+            && let Some(first) = page.items.iter_mut().find(|first| first.id == item.id)
+        {
+            // A duplicate elsewhere on the page may be the only card with the LIVE badge.
+            first.live = true;
         }
     }
     fn walk(
@@ -2293,6 +2320,72 @@ mod category_tests {
             );
             assert!(item.thumbnails.iter().all(|t| !t.url.contains("ggpht")));
         }
+    }
+
+    #[test]
+    fn current_broadcast_cards_are_live_but_premieres_and_archives_are_not() {
+        let badge = |style: &str, text: &str| {
+            json!({"thumbnailOverlayBadgeViewModel":{"thumbnailBadges":[
+                {"thumbnailBadgeViewModel":{"text":text,"badgeStyle":style}}
+            ]}})
+        };
+        let lockup = |id: &str, kind: &str, title: &str, overlays: Value| {
+            json!({"lockupViewModel":{
+                "contentId":id, "contentType":kind,
+                "contentImage":{"thumbnailViewModel":{"overlays":overlays}},
+                "metadata":{"lockupMetadataViewModel":{"title":{"content":title}}}
+            }})
+        };
+        let classic = |id: &str, title: &str, extra: Value| {
+            let mut card = json!({"videoId":id,"title":{"runs":[{"text":title}]}});
+            card.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            json!({"videoRenderer":card})
+        };
+        let page = parse_page(
+            &json!({"contents":[
+                lockup("aaaaaaaaaaa", "LOCKUP_CONTENT_TYPE_VIDEO", "Lockup on air",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")])),
+                lockup("bbbbbbbbbbb", "LOCKUP_CONTENT_TYPE_VIDEO", "LIVE in the title only",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT", "1:02:03")])),
+                lockup("ccccccccccc", "LOCKUP_CONTENT_TYPE_VIDEO", "Lockup premiere",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_DEFAULT", "UPCOMING")])),
+                lockup("PLsynthetic", "LOCKUP_CONTENT_TYPE_PLAYLIST", "Playlist",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")])),
+                classic("ddddddddddd", "Classic badge", json!({"badges":[
+                    {"metadataBadgeRenderer":{"style":"BADGE_STYLE_TYPE_LIVE_NOW","label":"LIVE"}}
+                ]})),
+                classic("eeeeeeeeeee", "Classic overlay", json!({"thumbnailOverlays":[
+                    {"thumbnailOverlayTimeStatusRenderer":{"style":"LIVE","text":{"simpleText":"LIVE"}}}
+                ]})),
+                classic("fffffffffff", "Classic premiere", json!({"thumbnailOverlays":[
+                    {"thumbnailOverlayTimeStatusRenderer":{"style":"UPCOMING"}}
+                ]})),
+                classic("ggggggggggg", "Unbadged first", json!({})),
+                lockup("ggggggggggg", "LOCKUP_CONTENT_TYPE_VIDEO", "Badged duplicate",
+                    json!([badge("THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE", "LIVE")]))
+            ]}),
+            false,
+        );
+        let live = page
+            .items
+            .iter()
+            .map(|item| (item.id.as_str(), item.live))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            live,
+            [
+                ("aaaaaaaaaaa", true),
+                ("bbbbbbbbbbb", false),
+                ("ccccccccccc", false),
+                ("PLsynthetic", false),
+                ("ddddddddddd", true),
+                ("eeeeeeeeeee", true),
+                ("fffffffffff", false),
+                ("ggggggggggg", true),
+            ]
+        );
     }
 
     #[test]
