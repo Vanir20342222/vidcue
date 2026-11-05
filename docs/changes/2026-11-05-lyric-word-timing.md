@@ -30,7 +30,7 @@ only in imported or saved enhanced LRC files and the rare LRCLIB entries that ca
 | Check | Command or procedure | Result | Level |
 | --- | --- | --- | --- |
 | Enhanced LRC parse, offsets, stray `<`, plain lines unchanged | `cargo test -p vidcue-providers --locked lyrics` | 11 passed | unit |
-| Workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked` | see PR | unit |
+| Workspace | `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo test --workspace --locked` | All passed (rustc 1.99.1) | unit |
 | Android sweep and LRC rebuild | `LyricSweepTest`, `LyricLrcTest` | Not run: no Android SDK in the agent container | unit (pending CI) |
 
 ## Not verified and limits
