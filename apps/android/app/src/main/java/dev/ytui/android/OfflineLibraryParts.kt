@@ -89,12 +89,20 @@ internal fun foldForSearch(text: String): String =
 
 /** Library filter: a calm rounded field with a clear button, filtering as you type. */
 @Composable
-internal fun OfflineSearchField(query: String, onQuery: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier) {
+internal fun OfflineSearchField(
+    query: String,
+    onQuery: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    onFocusChange: (Boolean) -> Unit = {},
+) {
     val colors = MaterialTheme.colorScheme
     val motion = LocalMotion.current
     val focus = LocalFocusManager.current
     val source = remember { MutableInteractionSource() }
     val focused by source.collectIsFocusedAsState()
+    val focusChanged by rememberUpdatedState(onFocusChange)
+    LaunchedEffect(focused) { focusChanged(focused) }
     val edge by
         animateColorAsState(
             if (focused) colors.onSurface.copy(alpha = 0.45f) else colors.onSurface.copy(alpha = 0f),

@@ -370,6 +370,28 @@ internal class YtuiViewModel(
     val queue = MutableStateFlow<List<MediaCard>>(emptyList())
     val upNext = MutableStateFlow(UpNextState())
     private var upNextJob: Job? = null
+
+    /**
+     * Watch-page extras for the playing video (date, likes, subscribers), keyed by its URL. The
+     * fast playback path does not return them; one `next` request after the video starts does.
+     */
+    val watchDetails = MutableStateFlow<Pair<String, JSONObject>?>(null)
+    private var watchDetailsJob: Job? = null
+
+    fun loadWatchDetails(media: JSONObject?) {
+        val url = media?.optString("url").orEmpty()
+        if (url.isBlank() || watchDetails.value?.first == url) return
+        watchDetailsJob?.cancel()
+        watchDetails.value = null
+        if (MediaBridge.offlineUi || player.value.value.optBoolean("offline")) return
+        watchDetailsJob =
+            viewModelScope.launch {
+                val found =
+                    runCatching { RustRpc.objectCall("watch_details", "media" to media) }.getOrNull()
+                        ?: return@launch
+                watchDetails.value = url to found
+            }
+    }
     private var shownRelated: Pair<String, List<MediaCard>>? = null
     val recent = MutableStateFlow<List<MediaCard>>(emptyList())
     val status = MutableStateFlow("Ready")

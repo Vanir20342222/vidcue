@@ -12,6 +12,7 @@ pub mod paths;
 pub mod radio;
 pub mod sponsorblock;
 pub mod watch;
+pub mod watch_details;
 pub use diagnostic::diagnostic;
 #[cfg(test)]
 mod test_http;
