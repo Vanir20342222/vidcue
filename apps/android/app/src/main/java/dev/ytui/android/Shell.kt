@@ -214,6 +214,9 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
             )
         // Downloads catches covers flying in from Save, and bounces when one lands.
         val bounce = remember { Animatable(1f) }
+        // Once this tab leaves the screen (the keyboard hides the phone dock), covers must not
+        // aim at its stale position; they land on the temporary shortcut instead.
+        if (index == 0) DisposableEffect(Unit) { onDispose { DownloadFlight.target = null } }
         if (index == 0)
             LaunchedEffect(DownloadFlight.landed) {
                 if (DownloadFlight.landed > 0 && motion.animate) {

@@ -703,7 +703,16 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             }
                         }
                 }
-                if (!onboarding && !fullscreen) DownloadFlightHost(config.optBoolean("thumbnails", true))
+                if (!onboarding && !fullscreen)
+                    DownloadFlightHost(
+                        config.optBoolean("thumbnails", true),
+                        // The full-screen player and panels cover the Downloads tab.
+                        navigationHidden = playerOpen || dialog.isNotEmpty(),
+                    ) {
+                        dialog = ""
+                        vm.playerOpen.value = false
+                        selectTab(0)
+                    }
                 if (!onboarding && !fullscreen)
                     NoticeHost(
                         vm,
