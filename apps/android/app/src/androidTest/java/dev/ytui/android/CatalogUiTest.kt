@@ -912,7 +912,8 @@ class CatalogUiTest {
                 compose.onNodeWithTag("menu-button").performClick()
                 compose.onNodeWithText("Sleep timer").performClick()
                 compose.onNodeWithText("15 minutes").assertIsDisplayed()
-                compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+                // No timer runs here, so there is nothing to cancel.
+                compose.onNodeWithText("Cancel timer").assertDoesNotExist()
                 captureSettled("restyle-fidelity-$profile-sleep.png")
                 compose.onNodeWithContentDescription("Close").performClick()
                 compose.onNodeWithTag("menu-button").performClick()
@@ -1403,19 +1404,20 @@ class CatalogUiTest {
             frames(240)
             compose.onNodeWithText("Sleep timer").performClick()
             frames(600)
-            compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+            // "Cancel timer" only shows while a timer runs; the first choice marks the sheet.
+            compose.onNodeWithText("15 minutes").assertIsDisplayed()
             mark("close timer sheet")
             compose.onNodeWithContentDescription("Close").performClick()
             frames(600)
             android.util.Log.e(
                 "YTUI-DIAG",
-                "timer sheet after Close: Cancel timer nodes=" +
-                    compose.onAllNodesWithText("Cancel timer").fetchSemanticsNodes().map { it.boundsInRoot } +
+                "timer sheet after Close: 15 minutes nodes=" +
+                    compose.onAllNodesWithText("15 minutes").fetchSemanticsNodes().map { it.boundsInRoot } +
                     " Close nodes=" +
                     compose.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().size,
             )
             MediaRuntimeTest.capture("restyle-fidelity-timer-closed.png")
-            compose.onNodeWithText("Cancel timer").assertDoesNotExist()
+            compose.onNodeWithText("15 minutes").assertDoesNotExist()
             mark("timer dismissed")
             Assert.assertTrue(
                 "Recording must still cover the final closed sheet state",
