@@ -529,6 +529,150 @@ fn manifest_only_direct_response_keeps_necessary_hls_without_watch_refetch() {
 }
 
 #[test]
+fn live_playback_uses_rolling_hls_for_video_audio_and_reconnects() {
+    use serde_json::json;
+    for fresh in [false, true] {
+        for selector in [FORMAT, "bestaudio/best"] {
+            // Direct URLs are deliberately offered too: live playback must use
+            // HLS so Media3, rather than a progressive source, refreshes it.
+            let mut live: serde_json::Value = serde_json::from_str(include_str!(
+                "fixtures/sites/youtube-direct-indexed/player.json"
+            ))
+            .unwrap();
+            live["videoDetails"] = json!({"videoId":"BaW_jenozKc", "title":"Live fixture",
+                "isLive":true, "isLiveContent":true, "lengthSeconds":"0"});
+            live["streamingData"]["hlsManifestUrl"] =
+                "https://manifest.test/hls/master.m3u8".into();
+            let (_directory, proxy) = recovery_proxy(live.clone(), live, json!({}), 200);
+            let dl = YoutubeDl::with_options(
+                YoutubeOptions {
+                    no_playlist: true,
+                    playback_format: Some(selector.into()),
+                    playback_skip_direct: fresh,
+                    playback_visitor_data: Some("synthetic-visitor".into()),
+                    js_runtime: Some("ytui-android-js".into()),
+                    ..Default::default()
+                },
+                HttpOptions {
+                    proxy: Some(proxy.url.clone()),
+                    no_check_certificates: true,
+                    socket_timeout: Some(2.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let info = dl.extract_info_with_format(VIDEO, Some(selector)).unwrap();
+            let data = serde_json::to_value(&info).unwrap();
+            assert_eq!(data["live_status"], "is_live");
+            assert_eq!(data["is_live"], true);
+            assert_eq!(info.height, Some(720));
+            assert_eq!(info.protocol.as_deref(), Some("m3u8_native"));
+            assert_ne!(info.acodec.as_deref(), Some("none"));
+            assert!(info.requested_formats.is_empty());
+            assert!(info.fragments.is_empty());
+            let requests = proxy.requests.lock().unwrap();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| r.contains("manifest.test"))
+                    .count(),
+                1,
+                "fresh={fresh}, selector={selector}, requests={requests:?}"
+            );
+            assert!(
+                requests
+                    .iter()
+                    .all(|r| !r.contains("/itag/") && !r.contains("media.test"))
+            );
+            if fresh {
+                assert!(requests[0].contains("/watch?"));
+            } else {
+                assert_eq!(requests.len(), 2, "requests: {requests:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn upcoming_and_post_live_videos_remain_unplayable() {
+    use serde_json::json;
+    for flag in ["isUpcoming", "isPostLiveDvr"] {
+        let mut player = json!({"playabilityStatus":{"status":"OK"},
+            "videoDetails":{"videoId":"BaW_jenozKc","title":"Not on air","isLiveContent":true},
+            "streamingData":{"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}});
+        player["videoDetails"][flag] = true.into();
+        let (_directory, proxy) = recovery_proxy(player.clone(), player, json!({}), 200);
+        let error = downloader(&proxy, Some(FORMAT))
+            .extract_info_with_format(VIDEO, Some(FORMAT))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("upcoming and post-live"),
+            "{error}"
+        );
+        assert!(
+            proxy
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|r| !r.contains("manifest.test"))
+        );
+    }
+}
+
+#[test]
+fn live_download_extraction_still_rejects_rolling_streams() {
+    use serde_json::json;
+    let live = json!({"playabilityStatus":{"status":"OK"},
+        "videoDetails":{"videoId":"BaW_jenozKc","title":"Live fixture", "isLive":true},
+        "streamingData":{"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}});
+    let (_directory, proxy) = recovery_proxy(live.clone(), live, json!({}), 200);
+    let error = downloader(&proxy, None)
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("live, upcoming and post-live"),
+        "{error}"
+    );
+    assert!(
+        proxy
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| !r.contains("manifest.test"))
+    );
+}
+
+#[test]
+fn live_playback_recovers_a_missing_manifest_from_an_alternative_client() {
+    use serde_json::json;
+    let live = json!({"playabilityStatus":{"status":"OK"},
+        "videoDetails":{"videoId":"BaW_jenozKc","title":"Live fixture",
+            "isLive":true,"isLiveContent":true},"streamingData":{}});
+    let mut fallback = live.clone();
+    fallback["streamingData"]["hlsManifestUrl"] = "https://manifest.test/hls/master.m3u8".into();
+    let (_directory, proxy) = recovery_proxy(live, fallback, json!({}), 200);
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    let data = serde_json::to_value(&info).unwrap();
+    assert_eq!(data["live_status"], "is_live");
+    assert_eq!(info.protocol.as_deref(), Some("m3u8_native"));
+    assert_eq!(info.height, Some(720));
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    let requests = proxy.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.contains("manifest.test"))
+            .count(),
+        1
+    );
+    assert!(requests.iter().all(|r| !r.contains("/itag/")));
+}
+
+#[test]
 fn optional_manifest_is_required_when_it_can_improve_a_lower_direct_resolution() {
     let proxy = site_proxy::SiteProxy::start("youtube-direct-hls-quality");
     let info = downloader(&proxy, Some(FORMAT))

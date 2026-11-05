@@ -1752,6 +1752,33 @@ mod hls_playback_tests {
     }
 
     #[test]
+    fn live_hls_reaches_android_as_live_with_refreshable_playlist_urls() {
+        for field in ["is_live", "live_status"] {
+            let mut data = muxed();
+            data[field] = if field == "is_live" {
+                json!(true)
+            } else {
+                json!("is_live")
+            };
+            for audio in [false, true] {
+                let value = stream(&data, audio).unwrap();
+                assert_eq!(value["live"], true);
+                assert_eq!(value["url"], data["url"]);
+                assert!(value["audio_url"].is_null());
+                assert!(value["dash_manifest"].is_null());
+                if !audio {
+                    assert!(
+                        value["hls_master"]
+                            .as_str()
+                            .unwrap()
+                            .ends_with("https://media.test/selected.m3u8?x=1&y=2\n")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn video_only_hls_retains_codec_preparation_and_separate_indexed_audio() {
         let mut video = muxed();
         video["acodec"] = "none".into();
