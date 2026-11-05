@@ -431,7 +431,7 @@ private fun PageTitle(title: String, body: String, center: Boolean = false, firs
 /** Small tinted badge shown above a page title. */
 @Composable
 private fun PageBadge(glyph: Glyph) {
-    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     Staggered(0) {
         Box(
             Modifier.size(56.dp).background(brand.copy(alpha = 0.16f), CircleShape),
@@ -533,7 +533,7 @@ private fun WelcomeText(center: Boolean) {
 @Composable
 private fun WelcomeHero(background: Color, size: Dp) {
     val reduced = LocalReducedMotion.current
-    val brand = mediaBrand(background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, background)
     val pop = remember { Animatable(if (reduced) 1f else 0.4f) }
     LaunchedEffect(reduced) {
         if (reduced) pop.snapTo(1f)
@@ -748,7 +748,7 @@ private fun AccountPage(vm: YtuiViewModel) {
                 label = "account-state",
             ) { signedIn ->
                 if (signedIn) {
-                    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+                    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
                     Row(
                         Modifier.fillMaxWidth()
                             .heightIn(min = 64.dp)
@@ -845,7 +845,7 @@ private fun SummaryRow(label: String, value: String) {
 @Composable
 private fun AnimatedCheck() {
     val reduced = LocalReducedMotion.current
-    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     val pop = remember { Animatable(if (reduced) 1f else 0f) }
     val draw = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(reduced) {

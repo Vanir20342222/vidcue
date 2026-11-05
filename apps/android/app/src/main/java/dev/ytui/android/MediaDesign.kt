@@ -75,9 +75,6 @@ internal object MediaTokens {
     val dialog = RoundedCornerShape(28.dp)
     /** Inputs are soft rectangles, so single and multi-line fields match. */
     val fieldShape = RoundedCornerShape(16.dp)
-    // Reuse the shared ytui dark/light accent values for a stable teal brand role.
-    val brandOnDark = Color(0xff6ddbc1)
-    val brandOnLight = Color(0xff006f62)
     val videoInk = Color.White
     val videoScrim = Color.Black.copy(alpha = 0.72f)
     /** Flat backing behind the native video transports: 3:1 for white glyphs over white video. */
@@ -106,16 +103,9 @@ internal fun mediaReadableText(candidate: Color, background: Color): Color {
     return end
 }
 
-internal fun mediaBrand(background: Color): Color {
-    val candidate =
-        if (
-            mediaContrast(MediaTokens.brandOnDark, background) >=
-                mediaContrast(MediaTokens.brandOnLight, background)
-        )
-            MediaTokens.brandOnDark
-        else MediaTokens.brandOnLight
-    return mediaReadableText(candidate, background)
-}
+/** The active theme's accent, nudged only as far as needed to stay AA-readable on [background]. */
+internal fun mediaBrand(accent: Color, background: Color): Color =
+    mediaReadableText(accent, background)
 
 /** Pick the stronger black/white contrast, including imported and light palettes. */
 internal fun mediaOnAccent(accent: Color): Color =
