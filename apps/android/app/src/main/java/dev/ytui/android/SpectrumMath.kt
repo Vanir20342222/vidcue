@@ -89,6 +89,26 @@ internal fun stringAmplitude(height: Float, glowWidth: Float, position: Float, l
     return amplitude.coerceAtMost(available)
 }
 
+internal const val ORBIT_BARS = 72
+
+internal data class OrbitGeometry(val inner: Float, val outer: Float, val stroke: Float, val reach: Float)
+
+/** Reserve the full painted extent, including peak dots, ripples, beat shake and antialiasing. */
+internal fun orbitGeometry(minDimension: Float, density: Float, kick: Float, energy: Float): OrbitGeometry {
+    // Use maximum shake even between beats, so the available radius does not pulse with it.
+    val available = (minDimension / 2f - 4f * density - 1f).coerceAtLeast(0f)
+    // Ripples travel to 1.05 × outer and have up to 1.5 dp of stroke on either side.
+    // This also contains the glow, which extends to 1.02 × outer.
+    val outer = ((available - 1.5f * density) / 1.05f).coerceAtLeast(0f)
+    val strokeRatio = TAU / ORBIT_BARS * 0.6f
+    val coverEdge = minDimension * 0.28f * (1f + 0.08f * kick + 0.05f * energy) + 8f * density
+    val inner = minOf(coverEdge, outer / (1f + 2.02f * strokeRatio))
+    val stroke = inner * strokeRatio
+    // A held peak sits 0.6 strokes beyond the bar endpoint and has radius 0.42 strokes.
+    val reach = (outer - inner - 1.02f * stroke).coerceAtLeast(0f)
+    return OrbitGeometry(inner, outer, stroke, reach)
+}
+
 /** Frame-to-frame group energies for the liquid views. Plain state, so it never recomposes. */
 internal class LiquidLevels {
     /** Smoothed energy per group, 0..1: bass, low-mid, high-mid, treble. */

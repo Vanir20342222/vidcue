@@ -78,6 +78,53 @@ class SpectrumMathTest {
     }
 
     @Test
+    fun orbitBarsPeakDotsGlowAndRipplesFitIncludingBeatShake() {
+        for (sizeDp in listOf(64f, 128f, 240f, 360f, 800f)) {
+            for (density in listOf(0.75f, 1f, 2f, 3f, 4f)) {
+                val size = sizeDp * density
+                for (kick in listOf(0f, 0.5f, 1f)) {
+                    for (energy in listOf(0f, 0.5f, 1f)) {
+                        val (inner, outer, stroke, reach) = orbitGeometry(size, density, kick, energy)
+                        val shake = kick * kick * 4f * density
+                        val limit = size / 2f - shake - 1f
+                        val context = "size=$sizeDp density=$density kick=$kick energy=$energy"
+                        assertTrue(context, inner >= 0f && reach >= 0f)
+                        for (level in listOf(0f, 0.25f, 0.5f, 0.75f, 1f)) {
+                            val reached = (level * (0.85f + 0.3f * kick) + 0.12f * kick).coerceAtMost(1f)
+                            val barTip = inner + stroke + (reach - stroke) * reached
+                            assertTrue("bar $context", barTip + stroke / 2f <= limit + 0.001f)
+                            // A full-scale held peak remains outside the bar as its level falls.
+                            val peakEdge = inner + stroke + (reach - stroke) + stroke * 0.6f + stroke * 0.42f
+                            assertTrue("peak $context", peakEdge <= limit + 0.001f)
+                        }
+                        assertTrue("glow $context", outer * 1.02f <= limit + 0.001f)
+                        for (step in 0..100) {
+                            val t = step / 100f
+                            val radius = inner + (outer * 1.05f - inner) * (1f - (1f - t) * (1f - t))
+                            val halfStroke = (3f - 2f * t) * density / 2f
+                            assertTrue("ripple $context t=$t", radius + halfStroke <= limit + 0.001f)
+                        }
+                        assertTrue("inner ring $context", inner - 4f * density + (1.5f + 2.5f * kick) * density / 2f <= limit + 0.001f)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun orbitKeepsTheCoverGapAndRoomForSpectrumMotionAtNormalStageSizes() {
+        for (sizeDp in listOf(128f, 240f, 360f, 800f)) {
+            for (density in listOf(0.75f, 1f, 2f, 3f, 4f)) {
+                val size = sizeDp * density
+                val geometry = orbitGeometry(size, density, 1f, 1f)
+                val coverEdge = size * 0.28f * 1.13f
+                assertTrue(geometry.inner >= coverEdge + 8f * density - 0.001f)
+                assertTrue(geometry.reach > geometry.stroke)
+            }
+        }
+    }
+
+    @Test
     fun surfaceFlowsSmoothlyBetweenNearbyPositionsAndFrames() {
         val groups = floatArrayOf(0.8f, 0.5f, 0.3f, 0.2f)
         val a = surfaceOffset(0.40f, 3.0f, groups)
