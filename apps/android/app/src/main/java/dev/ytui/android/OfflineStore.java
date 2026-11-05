@@ -415,6 +415,8 @@ public final class OfflineStore {
               .getSharedPreferences("exports", Context.MODE_PRIVATE)
               .getAll()
               .entrySet()) {
+        // Completed exports are receipts, not downloads; hide old saved receipts too.
+        if ("Export complete".equals(entry.getValue())) continue;
         if (rows.length() >= 2016) break;
         rows.put(
             new JSONObject()
