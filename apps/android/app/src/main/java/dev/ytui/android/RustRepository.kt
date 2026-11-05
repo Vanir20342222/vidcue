@@ -955,10 +955,15 @@ internal class YtuiViewModel(
         playContext: JSONObject? = null,
     ) {
         val quality = config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
+        val musicCollection = media.collection && (media.musicSource || tab.value == 2)
         val audio =
-            media.audio ||
-                (media.collection && (media.musicSource || tab.value == 2)) ||
-                download && config.value.optJSONObject("download")?.optBoolean("audio") == true
+            if (download)
+                PlaybackPolicy.audioForSave(
+                    media.kind,
+                    media.musicSource || musicCollection,
+                    config.value.optJSONObject("download")?.optBoolean("audio") == true,
+                )
+            else media.audio || musicCollection
         if (download && media.live) {
             status.value = "Live recording is not available"
             actionError.value = status.value

@@ -10,6 +10,12 @@ final class PlaybackPolicy {
     return "song".equals(kind) || "station".equals(kind);
   }
 
+  /** The save preference belongs to Music; ordinary YouTube saves retain video. */
+  static boolean audioForSave(String kind, boolean musicSource, boolean audioOnlySaves) {
+    return "station".equals(kind)
+        || (audioOnlySaves && ("song".equals(kind) || musicSource));
+  }
+
   static String liveTitle(CharSequence title) {
     if (title == null) return "";
     return title
