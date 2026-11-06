@@ -446,6 +446,11 @@ internal fun FocusedPlayer(
                         mobile = mobile,
                         thumbnails = config.optBoolean("thumbnails", true),
                         openChannel = { vm.openChannel(it, musicSource(player.media)) },
+                        // A YouTube video or playlist link plays here; anything else leaves the app.
+                        openLink = { url ->
+                            if (SharedLinks.playable(url)) vm.search(url)
+                            else openExternalLink(context, url)
+                        },
                         headerModifier =
                             Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
                         error =

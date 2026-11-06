@@ -25,7 +25,19 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
@@ -63,10 +75,46 @@ internal fun descriptionPreview(text: String): String =
     text.trim().replace(Regex("\n{3,}"), "\n\n")
 
 /**
+ * The description with every HTTP(S) URL as a tappable link in [linkColor]. Each link's tag is
+ * its URL, and a tap calls [open] with it. Text around the links is unchanged.
+ */
+internal fun linkedDescription(
+    text: String,
+    linkColor: Color,
+    open: (String) -> Unit,
+): AnnotatedString {
+    val spans = SharedLinks.urlSpans(text)
+    if (spans.isEmpty()) return AnnotatedString(text)
+    val style = TextLinkStyles(SpanStyle(color = linkColor))
+    return buildAnnotatedString {
+        var at = 0
+        for ((start, url) in spans) {
+            if (start < at) continue
+            append(text, at, start)
+            withLink(LinkAnnotation.Clickable(url, style) { open(url) }) { append(url) }
+            at = start + url.length
+        }
+        append(text, at, text.length)
+    }
+}
+
+/** Opens a description link outside the app; does nothing when no app can open it. */
+internal fun openExternalLink(context: Context, url: String) {
+    try {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE)
+        )
+    } catch (_: ActivityNotFoundException) {
+    } catch (_: SecurityException) {
+    }
+}
+
+/**
  * Watch-page details under the inline video. Three calm groups with room between them: what it
  * is (title, then views and age), who made it (avatar, name, subscribers), and what you can do.
  * The description sits in a soft card below the actions; it opens in place when the card or the
- * title is tapped, so the page stays short until more is wanted.
+ * title is tapped, so the page stays short until more is wanted. Once it is open, links in the
+ * description are tappable and go to [openLink]; the default opens them outside the app.
  */
 @Composable
 internal fun WatchDetails(
@@ -79,6 +127,7 @@ internal fun WatchDetails(
     headerModifier: Modifier,
     error: String?,
     openChannel: (String) -> Unit = {},
+    openLink: ((String) -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -197,8 +246,20 @@ internal fun WatchDetails(
                         colors.onSurfaceVariant,
                     )
                 }
+                val context = LocalContext.current
+                val linkColor = colors.primary
+                // Collapsed, a tap anywhere opens the card; links only take taps once it is open.
+                val shown =
+                    remember(description, open, linkColor, openLink) {
+                        if (open)
+                            linkedDescription(description, linkColor) { url ->
+                                openLink?.invoke(url) ?: openExternalLink(context, url)
+                            }
+                        else AnnotatedString(description)
+                    }
                 Text(
-                    description,
+                    shown,
+                    Modifier.testTag("video-description-text"),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,
                     maxLines = if (open) Int.MAX_VALUE else 2,
