@@ -448,6 +448,18 @@ internal fun FocusedPlayer(
                         mobile = mobile,
                         thumbnails = config.optBoolean("thumbnails", true),
                         openChannel = { vm.openChannel(it, musicSource(player.media)) },
+                        // YouTube videos, playlists, channels and hashtags stay in the app; a
+                        // timestamp seeks this video; other links leave the app.
+                        openLink = { target ->
+                            when (target) {
+                                is DescriptionTarget.Time -> vm.command("seek", "seconds" to target.seconds)
+                                is DescriptionTarget.Channel -> vm.openChannel(target.id, music = false)
+                                is DescriptionTarget.Hashtag -> vm.searchVideos(target.tag)
+                                is DescriptionTarget.Link ->
+                                    if (SharedLinks.playable(target.url)) vm.search(target.url)
+                                    else openExternalLink(context, target.url)
+                            }
+                        },
                         headerModifier =
                             Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
                         error =

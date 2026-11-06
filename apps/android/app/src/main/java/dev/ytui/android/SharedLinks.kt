@@ -60,6 +60,20 @@ internal object SharedLinks {
         else urlPattern.findAll(text).map { trim(it.value) }.filter { it.length > 8 }.toList()
 
     /**
+     * Where each HTTP(S) URL sits in free text, as (start, url) in order, without trailing
+     * sentence punctuation; `start + url.length` is where the link ends. Used to make the links
+     * in a video description tappable.
+     */
+    fun urlSpans(text: String?): List<Pair<Int, String>> =
+        if (text.isNullOrEmpty()) emptyList()
+        else
+            urlPattern
+                .findAll(text)
+                .map { it.range.first to trim(it.value) }
+                .filter { it.second.length > 8 }
+                .toList()
+
+    /**
      * The first YouTube media link in shared text ("Title https://youtu.be/ID"), or null when
      * the text holds none and belongs in the search box instead.
      */
@@ -91,6 +105,9 @@ internal object SharedLinks {
             host == "youtu.be" ||
             host == "youtube-nocookie.com" ||
             host.endsWith(".youtube-nocookie.com")
+
+    /** [url] without trailing sentence punctuation; a bracket the URL opened is kept. */
+    fun trimUrl(url: String): String = trim(url)
 
     private fun trim(url: String): String {
         var end = url.length

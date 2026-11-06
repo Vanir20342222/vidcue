@@ -908,7 +908,8 @@ internal class YtuiViewModel(
      * previous feed.
      */
     fun openChannel(channelId: String, music: Boolean = tab.value == 2) {
-        if (!isChannelId(channelId)) return
+        // An `@handle` is a YouTube channel; the engine looks up its ID.
+        if (!isChannelId(channelId) && (music || !DescriptionLinks.isHandle(channelId))) return
         val index = if (music) 2 else 1
         playerOpen.value = false
         if (tab.value != index) {
@@ -916,6 +917,20 @@ internal class YtuiViewModel(
             tab.value = index
         }
         navigate(index, request = json("Collection" to channelId))
+    }
+
+    /**
+     * A YouTube video search (a description `#hashtag`), shown on the Videos tab. The player
+     * shrinks to the mini-player, and Back returns to the previous feed.
+     */
+    fun searchVideos(query: String) {
+        if (query.isBlank()) return
+        playerOpen.value = false
+        if (tab.value != 1) {
+            categoryJob?.cancel()
+            tab.value = 1
+        }
+        navigate(1, request = json("Search" to query))
     }
 
     fun playCollection(media: MediaCard) {
