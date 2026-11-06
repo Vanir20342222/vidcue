@@ -68,8 +68,12 @@ impl DenoRuntime {
     /// Explicit path only: discovery and installation are the caller's
     /// concern. The pinned Deno or Node.js 22+ (by its `--version` line).
     pub(in crate::extractor::youtube) fn new(executable: &Path) -> Result<Self> {
-        if executable == Path::new("ytui-android-js") && crate::EMBEDDED_JS.get().is_some() {
-            return Ok(Self { executable: executable.into(), args: &["embedded"] });
+        if executable == Path::new(crate::EMBEDDED_JS_RUNTIME) && crate::EMBEDDED_JS.get().is_some()
+        {
+            return Ok(Self {
+                executable: executable.into(),
+                args: &["embedded"],
+            });
         }
         let executable = executable
             .canonicalize()
@@ -100,7 +104,9 @@ impl DenoRuntime {
 
     /// The JS challenge provider's name (`deno` or `node`).
     pub(in crate::extractor::youtube) fn name(&self) -> &'static str {
-        if self.executable == Path::new("ytui-android-js") { return "android-isolate"; }
+        if self.executable == Path::new(crate::EMBEDDED_JS_RUNTIME) {
+            return "android-isolate";
+        }
         if std::ptr::eq(self.args, ARGS) {
             "deno"
         } else {
@@ -110,8 +116,10 @@ impl DenoRuntime {
 
     pub(in crate::extractor::youtube) fn solve(&self, batch: &Batch) -> Result<Solutions> {
         let script = batch.script()?;
-        if self.executable == Path::new("ytui-android-js") {
-            let evaluator = crate::EMBEDDED_JS.get().ok_or("Embedded JS runtime is unavailable")?;
+        if self.executable == Path::new(crate::EMBEDDED_JS_RUNTIME) {
+            let evaluator = crate::EMBEDDED_JS
+                .get()
+                .ok_or("Embedded JS runtime is unavailable")?;
             return batch.validate(evaluator(&script)?.as_bytes());
         }
 
@@ -280,6 +288,32 @@ fn execute(
 mod tests {
     use super::*;
     use std::sync::OnceLock;
+
+    #[test]
+    fn embedded_runtime_routes_challenges_to_the_host_evaluator() {
+        use super::super::{Kind, Runtime};
+
+        assert!(crate::set_embedded_js_evaluator(|script| {
+            assert!(script.contains("synthetic-player"));
+            Ok(r#"{"type":"result","responses":[{"type":"result","data":{"synthetic-challenge":"solved"}}]}"#.into())
+        }));
+        // Use the public selector consumed by Android, with no executable present.
+        let runtime = Runtime::new(crate::EMBEDDED_JS_RUNTIME.into());
+        assert!(runtime.is_embedded());
+        let checked = runtime.checked().unwrap();
+        assert_eq!(checked.name(), "android-isolate");
+        let batch = Batch::new("synthetic-player", &[(Kind::N, "synthetic-challenge")]).unwrap();
+        assert_eq!(
+            checked
+                .solve(&batch)
+                .unwrap()
+                .get(Kind::N, "synthetic-challenge"),
+            Some("solved")
+        );
+        // The embedded evaluator must still reject malformed solver responses.
+        let wrong_keys = Batch::new("synthetic-player", &[(Kind::N, "other")]).unwrap();
+        assert!(checked.solve(&wrong_keys).is_err());
+    }
 
     // Compile a portable native helper, never a shell script or Python runtime.
     fn fake() -> &'static Path {
