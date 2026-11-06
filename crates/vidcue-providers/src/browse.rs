@@ -103,6 +103,7 @@ pub struct Browser {
     music: Arc<Mutex<Option<ClientContext>>>,
     origins: [String; 2],
     pages: Arc<crate::cache::ResponseCache<Page>>,
+    home_first: Arc<std::sync::Mutex<[Option<String>; 2]>>,
 }
 impl Browser {
     pub fn new(client: reqwest::Client, session: Option<Arc<Session>>, account: u32) -> Self {
@@ -111,6 +112,7 @@ impl Browser {
             session,
             account,
             pages: Arc::new(crate::cache::ResponseCache::new(64, 8 * 1024 * 1024)),
+            home_first: Arc::new(std::sync::Mutex::new([None, None])),
             web: Arc::new(Mutex::new(None)),
             music: Arc::new(Mutex::new(None)),
             origins: [
@@ -357,7 +359,9 @@ impl Browser {
         let fetch = async {
             // Home remains live so recovery/refresh never repeats an old recommendation shell.
             if matches!(request, BrowseRequest::Home) {
-                return self.fetch_page(music, request).await;
+                let mut page = self.fetch_page(music, request).await?;
+                self.shuffle_home(music, &mut page);
+                return Ok(page);
             }
             let ttl = Duration::from_secs(if matches!(request, BrowseRequest::Details(_)) {
                 300
@@ -382,6 +386,19 @@ impl Browser {
     }
     fn page_key(music: bool, request: &BrowseRequest) -> Result<String> {
         Ok(format!("{music}:{}", serde_json::to_string(request)?))
+    }
+    fn shuffle_home(&self, music: bool, page: &mut Page) {
+        // YouTube can return an identical ranked list even for a fresh request.
+        // Shuffle only Home's cards, leaving pagination and category endpoints intact.
+        page.items.sort_by_cached_key(|_| uuid::Uuid::new_v4());
+        let mut previous = self.home_first.lock().expect("home order");
+        let first = &mut previous[usize::from(music)];
+        if page.items.len() > 1 && page.items.first().map(|item| &item.id) == first.as_ref() {
+            page.items.rotate_left(1);
+        }
+        if let Some(item) = page.items.first() {
+            *first = Some(item.id.clone());
+        }
     }
     pub fn invalidate_page(&self, music: bool, request: &BrowseRequest) {
         if let Ok(key) = Self::page_key(music, request) {
@@ -2299,6 +2316,77 @@ mod request_tests {
                 )
                 .is_err()
         );
+    }
+    #[tokio::test]
+    async fn home_refresh_changes_top_card_even_when_service_repeats_the_same_feed() {
+        let data = json!({
+            "contents": [
+                {"videoRenderer":{"videoId":"a","title":{"simpleText":"A"}}},
+                {"videoRenderer":{"videoId":"b","title":{"simpleText":"B"}}},
+                {"videoRenderer":{"videoId":"c","title":{"simpleText":"C"}}}
+            ],
+            "continuationCommand":{"token":"next-page"}
+        });
+        let (base, task) = crate::test_http::serve_request(move |request| {
+            let body = if request.starts_with("GET") {
+                format!("ytcfg.set({{\"INNERTUBE_CLIENT_VERSION\":\"fixture\"}});var ytInitialData = {data};")
+            } else {
+                data.to_string()
+            };
+            (200, String::new(), body.into_bytes())
+        }).await;
+        let mut browser = Browser::new(client(), None, 0);
+        browser.origins = [base.clone(), base];
+        let mut previous = [None, None];
+        for _ in 0..10 {
+            for music in [false, true] {
+                // Clones share the previous order, as they do for mobile RPC calls.
+                let page = browser
+                    .clone()
+                    .fetch(music, &BrowseRequest::Home)
+                    .await
+                    .unwrap();
+                let first = &mut previous[usize::from(music)];
+                assert_ne!(Some(page.items[0].id.clone()), *first);
+                *first = Some(page.items[0].id.clone());
+                let mut ids: Vec<_> = page.items.iter().map(|item| item.id.as_str()).collect();
+                ids.sort_unstable();
+                assert_eq!(ids, ["a", "b", "c"]);
+                assert_eq!(page.continuation.as_deref(), Some("browse:next-page"));
+                assert!(page.notice.is_none());
+            }
+        }
+        // Other request types retain the provider's ranking/pagination order.
+        for request in [
+            BrowseRequest::Search("fixture".into()),
+            BrowseRequest::Continue("browse:next-page".into()),
+        ] {
+            let page = browser.fetch(false, &request).await.unwrap();
+            assert_eq!(
+                page.items
+                    .iter()
+                    .map(|item| item.id.as_str())
+                    .collect::<Vec<_>>(),
+                ["a", "b", "c"]
+            );
+        }
+        task.abort();
+    }
+    #[test]
+    fn home_shuffle_accepts_empty_and_single_card_pages() {
+        let browser = Browser::new(client(), None, 0);
+        let mut page = parse_page(&json!({"contents":[]}), false);
+        browser.shuffle_home(false, &mut page);
+        assert!(page.items.is_empty());
+        let mut page = parse_page(
+            &json!({"contents":[{"videoRenderer":{"videoId":"only","title":{"simpleText":"Only"}}}]}),
+            false,
+        );
+        for _ in 0..2 {
+            browser.shuffle_home(false, &mut page);
+            assert_eq!(page.items.len(), 1);
+            assert_eq!(page.items[0].id, "only");
+        }
     }
     #[tokio::test]
     async fn home_uses_fresh_html_feed_once_and_then_requests_new_data() {
