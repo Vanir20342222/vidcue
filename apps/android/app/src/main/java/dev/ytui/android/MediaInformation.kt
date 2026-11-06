@@ -83,3 +83,21 @@ internal fun MediaInformation(media: JSONObject, settings: JSONObject) {
             overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
         )
 }
+
+/** Shared by feed, shelf and wide search cards so each setting has the same effect. */
+@Composable
+internal fun CardInformation(media: JSONObject, settings: JSONObject) {
+    MediaInformation(media, settings)
+    for ((key, field) in listOf("show_description" to "description", "show_section" to "section")) {
+        val text = media.optString(field).takeUnless { it == "null" }.orEmpty()
+        if (settings.optBoolean(key) && text.isNotBlank())
+            Text(
+                text,
+                Modifier.testTag("card-$field"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = if (field == "description") 2 else 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+    }
+}

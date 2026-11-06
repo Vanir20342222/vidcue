@@ -1817,44 +1817,18 @@ private fun MediaRow(
                             )
                         else Color.Unspecified,
                 )
-                val information =
-                    remember(media, mobile, tab) { if (tab == 1) mediaInformation(media.value, mobile) else "" }
-                val metadata =
-                    listOfNotNull(
-                            if (mobile.optBoolean("show_channel", true))
-                                media.creator.ifBlank {
-                                    if (media.collection)
-                                        media.kind.replaceFirstChar(Char::titlecase)
-                                    else if (tab == 3) "Radio station" else "YouTube"
-                                }
-                            else null,
-                            information.ifBlank { null },
-                        )
-                        .joinToString(" · ")
-                if (metadata.isNotBlank())
+                if (mobile.optBoolean("show_channel", true))
                     Text(
-                        metadata,
-                        Modifier.then(
-                            if (information.isNotBlank()) Modifier.testTag("video-information")
-                            else Modifier
-                        ),
+                        media.creator.ifBlank {
+                            if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
+                            else if (tab == 3) "Radio station" else "YouTube"
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                media.value
-                    .optString("section")
-                    .takeIf { it.isNotBlank() && !shelf && mobile.optBoolean("show_section") }
-                    ?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                CardInformation(media.value, mobile)
             }
             MediaCardActions(media) { openMenu(media, square) }
         }
@@ -2029,7 +2003,7 @@ private fun WideMediaRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            MediaInformation(media.value, mobile)
+            CardInformation(media.value, mobile)
             if (mobile.optBoolean("show_channel", true))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -3053,7 +3027,10 @@ private fun SettingsPanel(
                 }
             }
         if (shown == "What cards show")
-            SettingGroup("Visible information") {
+            SettingGroup(
+                "Visible information",
+                subtitle = "Shows details when available. Some items have no likes or description.",
+            ) {
                 for ((key, label) in
                     listOf(
                         "show_channel" to "Channel or artist",
