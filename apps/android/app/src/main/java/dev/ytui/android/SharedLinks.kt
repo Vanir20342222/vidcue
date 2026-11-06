@@ -106,6 +106,9 @@ internal object SharedLinks {
             host == "youtube-nocookie.com" ||
             host.endsWith(".youtube-nocookie.com")
 
+    /** [url] without trailing sentence punctuation; a bracket the URL opened is kept. */
+    fun trimUrl(url: String): String = trim(url)
+
     private fun trim(url: String): String {
         var end = url.length
         while (end > 0 && url[end - 1] in TRAILING) {

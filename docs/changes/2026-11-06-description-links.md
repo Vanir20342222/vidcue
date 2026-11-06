@@ -1,31 +1,47 @@
-# Tappable links in the video description (M9)
+# Tappable links, channels, hashtags and timestamps in the video description (M9, M3)
 
 - **Date:** 2026-11-06
 - **PR:** #<number>
-- **Milestone:** M9 (Android UI)
-- **Platforms:** Android
-- **Status:** implemented (unit tests written, not run locally)
+- **Milestone:** M9 (Android UI), M3 (shared YouTube browse provider)
+- **Platforms:** Android, shared engine
+- **Status:** implemented; provider fixture verified; Android unit tests written, not run locally
 
 ## What it does
-When the watch-page description is expanded, every `http://` or `https://` URL in it is shown
-in the theme's primary colour and can be tapped. A YouTube video, Short, live or playlist link
-plays in Vidcue, through the same path as a pasted link. Any other link (merch, Instagram, GitHub,
-channel pages) opens in the browser or app that handles it; if no app can, nothing happens. While
-the description is collapsed, a tap anywhere still just expands it. The text itself is unchanged.
-Sentence punctuation after a URL is left out of the link, as for shared links.
+When the watch-page description is expanded, these parts of it are shown in the theme's primary
+colour and can be tapped. While it is collapsed, a tap anywhere still just expands it, and the text
+itself never changes.
+
+- `http(s)://` URLs and bare `www.` addresses: a YouTube video, Short, live or playlist link plays
+  in Vidcue (as a pasted link does). Anything else opens in the app that handles it; if none can,
+  nothing happens.
+- YouTube channel links (`youtube.com/@handle`, `/@handle/videos`, `/channel/UC…`) and bare
+  `@handles` open that channel's Videos tab in Vidcue. The player shrinks to the mini-player.
+- `#hashtags` (with at least one letter) run a YouTube search on the Videos tab.
+- Timestamps (`1:23`, `1:02:03`) seek the playing video. Ones past its duration stay plain.
+
+The engine now accepts a YouTube `@handle` as a `Collection` ID and looks up its `UC…` channel
+through `youtubei/v1/navigation/resolve_url` before browsing the channel's Videos tab.
+Email addresses, URL fragments, `#1`, ratios like `16:9` and times like `10:30am` stay plain.
 
 ## Evidence
 | Check | Command or procedure | Result | Level |
 | --- | --- | --- | --- |
-| Link ranges and taps | `WatchDetailsTest.descriptionLinksCoverOnlyTheUrls`, `descriptionWithoutLinksIsPlainText` (Robolectric) | not run locally | unit |
+| Handle resolves to channel Videos tab | `cargo test -p vidcue-providers channel_handles_resolve_to_the_channel_videos_tab` (loopback: resolve_url request and URL, then browse with Videos params; unknown handle errors without a browse) | pass | fixture |
+| Workspace | `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` | pass | unit |
+| Description patterns | the `www`/handle/hashtag/timestamp regexes run through `jshell` (same `java.util.regex` engine) on the test text | matched as the tests expect | manual |
+| Description parsing and links | `DescriptionLinksTest`, `WatchDetailsTest` (JUnit/Robolectric) | not run locally | unit |
 
 ## Not verified and limits
-- No Android SDK in the authoring environment (dl.google.com is blocked), so the app and tests
+- No Android SDK in the authoring environment (dl.google.com is blocked), so the app and its tests
   were not compiled or run locally; PR CI compiles and runs them. Not seen on an emulator or device.
-- Only explicit `http(s)://` URLs become links. Bare `www.` text, `@handles` and `#hashtags`
-  stay plain. YouTube channel URLs open externally rather than as a channel page in the app.
-- Timestamps (e.g. `1:23`) in the description are not yet tappable.
+- No live YouTube request: `navigation/resolve_url`'s response shape follows current WEB responses
+  but is not live verified.
+- Legacy `/c/name` and `/user/name` channel URLs, non-ASCII handles and YouTube Music artist links
+  still open outside the app.
+- The desktop terminal UI does not render description links; only the provider change reaches it.
 
 ## For the plan and parity tables
-- M9 watch page: links in the expanded description are tappable; YouTube media links play in
-  the app, other links open externally.
+- M9 watch page: in the expanded description, links, `www.` addresses, channel handles/links,
+  hashtags and timestamps are tappable (play/open channel/search/seek in app; other links external).
+- Shared provider: `Collection("@handle")` on YouTube resolves the handle and opens the channel
+  Videos tab.

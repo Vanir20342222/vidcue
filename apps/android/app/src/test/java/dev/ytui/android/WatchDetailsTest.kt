@@ -52,7 +52,7 @@ class WatchDetailsTest {
         val text =
             "Merch: https://www.shopmuye.com\n\nMods Used\nBeamNG.Earth:\n" +
                 "https://github.com/TecnaGamer/BeamNG.Earth/releases. (see https://example.com/a_(b))"
-        val opened = mutableListOf<String>()
+        val opened = mutableListOf<DescriptionTarget>()
         val linked = linkedDescription(text, Color.Blue) { opened += it }
         // The visible text is unchanged.
         assertEquals(text, linked.text)
@@ -66,13 +66,26 @@ class WatchDetailsTest {
             links.map { linked.text.substring(it.start, it.end) },
         )
         links.forEach { (it.item as LinkAnnotation.Clickable).linkInteractionListener!!.onClick(it.item) }
-        assertEquals(links.map { (it.item as LinkAnnotation.Clickable).tag }, opened)
+        assertEquals(
+            links.map { DescriptionTarget.Link(linked.text.substring(it.start, it.end)) },
+            opened,
+        )
     }
 
     @Test
     fun descriptionWithoutLinksIsPlainText() {
-        val linked = linkedDescription("No links, just www.example.com text", Color.Blue) {}
+        val linked = linkedDescription("No links here, just text 16:9 and #1", Color.Blue) {}
         assertEquals(0, linked.getLinkAnnotations(0, linked.length).size)
         assertEquals(emptyList<Pair<Int, String>>(), SharedLinks.urlSpans(""))
+    }
+
+    @Test
+    fun timestampsPastTheEndStayPlain() {
+        val text = "0:00 Intro\n4:05 Drive\n12:30 Recorded"
+        val linked = linkedDescription(text, Color.Blue, durationSeconds = 600.0) {}
+        assertEquals(
+            listOf("0:00", "4:05"),
+            linked.getLinkAnnotations(0, linked.length).map { text.substring(it.start, it.end) },
+        )
     }
 }

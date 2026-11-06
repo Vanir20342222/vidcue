@@ -444,6 +444,15 @@ impl Browser {
         Ok(page)
     }
     async fn fetch_once(&self, music: bool, request: &BrowseRequest) -> Result<Page> {
+        // A YouTube `@handle` (from a description or channel link) opens the channel it names.
+        let resolved;
+        let request = match request {
+            BrowseRequest::Collection(handle) if !music && is_channel_handle(handle) => {
+                resolved = BrowseRequest::Collection(self.resolve_handle(handle).await?);
+                &resolved
+            }
+            _ => request,
+        };
         let (endpoint, body, title) = match request {
             BrowseRequest::Category { endpoint, payload } => {
                 ensure!(
@@ -693,6 +702,22 @@ impl Browser {
         }
         Ok(page)
     }
+    /// The `UC…` channel ID behind a YouTube `@handle`, through the same lookup YouTube uses
+    /// when a channel page is opened by its handle.
+    async fn resolve_handle(&self, handle: &str) -> Result<String> {
+        let data = self
+            .post(
+                false,
+                "navigation/resolve_url",
+                json!({"url": format!("https://www.youtube.com/{handle}")}),
+            )
+            .await?;
+        data.pointer("/endpoint/browseEndpoint/browseId")
+            .and_then(Value::as_str)
+            .filter(|id| vidcue_core::is_channel_id(id))
+            .map(str::to_owned)
+            .with_context(|| format!("No YouTube channel is called {handle}"))
+    }
     /// Publication date, likes and subscribers for one video, which the fast playback path
     /// does not return (see `crate::watch_details`). One `next` request; no watch-page HTML.
     pub async fn watch_details(&self, id: &str) -> Result<Value> {
@@ -756,6 +781,16 @@ impl Browser {
         Ok(())
     }
 }
+/// A YouTube channel handle such as `@muyelive`: `@`, then 3–30 letters, digits, `_`, `-` or `.`.
+fn is_channel_handle(id: &str) -> bool {
+    id.strip_prefix('@').is_some_and(|name| {
+        (3..=30).contains(&name.len())
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    })
+}
+
 pub async fn limited_text(mut response: reqwest::Response, limit: usize) -> Result<String> {
     let mut bytes = Vec::new();
     let origin = response.url().clone();
@@ -1930,6 +1965,76 @@ mod request_tests {
         assert!(sent[2].get("params").is_none(), "playlists are unchanged");
         task.abort();
     }
+    #[tokio::test]
+    async fn channel_handles_resolve_to_the_channel_videos_tab() {
+        const CHANNEL: &str = "UCsyntheticchannel0000ab";
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = requests.clone();
+        let (base, task) = crate::test_http::serve_request(move |request| {
+            let body = if request.starts_with("GET") {
+                r#"ytcfg.set({"INNERTUBE_CLIENT_VERSION":"fixture"});"#.into()
+            } else {
+                seen.lock().unwrap().push(request.to_owned());
+                if request.contains("/navigation/resolve_url") {
+                    if request.contains("@missing") {
+                        json!({"endpoint":{"urlEndpoint":{"url":"https://www.youtube.com/"}}})
+                    } else {
+                        json!({"endpoint":{"browseEndpoint":{"browseId":CHANNEL}}})
+                    }
+                } else {
+                    json!({
+                        "metadata":{"channelMetadataRenderer":{"title":"Synthetic Channel"}},
+                        "contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{
+                            "selected":true,
+                            "content":{"richGridRenderer":{"contents":[
+                                {"richItemRenderer":{"content":{"videoRenderer":{
+                                    "videoId":"aaaaaaaaaaa","title":{"runs":[{"text":"Upload"}]}
+                                }}}}
+                            ]}}
+                        }}]}}
+                    })
+                }
+                .to_string()
+            };
+            (200, String::new(), body.into_bytes())
+        })
+        .await;
+        let mut browser = Browser::new(client(), None, 0);
+        browser.origins = [base.clone(), base];
+        let page = browser
+            .fetch(
+                false,
+                &BrowseRequest::Collection("@synthetic.handle".into()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.title, "Synthetic Channel · Videos");
+        assert_eq!(page.items[0].id, "aaaaaaaaaaa");
+        let error = browser
+            .fetch(false, &BrowseRequest::Collection("@missing".into()))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("@missing"), "{error}");
+        let requests = requests.lock().unwrap();
+        let bodies: Vec<Value> = requests
+            .iter()
+            .map(|r| serde_json::from_str(r.split_once("\r\n\r\n").unwrap().1).unwrap())
+            .collect();
+        assert!(requests[0].contains("/youtubei/v1/navigation/resolve_url"));
+        assert_eq!(
+            bodies[0]["url"],
+            "https://www.youtube.com/@synthetic.handle"
+        );
+        assert_eq!(bodies[1]["browseId"], CHANNEL);
+        assert_eq!(bodies[1]["params"], CHANNEL_VIDEOS_PARAMS);
+        assert_eq!(requests.len(), 3, "a handle with no channel is not browsed");
+        assert!(is_channel_handle("@muyelive"));
+        assert!(!is_channel_handle("@ab"));
+        assert!(!is_channel_handle("muyelive"));
+        assert!(!is_channel_handle("@bad/path"));
+        task.abort();
+    }
+
     #[test]
     fn video_cards_remember_the_channel_that_published_them() {
         const CHANNEL: &str = "UCsyntheticchannel0000ab";

@@ -75,24 +75,31 @@ internal fun descriptionPreview(text: String): String =
     text.trim().replace(Regex("\n{3,}"), "\n\n")
 
 /**
- * The description with every HTTP(S) URL as a tappable link in [linkColor]. Each link's tag is
- * its URL, and a tap calls [open] with it. Text around the links is unchanged.
+ * The description with its links, channel handles, hashtags and timestamps tappable in
+ * [linkColor]; a tap calls [open] with what it names. Timestamps past [durationSeconds] (when
+ * known, above zero) stay plain. The text itself is unchanged.
  */
 internal fun linkedDescription(
     text: String,
     linkColor: Color,
-    open: (String) -> Unit,
+    durationSeconds: Double = 0.0,
+    open: (DescriptionTarget) -> Unit,
 ): AnnotatedString {
-    val spans = SharedLinks.urlSpans(text)
+    val spans =
+        DescriptionLinks.spans(text).filter {
+            val target = it.target
+            target !is DescriptionTarget.Time || durationSeconds <= 0 || target.seconds <= durationSeconds
+        }
     if (spans.isEmpty()) return AnnotatedString(text)
     val style = TextLinkStyles(SpanStyle(color = linkColor))
     return buildAnnotatedString {
         var at = 0
-        for ((start, url) in spans) {
-            if (start < at) continue
-            append(text, at, start)
-            withLink(LinkAnnotation.Clickable(url, style) { open(url) }) { append(url) }
-            at = start + url.length
+        for (span in spans) {
+            append(text, at, span.start)
+            withLink(LinkAnnotation.Clickable(text.substring(span.start, span.end), style) { open(span.target) }) {
+                append(text, span.start, span.end)
+            }
+            at = span.end
         }
         append(text, at, text.length)
     }
@@ -114,7 +121,8 @@ internal fun openExternalLink(context: Context, url: String) {
  * is (title, then views and age), who made it (avatar, name, subscribers), and what you can do.
  * The description sits in a soft card below the actions; it opens in place when the card or the
  * title is tapped, so the page stays short until more is wanted. Once it is open, links in the
- * description are tappable and go to [openLink]; the default opens them outside the app.
+ * description (URLs, `www.` addresses, `@handles`, `#hashtags`, timestamps) are tappable and go
+ * to [openLink]; without one, web links open outside the app and the rest stay inert.
  */
 @Composable
 internal fun WatchDetails(
@@ -127,7 +135,7 @@ internal fun WatchDetails(
     headerModifier: Modifier,
     error: String?,
     openChannel: (String) -> Unit = {},
-    openLink: ((String) -> Unit)? = null,
+    openLink: ((DescriptionTarget) -> Unit)? = null,
     actions: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -251,10 +259,15 @@ internal fun WatchDetails(
                 val onLink by rememberUpdatedState(openLink)
                 // Collapsed, a tap anywhere opens the card; links only take taps once it is open.
                 val shown =
-                    remember(description, open, linkColor) {
+                    remember(description, open, linkColor, media) {
                         if (open)
-                            linkedDescription(description, linkColor) { url ->
-                                onLink?.invoke(url) ?: openExternalLink(context, url)
+                            linkedDescription(
+                                description,
+                                linkColor,
+                                media?.optDouble("duration", 0.0)?.takeIf { it.isFinite() } ?: 0.0,
+                            ) { target ->
+                                onLink?.invoke(target)
+                                    ?: (target as? DescriptionTarget.Link)?.let { openExternalLink(context, it.url) }
                             }
                         else AnnotatedString(description)
                     }
