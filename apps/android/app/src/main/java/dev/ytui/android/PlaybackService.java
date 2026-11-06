@@ -102,6 +102,8 @@ public final class PlaybackService extends MediaSessionService {
   JSONArray sponsors = new JSONArray();
   boolean skipSponsors = true, historyEnabled = true, pausedByUser = false, playbackRecorded;
   int reconnectCount = 0;
+  // Rejoins of the live edge after falling behind the window; reset once playback is ready.
+  int liveBehindRecoveries = 0;
   int streamRefreshCount = 0;
   boolean streamRefreshing;
   SharedPreferences prefs;
@@ -372,6 +374,11 @@ public final class PlaybackService extends MediaSessionService {
           }
 
           @Override
+          public void onTimelineChanged(Timeline timeline, int reason) {
+            markLiveFromTimeline();
+          }
+
+          @Override
           public void onVideoSizeChanged(VideoSize size) {
             if (size.width < 1 || size.height < 1) return;
             MediaBridge.videoWidth = Math.max(1, size.width);
@@ -423,6 +430,15 @@ public final class PlaybackService extends MediaSessionService {
                 trace.append(stack[j]).append("\n");
             }
             errorTrace = trace.toString();
+            // Paused too long on a live stream: its window moved past the position. Rejoin at
+            // the live edge with the same stream instead of reporting a failure.
+            if (e.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW
+                && liveBehindRecoveries < 3) {
+              liveBehindRecoveries++;
+              player.seekToDefaultPosition();
+              player.prepare();
+              return;
+            }
             if (!isLive()
                 && youtubeStream()
                 && PlaybackPolicy.refreshableStatus(httpStatus(e))
@@ -448,6 +464,7 @@ public final class PlaybackService extends MediaSessionService {
 
           @Override
           public void onPlaybackStateChanged(int state) {
+            if (state == Player.STATE_READY) liveBehindRecoveries = 0;
             if (state == Player.STATE_READY)
               StartupTimings.stage(
                   startupToken, "ready", SystemClock.elapsedRealtime() - startupAt);
@@ -568,6 +585,20 @@ public final class PlaybackService extends MediaSessionService {
     @Override
     public boolean isCommandAvailable(int command) {
       return getAvailableCommands().contains(command);
+    }
+
+    // A live window's position can pass its duration between playlist refreshes; the
+    // controller would print it as "1:00:28 / 1:00:00".
+    @Override
+    public long getCurrentPosition() {
+      long position = super.getCurrentPosition();
+      return LivePosition.live(this) ? LivePosition.clamp(position, getDuration()) : position;
+    }
+
+    @Override
+    public long getContentPosition() {
+      long position = super.getContentPosition();
+      return LivePosition.live(this) ? LivePosition.clamp(position, getContentDuration()) : position;
     }
 
     @Override
@@ -733,6 +764,7 @@ public final class PlaybackService extends MediaSessionService {
       // The item being left keeps where it was for a later resume.
       savePosition();
       reconnectCount = 0;
+      liveBehindRecoveries = 0;
       streamRefreshCount = 0;
       playbackRecorded = false;
       pausedByUser = false;
@@ -1272,7 +1304,9 @@ public final class PlaybackService extends MediaSessionService {
         stopAndClear();
         break;
       case "forward":
-        player.seekTo(player.getCurrentPosition() + MobileSettings.integer("seek_seconds") * 1000L);
+        player.seekTo(
+            liveSeekLimit(
+                player.getCurrentPosition() + MobileSettings.integer("seek_seconds") * 1000L));
         break;
       case "back":
         player.seekTo(
@@ -1280,7 +1314,13 @@ public final class PlaybackService extends MediaSessionService {
                 0, player.getCurrentPosition() - MobileSettings.integer("seek_seconds") * 1000L));
         break;
       case "seek":
-        player.seekTo((long) (command.optDouble("seconds") * 1000));
+        player.seekTo(liveSeekLimit((long) (command.optDouble("seconds") * 1000)));
+        break;
+      case "go_live":
+        if (LivePosition.live(player)) {
+          pausedByUser = false;
+          LivePosition.goLive(player);
+        }
         break;
       case "preview_end":
         finishPreview();
@@ -1546,6 +1586,35 @@ public final class PlaybackService extends MediaSessionService {
   boolean isLive() {
     JSONObject media = currentRequest.optJSONObject("media");
     return media != null && media.optBoolean("live") && !currentRequest.optBoolean("preview");
+  }
+
+  /**
+   * The loaded timeline is the authority on live: a stream the catalogue or resolver did not
+   * flag (a card from before it went live, a shared link) is marked live here, so reconnects,
+   * history and every player surface treat it as one.
+   */
+  void markLiveFromTimeline() {
+    if (currentRequest.optBoolean("preview") || !LivePosition.live(player)) return;
+    JSONObject media = currentRequest.optJSONObject("media");
+    if (media == null || media.optBoolean("live")) return;
+    try {
+      media.put("live", true);
+    } catch (JSONException ignored) {
+      return;
+    }
+    publish();
+  }
+
+  /** Seeking forward in a live stream stops at the live edge instead of past the window. */
+  long liveSeekLimit(long targetMs) {
+    if (!LivePosition.live(player)) return targetMs;
+    long edge = LivePosition.edgeMs(player);
+    return edge == C.TIME_UNSET ? targetMs : Math.max(0, Math.min(targetMs, edge));
+  }
+
+  long publishedPositionMs() {
+    long position = player.getCurrentPosition();
+    return LivePosition.live(player) ? LivePosition.clamp(position, player.getDuration()) : position;
   }
 
   static boolean rateLimited(Throwable error) {
@@ -2084,8 +2153,12 @@ public final class PlaybackService extends MediaSessionService {
               .put(
                   "buffering", streamRefreshing || player.getPlaybackState() == Player.STATE_BUFFERING)
               .put("buffered_ms", player.getTotalBufferedDuration())
-              .put("position", player.getCurrentPosition() / 1000.0)
+              .put("position", publishedPositionMs() / 1000.0)
               .put("duration", Math.max(0, player.getDuration()) / 1000.0)
+              // Detected from the loaded stream; media.live is the catalogue's claim.
+              .put("live_stream", LivePosition.live(player))
+              .put("live_seekable", LivePosition.live(player) && player.isCurrentMediaItemSeekable())
+              .put("live_behind", LivePosition.behindMs(player) / 1000.0)
               .put("video", !currentRequest.optBoolean("audio", true))
               .put(
                   "offline",

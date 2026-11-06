@@ -64,11 +64,21 @@
       <TextView android:id="@id/exo_position"
           style="@style/YtuiTime.Position"/>
 
-      <TextView
+      <TextView android:id="@+id/ytui_time_separator"
           style="@style/YtuiTime.Separator" android:text=" / "/>
 
       <TextView android:id="@id/exo_duration"
           style="@style/YtuiTime.Duration"/>
+
+      <!-- Live streams (PlayerChrome.trackLive): how far behind the edge, then LIVE with a dot
+           that is red at the edge. The pill becomes the go-live button. -->
+      <TextView android:id="@+id/ytui_live_behind"
+          style="@style/YtuiTime.Position" android:layout_marginEnd="8dp" android:visibility="gone"/>
+
+      <TextView android:id="@+id/ytui_live"
+          style="@style/YtuiTime.Position" android:text="@string/ytui_player_live"
+          android:drawablePadding="5dp" android:gravity="center_vertical"
+          android:letterSpacing="0.06" android:visibility="gone"/>
 
     </LinearLayout>
 

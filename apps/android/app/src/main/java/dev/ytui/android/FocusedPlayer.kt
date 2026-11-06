@@ -16,6 +16,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -92,6 +93,7 @@ internal fun VideoSurface(
                     VideoGestures.attach(this)
                     ColorGrade.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
+                    PlayerChrome.trackLive(this)
                     PlayerChrome.fitTransport(this)
                     PlayerChrome.bindCaptions(this)
                     PlayerChrome.softenPresses(this)
@@ -896,7 +898,56 @@ internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = M
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
     val live = player.media?.optBoolean("live") == true
     var drag by remember(player.media?.optString("url")) { mutableStateOf<Float?>(null) }
-    if (live) {
+    if (live && player.value.optBoolean("live_seekable") && player.duration > 0f) {
+        // A live stream with a DVR window: scrub within the window, and the live marker shows
+        // how far behind the edge playback is and returns there when tapped.
+        val behind = (player.value.optDouble("live_behind", 0.0) * 1000).toLong()
+        val atEdge = drag == null && LivePosition.atEdge(behind)
+        Column {
+            MediaSeekSlider(
+                (drag ?: player.position).coerceIn(0f, player.duration),
+                { drag = it },
+                valueRange = 0f..player.duration,
+                onValueChangeFinished = {
+                    drag?.let { vm.command("seek", "seconds" to it) }
+                    drag = null
+                },
+                modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val numbers =
+                    MaterialTheme.typography.labelMedium.merge(
+                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                    )
+                val shownBehind =
+                    drag?.let { ((player.duration - it) * 1000).toLong() } ?: behind
+                Text(
+                    LivePosition.behindLabel(shownBehind),
+                    style = numbers,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ArtworkBadge(
+                    atEdge,
+                    "Live",
+                    Modifier.heightIn(min = 36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(
+                            enabled = !atEdge,
+                            onClickLabel = "Jump to live",
+                            role = androidx.compose.ui.semantics.Role.Button,
+                        ) {
+                            vm.command("go_live")
+                        }
+                        .testTag("player-live"),
+                    pulse = atEdge,
+                )
+            }
+        }
+    } else if (live) {
         // The same live marker as on station artwork, instead of bare capitals.
         ArtworkBadge(true, "Live", Modifier.heightIn(min = 36.dp).testTag("player-live"))
     } else if (player.duration <= 0f) {

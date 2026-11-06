@@ -5,4 +5,7 @@
     <string name="ytui_player_options">Playback options</string>
     <string name="ytui_player_captions_on">Turn captions on</string>
     <string name="ytui_player_captions_off">Turn captions off</string>
+    <string name="ytui_player_live">LIVE</string>
+    <string name="ytui_player_live_at_edge">Live</string>
+    <string name="ytui_player_go_live">Behind live by %1$s. Jump to live</string>
 </resources>

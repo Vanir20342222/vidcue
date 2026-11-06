@@ -7,4 +7,6 @@
     <item name="ytui_panel_swipe" type="id" />
     <!-- Tag slot for the PlayerView's colour grading controller (ColorGrade.kt). -->
     <item name="ytui_color_grade" type="id" />
+    <!-- Tag slot for the PlayerView's live-stream pill updater (PlayerChrome.trackLive). -->
+    <item name="ytui_live_tracker" type="id" />
 </resources>
