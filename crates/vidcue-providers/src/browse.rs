@@ -2385,6 +2385,38 @@ mod category_tests {
     }
 
     #[test]
+    fn lockup_card_keeps_its_creator_avatar_apart_from_the_artwork() {
+        let page = parse_page(
+            &json!({"contents":[{"lockupViewModel":{
+                "contentId":"ccccccccccc", "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                "contentImage":{"thumbnailViewModel":{"image":{"sources":[
+                    {"url":"https://i.ytimg.com/vi/ccccccccccc/hq.jpg","width":480,"height":360}
+                ]}}},
+                "metadata":{"lockupMetadataViewModel":{
+                    "title":{"content":"Lockup video"},
+                    "image":{"decoratedAvatarViewModel":{"avatar":{"avatarViewModel":{"image":{"sources":[
+                        {"url":"https://yt3.ggpht.com/lockup=s68-c-k","width":68,"height":68}
+                    ]}}}}},
+                    "metadata":{"contentMetadataViewModel":{"metadataRows":[{"metadataParts":[{"text":{"content":"Lockup Channel"}}]}]}}
+                }}
+            }}]}),
+            false,
+        );
+        let item = &page.items[0];
+        assert_eq!(item.creator, "Lockup Channel");
+        assert_eq!(
+            item.channel_thumbnail,
+            "https://yt3.ggpht.com/lockup=s68-c-k"
+        );
+        assert_eq!(item.thumbnail, "https://i.ytimg.com/vi/ccccccccccc/hq.jpg");
+        assert!(
+            item.thumbnails.iter().all(|t| !t.url.contains("ggpht")),
+            "avatar URLs must not leak into video artwork: {:?}",
+            item.thumbnails
+        );
+    }
+
+    #[test]
     fn lockup_cards_keep_their_creator_avatar_apart_from_the_video_artwork() {
         let avatar = |url: &str| {
             json!({"avatarViewModel":{"image":{"sources":[

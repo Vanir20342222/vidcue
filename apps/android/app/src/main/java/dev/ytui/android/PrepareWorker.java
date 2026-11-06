@@ -69,12 +69,69 @@ public final class PrepareWorker extends Worker {
         context.getSharedPreferences("preparations-progress", Context.MODE_PRIVATE).edit();
     for (String name : PreparationPolicy.progressKeys(key)) progress.remove(name);
     progress.apply();
-    java.io.File checkpoint = checkpoint(context, key);
-    if (checkpoint.exists()) checkpoint.delete();
+    new android.util.AtomicFile(checkpoint(context, key)).delete();
+    new android.util.AtomicFile(checkpoint(context, key + "-retry")).delete();
   }
 
   static java.io.File checkpoint(Context context, String key) {
     return new java.io.File(context.getFilesDir(), "prepare-" + key + ".json");
+  }
+
+  static JSONArray readCheckpoint(java.io.File file) throws Exception {
+    try (java.io.InputStream in = new android.util.AtomicFile(file).openRead()) {
+      java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+      byte[] bytes = new byte[8192];
+      int count;
+      while ((count = in.read(bytes)) != -1) {
+        out.write(bytes, 0, count);
+        if (out.size() > 16 * 1024 * 1024)
+          throw new java.io.IOException("Playlist exceeds budget");
+      }
+      return new JSONArray(out.toString("UTF-8"));
+    }
+  }
+
+  static void writeCheckpoint(java.io.File file, JSONArray items) throws Exception {
+    byte[] bytes = items.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    if (bytes.length > 16 * 1024 * 1024)
+      throw new java.io.IOException("Playlist exceeds budget");
+    android.util.AtomicFile atomic = new android.util.AtomicFile(file);
+    java.io.FileOutputStream out = null;
+    try {
+      out = atomic.startWrite();
+      out.write(bytes);
+      atomic.finishWrite(out);
+    } catch (Exception error) {
+      if (out != null) atomic.failWrite(out);
+      throw error;
+    }
+  }
+
+  /**
+   * A completed pass keeps only its failed entries for a manual Restart. The request stays
+   * small enough for WorkManager, and a failed-only pass must not replace the saved full playlist.
+   * Interrupted passes never call this: their existing file and cursor remain resumable.
+   */
+  static JSONObject completedRequest(
+      Context context, String key, JSONObject request, JSONArray items, String retryable, int failed)
+      throws Exception {
+    int[] retry = PreparationPolicy.failures(retryable, items.length());
+    JSONObject next = new JSONObject(request.toString());
+    if (failed > 0) {
+      JSONArray again = new JSONArray();
+      for (int index : retry) again.put(items.getJSONObject(index));
+      writeCheckpoint(checkpoint(context, key + "-retry"), again);
+      next.put("retry_failed", true).put("create_offline_playlist", false);
+      SharedPreferences.Editor progress =
+          context.getSharedPreferences("preparations-progress", Context.MODE_PRIVATE).edit();
+      for (String name : PreparationPolicy.progressKeys(key)) progress.remove(name);
+      if (!progress.commit()) throw new java.io.IOException("Cannot reset completed playlist progress");
+      new android.util.AtomicFile(checkpoint(context, key)).delete();
+    } else {
+      purge(context, key);
+      next.remove("retry_failed");
+    }
+    return next;
   }
 
   /** Status updates from a cancelled or replaced run are dropped. */
@@ -119,24 +176,17 @@ public final class PrepareWorker extends Worker {
     String raw = getInputData().getString("request"), id = getInputData().getString("key");
     if (id == null) id = getId().toString();
     if (raw == null) return Result.failure();
-    java.io.File checkpoint = checkpoint(getApplicationContext(), id);
     try {
       setForegroundAsync(foreground()).get(15, TimeUnit.SECONDS);
       JSONObject request = new JSONObject(raw);
+      java.io.File checkpoint =
+          checkpoint(getApplicationContext(), id + (request.optBoolean("retry_failed") ? "-retry" : ""));
       JSONArray items;
-      if (checkpoint.isFile()) {
-        try (java.io.InputStream in = new android.util.AtomicFile(checkpoint).openRead()) {
-          java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-          byte[] b = new byte[8192];
-          int n;
-          while ((n = in.read(b)) != -1) {
-            out.write(b, 0, n);
-            if (out.size() > 16 * 1024 * 1024)
-              throw new java.io.IOException("Playlist exceeds budget");
-          }
-          items = new JSONArray(out.toString("UTF-8"));
-        }
+      if (checkpoint.isFile() || new java.io.File(checkpoint + ".bak").isFile()) {
+        items = readCheckpoint(checkpoint);
       } else {
+        if (request.optBoolean("retry_failed"))
+          throw new IllegalArgumentException("Missing failed-entry checkpoint");
         JSONObject response =
             call(
                 new JSONObject()
@@ -144,16 +194,7 @@ public final class PrepareWorker extends Worker {
                     .put("request", request.get("request"))
                     .put("music", request.optBoolean("music")));
         items = response.getJSONArray("data");
-        android.util.AtomicFile atomic = new android.util.AtomicFile(checkpoint);
-        java.io.FileOutputStream out = null;
-        try {
-          out = atomic.startWrite();
-          out.write(items.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
-          atomic.finishWrite(out);
-        } catch (Exception error) {
-          if (out != null) atomic.failWrite(out);
-          throw error;
-        }
+        writeCheckpoint(checkpoint, items);
       }
       SharedPreferences progress =
           getApplicationContext()
@@ -171,6 +212,7 @@ public final class PrepareWorker extends Worker {
       }
       int start = PreparationPolicy.checkedCursor(progress.getInt(id, 0), items.length()),
           failed = progress.getInt(id + "-failed", 0);
+      String retryable = progress.getString(id + "-retry", "");
       for (int i = start; i < items.length(); i++) {
         if (isStopped()) return stopped(id);
         JSONObject media = items.getJSONObject(i);
@@ -199,6 +241,7 @@ public final class PrepareWorker extends Worker {
           if (PreparationPolicy.rateLimited(error))
             return retryOrStop(id, "Service cooldown; playlist preparation will retry", raw);
           failed++;
+          retryable = PreparationPolicy.withFailure(retryable, i);
           MediaBridge.event(
               "error",
               "Playlist entry failed: "
@@ -235,16 +278,14 @@ public final class PrepareWorker extends Worker {
             Thread.sleep(100);
           }
         }
-        if (!progress.edit().putInt(id, i + 1).putInt(id + "-failed", failed).commit())
+        if (!progress.edit().putInt(id, i + 1).putInt(id + "-failed", failed)
+            .putString(id + "-retry", retryable).commit())
           throw new java.io.IOException("Cannot persist playlist progress");
       }
-      report(
-          id,
-          failed == 0
-              ? "Playlist queued: " + items.length() + " entries"
-              : "Playlist queued with " + failed + " failures; review before retrying",
-          raw);
-      purge(getApplicationContext(), id);
+      if (isStopped()) return stopped(id);
+      int retryCount = PreparationPolicy.failures(retryable, items.length()).length;
+      JSONObject next = completedRequest(getApplicationContext(), id, request, items, retryable, failed);
+      report(id, PreparationPolicy.finished(items.length(), failed, retryCount), next.toString());
       return failed == 0 ? Result.success() : Result.failure();
     } catch (IllegalArgumentException error) {
       report(id, "Invalid playlist checkpoint; remove and add the playlist again", raw);
