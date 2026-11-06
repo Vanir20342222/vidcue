@@ -84,6 +84,8 @@ final class VideoGestures {
     badge.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
     int padH = dp(16), padV = dp(8);
     badge.setPadding(padH, padV, padH, padV);
+    badge.setCompoundDrawablePadding(dp(10));
+    badge.setGravity(Gravity.CENTER_VERTICAL);
     android.graphics.drawable.GradientDrawable pill =
         new android.graphics.drawable.GradientDrawable();
     pill.setColor(0xb8000000);
@@ -129,10 +131,10 @@ final class VideoGestures {
                 int seconds = MobileSettings.integer("seek_seconds");
                 if (event.getX() < third) {
                   command("back");
-                  show("⏪  " + seconds + " s");
+                  show(R.drawable.ytui_gesture_seek_back, false, seconds + " s", true);
                 } else if (event.getX() > third * 2) {
                   command("forward");
-                  show(seconds + " s  ⏩");
+                  show(R.drawable.ytui_gesture_seek_forward, true, seconds + " s", true);
                 } else {
                   command("pause");
                   PlaybackService service = PlaybackService.current;
@@ -150,7 +152,7 @@ final class VideoGestures {
                 holding = true;
                 command(new JSONObject(), "speed_hold", true);
                 float rate = MobileSettings.integer("hold_speed") / 100f;
-                show(formatRate(rate) + "×  ⏩", false);
+                show(R.drawable.ytui_gesture_seek_forward, true, formatRate(rate) + "×", false);
                 haptic(HapticFeedbackConstants.LONG_PRESS);
               }
             });
@@ -263,10 +265,26 @@ final class VideoGestures {
           float level = Math.max(0f, Math.min(1f, startLevel + delta));
           if (drag == Drag.BRIGHTNESS) {
             setBrightness(Math.max(0.01f, level));
-            show("☀  " + Math.round(level * 100) + "%", false);
+            int percent = Math.round(level * 100);
+            show(
+                percent < 50
+                    ? R.drawable.ytui_gesture_brightness_low
+                    : R.drawable.ytui_gesture_brightness_high,
+                false,
+                percent + "%",
+                false);
           } else {
             setVolume(level);
-            show("🔊  " + Math.round(level * 100) + "%", false);
+            int percent = Math.round(level * 100);
+            show(
+                percent == 0
+                    ? R.drawable.ytui_gesture_volume_mute
+                    : percent < 50
+                        ? R.drawable.ytui_gesture_volume_low
+                        : R.drawable.ytui_gesture_volume_high,
+                false,
+                percent + "%",
+                false);
           }
           return true;
         }
@@ -398,9 +416,19 @@ final class VideoGestures {
     show(text, true);
   }
 
-  /** Brief on-video feedback; reduced/disabled animations jump straight to the end state. */
   private void show(String text, boolean autoHide) {
+    show(0, false, text, autoHide);
+  }
+
+  /**
+   * Brief on-video feedback; reduced/disabled animations jump straight to the end state. {@code
+   * icon} is a white vector drawable (0 for none) drawn before the text, or after it when {@code
+   * iconAfter} is set.
+   */
+  private void show(int icon, boolean iconAfter, String text, boolean autoHide) {
     badge.setText(text);
+    badge.setCompoundDrawablesRelativeWithIntrinsicBounds(
+        iconAfter ? 0 : icon, 0, iconAfter ? icon : 0, 0);
     badge.animate().cancel();
     boolean animate = android.animation.ValueAnimator.areAnimatorsEnabled();
     if (animate && badge.getAlpha() < 1f)
