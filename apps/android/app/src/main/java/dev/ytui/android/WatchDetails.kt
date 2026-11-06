@@ -248,12 +248,13 @@ internal fun WatchDetails(
                 }
                 val context = LocalContext.current
                 val linkColor = colors.primary
+                val onLink by rememberUpdatedState(openLink)
                 // Collapsed, a tap anywhere opens the card; links only take taps once it is open.
                 val shown =
-                    remember(description, open, linkColor, openLink) {
+                    remember(description, open, linkColor) {
                         if (open)
                             linkedDescription(description, linkColor) { url ->
-                                openLink?.invoke(url) ?: openExternalLink(context, url)
+                                onLink?.invoke(url) ?: openExternalLink(context, url)
                             }
                         else AnnotatedString(description)
                     }
