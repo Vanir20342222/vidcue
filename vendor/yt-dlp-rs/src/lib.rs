@@ -92,7 +92,11 @@ pub use subtitles::{
 pub use thumbnail_process::{ThumbnailConversion, fixup_webp};
 pub use video::{VideoMode, VideoOptions};
 
-/// Embedding hook used only when the caller selects `ytui-android-js`.
+/// Runtime selector for the host-provided offline JavaScript evaluator.
+/// Keep this protocol identifier stable across application renames.
+pub const EMBEDDED_JS_RUNTIME: &str = "ytui-android-js";
+
+/// Embedding hook used only when the caller selects [`EMBEDDED_JS_RUNTIME`].
 /// The host must run the offline script with no network/host API access and a deadline.
 pub type EmbeddedJsEvaluator = fn(&str) -> std::result::Result<String, String>;
 static EMBEDDED_JS: std::sync::OnceLock<EmbeddedJsEvaluator> = std::sync::OnceLock::new();

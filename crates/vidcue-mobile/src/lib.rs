@@ -1154,7 +1154,7 @@ impl Engine {
                                     playback_skip_direct: fresh,
                                     playback_visitor_data: visitor,
                                     js_runtime: if cfg!(target_os = "android") {
-                                        Some("vidcue-android-js".into())
+                                        Some(yt_dlp_rs::EMBEDDED_JS_RUNTIME.into())
                                     } else {
                                         None
                                     },
