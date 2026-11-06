@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlin.math.sign
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -116,11 +117,14 @@ internal data class Motion(
                 "smooth" -> 0.9f
                 else -> Spring.DampingRatioNoBouncy
             }
+        // Drag releases and press feedback must settle in a couple of hundred milliseconds;
+        // softer springs read as lag because the UI keeps moving after the finger has left.
         val base =
             when (style) {
-                "snappy" -> Spring.StiffnessMedium
-                "gentle" -> Spring.StiffnessLow
-                else -> Spring.StiffnessMediumLow
+                "snappy" -> 2200f
+                "gentle" -> Spring.StiffnessMediumLow
+                "bouncy" -> 1100f
+                else -> 1400f
             }
         // A spring's settle time scales with 1/sqrt(stiffness).
         val factor = speed.coerceIn(50, 200) / 100f
@@ -181,12 +185,24 @@ internal fun Modifier.pressFeedback(): Modifier {
  * (reset when its content changes) so items scrolled back into view do not animate again.
  */
 @Composable
-internal fun Modifier.appearance(key: Any, index: Int, seen: MutableSet<Any>): Modifier {
+internal fun Modifier.appearance(
+    key: Any,
+    index: Int,
+    seen: MutableSet<Any>,
+    isScrolling: () -> Boolean = { false },
+): Modifier {
     val motion = LocalMotion.current
-    val first = remember(key) { motion.animate && motion.cards && seen.add(key) && index < 12 }
-    val progress = remember(key) { Animatable(if (first) 0f else 1f) }
+    // Scrolled-in cards should be readable immediately, without a delayed entrance + art fade.
+    val first =
+        remember(key) {
+            motion.animate && motion.cards && seen.add(key) && index < 12 && !isScrolling()
+        }
+    // Most cards (anything scrolled in) never animate: they skip the animation state, the
+    // effect and the extra layer entirely.
+    if (!first) return this
+    val progress = remember(key) { Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(key) {
-        if (progress.value < 1f) progress.animateTo(1f, motion.enter(360, delay = index * 35))
+        if (progress.value < 1f) progress.animateTo(1f, motion.enter(300, delay = index * 22))
     }
     return graphicsLayer {
         alpha = progress.value.coerceIn(0f, 1f)
@@ -240,7 +256,9 @@ internal fun Modifier.swipeAxis(
                 val past = abs(distance) > threshold && allowed(sign(distance).toInt())
                 if (past && !crossed) haptic()
                 crossed = past
-                if (follow && motion.animate) scope.launch { offset.snapTo(distance) }
+                // Undispatched: the offset is applied before the next draw, not a frame later.
+                if (follow && motion.animate)
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) { offset.snapTo(distance) }
             }
         val end: () -> Unit = {
             val velocity = tracker.calculateVelocity().let { if (horizontal) it.x else it.y }

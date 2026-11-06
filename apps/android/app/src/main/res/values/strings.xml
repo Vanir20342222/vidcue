@@ -3,4 +3,6 @@
     <string name="ytui_player_collapse">Minimize player</string>
     <string name="ytui_player_exit_fullscreen">Exit full screen</string>
     <string name="ytui_player_options">Playback options</string>
+    <string name="ytui_player_captions_on">Turn captions on</string>
+    <string name="ytui_player_captions_off">Turn captions off</string>
 </resources>

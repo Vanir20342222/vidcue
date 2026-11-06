@@ -17,14 +17,14 @@ On CachyOS/Arch:
 sudo pacman -S --needed base-devel rustup openssl mpv ffmpeg nodejs
 rustup default stable
 git clone https://github.com/Vanir20342222/ytui.git
-cd ytui
+cd vidcue
 ./install.sh
 hash -r
-~/.local/bin/ytui --version
-~/.local/bin/ytui doctor
+~/.local/bin/vidcue --version
+~/.local/bin/vidcue doctor
 ```
 
-The installer builds Rust and installs `ytui` and `ytui-rs` in `~/.local/bin`, or
+The installer builds Rust and installs `vidcue` and `vidcue` in `~/.local/bin`, or
 `YTUI_INSTALL_DIR`. It builds before replacing launchers, replaces an old symlink
 itself, and preserves settings, queues, history, browser profiles and media.
 `install-rust.sh` is a compatibility entry point. No system package is installed
@@ -36,14 +36,14 @@ requires that tool and its supported JavaScript runtime.
 Update from main. Pulling source does not replace your installed executable:
 
 ```sh
-cd ~/ytui
+cd ~/vidcue
 git fetch origin
 git switch main
 git pull --ff-only
 ./install.sh
 hash -r
-~/.local/bin/ytui --version             # 0.2.0-alpha.12
-type -a ytui ytui-rs
+~/.local/bin/vidcue --version             # 0.2.0-alpha.12
+type -a vidcue vidcue
 ```
 
 Playback and downloads have independent backends. An older configuration with
@@ -147,7 +147,7 @@ Both settings offer:
 - `yt-dlp`: explicitly use the external extractor immediately.
 
 `Y` is still available for one explicit external retry. Per-job backend choices and
-`ytui download URL --backend auto|native|yt-dlp` override the global default.
+`vidcue download URL --backend auto|native|yt-dlp` override the global default.
 Cancellation and local publication/disk failures do not trigger an external retry.
 
 Alpha.7 resolves external playback directly with yt-dlp, then hands validated video/
@@ -167,7 +167,7 @@ overrides detection; a blank field restores it. Explicit unsupported versions
 produce an actionable error. A newer distribution Deno may only be compatible
 with external yt-dlp. JavaScript runs locally with restricted permissions; no
 executable or browser session is fetched automatically. Upstream still has
-account/live/DRM limitations, and ytui native playlist downloads stay gated.
+account/live/DRM limitations, and vidcue native playlist downloads stay gated.
 Pausing a native transfer preserves intent but restarting it may repeat transfer;
 yt-dlp can continue its own partials. Partials are not moved between backends.
 
@@ -177,7 +177,7 @@ Paste a dedicated YouTube/Music `…/playlist?list=…` link: the download form 
 Whole playlist, and pasting in Music selects audio. In the CLI:
 
 ```sh
-ytui download 'https://music.youtube.com/playlist?list=PLAYLIST_ID' --audio --backend auto
+vidcue download 'https://music.youtube.com/playlist?list=PLAYLIST_ID' --audio --backend auto
 ```
 
 A watch link containing both v= and list= remains a single video unless you choose
@@ -199,7 +199,7 @@ is explicit: **F2 → Account → Connect browser or cookie file**. Select Brave
 and the actual Profile Path from `brave://version`, or a Netscape cookie file.
 Cookies stay on the user's machine, scoped to approved YouTube/Google origins.
 The default store is the desktop keyring; `auth_store = "file"` uses private files.
-F2 → Disconnect removes ytui's saved session and account caches, leaving the browser.
+F2 → Disconnect removes vidcue's saved session and account caches, leaving the browser.
 
 Home, subscriptions, Watch Later, liked media, library and history depend on what
 the selected account/service returns. Anonymous Home can be empty; `/` offers
@@ -249,12 +249,12 @@ search and Radio Browser failover are available through the source list/Actions.
 Custom HTTP(S) stations can be added through Actions or imported read-only:
 
 ```sh
-ytui import-radio "$HOME/.config/cliamp/radios.toml"
-ytui import-radio "$HOME/.config/cliamp/radio_favorites.toml"
+vidcue import-radio "$HOME/.config/cliamp/radios.toml"
+vidcue import-radio "$HOME/.config/cliamp/radio_favorites.toml"
 ```
 
 The optional installed cliamp program launches through a separate action while
-ytui suspends/restores its terminal. Its unrelated providers are outside this port.
+vidcue suspends/restores its terminal. Its unrelated providers are outside this port.
 
 Direct extraction plays media without the YouTube website's ad player. This is the
 ad-free playback path; it does not promise removal of server-side ads embedded in
@@ -274,12 +274,12 @@ completed media are preserved when a later processing/publication step fails.
 ## Downloads, local library and data
 
 ```sh
-ytui download URL --backend auto
-ytui download URL --audio --audio-quality 320K --directory "$HOME/Music/ytui"
-ytui download PLAYLIST_URL --playlist --items '1,3:7' --backend yt-dlp
-ytui --offline
-ytui migrate                          # preview legacy migration
-ytui migrate --apply                  # import with backups
+vidcue download URL --backend auto
+vidcue download URL --audio --audio-quality 320K --directory "$HOME/Music/vidcue"
+vidcue download PLAYLIST_URL --playlist --items '1,3:7' --backend yt-dlp
+vidcue --offline
+vidcue migrate                          # preview legacy migration
+vidcue migrate --apply                  # import with backups
 ```
 
 The queue persists phases, progress, retries, pause/cancel, order, groups and final
@@ -310,7 +310,7 @@ a download window. Long DST transitions still need local acceptance.
 
 F2 → VPN operates on existing NetworkManager VPN/WireGuard profile UUIDs only.
 No connection changes happen at startup. This is not a standalone Proton login or
-server selector; keep using Proton normally. ytui never requires root for cookies.
+server selector; keep using Proton normally. vidcue never requires root for cookies.
 
 State format 2 backs up an old version-1 database before upgrading and rejects
 older readers. Migration retains original legacy files, raw unsupported values
@@ -320,11 +320,16 @@ source remains recoverable from Git history. See [remaining work](REMAINING_WORK
 
 ## Validation and diagnostics
 
-`ytui doctor` checks configuration/tools without provider requests. `doctor --network`
+`vidcue doctor` checks configuration/tools without provider requests. `doctor --network`
 probes public YouTube/Music/radio without reading browser sessions or changing VPN.
-F2 → Diagnostics reports sanitized recent errors. F2 → Check for updates describes
-the source-build update; it never silently replaces binaries. No signed release
-archives or distribution packages are implemented yet.
+F2 → Diagnostics reports sanitized recent errors. At startup Vidcue asks GitHub for
+a newer desktop release (`v1.2.3` or `desktop-v1.2.3` tags; Android tags are ignored)
+and shows a popup with **Update now**, **Later** and **Skip this version**. Update now
+clones that tag and runs its `install.sh` (needs git and cargo); nothing installs
+without that button or `vidcue update`. `vidcue update --check` only reports. Turn the
+check off in General settings → Check GitHub for new releases; F2 → Check for a new
+Vidcue version checks on demand. No signed release archives or distribution packages
+are implemented yet.
 
 Tests, capture reproduction and actual failures are recorded in
 [VALIDATION.md](VALIDATION.md), [FEATURE_AUDIT.md](FEATURE_AUDIT.md) and the

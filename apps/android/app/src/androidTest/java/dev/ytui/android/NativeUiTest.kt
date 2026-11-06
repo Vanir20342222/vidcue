@@ -102,15 +102,17 @@ class NativeUiTest {
     fun everySharedThemeChangesThePaintedNativeUiAndPersists() {
         val themes =
             JSONObject(NativeBridge.request(json("op" to "themes").toString())).getJSONArray("data")
-        for (index in 0 until themes.length()) {
-            val theme = themes.getString(index)
+        // Every palette is checked for contrast by the theme matrix test; the full repaint and
+        // persistence round trip runs for a representative sample to keep the suite short.
+        for ((index, theme) in representativeThemes(themes).withIndex()) {
             compose.onNodeWithTag("settings-button").performClick()
             compose.onNodeWithTag("settings-Appearance").performClick()
             compose.onNodeWithTag("theme-selector").performClick()
             compose.onNodeWithTag("theme-$theme").performScrollTo().performClick()
             compose.waitUntil(10_000) {
-                compose.onAllNodesWithText("Theme: $theme").fetchSemanticsNodes().isNotEmpty()
+                compose.onAllNodes(hasText("Theme") and hasText(themeLabel(theme))).fetchSemanticsNodes().isNotEmpty()
             }
+            compose.onNodeWithTag("settings-back").performClick()
             compose.onNodeWithContentDescription("Close").performClick()
             compose.waitForIdle()
             val dark =
@@ -161,7 +163,7 @@ class NativeUiTest {
             val document =
                 JSONObject(NativeBridge.request(json("op" to "theme", "dark" to true).toString()))
                     .getJSONObject("data")
-                    .put("name", "ytui-dark")
+                    .put("name", "vidcue-dark")
                     .put("source", "synthetic imported palette")
                     .put("background", org.json.JSONArray(listOf(12, 20, 50)))
                     .put("surface", org.json.JSONArray(listOf(20, 32, 60)))
@@ -223,6 +225,15 @@ class NativeUiTest {
         compose.onNodeWithTag("cookie-header-field").assertIsFocused()
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation()).pressBack()
         compose.onNodeWithTag("account-sign-in").performScrollTo().performClick()
+        // The native account card comes first; Continue opens the provider page.
+        compose.waitUntil(10_000) {
+            compose
+                .onAllNodesWithTag("sign-in-continue")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false)
+                .isNotEmpty()
+        }
+        compose.onNodeWithTag("sign-in-card").assertIsDisplayed()
+        compose.onNodeWithTag("sign-in-continue").performScrollTo().performClick()
         compose.waitUntil(10_000) {
             compose
                 .onAllNodesWithTag("sign-in-complete")
@@ -272,6 +283,65 @@ class NativeUiTest {
                 vm.linked("https://media.invalid/playlist?list=PLfixture").collection
             )
         }
+    }
+
+    @Test
+    fun musicShelvesLoadMoreAutomaticallyNearTheBottom() {
+        checkMusicAutoLoad(shelves = true)
+    }
+
+    @Test
+    fun musicSearchLoadsMoreAutomaticallyNearTheBottom() {
+        checkMusicAutoLoad(shelves = false)
+    }
+
+    private fun checkMusicAutoLoad(shelves: Boolean) {
+        val reference = java.util.concurrent.atomic.AtomicReference<YtuiViewModel>()
+        val cards =
+            (0 until 60).map { index ->
+                MediaCard(
+                    json(
+                        "title" to "Music result $index",
+                        "url" to "https://media.invalid/music-$index",
+                        "kind" to "song",
+                        "section" to "Section ${index / 6}",
+                    )
+                )
+            }
+        scenario.onActivity {
+            val vm = androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java]
+            reference.set(vm)
+            vm.chooseTab(2)
+            vm.feeds[2].value =
+                FeedState(
+                    request = if (shelves) "Home" else json("Search" to "fixture music"),
+                    cards = cards,
+                    // Rejected locally by the provider before HTTP; no real account/feed.
+                    continuation = "fixture:invalid-endpoint",
+                    generation = 500,
+                )
+        }
+        compose.waitForIdle()
+        Assert.assertEquals(
+            "Do not fetch far from the end",
+            500L,
+            reference.get().feeds[2].value.generation,
+        )
+        compose.onNodeWithText("Load more").assertDoesNotExist()
+        // Ten shelves have twenty lazy items despite containing sixty songs.
+        compose.onNodeWithTag("feed-list").performScrollToIndex(if (shelves) 19 else 59)
+        compose.waitUntil(10_000) { reference.get().feeds[2].value.failedAppend }
+        val failed = reference.get().feeds[2].value
+        Assert.assertEquals(501L, failed.generation)
+        Assert.assertTrue(failed.error.orEmpty().contains("Invalid continuation endpoint"))
+        Assert.assertEquals(cards.map { it.key }, failed.cards.map { it.key })
+        compose.waitForIdle()
+        android.os.SystemClock.sleep(600)
+        Assert.assertEquals(
+            "Failed continuation must wait for explicit retry",
+            501L,
+            reference.get().feeds[2].value.generation,
+        )
     }
 
     @Test

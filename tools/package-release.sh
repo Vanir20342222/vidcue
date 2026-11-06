@@ -9,20 +9,21 @@ export YTUI_BUILD_REVISION="$release_revision"
 release_epoch="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
 [[ "$release_epoch" =~ ^[0-9]+$ ]] || { echo 'SOURCE_DATE_EPOCH must be numeric.' >&2; exit 2; }
 [[ -z "$(git status --porcelain)" ]] || { echo 'Commit reviewed source changes before packaging.' >&2; exit 2; }
-cargo build --release --locked -p ytui
-release_version="$("${CARGO_TARGET_DIR:-target}/release/ytui" --version | awk '{print $2}')"
-release_name="ytui-$release_version-$(uname -s)-$(uname -m)"
+cargo build --release --locked -p vidcue
+release_version="$("${CARGO_TARGET_DIR:-target}/release/vidcue" --version | awk '{print $2}')"
+release_name="vidcue-$release_version-$(uname -s)-$(uname -m)"
 mkdir -p -- "$release_output"
 release_output="$(cd -- "$release_output" && pwd)"
 [[ ! -e "$release_output/$release_name.tar.gz" ]] || { echo 'Archive already exists; choose a new output directory.' >&2; exit 2; }
-release_stage="$(mktemp -d "${TMPDIR:-/tmp}/ytui-release.XXXXXX")"
+release_stage="$(mktemp -d "${TMPDIR:-/tmp}/vidcue-release.XXXXXX")"
 trap 'rm -rf -- "$release_stage"' EXIT
 mkdir -- "$release_stage/$release_name"
-install -m755 "${CARGO_TARGET_DIR:-target}/release/ytui" "$release_stage/$release_name/ytui"
-ln -s ytui "$release_stage/$release_name/ytui-rs"
-cp -- LICENSE Cargo.lock docs/RUST.md packaging/ytui.desktop "$release_stage/$release_name/"
+install -m755 "${CARGO_TARGET_DIR:-target}/release/vidcue" "$release_stage/$release_name/vidcue"
+ln -s vidcue "$release_stage/$release_name/ytui"
+ln -s vidcue "$release_stage/$release_name/ytui-rs"
+cp -- LICENSE Cargo.lock docs/RUST.md packaging/vidcue.desktop packaging/vidcue.svg "$release_stage/$release_name/"
 cargo metadata --locked --format-version 1 > "$release_stage/dependencies.json"
-cargo run --release --locked -p ytui --example license_bundle -- "$release_stage/dependencies.json" "$release_stage/$release_name/licenses"
+cargo run --release --locked -p vidcue --example license_bundle -- "$release_stage/dependencies.json" "$release_stage/$release_name/licenses"
 {
   printf 'Revision: %s\nVersion: %s\nSource date epoch: %s\n' "$release_revision" "$release_version" "$release_epoch"
   rustc --version

@@ -1,12 +1,12 @@
 use crate::editor::Editor;
 use anyhow::{Result, ensure};
-use ytui_core::{Config, DownloadOptions, Media};
+use vidcue_core::{Config, DownloadOptions, Media};
 #[derive(Clone)]
 pub struct Field {
     pub label: &'static str,
     pub value: Editor,
     pub toggle: bool,
-    pub choices: &'static [&'static str],
+    pub choices: Vec<String>,
 }
 impl Field {
     fn text(label: &'static str, value: impl ToString) -> Self {
@@ -14,7 +14,7 @@ impl Field {
             label,
             value: Editor::new(value.to_string()),
             toggle: false,
-            choices: &[],
+            choices: Vec::new(),
         }
     }
     fn flag(label: &'static str, value: bool) -> Self {
@@ -22,10 +22,17 @@ impl Field {
             label,
             value: Editor::new(if value { "yes" } else { "no" }),
             toggle: true,
-            choices: &[],
+            choices: Vec::new(),
         }
     }
     fn choice(label: &'static str, value: impl ToString, choices: &'static [&'static str]) -> Self {
+        Self::choices(
+            label,
+            value,
+            choices.iter().map(|c| c.to_string()).collect(),
+        )
+    }
+    fn choices(label: &'static str, value: impl ToString, choices: Vec<String>) -> Self {
         Self {
             choices,
             ..Self::text(label, value)
@@ -33,8 +40,8 @@ impl Field {
     }
 }
 pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
-    ("General", &[54, 15, 16, 17, 34, 56, 38, 50]),
-    ("Appearance", &[0, 1, 2, 3, 55]),
+    ("General", &[54, 68, 15, 16, 17, 34, 56, 57, 38, 50]),
+    ("Appearance", &[0, 1, 2, 3, 55, 61, 62, 63, 64, 65, 66, 67]),
     (
         "Downloads",
         &[39, 40, 41, 42, 37, 43, 44, 4, 5, 6, 45, 21, 32, 33, 30],
@@ -44,7 +51,7 @@ pub const SETTINGS_SECTIONS: &[(&str, &[usize])] = &[
     ("Schedule", &[18, 19, 20]),
     ("Tools", &[13, 14, 7, 8, 9, 35, 46, 47, 31]),
     ("Radio", &[48, 49]),
-    ("Playback", &[53, 51, 52]),
+    ("Playback", &[53, 51, 52, 58, 59, 60, 69, 70, 71, 72]),
 ];
 pub enum FormKind {
     Download(Media, DownloadOptions),
@@ -74,7 +81,7 @@ impl Form {
     pub fn explanation(&self) -> Option<&'static str> {
         Some(match self.fields.get(self.selected)?.label {
             "Duration (e.g. 30m)" => {
-                "Use 30m, 1h or 90s, up to 24 hours. Stops playback and queue advance without quitting ytui. Pausing or changing tracks does not reset the timer; restarting ytui clears it."
+                "Use 30m, 1h or 90s, up to 24 hours. Stops playback and queue advance without quitting vidcue. Pausing or changing tracks does not reset the timer; restarting vidcue clears it."
             }
             "Language" => {
                 "en = English; de = Deutsch; system follows LC_ALL, LC_MESSAGES or LANG. Saved changes apply immediately. Tool/provider errors keep their original text."
@@ -100,6 +107,12 @@ impl Form {
             "Playback backend" => {
                 "Native never starts Python yt-dlp. Auto permits fallback. Changes apply to the next playback; tools are never installed automatically."
             }
+            "Color grading" => {
+                "A look for video playback: warm, cool, vivid or cinematic. Off leaves the picture untouched. Changes apply to the playing video; audio-only playback is never graded."
+            }
+            "Auto color grade" => {
+                "Briefly measures the playing picture (exposure, contrast, saturation, colour cast) and adds a slight correction, checking again every 30 seconds. Combines with Color grading. Needs mpv with FFmpeg's signalstats filter."
+            }
             "Image protocol" => {
                 "Auto uses detected terminal capability. Saved changes rebuild visible cards immediately; Ghostty supports Kitty graphics."
             }
@@ -114,6 +127,12 @@ impl Form {
             }
             "Resume videos where you left off" => {
                 "Playing a partly watched video continues from its locally saved position. Music, stations and finished videos start at the beginning. Use :player-seek 0 to start over. Requires saved playback positions."
+            }
+            "Equalizer" => {
+                "Shapes playback audio with a ten-band equalizer (31 Hz–16 kHz). Off adds no filter. Custom presets from the next field appear here; saved changes apply to the current player right away."
+            }
+            "Custom equalizers" => {
+                "name=g1,…,g10 in dB (-12 to 12) from 31 Hz to 16 kHz; separate presets with ';'. Example: night=-3,-2,0,0,1,2,2,1,0,-1"
             }
             "Limit KiB/s (0=off)" => {
                 "Per-job transfer cap in KiB/s; 0 disables this cap. Global/schedule caps may also apply."
@@ -153,7 +172,7 @@ impl Form {
 
     pub fn download(media: Media, mut options: DownloadOptions) -> Self {
         options.playlist |=
-            ytui_core::is_playlist_url(&media.url) || options.playlist_items.is_some();
+            vidcue_core::is_playlist_url(&media.url) || options.playlist_items.is_some();
         let o = &options;
         let fields = vec![
             Field::flag("Audio only", o.audio),
@@ -204,7 +223,7 @@ impl Form {
     pub fn settings(config: Config) -> Self {
         let c = &config;
         let fields = vec![
-            Field::choice("Theme", &c.theme, ytui_services::theme::THEMES),
+            Field::choice("Theme", &c.theme, vidcue_services::theme::THEMES),
             Field::choice(
                 "Theme provider",
                 &c.theme_provider,
@@ -312,9 +331,35 @@ impl Form {
             Field::choice(
                 "Music player style",
                 &c.music_player_style,
-                ytui_core::MUSIC_PLAYER_STYLES,
+                vidcue_core::MUSIC_PLAYER_STYLES,
             ),
             Field::flag("Resume videos where you left off", c.resume_on_play),
+            Field::flag(
+                "Autoplay related videos when the queue ends",
+                c.autoplay_related,
+            ),
+            Field::text("Seek step seconds", c.seek_seconds),
+            Field::flag("Prefer saved offline copies", c.prefer_offline),
+            Field::flag("Preload the next item", c.preload_next),
+            Field::flag("Show channel", c.card_info.channel),
+            Field::flag("Show view count", c.card_info.views),
+            Field::flag("Show upload date", c.card_info.upload_date),
+            Field::flag("Show duration", c.card_info.duration),
+            Field::flag("Show section", c.card_info.section),
+            Field::flag("Show likes", c.card_info.likes),
+            Field::flag("Show description in details", c.card_info.description),
+            Field::flag("Check GitHub for new releases", c.update_check),
+            Field::choice("Color grading", &c.color_grade, vidcue_core::COLOR_GRADES),
+            Field::flag("Auto color grade", c.auto_color_grade),
+            Field::choices(
+                "Equalizer",
+                &c.equalizer,
+                vidcue_core::equalizer::names(&c.equalizer_custom),
+            ),
+            Field::text(
+                "Custom equalizers",
+                vidcue_core::equalizer::format_custom(&c.equalizer_custom),
+            ),
         ];
         Self {
             kind: FormKind::Settings(config),
@@ -326,7 +371,7 @@ impl Form {
         }
     }
     pub fn keys(config: Config) -> Self {
-        let fields = ytui_core::shortcuts::REGISTRY
+        let fields = vidcue_core::shortcuts::REGISTRY
             .iter()
             .map(|(default, _, action, description)| {
                 let mapped = config
@@ -364,13 +409,13 @@ impl Form {
         };
         let mut config = base.clone();
         config.keybindings.clear();
-        for (index, (_, _, action, _)) in ytui_core::shortcuts::REGISTRY.iter().enumerate() {
+        for (index, (_, _, action, _)) in vidcue_core::shortcuts::REGISTRY.iter().enumerate() {
             ensure!(
                 !self.value(index).is_empty(),
                 "Each action needs at least one key"
             );
             for key in self.value(index).split_whitespace() {
-                ensure!(ytui_core::shortcuts::valid_key(key), "Unknown key {key}");
+                ensure!(vidcue_core::shortcuts::valid_key(key), "Unknown key {key}");
                 ensure!(
                     !config.keybindings.contains_key(key),
                     "Key {key} is assigned more than once"
@@ -432,6 +477,14 @@ impl Form {
             self.toggle();
             return;
         }
+        if field.label == "Equalizer"
+            && matches!(self.kind, FormKind::Settings(_))
+            && let Ok(custom) = vidcue_core::equalizer::parse_custom(&self.fields[72].value.text)
+        {
+            // Offer presets typed into "Custom equalizers" before they are saved.
+            self.fields[self.selected].choices = vidcue_core::equalizer::names(&custom);
+        }
+        let field = &mut self.fields[self.selected];
         if !field.choices.is_empty() {
             let current = field
                 .choices
@@ -440,7 +493,7 @@ impl Form {
                 .unwrap_or(0);
             let index =
                 (current as isize + delta).rem_euclid(field.choices.len() as isize) as usize;
-            field.value = Editor::new(field.choices[index]);
+            field.value = Editor::new(field.choices[index].clone());
         }
     }
     pub fn toggle(&mut self) {
@@ -489,7 +542,7 @@ impl Form {
             Some(self.value(6).into())
         };
         ensure!(
-            !ytui_core::is_playlist_url(&media.url) || o.playlist,
+            !vidcue_core::is_playlist_url(&media.url) || o.playlist,
             "This is a playlist link. Enable Whole playlist or use a single-song URL"
         );
         if o.playlist_items.is_some() {
@@ -618,6 +671,24 @@ impl Form {
             .collect();
         c.music_player_style = self.value(55).into();
         c.resume_on_play = self.value(56) == "yes";
+        c.autoplay_related = self.value(57) == "yes";
+        c.seek_seconds = self.value(58).parse()?;
+        c.prefer_offline = self.value(59) == "yes";
+        c.preload_next = self.value(60) == "yes";
+        c.card_info = vidcue_core::CardInfo {
+            channel: self.value(61) == "yes",
+            views: self.value(62) == "yes",
+            upload_date: self.value(63) == "yes",
+            duration: self.value(64) == "yes",
+            section: self.value(65) == "yes",
+            likes: self.value(66) == "yes",
+            description: self.value(67) == "yes",
+        };
+        c.update_check = self.value(68) == "yes";
+        c.color_grade = self.value(69).into();
+        c.auto_color_grade = self.value(70) == "yes";
+        c.equalizer = self.value(71).into();
+        c.equalizer_custom = vidcue_core::equalizer::parse_custom(self.value(72))?;
         c.validate()?;
         Ok(c)
     }
@@ -643,6 +714,54 @@ mod tests {
                 .to_string()
                 .contains("more than once")
         );
+    }
+    #[test]
+    fn equalizer_settings_offer_typed_custom_presets_and_validate_gains() {
+        let mut form = Form::settings(Config::default());
+        assert!(SETTINGS_SECTIONS[8].1.contains(&71) && SETTINGS_SECTIONS[8].1.contains(&72));
+        form.selected = 71;
+        form.cycle_choice(1);
+        assert_eq!(form.value(71), "flat");
+        form.fields[72].value = Editor::new("night=-3,-2,0,0,1,2,2,1,0,-1");
+        form.cycle_choice(-1);
+        form.cycle_choice(-1);
+        assert_eq!(
+            form.value(71),
+            "night",
+            "presets typed but not yet saved are offered"
+        );
+        let saved = form.config_values().unwrap();
+        assert_eq!(saved.equalizer, "night");
+        assert_eq!(saved.equalizer_custom["night"][0], -3.0);
+        let reopened = Form::settings(saved);
+        assert_eq!(reopened.value(72), "night=-3,-2,0,0,1,2,2,1,0,-1");
+        form.fields[72].value = Editor::new("night=30,0,0,0,0,0,0,0,0,0");
+        assert!(form.config_values().is_err());
+        form.fields[72].value = Editor::new("");
+        assert!(
+            form.config_values().is_err(),
+            "the chosen preset was removed"
+        );
+    }
+    #[test]
+    fn color_grading_settings_are_off_by_default_and_roundtrip() {
+        let mut form = Form::settings(Config::default());
+        let playback = SETTINGS_SECTIONS
+            .iter()
+            .find(|(name, _)| *name == "Playback")
+            .unwrap()
+            .1;
+        assert!(playback.contains(&69) && playback.contains(&70));
+        assert_eq!(form.fields[69].label, "Color grading");
+        assert_eq!(form.value(69), "off");
+        assert_eq!(form.value(70), "no");
+        form.fields[69].value = Editor::new("vivid");
+        form.fields[70].value = Editor::new("yes");
+        let saved = form.config_values().unwrap();
+        assert_eq!(saved.color_grade, "vivid");
+        assert!(saved.auto_color_grade);
+        form.fields[69].value = Editor::new("sepia");
+        assert!(form.config_values().is_err());
     }
     #[test]
     fn schedule_settings_roundtrip_and_reject_invalid_windows() {

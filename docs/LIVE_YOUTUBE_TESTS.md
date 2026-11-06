@@ -4,7 +4,7 @@ For native-only watching on `fix/native-playback`, use installed Node.js 22+ or
 Deno 2.9.7 and mpv:
 
 ```sh
-cargo build -p ytui --locked
+cargo build -p vidcue --locked
 tools/test-native-solver.sh
 tools/test-native-playback.sh
 ```
@@ -32,7 +32,7 @@ yt-dlp's own YouTube tab tests. Public fixtures can change or become unavailable
 
 Checks include YouTube/Music search, video details, video and audio playback,
 Music URL playback, a video download, Music audio conversion, and **two separate
-playlist files**. Actual ytui processes run the configured native/auto/external
+playlist files**. Actual vidcue processes run the configured native/auto/external
 backend. Playback uses real mpv with null audio/video outputs and must advance at
 least three seconds; it is not a check of the physical sound/display device.
 ffprobe verifies nonempty completed downloads, duration and audio/video tracks.
@@ -44,7 +44,7 @@ can fail YouTube signature challenges; `auto` and `yt-dlp` are separate runs.
 The original strict-native download diagnostic remains available separately:
 
 ```sh
-cargo test -p ytui --locked --test live_youtube live_native_ -- --ignored
+cargo test -p vidcue --locked --test live_youtube live_native_ -- --ignored
 ```
 
 Optional environment overrides: `YTUI_TEST_MPV`, `YTUI_TEST_YT_DLP`,
@@ -57,8 +57,8 @@ The runner does not install missing tools. On Arch/CachyOS, install the appropri
 For a single public playback diagnostic with your configured mpv output:
 
 ```sh
-ytui playback-check 'https://www.youtube.com/watch?v=jNQXAC9IVRw' --backend auto
-ytui playback-check 'https://music.youtube.com/watch?v=jNQXAC9IVRw' --audio --backend yt-dlp
+vidcue playback-check 'https://www.youtube.com/watch?v=jNQXAC9IVRw' --backend auto
+vidcue playback-check 'https://music.youtube.com/watch?v=jNQXAC9IVRw' --audio --backend yt-dlp
 ```
 
 This command intentionally loads no browser session. It closes mpv after three
@@ -69,7 +69,7 @@ Ctrl+C also stops/reaps the owned playback worker. A separate real-mpv loopback
 regression checks both progress JSON and a visible decoder failure:
 
 ```sh
-cargo test -p ytui --test downloads --locked real_mpv_playback_check_ -- --ignored
+cargo test -p vidcue --test downloads --locked real_mpv_playback_check_ -- --ignored
 ```
 
 The separate **YouTube live** GitHub workflow runs a public network preflight

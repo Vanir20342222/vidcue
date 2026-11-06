@@ -8,8 +8,9 @@ promise: live-service and physical-device measurements remain necessary.
 
 Initial base: released main `2baa9b6`. The accepted UI overhaul reached main
 as `b6a76a2` through PR33 during this work; it is now integrated into the
-performance feature branch, including its sharded native CI. PR32 itself must
-remain unmerged, per the owner. Desktop and durable offline state must stay
+performance feature branch, including its sharded native CI. PR32 was to
+remain unmerged; on 2026-11-03 the owner chose to merge it with the 1000 ms
+emulator target advisory (see the final section). Desktop and durable offline state must stay
 compatible. Earlier validation below refers to the explicitly recorded old bases.
 
 ## Evidence and likely costs
@@ -417,3 +418,28 @@ The blocked-resolution regression exercises volume/speed feedback and pause
 while retaining the same selection through a subsequent real bridge snapshot;
 its existing actual playback/view-identity checks still follow. No placeholder
 frame or optimistic playing flag qualifies its startup timing.
+
+## Merge decision: 1000 ms emulator target advisory (2026-11-03)
+
+PR32 at `97e4819` passed every check main already had. Its new
+`prefetchedPairedIndexedTracksReachVisiblePlayingOutputUnderOneSecond` case
+missed the 1000 ms target twice on the hosted software emulator. Run
+[41601944508](https://github.com/Vanir20342222/ytui/actions/runs/41601944508):
+decoder 1061 ms in attempt 1; in attempt 2 the app reported visible_frame
+1556 ms, started 1197 ms and decoder 961 ms. These are app-reported times, not
+probe overhead. The stricter evidence variants (PR47 and the SurfaceView/
+compositor integration in PR48) also missed this target, and their screenshot
+completion adds about 350 ms.
+
+The owner chose to merge PR32 with the 1000 ms target advisory on that emulator.
+Both subsecond cases still run. They record `subsecond_target=met|missed` with
+the mode in their timing evidence and in logcat (`SubsecondTarget`). Actual
+RGB pixels and active playback within the existing 2000 ms gate remain hard
+assertions, as do the cache-reuse and continued-playback checks. Setting
+`YTUI_ANDROID_SUBSECOND=enforce` for `tools/android/run-device-tests.sh`
+(instrumentation argument `vidcue_subsecond=enforce`) restores the hard 1000 ms
+assertion, for example on a physical device.
+
+This decision does not establish subsecond startup. No emulator, physical
+device or live-service result in this record qualifies the 1000 ms target.
+PR47 and PR48 remain open drafts.

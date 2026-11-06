@@ -12,7 +12,7 @@ use ratatui::{
 use ratatui_image::Image;
 use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use ytui_core::{JobState, shortcuts::REGISTRY};
+use vidcue_core::{JobState, shortcuts::REGISTRY};
 
 pub fn rgb(c: (u8, u8, u8)) -> Color {
     Color::Rgb(c.0, c.1, c.2)
@@ -71,6 +71,8 @@ fn panel(title: impl Into<Line<'static>>, app: &App) -> Block<'static> {
 mod lyrics;
 mod menus;
 mod settings;
+mod setup;
+mod update;
 pub mod vinyl;
 mod visualizer;
 mod workspace;
@@ -112,6 +114,10 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         Modal::Queue(_) => (
             85,
             (app.snapshot.playback.items.len() as u16)
+                .saturating_add(
+                    app.up_next_related()
+                        .map_or(0, |r| r.items.len().max(1) as u16 + 1),
+                )
                 .saturating_add(4)
                 .clamp(6, 25),
         ),
@@ -165,6 +171,8 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
                 .clamp(12, 30),
         ),
         Modal::Text { .. } => (90, 28),
+        Modal::Setup(_) => (84, 24),
+        Modal::Update { release, .. } => (80, release.notes.len() as u16 + 14),
     };
     let rect = centered(area, size.0, size.1);
     f.render_widget(Clear, rect);
@@ -177,6 +185,11 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
             );
         }
         Modal::Lyrics(view) => lyrics::render(f, app, view, rect),
+        Modal::Setup(view) => setup::render(f, app, view, rect),
+        Modal::Update { release, selected } => {
+            let (release, selected) = (release.clone(), *selected);
+            update::render(f, app, &release, selected, rect);
+        }
         Modal::Actions { selected, query } => {
             let hits = menus::actions(f, app, *selected, query, rect);
             app.hit_targets.extend(hits);
@@ -284,7 +297,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Modal::History(view) => {
             let rows = view.rows(&app.snapshot.downloads.jobs);
-            let stats = ytui_core::history::Statistics::from_jobs(rows.iter().map(|(_, j)| *j));
+            let stats = vidcue_core::history::Statistics::from_jobs(rows.iter().map(|(_, j)| *j));
             let block = panel(
                 format!(
                     " Downloads · {}{} · {} matches ",
@@ -524,7 +537,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
             let inner = block.inner(rect);
             f.render_widget(block, rect);
             let chunks = Layout::vertical([Constraint::Length(6), Constraint::Min(1)]).split(inner);
-            f.render_widget(Paragraph::new(" Sign in to YouTube in your browser and complete any consent/verification there.\n Choose a profile below, then confirm the import in the next form.\n Discovery reads directory names only; cookies stay on this computer.\n Keyring must be unlocked. File storage is an explicit Settings → Account option.\n Session expired? Reconnect the selected profile; ytui never accepts consent for you.").wrap(Wrap { trim: false }), chunks[0]);
+            f.render_widget(Paragraph::new(" Sign in to YouTube in your browser and complete any consent/verification there.\n Choose a profile below, then confirm the import in the next form.\n Discovery reads directory names only; cookies stay on this computer.\n Keyring must be unlocked. File storage is an explicit Settings → Account option.\n Session expired? Reconnect the selected profile; vidcue never accepts consent for you.").wrap(Wrap { trim: false }), chunks[0]);
             let mut items = vec![ListItem::new("Manual profile path / Netscape cookie file…")];
             items.extend(profiles.iter().map(|profile| {
                 ListItem::new(vec![
@@ -553,14 +566,16 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
                 let ready = download
                     .outputs
                     .iter()
-                    .filter(|path| ytui_services::library::completed_file(download, path).is_some())
+                    .filter(|path| {
+                        vidcue_services::library::completed_file(download, path).is_some()
+                    })
                     .count();
                 let items = download
                     .outputs
                     .iter()
                     .map(|path| {
                         let available =
-                            ytui_services::library::completed_file(download, path).is_some();
+                            vidcue_services::library::completed_file(download, path).is_some();
                         ListItem::new(vec![
                             Line::styled(
                                 format!(
@@ -609,25 +624,59 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
         Modal::Queue(selected) => {
-            let items = app
-                .snapshot
-                .playback
+            let queue = &app.snapshot.playback;
+            let related = app.up_next_related();
+            let next = crate::related::plays_next(
+                queue,
+                related.map_or(0, |r| r.items.len()),
+                app.config.autoplay_related,
+            );
+            let marker = |i: usize| {
+                if queue.current == Some(i) {
+                    "▶"
+                } else if next == Some(i) {
+                    "»"
+                } else {
+                    " "
+                }
+            };
+            let mut items = queue
                 .items
                 .iter()
                 .enumerate()
-                .map(|(i, m)| {
+                .map(|(i, m)| ListItem::new(format!("{} {} · {}", marker(i), m.title, m.creator)))
+                .collect::<Vec<_>>();
+            // Recommendations follow the queue (Android's "Recommended" Up next rows).
+            if let Some(related) = related {
+                let heading = if related.loading {
+                    app.tr("Recommended · loading…")
+                } else if let Some(error) = &related.error {
+                    error.as_str()
+                } else if app.config.autoplay_related {
+                    app.tr("Recommended · plays when the queue ends")
+                } else {
+                    app.tr("Recommended · related autoplay is off")
+                };
+                items.push(
+                    ListItem::new(format!("── {heading} ──"))
+                        .style(Style::default().fg(themed(app, app.palette.muted))),
+                );
+                let offset = queue.items.len();
+                items.extend(related.items.iter().enumerate().map(|(i, m)| {
                     ListItem::new(format!(
                         "{} {} · {}",
-                        if app.snapshot.playback.current == Some(i) {
-                            "▶"
-                        } else {
-                            " "
-                        },
+                        marker(offset + i),
                         m.title,
                         m.creator
                     ))
-                })
-                .collect::<Vec<_>>();
+                }));
+            }
+            // The heading row is not selectable; shift recommendations past it.
+            let shown = if related.is_some() && *selected >= queue.items.len() {
+                *selected + 1
+            } else {
+                *selected
+            };
             let list = List::new(items)
                 .block(panel(
                     " Playback queue · Enter plays · Del removes · Esc closes ",
@@ -635,7 +684,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
                 ))
                 .highlight_style(Style::default().bg(themed(app, app.palette.selection)))
                 .highlight_symbol("▸ ");
-            let mut state = ListState::default().with_selected(Some(*selected));
+            let mut state = ListState::default().with_selected(Some(shown));
             f.render_stateful_widget(list, rect, &mut state);
         }
         Modal::Form(form) => {
@@ -775,7 +824,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 fn theme_items(app: &App) -> Vec<ListItem<'static>> {
-    ytui_services::theme::THEMES
+    vidcue_services::theme::THEMES
         .iter()
         .map(|name| {
             ListItem::new(format!(

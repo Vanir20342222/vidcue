@@ -1,7 +1,7 @@
 //! The main workspace: compact navigation, a readable catalog and selected-item details.
 use super::*;
 use crate::app::HitTarget;
-use ytui_core::{Job, shortcuts::Action};
+use vidcue_core::{Job, shortcuts::Action};
 
 fn style(app: &App, color: (u8, u8, u8)) -> Style {
     Style::default().fg(themed(app, color))
@@ -68,7 +68,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     );
     if area.width < 35 || area.height < 12 {
         f.render_widget(
-            Paragraph::new("ytui\nEnlarge to at least 35 × 12.\nCtrl+C quits safely.")
+            Paragraph::new("vidcue\nEnlarge to at least 35 × 12.\nCtrl+C quits safely.")
                 .wrap(Wrap { trim: true }),
             area,
         );
@@ -226,7 +226,7 @@ fn sidebar(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(5),
     ])
     .split(area);
-    let block = panel(" ytui · Status ", app);
+    let block = panel(" vidcue · Status ", app);
     let inner = inset(block.inner(rows[0]));
     f.render_widget(block, rows[0]);
     let account = app
@@ -362,7 +362,7 @@ fn header(f: &mut Frame, app: &App, area: Rect) {
         Layout::horizontal([Constraint::Min(10), Constraint::Length(right_width)]).split(area);
     let spans = vec![
         Span::styled(
-            " ytui ",
+            " vidcue ",
             style(app, app.palette.accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
@@ -494,7 +494,7 @@ fn job_state(app: &App, job: &Job) -> (&'static str, (u8, u8, u8)) {
         JobState::Queued
             if job
                 .not_before
-                .is_some_and(|at| at > ytui_core::schedule::unix_now()) =>
+                .is_some_and(|at| at > vidcue_core::schedule::unix_now()) =>
         {
             ("Scheduled", app.palette.warning)
         }
@@ -506,14 +506,16 @@ fn job_state(app: &App, job: &Job) -> (&'static str, (u8, u8, u8)) {
         JobState::Backoff => ("Retry wait", app.palette.warning),
     }
 }
-fn meter(value: f64, width: usize) -> String {
+/// Nothing-styled palettes draw a dot-matrix row instead of a solid bar.
+fn meter(value: f64, width: usize, dots: bool) -> String {
     let value = if value.is_finite() {
         value.clamp(0.0, 1.0)
     } else {
         0.0
     };
     let filled = (value * width as f64).round() as usize;
-    format!("{}{}", "━".repeat(filled), "─".repeat(width - filled))
+    let (on, off) = if dots { ("●", "·") } else { ("━", "─") };
+    format!("{}{}", on.repeat(filled), off.repeat(width - filled))
 }
 fn downloads(f: &mut Frame, app: &mut App, area: Rect) {
     let jobs = &app.snapshot.downloads.jobs;
@@ -709,7 +711,7 @@ fn download_details(f: &mut Frame, app: &App, job: &Job, area: Rect) {
         style(app, color).add_modifier(Modifier::BOLD),
     )];
     if let Some(error) = &job.error {
-        if let Some(recovery) = ytui_services::failure::recovery(error) {
+        if let Some(recovery) = vidcue_services::failure::recovery(error) {
             lines.extend([
                 Line::styled(recovery.title, style(app, app.palette.error)),
                 Line::from(recovery.instruction),
@@ -730,7 +732,11 @@ fn download_details(f: &mut Frame, app: &App, job: &Job, area: Rect) {
         lines.push(Line::styled(
             format!(
                 "{}  {:.0}%",
-                meter(value, inner.width.saturating_sub(7) as usize),
+                meter(
+                    value,
+                    inner.width.saturating_sub(7) as usize,
+                    app.palette.dot_matrix()
+                ),
                 value * 100.0
             ),
             style(app, color),
@@ -984,16 +990,23 @@ fn browse(f: &mut Frame, app: &mut App, area: Rect) {
             Rect::new(row.x, row.y, 1, row.height),
         );
         let favorite = app.snapshot.favorites.iter().any(|m| m.url == item.url);
-        let meta = format!(
-            "{}{}{}",
-            item.label(),
-            if item.tracks_url.is_some() {
-                " · track library"
-            } else {
-                ""
-            },
-            if favorite { " · saved" } else { "" }
-        );
+        let info = &app.config.card_info;
+        let mut details = item.details(info);
+        if item.tracks_url.is_some() {
+            details.push("track library".into());
+        }
+        if favorite {
+            details.push("saved".into());
+        }
+        if info.section && !item.section.is_empty() {
+            details.push(item.section.clone());
+        }
+        let meta = details.join(" · ");
+        let creator = if info.channel && !item.creator.is_empty() {
+            Some(item.creator.clone())
+        } else {
+            None
+        };
         let text_x = if cards
             && app.config.thumbnails
             && app.config.image_protocol != "none"
@@ -1030,12 +1043,6 @@ fn browse(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             row.x + 2
         };
-        let section = if item.section.is_empty() {
-            String::new()
-        } else {
-            format!(" · {}", item.section)
-        };
-        let meta = format!("{meta}{section}");
         let lines = if height <= 3 {
             vec![
                 Line::styled(
@@ -1043,7 +1050,11 @@ fn browse(f: &mut Frame, app: &mut App, area: Rect) {
                     style(app, app.palette.text).add_modifier(Modifier::BOLD),
                 ),
                 Line::styled(
-                    format!("{} · {meta}", item.creator),
+                    creator
+                        .into_iter()
+                        .chain((!meta.is_empty()).then_some(meta))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
                     style(app, app.palette.muted),
                 ),
             ]
@@ -1053,7 +1064,7 @@ fn browse(f: &mut Frame, app: &mut App, area: Rect) {
                     item.title.clone(),
                     style(app, app.palette.text).add_modifier(Modifier::BOLD),
                 ),
-                Line::styled(item.creator.clone(), style(app, app.palette.muted)),
+                Line::styled(creator.unwrap_or_default(), style(app, app.palette.muted)),
                 Line::styled(
                     meta,
                     style(
@@ -1146,26 +1157,38 @@ fn selected_details(f: &mut Frame, app: &mut App, area: Rect) {
             media.title.clone(),
             style(app, app.palette.text).add_modifier(Modifier::BOLD),
         ),
-        Line::styled(media.creator.clone(), style(app, app.palette.accent)),
+        Line::styled(
+            if app.config.card_info.channel {
+                media.creator.clone()
+            } else {
+                String::new()
+            },
+            style(app, app.palette.accent),
+        ),
         Line::from(""),
-        Line::styled(media.label(), style(app, app.palette.muted)),
+        Line::styled(
+            media.details(&app.config.card_info).join(" · "),
+            style(app, app.palette.muted),
+        ),
         Line::from(""),
     ];
-    lines.push(Line::from(if media.description.is_empty() {
-        if media.collection() {
-            "Open this collection to explore its videos or tracks.".into()
-        } else if app.tab == 3 {
-            "Play this station or save it to your favorites.".into()
-        } else if media.kind == ytui_core::MediaKind::Song || app.tab == 2 {
-            "Play this track or add it to your queue.".into()
+    lines.push(Line::from(
+        if media.description.is_empty() || !app.config.card_info.description {
+            if media.collection() {
+                "Open this collection to explore its videos or tracks.".into()
+            } else if app.tab == 3 {
+                "Play this station or save it to your favorites.".into()
+            } else if media.kind == vidcue_core::MediaKind::Song || app.tab == 2 {
+                "Play this track or add it to your queue.".into()
+            } else {
+                "Preview this video, play it now, or add it to your downloads.".into()
+            }
         } else {
-            "Preview this video, play it now, or add it to your downloads.".into()
-        }
-    } else {
-        media.description.clone()
-    }));
+            media.description.clone()
+        },
+    ));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), regions[0]);
-    let actions = if media.kind == ytui_core::MediaKind::Station {
+    let actions = if media.kind == vidcue_core::MediaKind::Station {
         vec![
             hints(app, &[(Action::Open, "play/open")], regions[1].width),
             hints(app, &[(Action::Favorite, "save station")], regions[1].width),
@@ -1219,7 +1242,7 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
     if area.height == 1 {
         if let Some(error) = &status.error {
             let title =
-                ytui_services::failure::recovery(error).map_or("Playback failed", |r| r.title);
+                vidcue_services::failure::recovery(error).map_or("Playback failed", |r| r.title);
             f.render_widget(
                 Paragraph::new(format!(" {} Actions · {title}", key(app, Action::Command)))
                     .style(style(app, app.palette.error)),
@@ -1292,7 +1315,7 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = inset(block.inner(area));
     f.render_widget(block, area);
     if let Some(error) = &status.error {
-        let recovery = ytui_services::failure::recovery(error);
+        let recovery = vidcue_services::failure::recovery(error);
         let title = recovery.map_or("Playback failed", |r| r.title);
         let instruction = recovery.map_or(
             "Open Playback repair or Diagnostics in Actions for details.",
@@ -1474,5 +1497,15 @@ fn playback(f: &mut Frame, app: &mut App, area: Rect) {
             )),
             inner,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn meter_switches_to_dot_matrix_for_nothing_palettes() {
+        assert_eq!(super::meter(0.5, 4, false), "━━──");
+        assert_eq!(super::meter(0.5, 4, true), "●●··");
+        assert_eq!(super::meter(f64::NAN, 2, true), "··");
     }
 }

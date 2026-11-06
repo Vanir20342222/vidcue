@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 evidence="$root/target/android-device-evidence"
-test_package=dev.ytui.android.preview
+test_package=dev.vidcue.android.preview
 mkdir -p "$evidence"
 # Google SDK Setup can raise its own first-boot ANR before instrumentation and
 # obscure a correctly rendered app. It is not an app dependency. Disable only
@@ -54,6 +54,15 @@ collect_evidence() {
     adb pull "/sdcard/Android/data/$test_package/files/watch-collapse-missing.xml" "$evidence/native-ui/watch-collapse-missing.xml" > /dev/null 2>&1 || true
 }
 trap collect_evidence EXIT
+# Startup timing budgets are advisory on the hosted software emulator: measured times are
+# recorded in the evidence files and only a hang-catching ceiling fails. Set
+# YTUI_ANDROID_TIMING=enforce (nightly CI, a physical device) to assert the 2000 ms
+# visible-output gate, and YTUI_ANDROID_SUBSECOND=enforce to assert the 1000 ms target
+# (which implies the 2000 ms gate).
+subsecond="${YTUI_ANDROID_SUBSECOND:-advisory}"
+case "$subsecond" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_SUBSECOND (advisory|enforce).' >&2; exit 1;; esac
+timing="${YTUI_ANDROID_TIMING:-advisory}"
+case "$timing" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_TIMING (advisory|enforce).' >&2; exit 1;; esac
 public_quality="${YTUI_ANDROID_PUBLIC_QUALITY:-best}"
 public_target="${YTUI_ANDROID_PUBLIC_TARGET_MS:-1000}"
 if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
@@ -78,6 +87,8 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
     [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
+    [[ "$subsecond" == enforce ]] && instrument+=(-e vidcue_subsecond enforce)
+    [[ "$timing" == enforce ]] && instrument+=(-e vidcue_timing enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         # adb joins arguments into one device shell command; single-quote the URL.
         [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
@@ -95,6 +106,8 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     fi
 else
     arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
+    [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_subsecond=enforce)
+    [[ "$timing" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_timing=enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=$public_quality")

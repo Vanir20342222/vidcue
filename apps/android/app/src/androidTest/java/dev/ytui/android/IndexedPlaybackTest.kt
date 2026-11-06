@@ -194,7 +194,7 @@ class IndexedPlaybackTest {
                     compose.waitUntil(10000) { StartupTimings.usable(token) > 0 }
                     Assert.assertTrue(
                         "Indexed usable start: ${StartupTimings.usable(token)}\n${StartupTimings.report()}",
-                        StartupTimings.usable(token) <= 2000,
+                        StartupTimings.usable(token) <= StartupBudget.ms(),
                     )
                     var rgb = false
                     var observed = -1L
@@ -203,7 +203,7 @@ class IndexedPlaybackTest {
                             StartupTimings.elapsed(
                                 token,
                                 android.os.SystemClock.elapsedRealtime(),
-                            ) > 2000
+                            ) > StartupBudget.ms()
                         )
                             break
                         val sample = VisibleVideoProbe.capture(scene, token, "startup-indexed.png")
@@ -211,7 +211,7 @@ class IndexedPlaybackTest {
                         observed = StartupTimings.elapsed(token, sample.capturedAt)
                         if (!rgb) Thread.sleep(16)
                     } while (!rgb)
-                    Assert.assertTrue("Indexed pixels: $observed", rgb && observed in 0..2000)
+                    Assert.assertTrue("Indexed pixels: $observed", rgb && observed in 0..StartupBudget.ms())
                     val requests = synchronized(cdn.requests) { cdn.requests.toList() }
                     Assert.assertTrue(requests.isNotEmpty())
                     Assert.assertFalse(
@@ -326,7 +326,11 @@ class IndexedPlaybackTest {
                         // rendering; the original tap clock/deadline still applies.
                         frame =
                             if (StartupTimings.usable(token) > 0)
-                                observer.capture(token, "startup-indexed-prefetched.png", 1000)
+                                observer.capture(
+                                    token,
+                                    "startup-indexed-prefetched.png",
+                                    SubsecondTarget.observeMs,
+                                )
                             else
                                 VisibleVideoProbe.Result(
                                     false,
@@ -336,7 +340,7 @@ class IndexedPlaybackTest {
                         Thread.sleep(8)
                     } while (
                         StartupTimings.elapsed(token, android.os.SystemClock.elapsedRealtime()) <
-                            1000
+                            SubsecondTarget.observeMs
                     )
                     val visible = StartupTimings.elapsed(token, frame.capturedAt)
                     val usable = StartupTimings.usable(token)
@@ -345,11 +349,16 @@ class IndexedPlaybackTest {
                         .append(
                             "indexed_prefetched_window_ms=$visible usable_ms=$usable copy_request_ms=${StartupTimings.elapsed(token, frame.requestedAt)} observer_requests=${observer.requests} observer_ms=${observer.observationMs}\n"
                         )
-                    if (!frame.rgb || visible !in 1..999 || usable !in 1..999)
+                    if (!SubsecondTarget.met(frame.rgb, visible, usable))
                         MediaRuntimeTest.capture("startup-indexed-prefetched-failed.png")
-                    Assert.assertTrue(
-                        "Paired indexed output must be actually visible and playing under1000ms: pixels=$visible usable=$usable\n${StartupTimings.report()}",
-                        frame.rgb && visible in 1..999 && usable in 1..999,
+                    evidence.append(
+                        SubsecondTarget.check(
+                            "Paired indexed prefetched",
+                            frame.rgb,
+                            visible,
+                            usable,
+                            StartupTimings.report(),
+                        ) + "\n"
                     )
                     Assert.assertEquals(
                         "Initial playback must reuse the selected tracks' cached ranges",

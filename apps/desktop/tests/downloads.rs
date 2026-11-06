@@ -11,14 +11,14 @@ use std::{
     thread,
     time::Duration,
 };
-use ytui_core::Config;
+use vidcue_core::Config;
 
 #[test]
 fn headless_setup_station_import_and_offline_guards_preserve_user_files() {
     let temp = tempfile::tempdir().unwrap();
     let config_path = temp.path().join("rust.toml");
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .arg("--config")
             .arg(&config_path)
             .arg("--state-dir")
@@ -33,7 +33,7 @@ fn headless_setup_station_import_and_offline_guards_preserve_user_files() {
     };
     assert!(run(&["init"]).status.success());
     assert!(
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .current_dir(temp.path())
             .args(["--config", "relative.toml", "--offline", "init"])
             .env("XDG_CONFIG_HOME", temp.path().join("config"))
@@ -50,7 +50,7 @@ fn headless_setup_station_import_and_offline_guards_preserve_user_files() {
     assert_eq!(std::fs::read(&config_path).unwrap(), original);
     let mut config: Config = toml::from_str(std::str::from_utf8(&original).unwrap()).unwrap();
     config.auth_store = "file".into();
-    config.theme = "ytui-dark".into();
+    config.theme = "vidcue-dark".into();
     std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
     let source = temp.path().join("cliamp.toml");
     let stations = "[[stations]]\nname='Fixture radio'\nurl='https://example.test/live'\n[[stations]]\nname='Duplicate'\nstream='https://example.test/live'\n[[stations]]\nname='Unsupported'\nurl='file:///synthetic/local'\n";
@@ -98,19 +98,19 @@ struct Server {
 fn native_worker_survives_replacing_the_running_executable() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
-    let running = temp.path().join("ytui-running");
-    if std::fs::hard_link(env!("CARGO_BIN_EXE_ytui"), &running).is_err() {
-        std::fs::copy(env!("CARGO_BIN_EXE_ytui"), &running).unwrap();
+    let running = temp.path().join("vidcue-running");
+    if std::fs::hard_link(env!("CARGO_BIN_EXE_vidcue"), &running).is_err() {
+        std::fs::copy(env!("CARGO_BIN_EXE_vidcue"), &running).unwrap();
     }
     let ready = temp.path().join("runtime-ready");
     let release = temp.path().join("runtime-release");
     let runtime = temp.path().join("node");
-    std::fs::write(&runtime, format!("#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nprintf 'v26.8.1\\n'\n", ready.display(), release.display())).unwrap();
+    std::fs::write(&runtime, format!("#!/bin/sh\nif [ \"$1\" = -p ]; then printf '%s\\n' \"$0\"; exit 0; fi\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.01; done\nprintf 'v26.8.1\\n'\n", ready.display(), release.display())).unwrap();
     std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o755)).unwrap();
     let proxy = Server::with_status(b"Synthetic proxy rejection".to_vec(), 403);
     let config = Config {
         auth_store: "file".into(),
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         playback_backend: "native".into(),
         native_js_runtime: Some(runtime),
         proxy: Some(
@@ -168,7 +168,7 @@ fn doctor_network_returns_failure_when_its_public_probes_are_rejected() {
     // A local rejecting HTTP proxy prevents all actual external provider access.
     let proxy = Server::with_status(b"Fixture proxy rejection".to_vec(), 403);
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         proxy: Some(
             url::Url::parse(&proxy.url)
@@ -180,7 +180,7 @@ fn doctor_network_returns_failure_when_its_public_probes_are_rejected() {
     };
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .arg("--config")
         .arg(config_file)
         .arg("--state-dir")
@@ -212,7 +212,7 @@ fn native_playback_never_invokes_external_extraction_even_for_legacy_auto_config
     std::fs::set_permissions(&extractor, std::fs::Permissions::from_mode(0o755)).unwrap();
     // Deliberately deserialize a config predating playback_backend.
     let mut config: Config =
-        toml::from_str("download_backend='auto'\nauth_store='file'\ntheme='ytui-dark'").unwrap();
+        toml::from_str("download_backend='auto'\nauth_store='file'\ntheme='vidcue-dark'").unwrap();
     config.proxy = Some(
         url::Url::parse(&proxy.url)
             .unwrap()
@@ -222,7 +222,7 @@ fn native_playback_never_invokes_external_extraction_even_for_legacy_auto_config
     config.yt_dlp = extractor.display().to_string();
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
-    let result = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .arg("--config")
         .arg(config_file)
         .arg("--state-dir")
@@ -316,7 +316,7 @@ fn native_default_transfers_without_python_and_reports_a_real_final_file() {
     config.download.thumbnail = false;
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let output = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -367,7 +367,7 @@ fn explicit_fallback_requires_success_after_postprocessing() {
     };
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let output = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -409,7 +409,7 @@ fn local_conversion_changes_extension_and_preserves_input() {
     };
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let output = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -457,7 +457,7 @@ fn hooks_receive_resolved_metadata_and_daily_window_requires_explicit_override()
         ..Default::default()
     };
     config.download.post_download_hook = Some(hook);
-    let minute = (ytui_services::desktop::local_minute() + 20) % 1440;
+    let minute = (vidcue_services::desktop::local_minute() + 20) % 1440;
     let end = (minute + 1) % 1440;
     config.schedule.download_window = Some(format!(
         "{:02}:{:02}-{:02}:{:02}",
@@ -468,7 +468,7 @@ fn hooks_receive_resolved_metadata_and_daily_window_requires_explicit_override()
     ));
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ytui"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vidcue"));
     command
         .args([
             "--config",
@@ -513,7 +513,7 @@ fn native_media_transfer_honors_a_rate_limit_and_cleans_staging() {
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
     let started = std::time::Instant::now();
-    let result = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -558,7 +558,7 @@ fn cancelling_a_throttled_native_worker_is_prompt_and_preserves_pause() {
     config.download.bandwidth_kib = 1;
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -616,9 +616,9 @@ fn cancelling_a_throttled_native_worker_is_prompt_and_preserves_pause() {
         );
     }
     tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let store = ytui_services::store::Store::open(&temp.path().join("state")).unwrap();
+        let store = vidcue_services::store::Store::open(&temp.path().join("state")).unwrap();
         let saved = store.load().await.unwrap();
-        assert_eq!(saved.downloads.jobs[0].state, ytui_core::JobState::Paused);
+        assert_eq!(saved.downloads.jobs[0].state, vidcue_core::JobState::Paused);
         store.close().await.unwrap();
     });
 }
@@ -640,7 +640,7 @@ fn failed_native_tagging_keeps_a_recoverable_source_and_publishes_no_final_file(
     let path = temp.path().join("rust.toml");
     std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
     let media = temp.path().join("media");
-    let result = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             path.to_str().unwrap(),
@@ -710,7 +710,7 @@ fn automatic_fallback_runs_once_for_a_native_limitation_but_strict_native_stays_
     let config_path = temp.path().join("config.toml");
     std::fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
     let run = |backend: &str| {
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .args([
                 "--config",
                 config_path.to_str().unwrap(),
@@ -818,7 +818,7 @@ done
         let config_file = temp.path().join("config.toml");
         std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
         let state = temp.path().join("state");
-        let mut command = Command::new(env!("CARGO_BIN_EXE_ytui"));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_vidcue"));
         command
             .args([
                 "--config",
@@ -863,7 +863,7 @@ done
             "{case}: {args}"
         );
         let snapshot = tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let store = ytui_services::store::Store::open(&state).unwrap();
+            let store = vidcue_services::store::Store::open(&state).unwrap();
             let snapshot = store.load().await.unwrap();
             store.close().await.unwrap();
             snapshot
@@ -871,7 +871,7 @@ done
         let job = &snapshot.downloads.jobs[0];
         assert_eq!(job.outputs.len(), expected, "{case}");
         assert!(job.outputs.iter().all(|path| path.is_file()));
-        assert_eq!(job.state, ytui_core::JobState::Done);
+        assert_eq!(job.state, vidcue_core::JobState::Done);
         if expected > 1 {
             assert_eq!(job.media.url, url, "{case}: entry replaced playlist source");
         }
@@ -899,7 +899,7 @@ fn failed_playlist_retains_completed_outputs_and_strict_native_reports_limit() {
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
     let source = "https://music.youtube.com/playlist?list=PLsynthetic";
     let run = |backend: &str, state: &Path| {
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .args([
                 "--config",
                 config_file.to_str().unwrap(),
@@ -932,13 +932,13 @@ fn failed_playlist_retains_completed_outputs_and_strict_native_reports_limit() {
     assert!(!String::from_utf8_lossy(&failed.stdout).contains("Saved "));
     assert!(String::from_utf8_lossy(&failed.stderr).contains("item 2 is unavailable"));
     let snapshot = tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let store = ytui_services::store::Store::open(&state).unwrap();
+        let store = vidcue_services::store::Store::open(&state).unwrap();
         let snapshot = store.load().await.unwrap();
         store.close().await.unwrap();
         snapshot
     });
     let job = &snapshot.downloads.jobs[0];
-    assert_eq!(job.state, ytui_core::JobState::Error);
+    assert_eq!(job.state, vidcue_core::JobState::Error);
     assert_eq!(job.media.url, source);
     assert_eq!(job.outputs, vec![final_file]);
 }
@@ -977,7 +977,7 @@ fn assert_real_audio_conversion(format: &str, codec: &str) {
     config.download.metadata = false;
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let output = Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .args([
             "--config",
             config_file.to_str().unwrap(),
@@ -1079,7 +1079,7 @@ async fn real_ytdlp_playlist_saves_two_distinct_decodable_audio_files() {
     });
     let url = server.url.replace("fixture.mp4", "playlist.html");
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         max_retries: 0,
         yt_dlp: std::env::var("YTUI_TEST_YT_DLP").unwrap_or_else(|_| "yt-dlp".into()),
@@ -1087,7 +1087,7 @@ async fn real_ytdlp_playlist_saves_two_distinct_decodable_audio_files() {
     };
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
-    let result = tokio::process::Command::new(env!("CARGO_BIN_EXE_ytui"))
+    let result = tokio::process::Command::new(env!("CARGO_BIN_EXE_vidcue"))
         .arg("--config")
         .arg(config_file)
         .arg("--state-dir")
@@ -1117,11 +1117,11 @@ async fn real_ytdlp_playlist_saves_two_distinct_decodable_audio_files() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let store = ytui_services::store::Store::open(&temp.path().join("state")).unwrap();
+    let store = vidcue_services::store::Store::open(&temp.path().join("state")).unwrap();
     let snapshot = store.load().await.unwrap();
     store.close().await.unwrap();
     let job = &snapshot.downloads.jobs[0];
-    assert_eq!(job.state, ytui_core::JobState::Done);
+    assert_eq!(job.state, vidcue_core::JobState::Done);
     assert_eq!(job.media.url, url);
     assert_eq!(
         job.outputs.len(),
@@ -1196,7 +1196,7 @@ fn real_mpv_playback_check_requires_actual_progress_and_reports_tool_failure() {
     );
     let server = Server::with_payload(std::fs::read(source).unwrap());
     let mpv = std::env::var("YTUI_TEST_MPV").unwrap_or_else(|_| "mpv".into());
-    let mpv = ytui_services::paths::executable(&mpv).expect("Install mpv or set YTUI_TEST_MPV");
+    let mpv = vidcue_services::paths::executable(&mpv).expect("Install mpv or set YTUI_TEST_MPV");
     let wrapper = temp.path().join("mpv-headless");
     std::fs::write(
         &wrapper,
@@ -1216,7 +1216,7 @@ fn real_mpv_playback_check_requires_actual_progress_and_reports_tool_failure() {
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
     let check = || {
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .arg("--config")
             .arg(&config_file)
             .arg("--state-dir")
@@ -1278,7 +1278,7 @@ fn rejected_native_http_stream_uses_one_fallback_and_destination_errors_do_not()
     let config_file = temp.path().join("config.toml");
     std::fs::write(&config_file, toml::to_string(&config).unwrap()).unwrap();
     let run = |backend: &str, destination: &Path| {
-        Command::new(env!("CARGO_BIN_EXE_ytui"))
+        Command::new(env!("CARGO_BIN_EXE_vidcue"))
             .args([
                 "--config",
                 config_file.to_str().unwrap(),

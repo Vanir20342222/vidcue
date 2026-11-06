@@ -24,7 +24,7 @@ Each photograph is a Wikimedia Commons file. The table lists its licence.
 
 - CC0 and public-domain photographs need no attribution.
 - CC BY and CC BY-SA photographs require credit to the author, and CC BY-SA
-  requires that adapted versions keep the same licence. ytui does not modify or
+  requires that adapted versions keep the same licence. vidcue does not modify or
   redistribute these images beyond resizing for display. The file page linked in
   each row has the full licence text.
 

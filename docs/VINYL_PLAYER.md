@@ -46,9 +46,9 @@ read browser sessions or request public media.
 The native capture tool provides actual executable PTY captures at 2560×1440:
 
 ```sh
-cargo build -p ytui --locked
-cargo run -p ytui --example capture_ui --locked -- --vinyl-only
-cargo test -p ytui --test vinyl_ui --locked
+cargo build -p vidcue --locked
+cargo run -p vidcue --example capture_ui --locked -- --vinyl-only
+cargo test -p vidcue --test vinyl_ui --locked
 ```
 
 ![Vinyl pane](screenshots/music-vinyl-pane.png)
@@ -81,8 +81,8 @@ and confirms the player launched exactly once. UI tests cover all new modes in
 every theme and four sizes, plus frozen state and absent telemetry.
 
 ```sh
-cargo test -p ytui-services --locked real_mpv_audio_meter -- --ignored
-cargo run -p ytui --example capture_ui --locked -- --visualizers-only
+cargo test -p vidcue-services --locked real_mpv_audio_meter -- --ignored
+cargo run -p vidcue --example capture_ui --locked -- --visualizers-only
 ```
 
 ![Neon VU](screenshots/neon-vu-fullscreen.png)

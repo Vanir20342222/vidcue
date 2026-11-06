@@ -1,4 +1,15 @@
-# Working on ytui
+# Working on vidcue
+
+The app was renamed from ytui to **Vidcue** on 2026-11-04 at the user's request. Older
+dated records, change notes and evidence documents still say ytui and stay as written.
+Keep these old names for compatibility: the `ytui`/`ytui-rs` launcher aliases, migration
+from `ytui` config/state/cache folders, the `ytui-rust` keyring entry, `YTUI_*` environment
+variables and secrets, the GitHub repository URL until the owner renames it, and the Android
+Java/JNI namespace `dev.ytui.android`. The owner clarified on 2026-11-04 that beta.1
+starts a new permanent installation channel: package `dev.vidcue.android.stable` and
+the beta certificate pinned in `tools/android/release_channel.py`. Every subsequent
+beta, RC and final release must update that channel; compatibility with old alphas
+is not required. Never generate a replacement key for an established beta channel.
 
 Read [RUST_REWRITE_PLAN.md](RUST_REWRITE_PLAN.md) before planning or implementing
 the Rust rewrite. It contains confirmed user requirements, provisional choices,
@@ -10,8 +21,15 @@ baseline defects, milestones, migration requirements, and acceptance checks.
   CachyOS + Caelestia is the historical target. The user confirmed
   a terminal app with mpv playback, short muted previews on `v`, native radio with
   optional cliamp launch, and permits yt-dlp/FFmpeg as external tools.
-- Reference milestone IDs in changes and update completion evidence in the plan.
-  Coordinate shared model/service contracts before independent feature work.
+- Reference milestone IDs in changes. Record completion evidence in a new
+  `docs/changes/<date>-<slug>.md` note, not in the shared plan, parity or validation
+  files (the owner folds notes into them at release). Coordinate shared
+  model/service contracts before independent feature work.
+- Agents that push PRs follow [docs/AGENT_PR_RULES.md](docs/AGENT_PR_RULES.md): one topic
+  per PR, branch from latest `main`, fill `.github/pull_request_template.md`, never edit
+  workflows, versions or shared evidence docs unless the task is about them, never weaken
+  a test, and stop after two failed CI fixes on the same job. Merge flow and settings:
+  [docs/MERGE_PROCESS.md](docs/MERGE_PROCESS.md).
 - The user explicitly authorized removing the Python app on 2026-10-21 after
   documenting gaps. Rust is now the repository application. Keep migration and
   existing user settings, queues, history and downloaded files intact. Remaining
@@ -40,8 +58,8 @@ baseline defects, milestones, migration requirements, and acceptance checks.
 
 - M9 adds the Android preview and monorepo. Desktop source is `apps/desktop`;
   package/binary names and installed state paths must remain compatible.
-  Shared network/provider code is `crates/ytui-providers`; Android's engine
-  remains Rust in `crates/ytui-mobile`. On 2026-10-28 the user authorized a
+  Shared network/provider code is `crates/vidcue-providers`; Android's engine
+  remains Rust in `crates/vidcue-mobile`. On 2026-10-28 the user authorized a
   stack change after reporting unusable text input/themes/account navigation on
   a physical Galaxy Tab S9. Android's current UI target is native Jetpack Compose
   under `apps/android`, with the shared Rust engine. Later on 2026-10-28 the user

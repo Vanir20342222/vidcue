@@ -31,6 +31,8 @@ pub const ENTRIES: &[Entry] = &[
         "music-player-style"
     ),
     entry!("Settings", "General settings", "settings"),
+    entry!("Settings", "Check for a new Vidcue version", "update-check"),
+    entry!("Settings", "Replay first-run setup", "setup"),
     entry!("Settings", "Setup & tool capabilities", "capabilities"),
     entry!("Settings", "Inspect thumbnail cache", "thumbnail-cache"),
     entry!("Settings", "Clear thumbnail cache", "thumbnail-cache-clear"),
@@ -38,7 +40,7 @@ pub const ENTRIES: &[Entry] = &[
         "Settings",
         "Export safe support report",
         "support-export",
-        &[("New JSON file", "ytui-support.json")]
+        &[("New JSON file", "vidcue-support.json")]
     ),
     entry!("Settings", "Playback and SponsorBlock", "playback-settings"),
     entry!(
@@ -57,7 +59,7 @@ pub const ENTRIES: &[Entry] = &[
         "Settings",
         "Choose theme by name",
         "theme",
-        &[("Theme name", "ytui-dark")]
+        &[("Theme name", "vidcue-dark")]
     ),
     entry!("Account", "Connect browser or cookie file", "auth"),
     entry!("Account", "Disconnect saved browser session", "disconnect"),
@@ -308,7 +310,7 @@ pub const ENTRIES: &[Entry] = &[
         &[("Node.js 22+ or Deno 2.9.7 executable", "node")]
     ),
     entry!("Tools", "Diagnostics", "log"),
-    entry!("Tools", "Check for updates", "update"),
+    entry!("Tools", "How updates work", "update"),
     entry!("Tools", "List saved settings profiles", "profiles"),
     entry!(
         "Tools",

@@ -1,5 +1,5 @@
 //! Narrow watch-page slice of YoutubeIE at the pinned upstream revision.
-//! Bounded WEB API fallback, native HLS VOD and explicit offline JS runtime.
+//! Bounded WEB API fallback, HLS VOD/live playback and explicit offline JS runtime.
 mod challenge;
 mod chapters;
 pub(crate) use chapters::from_description as chapters_from_description;
@@ -36,6 +36,9 @@ pub struct YoutubeOptions {
     /// full watch-page/client acquisition. Validate the requested selector first.
     /// None preserves CLI/download acquisition and format discovery.
     pub playback_format: Option<String>,
+    /// Retry a rejected playback URL through full watch/client acquisition.
+    /// Keeps playback format/index metadata while bypassing the direct shortcut.
+    pub playback_skip_direct: bool,
     /// Existing browse visitor context for this same account/network. Memory only.
     pub playback_visitor_data: Option<String>,
 }
@@ -45,6 +48,7 @@ struct ConfiguredYoutube {
     no_playlist: bool,
     runtime: Option<challenge::Runtime>,
     playback_format: Option<String>,
+    playback_skip_direct: bool,
     playback_visitor: std::sync::Mutex<Option<(String, std::time::Instant)>>,
 }
 
@@ -56,6 +60,7 @@ impl Youtube {
             include_translated_subtitles: options.include_translated_subtitles,
             no_playlist: options.no_playlist,
             playback_format: options.playback_format,
+            playback_skip_direct: options.playback_skip_direct,
             playback_visitor: std::sync::Mutex::new(
                 options
                     .playback_visitor_data
@@ -190,10 +195,80 @@ fn video_id(url: &Url, no_playlist: bool) -> Result<Option<String>> {
         .map(Some)
         .ok_or_else(|| unsupported("expected a single video URL with an 11-character ID"))
 }
-fn no_formats() -> Error {
-    unsupported(
-        "no eligible media formats; signature/n URL challenges require an explicit runtime; WEB DASH requires a GVS token; SABR, live and DRM are unsupported",
-    )
+fn no_formats(solver_failure: Option<&str>) -> Error {
+    unsupported(&format!(
+        "no eligible media formats; {}",
+        solver_failure.unwrap_or(
+            "YouTube did not return a supported playable stream; retry later or try another video"
+        )
+    ))
+}
+
+/// Access denials are not extractor/format failures. Inspect only YouTube's
+/// playability text, never titles or arbitrary response fields, and return our
+/// own messages so account data and response URLs cannot reach diagnostics.
+fn playability_error<'a>(responses: impl IntoIterator<Item = &'a Value>) -> Option<Error> {
+    let mut reasons = Vec::new();
+    for response in responses {
+        let Some(status) = response.get("playabilityStatus") else {
+            continue;
+        };
+        if !matches!(
+            status["status"].as_str(),
+            Some(
+                "LOGIN_REQUIRED"
+                    | "UNPLAYABLE"
+                    | "ERROR"
+                    | "AGE_CHECK_REQUIRED"
+                    | "AGE_VERIFICATION_REQUIRED"
+            )
+        ) {
+            continue;
+        }
+        let texts = [
+            status.get("reason"),
+            status.pointer("/errorScreen/playerErrorMessageRenderer/reason"),
+            status.pointer("/errorScreen/playerErrorMessageRenderer/subreason"),
+        ];
+        for value in texts.into_iter().flatten().chain(
+            status
+                .get("messages")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .take(4),
+        ) {
+            if let Some(text) = value
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| metadata::text(value))
+            {
+                reasons.push(text.chars().take(4096).collect::<String>().to_lowercase());
+            }
+        }
+    }
+    let contains = |needle: &str| reasons.iter().any(|reason| reason.contains(needle));
+    let message = if contains("members-only")
+        || contains("members only")
+        || contains("join this channel")
+        || reasons
+            .iter()
+            .any(|reason| reason.contains("channel") && reason.contains("members"))
+    {
+        "This video is for channel members. Sign in with a YouTube account that has the required channel membership."
+    } else if contains("private video") || contains("video is private") {
+        "This video is private. Sign in with a YouTube account that has access."
+    } else if contains("confirm your age")
+        || contains("age verification")
+        || contains("age-verified")
+    {
+        "YouTube requires age verification for this video. Sign in with an age-verified account."
+    } else if contains("sign in") || contains("signin") {
+        "YouTube requires sign-in to play this video. Connect or reconnect your YouTube account and retry."
+    } else {
+        return None;
+    };
+    Some(Error::Reported(message.into()))
 }
 
 /// `solve_js_challenges` through the configured runtime: the player JS
@@ -203,6 +278,7 @@ struct JsSolver<'a> {
     runtime: Option<&'a challenge::Runtime>,
     player_url: Option<String>,
     video_id: &'a str,
+    failure: Option<&'static str>,
 }
 
 impl streams::Solver for JsSolver<'_> {
@@ -216,10 +292,22 @@ impl streams::Solver for JsSolver<'_> {
     ) {
         let mut n_results = std::collections::HashMap::new();
         let mut sig_results = std::collections::HashMap::new();
-        let (Some(runtime), Some(player_url)) = (self.runtime, self.player_url.as_deref()) else {
+        let Some(runtime) = self.runtime else {
+            self.failure = Some("signature/n URL challenges require a JavaScript runtime");
+            return (n_results, sig_results);
+        };
+        let Some(player_url) = self.player_url.as_deref() else {
+            self.failure = Some("YouTube's player script could not be located; retry later");
             return (n_results, sig_results);
         };
         let Ok(runtime) = runtime.checked() else {
+            self.failure = Some(
+                if self.runtime.is_some_and(challenge::Runtime::is_embedded) {
+                    "Android's isolated JavaScript solver is unavailable; restart the app and update Android System WebView"
+                } else {
+                    "the configured JavaScript runtime is unavailable or unsupported"
+                },
+            );
             return (n_results, sig_results);
         };
         let Ok(url) = Url::parse(player_url) else {
@@ -237,6 +325,9 @@ impl streams::Solver for JsSolver<'_> {
             self.video_id
         ));
         let Ok(player) = player_assets::get(self.client, &url) else {
+            self.failure = Some(
+                "YouTube's player script could not be downloaded; check the connection and retry",
+            );
             crate::screen::warning(&format!(
                 "[youtube] {}: Download of {key} failed",
                 self.video_id
@@ -265,6 +356,7 @@ impl streams::Solver for JsSolver<'_> {
                 .map(|(_, identity)| (challenge::Kind::Sig, identity.as_str())),
         );
         let Ok(batch) = challenge::Batch::new(&player, &inputs) else {
+            self.failure = Some("YouTube's player challenge exceeds the supported limits");
             return (n_results, sig_results);
         };
         let name = runtime.name();
@@ -272,6 +364,13 @@ impl streams::Solver for JsSolver<'_> {
             "[youtube] [jsc:{name}] Solving JS challenges using {name}"
         ));
         let Ok(solutions) = runtime.solve(&batch) else {
+            self.failure = Some(
+                if self.runtime.is_some_and(challenge::Runtime::is_embedded) {
+                    "Android's isolated JavaScript solver could not solve this player; retry and check for app or Android System WebView updates"
+                } else {
+                    "the JavaScript solver could not solve this YouTube player; check for app and runtime updates"
+                },
+            );
             return (n_results, sig_results);
         };
         for challenge in n {
@@ -295,23 +394,54 @@ fn extract_clients(
     id: &str,
     runtime: Option<&challenge::Runtime>,
     translated_manual: bool,
-    playback: bool,
+    playback: Option<&str>,
 ) -> Result<VideoInfo> {
     crate::screen::screen(&format!(
         "[youtube] Extracting URL: {}",
         crate::screen::extracting_url(&format!("https://www.youtube.com/watch?v={id}"))
     ));
-    let acquired = watch::acquire(client, id, runtime)?;
-    extract_acquired(
-        client,
-        url,
-        id,
-        runtime,
-        translated_manual,
-        &acquired,
-        false,
-        playback,
-    )
+    let mut acquired = watch::acquire(client, id, runtime)?;
+    let parse = |acquired: &watch::Acquired| {
+        let info = extract_acquired(
+            client,
+            url,
+            id,
+            runtime,
+            translated_manual,
+            acquired,
+            false,
+            playback.is_some(),
+        )?;
+        match playback {
+            Some(format) => validate_playback(info, format, (None, false), false),
+            None => Ok(info),
+        }
+    };
+    let error = match parse(&acquired) {
+        Ok(info) => return Ok(info),
+        Err(error) => error,
+    };
+    // A missing/unsolved stream can be client-specific. Only playback opts in:
+    // keep CLI/download acquisition and explicit client choices unchanged.
+    if playback.is_some() && recoverable_formats(&error) {
+        for name in watch::playback_fallback_clients() {
+            if watch::acquire_playback_fallback(client, id, name, &mut acquired)? {
+                match parse(&acquired) {
+                    Ok(info) => return Ok(info),
+                    // Retain the original cause (e.g. an unavailable Android
+                    // isolate), rather than replacing it with an empty catalog.
+                    Err(next) if recoverable_formats(&next) => {}
+                    Err(next) => return Err(next),
+                }
+            }
+        }
+    }
+    Err(error)
+}
+
+fn recoverable_formats(error: &Error) -> bool {
+    matches!(error, Error::FormatSelection(reason) if reason == "Requested format is not available")
+        || matches!(error, Error::UnsupportedYoutube(reason) if reason.starts_with("no eligible media formats"))
 }
 
 fn extract_acquired(
@@ -368,7 +498,9 @@ fn extract_acquired(
     } else {
         None
     };
-    if matches!(live_status, Some("is_live" | "is_upcoming" | "post_live")) {
+    if matches!(live_status, Some("is_upcoming" | "post_live"))
+        || (live_status == Some("is_live") && !playback)
+    {
         return Err(unsupported("live, upcoming and post-live videos"));
     }
     let context = streams::Context {
@@ -385,7 +517,9 @@ fn extract_acquired(
         skip_player_js: false,
         // A usable direct playback response must not wait for optional HLS/DASH
         // discovery. Only enumerate manifests when direct selection needs them.
-        skip_manifests: if direct_streams_only {
+        // Live playback needs the rolling HLS playlist, even if the player
+        // response also advertises direct URLs. Media3 owns playlist refreshes.
+        skip_manifests: if direct_streams_only && live_status != Some("is_live") {
             ["hls".into(), "dash".into()].into()
         } else {
             Default::default()
@@ -398,6 +532,7 @@ fn extract_acquired(
         runtime,
         player_url: acquired.player_url.clone(),
         video_id: id,
+        failure: None,
     };
     let streams = streams::extract(&context, &acquired.responses, &mut solver)?;
     let manifest_ms = streams.manifest_ms;
@@ -457,8 +592,9 @@ fn extract_acquired(
             }
         }
     }
-    let Some(first_format) = formats.first() else {
-        return Err(no_formats());
+    let Some(first_format) = formats.iter().find(|format| format.ext != "mhtml") else {
+        return Err(playability_error(&acquired.player_responses)
+            .unwrap_or_else(|| no_formats(solver.failure)));
     };
     let microformats: Vec<&Value> = acquired
         .player_responses
@@ -623,7 +759,7 @@ impl Extractor for Youtube {
         crate::screen::set_extractor("youtube");
         let page = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))?;
         let _ = page;
-        let info = extract_clients(client, url, &id, None, false, false)?;
+        let info = extract_clients(client, url, &id, None, false, None)?;
         Ok(Some(info))
     }
 }
@@ -720,6 +856,11 @@ fn validate_playback(
         .map_err(|error| Error::FormatSelection(error.0))?;
     crate::info::sort_formats(&mut selected.formats, &sorter);
     selected.select_format(Some(format))?;
+    // Live formats already come exclusively from HLS. Direct HTTPS offers
+    // cannot improve playback quality or provide a usable audio-only source.
+    if info.metadata.live_status.as_deref() == Some("is_live") {
+        return Ok(info);
+    }
     if offered
         .0
         .is_some_and(|height| selected.height.unwrap_or(0) < height)
@@ -755,7 +896,9 @@ impl Extractor for ConfiguredYoutube {
         crate::screen::set_extractor("youtube");
         let page = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))?;
         let _ = page;
-        if let Some(format) = self.playback_format.as_deref() {
+        if !self.playback_skip_direct
+            && let Some(format) = self.playback_format.as_deref()
+        {
             // Do not hold a context lock across network I/O: a speculative
             // visitor request must never block foreground extraction admission.
             let visitor = self
@@ -840,7 +983,7 @@ impl Extractor for ConfiguredYoutube {
             &id,
             self.runtime.as_ref(),
             self.include_translated_subtitles,
-            self.playback_format.is_some(),
+            self.playback_format.as_deref(),
         )?;
         if self.playback_format.is_some() {
             info.extra

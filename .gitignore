@@ -39,4 +39,5 @@ Thumbs.db
 /apps/android/signing.properties
 /apps/android/keystore.properties
 credentials.json
-ytui-android-signing-backup.age
+vidcue-android-signing-backup.age
+vidcue-android-beta-signing-backup-*.age

@@ -96,10 +96,10 @@ wrapper rerun. Startup-deadline acceptance deliberately takes about 90 seconds.
 Focused commands:
 
 ```sh
-cargo run -p ytui --locked --example playback_sweep
-cargo run -p ytui --locked --example playback_sweep -- --backend auto --cases completion,controls-preview,audio,truncated-eof
-cargo run -p ytui --locked --example playback_sweep -- --backend yt-dlp --cases completion,controls-preview,audio
-cargo run -p ytui --locked --example playback_sweep -- --backend yt-dlp --cases no-ipc
+cargo run -p vidcue --locked --example playback_sweep
+cargo run -p vidcue --locked --example playback_sweep -- --backend auto --cases completion,controls-preview,audio,truncated-eof
+cargo run -p vidcue --locked --example playback_sweep -- --backend yt-dlp --cases completion,controls-preview,audio
+cargo run -p vidcue --locked --example playback_sweep -- --backend yt-dlp --cases no-ipc
 ```
 
 For a displayed **muted** completion run, inherit the actual graphical session's
@@ -114,15 +114,15 @@ live/DRM/age/private/account-restricted content, alternative language tracks or
 all possible service/network changes. Anonymous Music browsing's consent gate
 from the earlier report remains open; Music playback of this URL passes.
 
-Both `~/.local/bin/ytui` and `ytui-rs` now report **0.2.0-alpha.11**, installed
+Both `~/.local/bin/vidcue` and `vidcue` now report **0.2.0-alpha.11**, installed
 through the repository `install.sh`. The installed doctor selects Node and
 reports the existing native-playback/auto-download settings without opening a
-browser store. Restart an existing ytui process to load the updated application.
+browser store. Restart an existing vidcue process to load the updated application.
 An isolated post-install check using the installed launcher advanced this video
 through native Rust to 10.066667 seconds (duration 18.933333).
 
 The previous alpha.10 launchers and host maintenance documents are backed up at
 `~/Work/caelestia-customization/ytui-alpha11-20261022/before/`, preserving absolute
-paths below that directory. Restore the saved `home/vanir/.local/bin/ytui` and
-`ytui-rs` to roll back the binary. User settings, queues/history, downloaded media,
+paths below that directory. Restore the saved `home/vanir/.local/bin/vidcue` and
+`vidcue` to roll back the binary. User settings, queues/history, downloaded media,
 sessions, VPN, packages and desktop configuration were not modified.

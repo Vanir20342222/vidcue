@@ -1,7 +1,7 @@
 # M9: complete UI/UX overhaul pass
 
 On 2026-11-02 the owner asked for the Android app to be redesigned after the
-restyle brief (`ytui-youtube-restyle-agent-prompt.md`) and its reference
+restyle brief (`vidcue-youtube-restyle-agent-prompt.md`) and its reference
 (`youtube-style-and-feel.md`). The goal is a fully usable UI and UX, and the
 owner allowed deviations from the brief where it is wrong. This pass builds on
 the judged refinement in PR #31 (`feat/android-ui-fidelity`, revision 3
@@ -45,9 +45,14 @@ Each screen now has at most one primary (inverted) pill.
 - **Downloads.** No page heading. One chip row (the Transfers chip shows a
   count), with save-from-link and new-playlist icons at its end.
   - Offline items are list rows with a bottom-sheet menu: header, Play, Add to
-    playlist, Export, Retry folder save, and Remove (error colour).
-  - Transfers show state and percentage. Their icon matches what
-    `download_toggle` really does: pause, resume, retry, or restart preparation.
+    playlist, Export, Retry folder save, and Remove (error colour). A second
+    line names the kind, quality and size ("Video · 1080p · 1.2 GB").
+  - Transfers are cards, not list rows. The title, a coloured status line, a
+    full-width progress bar and the numbers (percent, "12 MB of 1.2 GB", speed,
+    time left) each get their own line, so nothing is cut off by the buttons.
+    The actions are labelled pills (Pause, Resume, Retry, Restart, Remove) with
+    the spoken names the icon buttons had. A summary line above the cards counts
+    what is downloading, waiting, paused or failed.
   - The playlist sheet has Play all as its primary action, Rename as secondary
     and Delete as a destructive text action. Its actions wrap at 2× text, and
     item actions sit in a menu.
@@ -264,3 +269,22 @@ visual acceptance. The rev. 3 failures in large-text navigation measurement,
 offline-playlist rename timing and HLS start timing belong to the PR #31 work
 and remain open. Physical-device and live-YouTube acceptance remain separate
 gates.
+
+## Sign-in flow follow-up (2026-11-03)
+
+Reported on a physical device: sign-in opened YouTube's mobile page (blank until the
+overflow menu was used), and after Google login the page stayed on a loading screen
+with an always-enabled "Use this session" button.
+
+- The web stage now opens Google's sign-in form directly (`AuthActivity.SIGN_IN_URL`,
+  returning to YouTube), so no menu hunting.
+- The signed-in cookie-name check runs on every navigation signal (including SPA history
+  updates and progress 100) and on a 1 s poll while the web stage is visible.
+- When a session is detected, a native "You're signed in" card (`sign-in-detected`,
+  action `sign-in-finish`) covers the possibly blank YouTube page.
+- The bottom "Use this session" button (`sign-in-complete`) is disabled until a session
+  is detected; the hint reads "Sign in with Google. vidcue detects it and returns you here."
+- Confirmation stays explicit; only cookie names are inspected.
+
+Evidence: not compiled or run in this environment (no Android SDK). Needs CI
+`testDebugUnitTest`, and an emulator/physical-device pass of the live sign-in flow.

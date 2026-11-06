@@ -27,7 +27,7 @@ Implementation order:
    user's browser, Ghostty, mpv/audio device or Proton connection.
 
 Player direction: supervised mpv with its on-screen controller, built-in menus,
-quality/audio/subtitle/speed controls and ytui settings. Ad-free direct extraction
+quality/audio/subtitle/speed controls and vidcue settings. Ad-free direct extraction
 does not insert website ads; SponsorBlock is a separate public API. Do not promise
 YouTube website UI parity or bypass server-side access/bot restrictions.
 

@@ -1,4 +1,8 @@
-# Native playback — alpha.9 (M3/M5/M8)
+# Native playback (M3/M4/M5/M8)
+
+Current startup/client/cache changes and target-PC evidence are in
+[the October 26 playback report](PLAYBACK_STARTUP_2026-10-26.md).
+The alpha.9 results below retain their original scope.
 
 The native watching request exposed three concrete integration defects: the
 extractor revision was outdated, installed challenge runtimes were not detected,
@@ -7,7 +11,8 @@ manifest. Native request headers were also discarded before mpv opened the strea
 
 ## Changes
 
-- Pin aagedal/yt-dlp-rs at `f67d96bdf98c5b821d0c9bf6175d328a0fa8ceab`.
+- Original alpha.9 pin: aagedal/yt-dlp-rs `f67d96bdf98c5b821d0c9bf6175d328a0fa8ceab`.
+  Current pin: `93d561be519b2e46189ede4a8441a143892fd35b`.
 - Detect installed Node.js 22+ or Deno 2.9.7. Explicit runtime paths are validated,
   not silently replaced. No runtime is downloaded. Version probes are bounded and
   cancellable. The pinned dependency solves saved YouTube JavaScript locally.
@@ -26,7 +31,7 @@ manifest. Native request headers were also discarded before mpv opened the strea
 ## Reproduce
 
 ```sh
-cargo build -p ytui --locked
+cargo build -p vidcue --locked
 tools/test-native-solver.sh
 tools/test-native-playback.sh
 # Optional: one public URL per line and a longer playback observation
@@ -84,7 +89,7 @@ that claim. Login/live/DRM and alternate-language track discovery remain open.
 The local checkout and both installed launchers were still alpha.7. With isolated
 state and no cookies, that installed binary failed all three native smoke cases
 with “no eligible media formats.” Checked out `fix/native-playback` at `7cc5a43`
-and completed `cargo build -p ytui --locked`. Doctor detects `/usr/bin/node`
+and completed `cargo build -p vidcue --locked`. Doctor detects `/usr/bin/node`
 (26.8.1), native playback and the updated extractor without a runtime override.
 
 `YTUI_TEST_PLAY_SECONDS=10 tools/test-native-playback.sh` successfully played the
@@ -94,11 +99,11 @@ test were stopped when the user requested no heavy commands while gaming. The
 remaining cases and solver suite have no completed result from this task.
 
 Installed the completed **development build**, alpha.9, as both
-`~/.local/bin/ytui` and `ytui-rs` without another build. Both report alpha.9 and
+`~/.local/bin/vidcue` and `vidcue` without another build. Both report alpha.9 and
 the installed doctor detects Node. Existing settings, account session, queue,
 history and media were preserved; VPN was unchanged. Previous alpha.7 launchers
 are backed up under
 `~/Work/caelestia-customization/ytui-playback-20261022-151851/before/home/vanir/.local/bin/`.
-Restart ytui to use the new binary. An optimized build can replace it when the
+Restart vidcue to use the new binary. An optimized build can replace it when the
 user permits compilation again. This establishes one local native playback
 success; displayed video/audio-device acceptance and reliability remain open.

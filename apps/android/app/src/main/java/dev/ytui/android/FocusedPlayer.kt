@@ -3,7 +3,14 @@ package dev.ytui.android
 import android.content.Intent
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -15,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
@@ -23,7 +31,10 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -31,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.Player
 import kotlin.math.abs
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
@@ -41,8 +54,12 @@ internal fun VideoSurface(
     covered: Boolean = false,
     timingToken: Long = PlaybackService.current?.startupToken ?: 0,
     onSettings: (() -> Unit)? = null,
+    onPanelDrag: ((Float) -> Unit)? = null,
+    onPanelEnd: ((Float, Float) -> Unit)? = null,
 ) {
     val collapse by rememberUpdatedState(onCollapse)
+    val panelDrag by rememberUpdatedState(onPanelDrag)
+    val panelEnd by rememberUpdatedState(onPanelEnd)
     val settings by rememberUpdatedState(onSettings)
     val accent = MaterialTheme.colorScheme.primary.toArgb()
     val reduced by rememberUpdatedState(LocalReducedMotion.current)
@@ -62,7 +79,7 @@ internal fun VideoSurface(
                     setControllerAnimationEnabled(
                         !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
                     )
-                    setShowSubtitleButton(true)
+                    // Captions use ytui's own on/off button (PlayerChrome.bindCaptions).
                     // Queue modes stay in the app's transport; the video chrome is for watching.
                     setShowShuffleButton(false)
                     setFullscreenButtonClickListener {
@@ -73,6 +90,23 @@ internal fun VideoSurface(
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    ColorGrade.attach(this)
+                    PlayerChrome.trackSponsorMarks(this)
+                    PlayerChrome.fitTransport(this)
+                    PlayerChrome.bindCaptions(this)
+                    PlayerChrome.softenPresses(this)
+                    VideoGestures.setPanelSwipe(
+                        this,
+                        object : VideoGestures.PanelSwipe {
+                            override fun enabled() = panelDrag != null
+                            override fun onDrag(dy: Float) {
+                                panelDrag?.invoke(dy)
+                            }
+                            override fun onEnd(dy: Float, velocity: Float) {
+                                panelEnd?.invoke(dy, velocity)
+                            }
+                        },
+                    )
                 }
         },
         modifier = modifier.background(Color.Black).testTag("native-video-surface"),
@@ -80,8 +114,11 @@ internal fun VideoSurface(
             view.setControllerAnimationEnabled(
                 !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
             )
+            PlayerChrome.reducedMotion = reduced
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
+            PlayerChrome.showSponsorMarks(view)
+            PlayerChrome.showCaptions(view)
             view.findViewById<android.view.View>(R.id.ytui_collapse)?.apply {
                 tag = "panel-close" // Native View tag; Compose tag remains on music/modal chrome.
                 visibility =
@@ -111,6 +148,7 @@ internal fun VideoSurface(
 }
 
 /** A bounded screen: advanced controls open separately, never below a long cover. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun FocusedPlayer(
     vm: YtuiViewModel,
@@ -120,32 +158,35 @@ internal fun FocusedPlayer(
     onMore: () -> Unit,
     onLyrics: () -> Unit = {},
     onSleep: () -> Unit = {},
+    onOutput: () -> Unit = {},
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     val queue by vm.queue.collectAsState()
+    val upNext by vm.upNext.collectAsState()
     val context = LocalContext.current
     val mediaUrl = player.media?.optString("url")
     // Keep the inline Up next list current as playback advances.
-    LaunchedEffect(mediaUrl) { vm.loadQueue() }
+    LaunchedEffect(mediaUrl) { vm.loadUpNext() }
+    // Date, likes and subscribers arrive after the video starts (see loadWatchDetails).
+    LaunchedEffect(mediaUrl, player.video) { if (player.video) vm.loadWatchDetails(player.media) }
+    val watchDetails by vm.watchDetails.collectAsState()
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val motion = LocalMotion.current
     val panelDrag = LocalPanelDrag.current
     val restingDrag = remember { Animatable(0f) }
-    // Music follows the finger through the panel; video only recognises the gesture so the
-    // native surface is never moved by a Compose layer.
+    // The whole panel follows the finger, music and video alike.
     val dismiss =
         Modifier.swipeAxis(
             enabled = mobile.gesture("gesture_swipe_dismiss"),
             horizontal = false,
-            offset = if (!player.video && panelDrag != null) panelDrag.offset else restingDrag,
+            offset = panelDrag?.offset ?: restingDrag,
             threshold = threshold,
-            follow = !player.video && panelDrag != null,
+            follow = panelDrag != null,
             allow = { it > 0 },
             onSwipe = { direction ->
-                if (!player.video && panelDrag != null) panelDrag.dismiss(this, direction)
-                else minimize()
+                if (panelDrag != null) panelDrag.dismiss(this, direction) else minimize()
             },
         )
     // Horizontal swipe on music artwork changes track, carousel style.
@@ -177,10 +218,59 @@ internal fun FocusedPlayer(
                     }
                 )
         }
+    val scope = rememberCoroutineScope()
+    // The collapse buttons leave the way the swipe does: the panel glides down off screen.
+    val animatedMinimize: () -> Unit = {
+        if (panelDrag != null && motion.animate) scope.launch { panelDrag.dismiss(this, 1) }
+        else minimize()
+    }
+    val openFullscreen = {
+        context.startActivity(
+            Intent(context, FullscreenActivity::class.java)
+                .putExtra("reduced_motion", config.optBoolean("reduced_motion"))
+        )
+    }
+    val swipeGestures = mobile.gesture("gesture_swipe_dismiss")
+    val flingSpeed = with(LocalDensity.current) { 900.dp.toPx() }
+    val fullscreenThreshold = with(LocalDensity.current) { 56.dp.toPx() }
+    // YouTube-style: swipe the video down to minimize, up for fullscreen. The panel tracks the
+    // finger on the way down; an upward swipe springs back as the fullscreen activity opens.
+    val videoDrag: ((Float) -> Unit)? =
+        if (!swipeGestures || panelDrag == null) null
+        else
+            ({ dy: Float ->
+                if (motion.animate)
+                    scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                        panelDrag.offset.snapTo(dy.coerceAtLeast(0f))
+                    }
+            })
+    val videoEnd: ((Float, Float) -> Unit)? =
+        if (!swipeGestures || panelDrag == null) null
+        else
+            ({ dy: Float, velocity: Float ->
+                scope.launch {
+                    when {
+                        dy > threshold || (velocity > flingSpeed && dy > threshold / 3) -> {
+                            haptic()
+                            panelDrag.dismiss(this, 1)
+                        }
+                        dy < -fullscreenThreshold ||
+                            (velocity < -flingSpeed && dy < -fullscreenThreshold / 3) -> {
+                            haptic()
+                            openFullscreen()
+                            panelDrag.offset.animateTo(0f, motion.spring())
+                        }
+                        else -> panelDrag.offset.animateTo(0f, motion.spring())
+                    }
+                }
+                Unit
+            })
     BoxWithConstraints(Modifier.fillMaxSize().testTag("focused-player")) {
         val landscape = maxWidth > maxHeight * 1.25f
         val portraitVideoHeight =
             minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
+        // Details may open their description; Up next always keeps some room.
+        val portraitDetailsMax = ((maxHeight - portraitVideoHeight) * 0.68f).coerceAtLeast(120.dp)
         @Composable
         fun Controls(modifier: Modifier) {
             val preparing = player.preparing
@@ -208,6 +298,122 @@ internal fun FocusedPlayer(
                 }
                 return
             }
+            @Composable
+            fun ActionRow() {
+                // One soft tray of evenly spaced icons, music and video alike, so nothing has to
+                // be scrolled sideways on a phone. Each icon keeps its spoken name; video puts
+                // ⋮ in the tray so the first and last icons line up with the title's edges.
+                val media = player.media
+                val canSave =
+                    media != null &&
+                        !player.value.optBoolean("offline") &&
+                        !media.optBoolean("live") &&
+                        !player.preview
+                Row(
+                    Modifier.fillMaxWidth()
+                        .then(
+                            // One soft tray, the same shape language as the dock, instead of
+                            // loose icons or pills that overflow a narrow screen.
+                            Modifier.clip(MediaTokens.card)
+                                .background(LocalContentColor.current.copy(alpha = 0.07f))
+                                .padding(
+                                    horizontal = if (player.video) 0.dp else 4.dp,
+                                    vertical = 2.dp,
+                                )
+                        )
+                        .testTag("player-actions"),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val compact = true
+                        // Video: equal cells, so five or six actions always fit the width.
+                        val cell = if (player.video) Modifier.weight(1f) else Modifier
+                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, modifier = cell, action = onQueue)
+                        if (!player.video)
+                            PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
+                        if (canSave && media != null) {
+                            var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                            PlayerAction(
+                                Glyph.Download,
+                                "Save",
+                                "Save offline",
+                                "player-download",
+                                compact,
+                                modifier = cell.trackCentre { saveCentre = it },
+                            ) {
+                                val card = MediaCard(media)
+                                DownloadFlight.launch(card, saveCentre)
+                                vm.play(card, download = true)
+                            }
+                        }
+                        player.output?.let { output ->
+                            // Accent while audio goes to Bluetooth; opens the output picker.
+                            PlayerAction(
+                                Glyph.Bluetooth,
+                                output.name,
+                                "Audio output, ${output.name}",
+                                "player-output",
+                                compact,
+                                active = output.bluetooth,
+                                modifier = cell,
+                                action = onOutput,
+                            )
+                        }
+                        val shareUrl = media?.optString("url").orEmpty()
+                        if (player.video && shareUrl.startsWith("http"))
+                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact, modifier = cell) {
+                                val send =
+                                    Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_SUBJECT, player.title)
+                                        .putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, null)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
+                        val sleepLeft = rememberSleepLeft(player)
+                        // Video keeps the row short: the timer lives in ⋮ until it is running.
+                        if (!player.video || sleepLeft > 0) {
+                            PlayerAction(
+                                Glyph.Sleep,
+                                if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
+                                if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
+                                compact = compact,
+                                active = sleepLeft > 0,
+                                countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
+                                modifier = cell,
+                                action = onSleep,
+                            )
+                        }
+                        if (player.video)
+                            PlayerAction(
+                                Glyph.More,
+                                "More",
+                                "Playback options",
+                                "player-options",
+                                compact,
+                                modifier = cell,
+                                action = onMore,
+                            )
+                    }
+                    if (!player.video) {
+                        Spacer(Modifier.width(4.dp))
+                        MediaIconButton(
+                            Glyph.More,
+                            "Playback options",
+                            "player-options",
+                            action = onMore,
+                        )
+                    }
+                }
+            }
             Column(
                 modifier
                     .padding(horizontal = MediaTokens.textInset)
@@ -218,92 +424,104 @@ internal fun FocusedPlayer(
                     ),
                 verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
             ) {
+                if (player.video) {
+                    val creator =
+                        player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        }
+                    WatchDetails(
+                        title = player.title,
+                        media =
+                            remember(player.media, watchDetails) {
+                                withWatchDetails(
+                                    player.media,
+                                    watchDetails?.takeIf { it.first == mediaUrl }?.second,
+                                )
+                            },
+                        creator = creator,
+                        showCreator =
+                            creator.isNotBlank() &&
+                                (mobile.optBoolean("show_channel", true) ||
+                                    player.media?.optBoolean("live") == true),
+                        mobile = mobile,
+                        thumbnails = config.optBoolean("thumbnails", true),
+                        headerModifier =
+                            Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
+                        error =
+                            player.value.optString("error").takeUnless { it.isBlank() || it == "null" },
+                    ) {
+                        ActionRow()
+                    }
+                    // Breathing room above Up next.
+                    Spacer(Modifier.height(4.dp))
+                } else {
                 Column(
-                    Modifier.fillMaxWidth()
-                        .then(
-                            if (player.video)
-                                Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss)
-                            else Modifier
-                        ),
+                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
                 ) {
+                    // Music keeps one line (long titles scroll) so the controls below never move
+                    // when the next track has a longer or not-yet-known title.
                     Text(
-                        player.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
+                        player.title.ifBlank { " " },
+                        if (player.video) Modifier
+                        else Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1800),
+                        style =
+                            if (player.video) MaterialTheme.typography.titleLarge
+                            else MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                        maxLines = if (player.video) 2 else 1,
+                        overflow = if (player.video) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
-                    if (
-                        mobile.optBoolean("show_channel", true) ||
-                            player.media?.optBoolean("live") == true
-                    )
-                        Text(
-                            player.value.optString("station").ifBlank {
-                                player.media?.optString("creator") ?: ""
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                }
-                if (player.video) player.media?.let { MediaInformation(it, mobile) }
-                player.value
-                    .optString("error")
-                    .takeUnless { it.isBlank() || it == "null" }
-                    ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                // One row of existing actions under the title (YouTube watch-page
-                // pattern). Every entry maps to an action the app already performs.
-                // Narrow columns (landscape watch split) scroll instead of overlapping.
-                val media = player.media
-                val canSave =
-                    media != null &&
-                        !player.value.optBoolean("offline") &&
-                        !media.optBoolean("live") &&
-                        !player.preview
-                val actionCount =
-                    3 +
-                        (if (!player.video) 1 else 0) +
-                        (if (canSave) 1 else 0) +
-                        (if (player.video) 1 else 0)
-                BoxWithConstraints(Modifier.fillMaxWidth()) {
-                    val minimum = 48.dp * actionCount
-                    Row(
-                        (if (maxWidth < minimum)
-                                Modifier.horizontalScroll(rememberScrollState())
-                                    .widthIn(min = minimum)
-                            else Modifier.fillMaxWidth())
-                            .testTag("player-actions"),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        MediaIconButton(Glyph.Queue, "Playback queue", action = onQueue)
-                        if (!player.video)
-                            MediaIconButton(Glyph.Lyrics, "Lyrics", action = onLyrics)
-                        MediaIconButton(Glyph.Sleep, "Sleep timer", action = onSleep)
-                        if (canSave && media != null)
-                            MediaIconButton(Glyph.Download, "Save offline", "player-download") {
-                                vm.play(MediaCard(media), download = true)
-                            }
-                        if (player.video)
-                            MediaIconButton(Glyph.Expand, "Fullscreen video", "fullscreen-button") {
-                                context.startActivity(
-                                    Intent(context, FullscreenActivity::class.java)
-                                        .putExtra(
-                                            "reduced_motion",
-                                            config.optBoolean("reduced_motion"),
-                                        )
+                    // Video: views and age under the title, then the channel row (watch-page
+                    // order). Music keeps the artist directly under the title.
+                    if (player.video) player.media?.let { MediaInformation(it, mobile) }
+                    val creator =
+                        player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        }
+                    val showCreator =
+                        creator.isNotBlank() &&
+                            (mobile.optBoolean("show_channel", true) ||
+                                player.media?.optBoolean("live") == true)
+                    if (!player.video && !showCreator)
+                        // Hold the artist line's height while the next track loads.
+                        Text(" ", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                    if (showCreator)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (player.video)
+                                ChannelAvatar(
+                                    creator,
+                                    32.dp,
+                                    imageUrl = player.media?.optString("channel_thumbnail").orEmpty(),
+                                    loadImage = config.optBoolean("thumbnails", true),
                                 )
-                            }
-                        MediaIconButton(
-                            Glyph.More,
-                            "Playback options",
-                            "player-options",
-                            action = onMore,
-                        )
-                    }
+                            Text(
+                                creator,
+                                style =
+                                    if (player.video) MaterialTheme.typography.titleSmall
+                                    else MaterialTheme.typography.bodyLarge,
+                                fontWeight = if (player.video) FontWeight.Medium else null,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color =
+                                    if (player.video) MaterialTheme.colorScheme.onSurface
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                 }
-                if (!player.video) PlayerSeek(vm, player)
+                if (!player.video)
+                    player.value
+                        .optString("error")
+                        .takeUnless { it.isBlank() || it == "null" }
+                        ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
+                if (!player.video)
+                    // Fixed height: a track change (no duration yet) or a live station must not
+                    // shrink this slot and shift the title above it.
+                    Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.CenterStart) {
+                        PlayerSeek(vm, player)
+                    }
                 if (!player.video)
                     Row(
                         Modifier.fillMaxWidth(),
@@ -318,21 +536,9 @@ internal fun FocusedPlayer(
                         ) {
                             vm.command("shuffle")
                         }
-                        MediaIconButton(Glyph.Previous, "Previous track") { vm.command("previous") }
-                        FilledIconButton(
-                            { vm.command("pause") },
-                            Modifier.size(64.dp).testTag("player-pause").semantics {
-                                contentDescription = if (player.playing) "Pause" else "Play"
-                            },
-                            colors =
-                                IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.onBackground,
-                                    contentColor = MaterialTheme.colorScheme.background,
-                                ),
-                        ) {
-                            PlayPauseIcon(player.playing, Modifier.size(32.dp))
-                        }
-                        MediaIconButton(Glyph.Next, "Next track", "player-next") {
+                        TransportButton(Glyph.Previous, "Previous track") { vm.command("previous") }
+                        PlayDisc(player.playing, Modifier.testTag("player-pause")) { vm.command("pause") }
+                        TransportButton(Glyph.Next, "Next track", Modifier.testTag("player-next")) {
                             vm.command("next")
                         }
                         MediaModeButton(
@@ -344,7 +550,12 @@ internal fun FocusedPlayer(
                             vm.command("repeat")
                         }
                     }
+                if (!player.video) {
+                    Spacer(Modifier.height(6.dp))
+                    ActionRow()
+                }
             }
+                }
         }
         @Composable
         fun Art(modifier: Modifier) {
@@ -360,11 +571,23 @@ internal fun FocusedPlayer(
                     Box(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
                             .aspectRatio(16f / 9f)
+                            // Soft corners: full bleed at the top edge in portrait, a rounded
+                            // pane beside the details in landscape.
+                            .clip(
+                                if (landscape) androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                                else
+                                    androidx.compose.foundation.shape.RoundedCornerShape(
+                                        bottomStart = 16.dp,
+                                        bottomEnd = 16.dp,
+                                    )
+                            )
                     ) {
                         VideoSurface(
                             Modifier.fillMaxSize(),
-                            onCollapse = minimize,
+                            onCollapse = animatedMinimize,
                             onSettings = onMore,
+                            onPanelDrag = videoDrag,
+                            onPanelEnd = videoEnd,
                             playbackPlayer = PlaybackService.current?.controlsPlayer,
                             covered = player.preparing != null,
                             timingToken =
@@ -387,7 +610,7 @@ internal fun FocusedPlayer(
                                         }
                                     }
                                 )
-                                CircularProgressIndicator()
+                                MediaSpinner(Modifier.size(36.dp), MediaTokens.videoInk)
                                 Box(Modifier.align(Alignment.TopStart).padding(4.dp)) {
                                     CompositionLocalProvider(
                                         LocalContentColor provides MediaTokens.videoInk
@@ -396,7 +619,7 @@ internal fun FocusedPlayer(
                                             Glyph.Down,
                                             "Minimize player",
                                             "panel-close",
-                                            minimize,
+                                            animatedMinimize,
                                         )
                                     }
                                 }
@@ -408,13 +631,21 @@ internal fun FocusedPlayer(
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
                 } else {
-                    val ratio =
-                        if (config.optString("music_player_style", "classic") == "classic") 1f
-                        else 1.35f
+                    val ratio = visualizerRatio(androidPlayerStyle(config))
+                    // The cover eases back while paused and steps forward when playing.
+                    val rest by
+                        animateFloatAsState(
+                            if (player.playing || !motion.animate) 1f else 0.86f,
+                            motion.spring(),
+                            label = "cover-rest",
+                        )
+                    // The paused size is a real layout size, not a layer scale: the cover is a shared
+                    // element, which is placed without its parents' layer scale, so a scaled-down
+                    // parent drew it towards the bottom right.
                     Visualizer(
                         player,
                         config,
-                        Modifier.width(minOf(maxWidth, maxHeight * ratio))
+                        Modifier.width(minOf(maxWidth, maxHeight * ratio) * rest)
                             .aspectRatio(ratio)
                             .graphicsLayer {
                                 translationX = trackShift.value
@@ -437,17 +668,18 @@ internal fun FocusedPlayer(
             } else {
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Art(Modifier.fillMaxWidth().height(portraitVideoHeight))
-                    Controls(Modifier.fillMaxWidth())
+                    Controls(Modifier.fillMaxWidth().heightIn(max = portraitDetailsMax))
                     UpNext(
                         queue,
+                        upNext,
                         mediaUrl,
+                        player.value.optBoolean("shuffle"),
                         config.optBoolean("thumbnails", true),
                         mobile.optBoolean("show_channel", true),
                         Modifier.weight(1f),
                         onQueue,
-                    ) {
-                        vm.play(it, queued = true)
-                    }
+                        play = vm::playUpNext,
+                    )
                 }
             }
         } else if (landscape)
@@ -456,56 +688,63 @@ internal fun FocusedPlayer(
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
             }
         else
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Art(Modifier.weight(1f).fillMaxWidth())
-                Controls(Modifier.fillMaxWidth().padding(bottom = 8.dp))
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Art(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
+                Controls(Modifier.fillMaxWidth().padding(bottom = 12.dp))
             }
     }
 }
 
 /**
- * Inline queue under the video and in the fullscreen options panel; full management stays in the
- * queue sheet (`onManage == null` hides that entry).
+ * Inline Up next under the video and in the fullscreen options panel, in the order Next takes
+ * them: the manual queue, then the rest of the playlist or related videos. Full queue management
+ * stays in the queue sheet (`onManage == null` hides that entry).
  */
 @Composable
 internal fun UpNext(
     queue: List<MediaCard>,
+    state: UpNextState,
     playingUrl: String?,
+    shuffle: Boolean,
     thumbnails: Boolean,
     showCreator: Boolean,
     modifier: Modifier,
     onManage: (() -> Unit)?,
     showHeader: Boolean = true,
-    play: (MediaCard) -> Unit,
+    play: (MediaCard, Boolean) -> Unit,
 ) {
+    val upcoming = queue.filter { it.url.isBlank() || it.url != playingUrl }
+    // The item Next/autoplay starts, unless shuffle makes the choice random.
+    val next =
+        if (shuffle) null
+        else
+            upcoming.firstOrNull()
+                ?: state.context.firstOrNull { it.url != playingUrl }.takeIf { state.autoplay }
+    val contextLabel = if (state.related) "Recommended" else "From this playlist"
     Column(modifier.fillMaxWidth().testTag("up-next")) {
-        if (showHeader) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         if (showHeader)
             Row(
                 Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Text("Up next", style = MaterialTheme.typography.titleLarge)
+                // With no manual queue the context list is all there is: name its source in
+                // the header instead of stacking a second heading above the first row.
                 Text(
-                    "Up next",
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
+                    if (queue.isEmpty() && state.context.isNotEmpty()) contextLabel else "",
+                    Modifier.weight(1f).padding(start = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (queue.isNotEmpty() && onManage != null)
-                    TextButton(
-                        onManage,
-                        Modifier.heightIn(min = 48.dp),
-                        colors =
-                            ButtonDefaults.textButtonColors(
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            ),
-                    ) {
-                        Text("Edit queue")
-                    }
+                    Pill("Edit queue", style = PillStyle.Quiet, onClick = onManage)
             }
-        if (queue.isEmpty())
+        if (queue.isEmpty() && state.context.isEmpty())
             Text(
-                "Nothing queued. Add videos with Add to queue in any ⋮ menu.",
+                if (state.loading) "Finding what plays next…"
+                else "Nothing queued. Add videos with Add to queue in any ⋮ menu.",
                 Modifier.padding(horizontal = MediaTokens.textInset, vertical = 8.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -514,32 +753,148 @@ internal fun UpNext(
             androidx.compose.foundation.lazy.LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                items(queue.size, key = { "${queue[it].key}#$it" }) { index ->
-                    val media = queue[index]
+                @Composable
+                fun Entry(media: MediaCard, fromQueue: Boolean) {
                     val current = media.url.isNotBlank() && media.url == playingUrl
+                    val label =
+                        when {
+                            current -> "Playing"
+                            media === next -> "Plays next"
+                            else -> ""
+                        }
+                    val creator = if (showCreator) media.creator else ""
                     MediaListRow(
                         media.title,
-                        if (current) "Playing" else if (showCreator) media.creator else "",
+                        listOf(label, creator).filter { it.isNotBlank() }.joinToString(" · "),
                         Modifier.padding(horizontal = 8.dp),
                         artwork = { Artwork(media, it, thumbnails) },
                         square = media.audio,
                         highlighted = current,
-                        onClick = { play(media) },
+                        onClick = { play(media, fromQueue) },
                     )
+                }
+                items(queue.size, key = { "${queue[it].key}#$it" }) { Entry(queue[it], true) }
+                if (state.context.isNotEmpty()) {
+                    if (queue.isNotEmpty() || !showHeader)
+                        item(key = "context-header") {
+                            SectionHeader(
+                                contextLabel,
+                                Modifier.padding(start = 4.dp).testTag("up-next-context"),
+                            )
+                        }
+                    items(state.context.size, key = { "context:${state.context[it].key}#$it" }) {
+                        Entry(state.context[it], false)
+                    }
+                    if (state.more)
+                        item(key = "context-more") {
+                            Text(
+                                "More after these",
+                                Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                 }
             }
     }
 }
 
+/** Labelled pill for the player action row; [description] stays the accessible name. */
+@Composable
+internal fun PlayerAction(
+    glyph: Glyph,
+    label: String,
+    description: String,
+    tag: String = "",
+    compact: Boolean = false,
+    active: Boolean = false,
+    /** Remaining share of a running timer; draws a draining clock ring around the icon. */
+    countdown: Float? = null,
+    modifier: Modifier = Modifier,
+    action: () -> Unit,
+) {
+    val source = remember { MutableInteractionSource() }
+    val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
+    if (compact) {
+        // Music: an evenly spaced, icon-only row; the accessible name carries the label.
+        Box(
+            modifier.testTag(tag)
+                .pressScale(source, 0.9f)
+                .widthIn(min = 56.dp)
+                .heightIn(min = 56.dp)
+                .clip(MediaTokens.medium)
+                .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+                .semantics { contentDescription = description }
+                .padding(6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (countdown != null) CountdownRing(glyph, countdown, accent)
+            else MediaIcon(glyph, Modifier.size(24.dp), if (active) accent else LocalContentColor.current, filled = active)
+        }
+        return
+    }
+    Row(
+        modifier.testTag(tag)
+            .pressScale(source, 0.94f)
+            .heightIn(min = 48.dp)
+            .clip(MediaTokens.pill)
+            .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+            .semantics { contentDescription = description },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            // The visible label repeats the description; keep one accessible name.
+            Modifier.clip(MediaTokens.pill)
+                .background(LocalContentColor.current.copy(alpha = 0.09f))
+                .padding(start = 12.dp, end = 16.dp)
+                .heightIn(min = 38.dp)
+                .clearAndSetSemantics {},
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MediaIcon(glyph, Modifier.size(18.dp), if (active) accent else LocalContentColor.current, filled = active)
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1, color = if (active) accent else Color.Unspecified)
+        }
+    }
+}
+
+/** The main play/pause control: a large ink disc whose glyph morphs between states. */
+@Composable
+internal fun PlayDisc(playing: Boolean, modifier: Modifier = Modifier, size: androidx.compose.ui.unit.Dp = 72.dp, action: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    val ink = MaterialTheme.colorScheme.onBackground
+    Box(
+        modifier
+            .size(size)
+            .pressScale(source, 0.9f)
+            .shadow(10.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(CircleShape)
+            .background(ink)
+            .clickable(source, null, role = Role.Button, onClick = action)
+            .semantics { contentDescription = if (playing) "Pause" else "Play" },
+        contentAlignment = Alignment.Center,
+    ) {
+        PlayPauseIcon(playing, Modifier.size(size * 0.42f), MaterialTheme.colorScheme.background)
+    }
+}
+
+/** Previous/next: larger glyphs than toolbar icons, the same soft press. */
+@Composable
+internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = Modifier, action: () -> Unit) =
+    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 30.dp, action = action)
+
 @Composable
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
     val live = player.media?.optBoolean("live") == true
     var drag by remember(player.media?.optString("url")) { mutableStateOf<Float?>(null) }
-    if (live || player.duration <= 0f) {
+    if (live) {
+        // The same live marker as on station artwork, instead of bare capitals.
+        ArtworkBadge(true, "Live", Modifier.heightIn(min = 36.dp).testTag("player-live"))
+    } else if (player.duration <= 0f) {
         Text(
-            if (live) "LIVE" else if (player.value.optBoolean("buffering")) "Buffering…" else "",
+            if (player.value.optBoolean("buffering")) "Buffering…" else "",
             Modifier.heightIn(min = 36.dp),
             color = MaterialTheme.colorScheme.primary,
             style = MaterialTheme.typography.labelMedium,
@@ -558,8 +913,16 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                 marks = player.sponsorMarks(),
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(time(drag ?: player.position), style = MaterialTheme.typography.labelMedium)
-                Text(time(player.duration), style = MaterialTheme.typography.labelMedium)
+                val numbers =
+                    MaterialTheme.typography.labelMedium.merge(
+                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                    )
+                Text(time(drag ?: player.position), style = numbers, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "-" + time((player.duration - (drag ?: player.position)).coerceAtLeast(0f)),
+                    style = numbers,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }
@@ -587,34 +950,41 @@ internal fun MediaSeekSlider(
     modifier: Modifier = Modifier,
     marks: List<Pair<Float, Float>> = emptyList(),
 ) {
-    val accent = MaterialTheme.colorScheme.primary
-    val track = MaterialTheme.colorScheme.outlineVariant
-    val markColor = MaterialTheme.colorScheme.tertiary
+    val accent = MaterialTheme.colorScheme.onBackground
+    val track = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.16f)
+    val markColor = MediaTokens.sponsorMark
+    val source = remember { MutableInteractionSource() }
+    val dragging by source.collectIsDraggedAsState()
+    val pressing by source.collectIsPressedAsState()
+    val active = dragging || pressing
+    val motion = LocalMotion.current
+    val thickness by animateDpAsState(if (active) 8.dp else 4.dp, motion.spring(), label = "seek-track")
+    val knob by animateDpAsState(if (active) 18.dp else 12.dp, motion.spring(), label = "seek-knob")
     Slider(
         value,
         onValueChange,
         modifier.heightIn(min = 48.dp),
         valueRange = valueRange,
         onValueChangeFinished = onValueChangeFinished,
-        thumb = { Box(Modifier.size(12.dp).clip(CircleShape).background(accent)) },
+        interactionSource = source,
+        thumb = {
+            Box(Modifier.size(18.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(knob).shadow(3.dp, CircleShape).clip(CircleShape).background(accent))
+            }
+        },
         track = { state ->
-            Canvas(Modifier.fillMaxWidth().height(3.dp)) {
+            Canvas(Modifier.fillMaxWidth().height(thickness)) {
                 val fraction =
                     mediaProgress(
                         state.value - state.valueRange.start,
                         state.valueRange.endInclusive - state.valueRange.start,
                     )
-                drawLine(
-                    track,
-                    androidx.compose.ui.geometry.Offset(0f, size.height / 2),
-                    androidx.compose.ui.geometry.Offset(size.width, size.height / 2),
-                    size.height,
-                )
-                drawLine(
+                val radius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                drawRoundRect(track, cornerRadius = radius)
+                drawRoundRect(
                     accent,
-                    androidx.compose.ui.geometry.Offset(0f, size.height / 2),
-                    androidx.compose.ui.geometry.Offset(size.width * fraction, size.height / 2),
-                    size.height,
+                    size = androidx.compose.ui.geometry.Size(size.width * fraction, size.height),
+                    cornerRadius = radius,
                 )
                 val span = state.valueRange.endInclusive - state.valueRange.start
                 if (span > 0f) {
@@ -635,4 +1005,86 @@ internal fun MediaSeekSlider(
             }
         },
     )
+}
+
+/** Labelled seek jump ("−10" / "+10") with the same round press as other transport keys. */
+@Composable
+internal fun SeekJump(label: String, description: String, action: () -> Unit) {
+    val source = remember { MutableInteractionSource() }
+    Box(
+        Modifier.size(52.dp)
+            .pressScale(source, 0.9f)
+            .clip(CircleShape)
+            .clickable(source, SoftIndication, role = Role.Button, onClick = action)
+            .semantics { contentDescription = description },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            style =
+                MaterialTheme.typography.titleSmall.merge(
+                    androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
+                ),
+            modifier = Modifier.clearAndSetSemantics {},
+        )
+    }
+}
+
+/**
+ * Clock-face countdown: a faint full track with an accent arc that drains clockwise from
+ * twelve o'clock, a dot at its leading end like a clock hand, and the glyph in the middle.
+ */
+@Composable
+private fun CountdownRing(glyph: Glyph, fraction: Float, accent: Color) {
+    val ink = LocalContentColor.current
+    // The service ticks once a second; ease between ticks so the ring drains continuously.
+    val sweep by
+        animateFloatAsState(
+            fraction.coerceIn(0f, 1f),
+            androidx.compose.animation.core.tween(1000, easing = androidx.compose.animation.core.LinearEasing),
+            label = "sleep-countdown",
+        )
+    Box(Modifier.size(28.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize()) {
+            val stroke = 2.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(
+                ink.copy(alpha = 0.18f),
+                0f,
+                360f,
+                false,
+                topLeft,
+                arcSize,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+            )
+            if (sweep > 0f) {
+                drawArc(
+                    accent,
+                    -90f,
+                    360f * sweep,
+                    false,
+                    topLeft,
+                    arcSize,
+                    style =
+                        androidx.compose.ui.graphics.drawscope.Stroke(
+                            stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                )
+                val angle = Math.toRadians((-90f + 360f * sweep).toDouble())
+                val r = arcSize.width / 2
+                drawCircle(
+                    accent,
+                    stroke * 1.1f,
+                    center + androidx.compose.ui.geometry.Offset(
+                        (r * kotlin.math.cos(angle)).toFloat(),
+                        (r * kotlin.math.sin(angle)).toFloat(),
+                    ),
+                )
+            }
+        }
+        MediaIcon(glyph, Modifier.size(15.dp), accent, filled = true)
+    }
 }

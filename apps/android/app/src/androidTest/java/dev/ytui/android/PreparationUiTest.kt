@@ -21,6 +21,22 @@ import org.junit.runner.RunWith
 class PreparationUiTest {
     @get:Rule
     val compose = createEmptyComposeRule(effectContext = kotlinx.coroutines.Dispatchers.Main)
+
+    /** Scrolls the feed until [node] sits above the floating bottom dock. */
+    private fun clearOfBottomDock(node: SemanticsNodeInteraction) {
+        compose.waitForIdle()
+        val dock =
+            compose.onAllNodesWithTag("bottom-dock").fetchSemanticsNodes().firstOrNull()?.boundsInRoot
+                ?: return
+        val overlap = node.fetchSemanticsNode().boundsInRoot.bottom - dock.top
+        if (overlap > 0f)
+            compose.onNodeWithTag("feed-list").performSemanticsAction(
+                androidx.compose.ui.semantics.SemanticsActions.ScrollBy
+            ) {
+                it(0f, overlap + 16f)
+            }
+        compose.waitForIdle()
+    }
     @get:Rule
     val notifications =
         androidx.test.rule.GrantPermissionRule.grant(
@@ -164,7 +180,10 @@ class PreparationUiTest {
                         Assert.assertNull(vm.get().actionError.value)
                     }
                     compose.onNodeWithTag("panel-close").performClick()
-                    compose.onNodeWithText(second.title).performScrollTo().performClick()
+                    // The mini player and navigation float over the feed; scroll the card clear
+                    // of them, as a person would, before tapping it.
+                    clearOfBottomDock(compose.onNodeWithText(second.title).performScrollTo())
+                    compose.onNodeWithText(second.title).performClick()
                     compose.onNodeWithTag("preparing-video").assertIsDisplayed()
                     val secondToken = vm.get().player.value.preparing!!.token
                     Assert.assertTrue(secondToken > firstToken)

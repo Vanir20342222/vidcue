@@ -11,12 +11,14 @@ class MediaDesignTest {
     @Test
     fun nativeTransportInkHasIconContrastEvenOnWhiteVideo() {
         assertTrue(
-            mediaContrast(MediaTokens.videoInk, MediaTokens.videoDisc.compositeOver(Color.White)) >=
-                3f
+            mediaContrast(
+                MediaTokens.videoInk,
+                MediaTokens.videoChromeDisc.compositeOver(Color.White),
+            ) >= 3f
         )
         for (accent in
             listOf(
-                MediaTokens.brandOnDark,
+                Color(0xff6ddbc1),
                 Color(0xff9d0006),
                 Color(0xff006f62),
                 Color(0xff8839ef),
@@ -31,7 +33,9 @@ class MediaDesignTest {
     @Test
     fun secondaryInkStaysReadableOnRaisedImportedSurfaces() {
         for (surface in (0..255 step 8).map { Color(it, it, it) }) {
-            assertTrue(mediaContrast(mediaBrand(surface), surface) >= 4.5f)
+            for (accent in listOf(Color(0xff6ddbc1), Color(0xff9d0006), Color(0xff8839ef), Color.Gray)) {
+                assertTrue(mediaContrast(mediaBrand(accent, surface), surface) >= 4.5f)
+            }
             for (ink in listOf(Color.Black, Color.White, Color.Gray, Color.Cyan, Color.Magenta)) {
                 assertTrue(mediaContrast(mediaReadableText(ink, surface), surface) >= 4.5f)
             }
@@ -73,6 +77,23 @@ class MediaDesignTest {
             val b = mediaOnAccent(color).luminance()
             val contrast = (maxOf(a, b) + 0.05f) / (minOf(a, b) + 0.05f)
             assertTrue("Accent $color needs WCAG AA text contrast; was $contrast", contrast >= 4.5f)
+        }
+    }
+
+    @Test
+    fun videoTimebarKeylineStaysDarkForMidToneAccents() {
+        // Nothing red, vidcue-light teal, catppuccin-latte mauve and flexoki-light blue all
+        // previously got a white keyline because white ink suits text on them.
+        for (hex in listOf(0xffd71921, 0xff006f62, 0xff8839ef, 0xff205ea6, 0xff80cbc4, 0xfffabd2f)) {
+            val accent = Color(hex)
+            assertEquals("keyline for ${hex.toString(16)}", Color.Black, mediaTimeBarBacking(accent))
+            assertTrue(mediaContrast(accent, mediaTimeBarBacking(accent)) >= 3f)
+        }
+        // Very dark imported accents still get a light keyline so the played part reads.
+        for (hex in listOf(0xff000000, 0xff1a1a40, 0xff3a0a0a)) {
+            val accent = Color(hex)
+            assertEquals(Color.White, mediaTimeBarBacking(accent))
+            assertTrue(mediaContrast(accent, mediaTimeBarBacking(accent)) >= 3f)
         }
     }
 }

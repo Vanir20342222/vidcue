@@ -23,6 +23,295 @@ fn downloader(proxy: &site_proxy::SiteProxy, format: Option<&str>) -> YoutubeDl 
 const VIDEO: &str = "https://www.youtube.com/watch?v=BaW_jenozKc";
 const FORMAT: &str = "bestvideo[height<=1080]+bestaudio/best";
 
+// Synthetic session and URLs only. Header routing ensures that recovery really
+// changes clients; no media probes or external requests can leave this proxy.
+fn recovery_proxy(
+    initial_streams: serde_json::Value,
+    embedded: serde_json::Value,
+    safari: serde_json::Value,
+    embedded_status: u16,
+) -> (tempfile::TempDir, site_proxy::SiteProxy) {
+    use serde_json::json;
+    let directory = tempfile::tempdir().unwrap();
+    let player = |streams| {
+        json!({
+            "playabilityStatus":{"status":"OK"},
+            "videoDetails":{"videoId":"BaW_jenozKc","title":"Recovery fixture","lengthSeconds":"10","isLiveContent":false},
+            "streamingData":streams,
+        })
+    };
+    let initial = if initial_streams.get("playabilityStatus").is_some() {
+        initial_streams
+    } else {
+        player(initial_streams)
+    };
+    let webpage = format!(
+        "<script>ytcfg.set({});ytInitialPlayerResponse={initial};</script>",
+        json!({"VISITOR_DATA":"synthetic-visitor","STS":20522,
+            "PLAYER_JS_URL":"/s/player/12345678/player_ias.vflset/en_US/base.js"})
+    );
+    let embedded = if embedded.get("videoDetails").is_some() {
+        embedded
+    } else {
+        player(embedded)
+    };
+    let routes = json!({"routes":[
+        {"url":"https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            "request_headers":{"X-YouTube-Client-Name":"56","X-Goog-Visitor-Id":"synthetic-visitor"},
+            "request_body":["WEB_EMBEDDED_PLAYER","signatureTimestamp"],
+            "status":embedded_status,"headers":{"Retry-After":"30"},"body":embedded.to_string()},
+        {"url":"https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            "request_headers":{"X-YouTube-Client-Name":"1","X-Goog-Visitor-Id":"synthetic-visitor"},
+            "request_body":["Safari","signatureTimestamp"],"body":player(safari).to_string()},
+        {"url":"https://www.youtube.com/youtubei/v1/player?prettyPrint=false","body":initial.to_string()},
+        {"url":"https://www.youtube.com/watch?v=BaW_jenozKc&bpctr=9999999999&has_verified=1","body":webpage},
+        {"url":"https://manifest.test/hls/master.m3u8","body":include_str!("fixtures/sites/youtube-direct-hls-only/master.m3u8")},
+    ]});
+    std::fs::write(directory.path().join("routes.json"), routes.to_string()).unwrap();
+    let proxy = site_proxy::SiteProxy::start(directory.path().to_str().unwrap());
+    (directory, proxy)
+}
+
+fn recovery_downloader(proxy: &site_proxy::SiteProxy, playback: Option<&str>) -> YoutubeDl {
+    YoutubeDl::with_options(
+        YoutubeOptions {
+            no_playlist: true,
+            playback_format: playback.map(str::to_owned),
+            playback_visitor_data: Some("synthetic-visitor".into()),
+            // Exercise Android's configuration without registering a fake solver.
+            js_runtime: Some("ytui-android-js".into()),
+            ..Default::default()
+        },
+        HttpOptions {
+            proxy: Some(proxy.url.clone()),
+            no_check_certificates: true,
+            socket_timeout: Some(2.0),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+#[test]
+fn empty_default_clients_recover_native_paired_video_without_downgrading_quality() {
+    let full: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/sites/youtube-direct-indexed/player.json"
+    ))
+    .unwrap();
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({}),
+        full["streamingData"].clone(),
+        serde_json::json!({}),
+        200,
+    );
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    assert_eq!(info.height, Some(1080));
+    assert_eq!(info.requested_formats.len(), 2);
+    assert_eq!(info.title, "Recovery fixture");
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    assert!(
+        info.requested_formats
+            .iter()
+            .all(|format| format.extra["ytui_init_range"]["end"] == "99")
+    );
+    assert_eq!(proxy.requests.lock().unwrap().len(), 5);
+}
+
+#[test]
+fn sabr_only_defaults_can_recover_through_native_safari_hls() {
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({"serverAbrStreamingUrl":"https://sabr.test/unsupported"}),
+        serde_json::json!({}),
+        serde_json::json!({"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}),
+        200,
+    );
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    assert_eq!(info.height, Some(720));
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    let requests = proxy.requests.lock().unwrap();
+    assert_eq!(requests.len(), 7, "{requests:?}");
+    assert!(requests.last().unwrap().contains("master.m3u8"));
+    assert!(info.fragments.is_empty());
+}
+
+#[test]
+fn recovery_rate_limit_stops_before_the_next_client_and_retains_retry_after() {
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({}),
+        serde_json::json!({}),
+        serde_json::json!({}),
+        429,
+    );
+    let error = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap_err();
+    let yt_dlp_rs::Error::ExtractorRequest { source, .. } = error else {
+        panic!("{error}");
+    };
+    assert!(
+        matches!(*source, yt_dlp_rs::Error::HttpRetryAfter {retry_after, ..} if retry_after.as_secs() == 30)
+    );
+    assert_eq!(proxy.requests.lock().unwrap().len(), 5);
+}
+
+#[test]
+fn exhausted_recovery_reports_android_solver_failure_without_signed_url_details() {
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({"formats":[{"itag":18,"url":"https://media.test/video?n=private-challenge&sig=private-signature",
+            "mimeType":"video/mp4; codecs=\"avc1.42001e, mp4a.40.2\"","width":640,"height":360}]}),
+        serde_json::json!({}),
+        serde_json::json!({}),
+        200,
+    );
+    let error = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("Android's isolated JavaScript solver is unavailable"),
+        "{error}"
+    );
+    assert!(!error.contains("private-"), "{error}");
+    assert!(!error.contains("require an explicit runtime"), "{error}");
+    assert_eq!(proxy.requests.lock().unwrap().len(), 6);
+}
+
+#[test]
+fn download_acquisition_does_not_opt_into_playback_client_recovery() {
+    let full: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/sites/youtube-direct-indexed/player.json"
+    ))
+    .unwrap();
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({}),
+        full["streamingData"].clone(),
+        serde_json::json!({}),
+        200,
+    );
+    assert!(
+        recovery_downloader(&proxy, None)
+            .extract_info_with_format(VIDEO, Some(FORMAT))
+            .is_err()
+    );
+    assert_eq!(proxy.requests.lock().unwrap().len(), 3);
+}
+
+#[test]
+fn music_recovers_audio_only_streams_with_index_and_language_metadata() {
+    let mut full: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/sites/youtube-direct-indexed/player.json"
+    ))
+    .unwrap();
+    let streams = &mut full["streamingData"];
+    streams["formats"] = serde_json::json!([]);
+    streams["adaptiveFormats"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|format| format["mimeType"].as_str().unwrap().starts_with("audio/"));
+    for format in streams["adaptiveFormats"].as_array_mut().unwrap() {
+        format["audioTrack"] =
+            serde_json::json!({"id":"de.0","audioIsDefault":true,"displayName":"German original"});
+    }
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({}),
+        streams.clone(),
+        serde_json::json!({}),
+        200,
+    );
+    let info = recovery_downloader(&proxy, Some("bestaudio/best"))
+        .extract_info_with_format(VIDEO, Some("bestaudio/best"))
+        .unwrap();
+    assert_eq!(info.vcodec.as_deref(), Some("none"));
+    assert!(info.formats.iter().any(|format| {
+        Some(&format.format_id) == info.format_id.as_ref()
+            && format.language.as_deref() == Some("de")
+    }));
+    assert_eq!(info.extra["ytui_init_range"]["end"], "99");
+    assert_eq!(proxy.requests.lock().unwrap().len(), 5);
+}
+
+#[test]
+fn wrong_video_from_an_alternative_client_is_never_played() {
+    let mut wrong: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/sites/youtube-direct-indexed/player.json"
+    ))
+    .unwrap();
+    wrong["videoDetails"]["videoId"] = "WRONG_VIDEO".into();
+    let (_directory, proxy) = recovery_proxy(
+        serde_json::json!({}),
+        wrong,
+        serde_json::json!({"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}),
+        200,
+    );
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    assert_eq!(info.height, Some(720));
+    assert_eq!(info.id, "BaW_jenozKc");
+    assert_eq!(proxy.requests.lock().unwrap().len(), 7);
+}
+
+#[test]
+fn access_restrictions_report_the_reason_instead_of_retrying_native_clients() {
+    use serde_json::json;
+    for with_details in [false, true] {
+        for (reason, expected) in [
+            (
+                "Join this channel to get access to members-only content",
+                "for channel members",
+            ),
+            (
+                "This is a private video. Please sign in to verify access.",
+                "video is private",
+            ),
+            ("Sign in to confirm your age", "age verification"),
+            ("Sign in to confirm you're not a bot", "requires sign-in"),
+        ] {
+            let mut denied = json!({"playabilityStatus":{"status":"LOGIN_REQUIRED",
+                "errorScreen":{"playerErrorMessageRenderer":{"reason":{"runs":[{"text":reason}]},
+                    "subreason":{"simpleText":"https://account.test/?token=private-session"}}}}});
+            if with_details {
+                denied["videoDetails"] =
+                    json!({"videoId":"BaW_jenozKc","title":"Restricted fixture"});
+                // YouTube also sends membership denials as a plain reason.
+                if expected == "for channel members" {
+                    denied["playabilityStatus"] = json!({"status":"UNPLAYABLE","reason":reason});
+                }
+            }
+            let (_directory, proxy) = recovery_proxy(denied, json!({}), json!({}), 200);
+            let error = recovery_downloader(&proxy, Some(FORMAT))
+                .extract_info_with_format(VIDEO, Some(FORMAT))
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(expected), "{error}");
+            assert!(!error.contains("no eligible media formats"), "{error}");
+            assert!(!error.contains("likely being blocked"), "{error}");
+            assert!(!error.contains("private-session"), "{error}");
+            assert_eq!(proxy.requests.lock().unwrap().len(), 4);
+        }
+    }
+}
+
+#[test]
+fn a_members_only_title_never_marks_a_playable_video_as_restricted() {
+    let mut full: serde_json::Value = serde_json::from_str(include_str!(
+        "fixtures/sites/youtube-direct-indexed/player.json"
+    ))
+    .unwrap();
+    full["videoDetails"]["title"] = "Members only — public video about memberships".into();
+    let (_directory, proxy) =
+        recovery_proxy(full, serde_json::json!({}), serde_json::json!({}), 200);
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    assert_eq!(info.height, Some(1080));
+    assert_eq!(proxy.requests.lock().unwrap().len(), 1);
+}
+
 #[test]
 fn indexed_playback_retains_initialization_index_and_duration_without_media_probes() {
     let proxy = site_proxy::SiteProxy::start("youtube-direct-indexed");
@@ -61,6 +350,40 @@ fn mobile_audio_selects_audio_without_fetching_watch_page_or_player_js() {
         .unwrap();
     assert_eq!(info.vcodec.as_deref(), Some("none"));
     assert_eq!(proxy.requests.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn rejected_audio_recovery_bypasses_direct_player_and_keeps_playback_metadata() {
+    let proxy = site_proxy::SiteProxy::start("youtube-direct-indexed");
+    let dl = YoutubeDl::with_options(
+        YoutubeOptions {
+            no_playlist: true,
+            playback_format: Some("bestaudio/best".into()),
+            playback_skip_direct: true,
+            playback_visitor_data: Some("synthetic-visitor".into()),
+            ..Default::default()
+        },
+        HttpOptions {
+            proxy: Some(proxy.url.clone()),
+            no_check_certificates: true,
+            socket_timeout: Some(2.0),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let info = dl
+        .extract_info_with_format(VIDEO, Some("bestaudio/best"))
+        .unwrap_or_else(|error| panic!("{error}; requests={:?}", proxy.requests.lock().unwrap()));
+    assert_eq!(info.vcodec.as_deref(), Some("none"));
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    assert_eq!(info.extra["ytui_init_range"]["end"], "99");
+    let requests = proxy.requests.lock().unwrap();
+    assert!(requests[0].contains("/watch?"), "requests: {requests:?}");
+    assert!(
+        requests
+            .iter()
+            .all(|request| !request.contains("/visitor_id?"))
+    );
 }
 
 #[test]
@@ -203,6 +526,150 @@ fn manifest_only_direct_response_keeps_necessary_hls_without_watch_refetch() {
     );
     assert!(requests.iter().all(|request| !request.contains("/watch?")));
     assert!(requests[1].contains("manifest.test/hls/master.m3u8"));
+}
+
+#[test]
+fn live_playback_uses_rolling_hls_for_video_audio_and_reconnects() {
+    use serde_json::json;
+    for fresh in [false, true] {
+        for selector in [FORMAT, "bestaudio/best"] {
+            // Direct URLs are deliberately offered too: live playback must use
+            // HLS so Media3, rather than a progressive source, refreshes it.
+            let mut live: serde_json::Value = serde_json::from_str(include_str!(
+                "fixtures/sites/youtube-direct-indexed/player.json"
+            ))
+            .unwrap();
+            live["videoDetails"] = json!({"videoId":"BaW_jenozKc", "title":"Live fixture",
+                "isLive":true, "isLiveContent":true, "lengthSeconds":"0"});
+            live["streamingData"]["hlsManifestUrl"] =
+                "https://manifest.test/hls/master.m3u8".into();
+            let (_directory, proxy) = recovery_proxy(live.clone(), live, json!({}), 200);
+            let dl = YoutubeDl::with_options(
+                YoutubeOptions {
+                    no_playlist: true,
+                    playback_format: Some(selector.into()),
+                    playback_skip_direct: fresh,
+                    playback_visitor_data: Some("synthetic-visitor".into()),
+                    js_runtime: Some("ytui-android-js".into()),
+                    ..Default::default()
+                },
+                HttpOptions {
+                    proxy: Some(proxy.url.clone()),
+                    no_check_certificates: true,
+                    socket_timeout: Some(2.0),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let info = dl.extract_info_with_format(VIDEO, Some(selector)).unwrap();
+            let data = serde_json::to_value(&info).unwrap();
+            assert_eq!(data["live_status"], "is_live");
+            assert_eq!(data["is_live"], true);
+            assert_eq!(info.height, Some(720));
+            assert_eq!(info.protocol.as_deref(), Some("m3u8_native"));
+            assert_ne!(info.acodec.as_deref(), Some("none"));
+            assert!(info.requested_formats.is_empty());
+            assert!(info.fragments.is_empty());
+            let requests = proxy.requests.lock().unwrap();
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|r| r.contains("manifest.test"))
+                    .count(),
+                1,
+                "fresh={fresh}, selector={selector}, requests={requests:?}"
+            );
+            assert!(
+                requests
+                    .iter()
+                    .all(|r| !r.contains("/itag/") && !r.contains("media.test"))
+            );
+            if fresh {
+                assert!(requests[0].contains("/watch?"));
+            } else {
+                assert_eq!(requests.len(), 2, "requests: {requests:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn upcoming_and_post_live_videos_remain_unplayable() {
+    use serde_json::json;
+    for flag in ["isUpcoming", "isPostLiveDvr"] {
+        let mut player = json!({"playabilityStatus":{"status":"OK"},
+            "videoDetails":{"videoId":"BaW_jenozKc","title":"Not on air","isLiveContent":true},
+            "streamingData":{"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}});
+        player["videoDetails"][flag] = true.into();
+        let (_directory, proxy) = recovery_proxy(player.clone(), player, json!({}), 200);
+        let error = downloader(&proxy, Some(FORMAT))
+            .extract_info_with_format(VIDEO, Some(FORMAT))
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("upcoming and post-live"),
+            "{error}"
+        );
+        assert!(
+            proxy
+                .requests
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|r| !r.contains("manifest.test"))
+        );
+    }
+}
+
+#[test]
+fn live_download_extraction_still_rejects_rolling_streams() {
+    use serde_json::json;
+    let live = json!({"playabilityStatus":{"status":"OK"},
+        "videoDetails":{"videoId":"BaW_jenozKc","title":"Live fixture", "isLive":true},
+        "streamingData":{"hlsManifestUrl":"https://manifest.test/hls/master.m3u8"}});
+    let (_directory, proxy) = recovery_proxy(live.clone(), live, json!({}), 200);
+    let error = downloader(&proxy, None)
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("live, upcoming and post-live"),
+        "{error}"
+    );
+    assert!(
+        proxy
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|r| !r.contains("manifest.test"))
+    );
+}
+
+#[test]
+fn live_playback_recovers_a_missing_manifest_from_an_alternative_client() {
+    use serde_json::json;
+    let live = json!({"playabilityStatus":{"status":"OK"},
+        "videoDetails":{"videoId":"BaW_jenozKc","title":"Live fixture",
+            "isLive":true,"isLiveContent":true},"streamingData":{}});
+    let mut fallback = live.clone();
+    fallback["streamingData"]["hlsManifestUrl"] = "https://manifest.test/hls/master.m3u8".into();
+    let (_directory, proxy) = recovery_proxy(live, fallback, json!({}), 200);
+    let info = recovery_downloader(&proxy, Some(FORMAT))
+        .extract_info_with_format(VIDEO, Some(FORMAT))
+        .unwrap();
+    let data = serde_json::to_value(&info).unwrap();
+    assert_eq!(data["live_status"], "is_live");
+    assert_eq!(info.protocol.as_deref(), Some("m3u8_native"));
+    assert_eq!(info.height, Some(720));
+    assert_eq!(info.extra["ytui_playback_route"], "full");
+    let requests = proxy.requests.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| r.contains("manifest.test"))
+            .count(),
+        1
+    );
+    assert!(requests.iter().all(|r| !r.contains("/itag/")));
 }
 
 #[test]

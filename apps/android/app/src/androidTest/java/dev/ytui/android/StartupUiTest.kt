@@ -125,7 +125,7 @@ class StartupUiTest {
                                 observer.capture(
                                     token,
                                     "startup-subsecond${if(prepared) "" else "-cold"}.png",
-                                    1000,
+                                    SubsecondTarget.observeMs,
                                 )
                             if (frame.rgb && StartupTimings.usable(token) > 0) break
                             Thread.sleep(8)
@@ -133,20 +133,25 @@ class StartupUiTest {
                             StartupTimings.elapsed(
                                 token,
                                 android.os.SystemClock.elapsedRealtime(),
-                            ) < 1000
+                            ) < SubsecondTarget.observeMs
                         )
                         val visible = StartupTimings.elapsed(token, frame.capturedAt)
                         val usable = StartupTimings.usable(token)
                         evidence.append(
                             "$name subsecond_usable_ms=$usable subsecond_screenshot_confirmation_ms=$visible copy_request_ms=${StartupTimings.elapsed(token, frame.requestedAt)}\n"
                         )
-                        if (!frame.rgb || usable !in 1..999 || visible !in 1..999) {
+                        if (!SubsecondTarget.met(frame.rgb, visible, usable)) {
                             evidence.append(StartupTimings.report())
                             MediaRuntimeTest.capture("startup-subsecond-failed.png")
                         }
-                        Assert.assertTrue(
-                            "$name actual visible and playing output must be under1000ms: pixels=$visible usable=$usable\n${StartupTimings.report()}",
-                            frame.rgb && visible in 1..999 && usable in 1..999,
+                        evidence.append(
+                            SubsecondTarget.check(
+                                name,
+                                frame.rgb,
+                                visible,
+                                usable,
+                                StartupTimings.report(),
+                            ) + "\n"
                         )
                         val lastVideo =
                             StartupTimings.report().lineSequence().last { it.startsWith("Video") }
@@ -256,7 +261,7 @@ class StartupUiTest {
                         val elapsed = MediaRuntimeTest.status().getLong("tap_to_output_ms")
                         Assert.assertTrue(
                             "${if (prepared) "Prepared" else "Cold"} tap to visible frame was $elapsed ms\n${StartupTimings.report()}",
-                            elapsed <= 2000,
+                            elapsed <= StartupBudget.ms(),
                         )
                         var rgb = false
                         var observed = -1L
@@ -266,7 +271,7 @@ class StartupUiTest {
                                     PlaybackService.current.startupToken,
                                     android.os.SystemClock.elapsedRealtime(),
                                 )
-                            if (observed < 0 || observed > 2000) break
+                            if (observed < 0 || observed > StartupBudget.ms()) break
                             val sample =
                                 VisibleVideoProbe.capture(
                                     scenario,
@@ -286,8 +291,8 @@ class StartupUiTest {
                         )
                         if (!rgb) MediaRuntimeTest.capture("startup-missing-frame.png")
                         Assert.assertTrue(
-                            "RGB image was not presented within 2000 ms: $observed ms\n${StartupTimings.report()}",
-                            rgb && observed in 0..2000,
+                            "RGB image was not presented within ${StartupBudget.ms()} ms: $observed ms\n${StartupTimings.report()}",
+                            rgb && observed in 0..StartupBudget.ms(),
                         )
                         MediaRuntimeTest.command("stop")
                         compose.waitUntil(10000) {
@@ -416,8 +421,8 @@ class StartupUiTest {
                     MediaBridge.execute(json("op" to "play", "request" to request).toString())
                     compose.waitUntil(10000) { StartupTimings.total(token) > 0 }
                     Assert.assertTrue(
-                        "HLS first frame exceeded 2000 ms: ${StartupTimings.total(token)}",
-                        StartupTimings.total(token) <= 2000,
+                        "HLS first frame exceeded ${StartupBudget.ms()} ms: ${StartupTimings.total(token)}",
+                        StartupTimings.total(token) <= StartupBudget.ms(),
                     )
                     var rgb = false
                     var observed = -1L
@@ -426,7 +431,7 @@ class StartupUiTest {
                             StartupTimings.elapsed(
                                 token,
                                 android.os.SystemClock.elapsedRealtime(),
-                            ) > 2000
+                            ) > StartupBudget.ms()
                         )
                             break
                         val frame =
@@ -440,8 +445,8 @@ class StartupUiTest {
                         if (!rgb) Thread.sleep(16)
                     } while (!rgb)
                     Assert.assertTrue(
-                        "HLS pixels were not present within 2000 ms: $observed",
-                        rgb && observed in 0..2000,
+                        "HLS pixels were not present within ${StartupBudget.ms()} ms: $observed",
+                        rgb && observed in 0..StartupBudget.ms(),
                     )
                     confirmations.append(
                         "${if(prepared) "prepared" else "cold"} hls_screenshot_confirmation_ms=$observed\n"

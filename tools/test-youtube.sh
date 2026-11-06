@@ -22,4 +22,4 @@ echo "Testing public YouTube with backend: $YTUI_LIVE_BACKEND"
 echo 'Temporary media and isolated test state are deleted after each check.'
 # Strict native is a separate diagnostic: its known challenge limitations must not
 # turn a successful auto/external suite into a false failure (or a false pass).
-exec cargo test -p ytui --locked --test live_youtube -- --ignored --test-threads=1 --nocapture --skip live_native_youtube_test_video_download
+exec cargo test -p vidcue --locked --test live_youtube -- --ignored --test-threads=1 --nocapture --skip live_native_youtube_test_video_download

@@ -6,8 +6,8 @@ use std::{
 };
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use ytui_core::{Config, DownloadQueue, Job, JobEvent, JobState, JobUpdate, Media};
-use ytui_services::{download, paths::Paths};
+use vidcue_core::{Config, DownloadQueue, Job, JobEvent, JobState, JobUpdate, Media};
+use vidcue_services::{download, paths::Paths};
 
 // Fresh executable scripts can be ETXTBSY when another fixture spawns while
 // a writable script descriptor is still inherited. Keep each fixture's file/
@@ -26,7 +26,7 @@ impl Fixture {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let temp = tempfile::Builder::new()
-            .prefix("ytui 日本語 tests-")
+            .prefix("vidcue 日本語 tests-")
             .tempdir()
             .unwrap();
         let root = temp.path();

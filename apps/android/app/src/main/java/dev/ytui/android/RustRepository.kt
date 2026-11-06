@@ -16,9 +16,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -110,12 +108,37 @@ internal object RustRpc {
         call(json("op" to op, *fields)) as? JSONArray ?: JSONArray()
 }
 
+/** What plays after the current item: queue, then the active playback context. */
+internal data class UpNextState(
+    val context: List<MediaCard> = emptyList(),
+    val contextId: String = "",
+    /** Related videos for the current one, rather than the rest of a playlist. */
+    val related: Boolean = false,
+    /** False for recommendations shown while related autoplay is off. */
+    val autoplay: Boolean = true,
+    val more: Boolean = false,
+    val loading: Boolean = false,
+)
+
 /** Treated as immutable: media JSON is copied (`copyJson`) before any change. */
 @androidx.compose.runtime.Immutable
 internal data class MediaCard(val value: JSONObject) {
+    /** Artwork-only metadata, including a public cover URL when YouTube omitted one. */
+    val artwork: JSONObject by lazy {
+        val fallback =
+            youtubeArtworkFallback(
+                url,
+                kind,
+                value.optString("thumbnail"),
+                (value.optJSONArray("thumbnails")?.length() ?: 0) > 0,
+            )
+        // Copy only the artwork request. Queue/history/playback metadata stays untouched.
+        if (fallback == null) value else value.copyJson().put("thumbnail", fallback)
+    }
+
     /** Thumbnail identity, computed once instead of re-serialising arrays per frame. */
     val artworkSource: String by lazy {
-        "${value.optString("thumbnail")}:${value.optJSONArray("thumbnails")}"
+        "${artwork.optString("thumbnail")}:${artwork.optJSONArray("thumbnails")}"
     }
 
     val title: String
@@ -123,6 +146,10 @@ internal data class MediaCard(val value: JSONObject) {
 
     val creator: String
         get() = value.optString("creator")
+
+    /** Creator picture URL advertised by the provider; blank when the response had none. */
+    val channelThumbnail: String
+        get() = value.optString("channel_thumbnail")
 
     val url: String
         get() = value.optString("url")
@@ -166,9 +193,12 @@ internal data class FeedState(
     val errorCode: String = "",
     val notice: String? = null,
     val generation: Long = 0,
+    // Generations also advance on invalidation; they do not prove a load was started.
+    val needsLoad: Boolean = true,
     val scrollIndex: Int = 0,
     val failedRequest: Any? = null,
     val failedAppend: Boolean = false,
+    val instantContent: Boolean = false,
 )
 
 @androidx.compose.runtime.Immutable
@@ -206,11 +236,16 @@ internal data class PlayerState(
 }
 
 internal object ArtworkCache {
-    private val slots = Semaphore(8)
     private val memory =
         object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
             override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
         }
+    private val loader =
+        ArtworkLoader<String, Bitmap>(
+            CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            memory::get,
+            { key, bitmap -> memory.put(key, bitmap) },
+        )
 
     private val decodeSizes = intArrayOf(96, 160, 240, 320, 480, 640, 768)
 
@@ -222,60 +257,74 @@ internal object ArtworkCache {
         decodeSizes.firstOrNull { it >= pixels } ?: decodeSizes.last()
 
     fun hasArtwork(media: MediaCard): Boolean =
-        media.value.optString("thumbnail").isNotBlank() ||
-            (media.value.optJSONArray("thumbnails")?.length() ?: 0) > 0
+        media.artwork.optString("thumbnail").let { it.isNotBlank() && it != "null" } ||
+            (media.artwork.optJSONArray("thumbnails")?.length() ?: 0) > 0
 
     /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
-    fun cached(media: MediaCard, pixels: Int): Bitmap? =
-        memory.get("${media.key}:${media.artworkSource}:${decodeSize(pixels)}")
+    fun cached(media: MediaCard, pixels: Int): Bitmap? {
+        val size = decodeSize(pixels)
+        // Reuse larger art from a player/detail view instead of flashing a placeholder.
+        for (candidate in decodeSizes) {
+            if (candidate < size) continue
+            memory.get("${media.key}:${media.artworkSource}:$candidate")?.let {
+                return it
+            }
+        }
+        return null
+    }
+
+    /** The latest cover decoded for each item, at any size or source. */
+    private val recentByItem = LruCache<String, Bitmap>(48)
+
+    /**
+     * Something to paint for [media] while its exact size or source loads: the last cover decoded
+     * for the same item. Never decodes or fetches.
+     */
+    fun recent(media: MediaCard): Bitmap? = recentByItem.get(media.key)
 
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
         if (!hasArtwork(media)) return null
         val size = decodeSize(pixels)
         val key = "${media.key}:${media.artworkSource}:$size"
-        memory.get(key)?.let {
+        cached(media, size)?.let {
             return it
         }
-        return slots.withPermit {
-            for (attempt in 0..2) {
-                currentCoroutineContext().ensureActive()
-                memory.get(key)?.let {
-                    return@withPermit it
-                }
-                val decoded =
-                    withContext(Dispatchers.IO) {
-                        val data =
-                            NativeBridge.thumbnail(media.value.toString(), size)
-                                ?: return@withContext null
-                        currentCoroutineContext().ensureActive()
-                        if (
-                            data.size < 3 ||
-                                data[0] !in 1..768 ||
-                                data[1] !in 1..768 ||
-                                data.size != data[0] * data[1] + 2
+        return loader.load(key) fetch@{
+            // YouTube's standard image exists for every video; a listed cover (for example a
+            // max-resolution one) may not. Fall back to it rather than leaving the cover empty.
+            val standard =
+                youtubeArtworkFallback(media.url, if (media.kind == "song") "song" else "video")
+                    ?.takeIf { it != media.artwork.optString("thumbnail") }
+            val data =
+                NativeBridge.thumbnail(media.artwork.toString(), size)
+                    ?: standard?.let {
+                        NativeBridge.thumbnail(
+                            media.artwork.copyJson().put("thumbnail", it).put("thumbnails", JSONArray()).toString(),
+                            size,
                         )
-                            return@withContext null
-                        Bitmap.createBitmap(
-                                data,
-                                2,
-                                data[0],
-                                data[0],
-                                data[1],
-                                Bitmap.Config.ARGB_8888,
-                            )
-                            .also { memory.put(key, it) }
                     }
-                if (decoded != null) return@withPermit decoded
-                // A transient image failure must not leave a permanent placeholder.
-                // Bound retries and release the coroutine promptly when a card leaves.
-                if (attempt < 2) delay(200L shl attempt)
+                    ?: return@fetch null
+            if (
+                data.size < 3 ||
+                    data[0] !in 1..768 ||
+                    data[1] !in 1..768 ||
+                    data.size != data[0] * data[1] + 2
+            )
+                return@fetch null
+            Bitmap.createBitmap(data, 2, data[0], data[0], data[1], Bitmap.Config.ARGB_8888).also {
+                it.prepareToDraw()
+                recentByItem.put(media.key, it)
             }
-            null
         }
     }
 }
 
-internal class YtuiViewModel : ViewModel() {
+internal class YtuiViewModel(
+    private val browsePage: suspend (Int, Any, Int) -> JSONObject = { index, request, offset ->
+        RustRpc.objectCall("browse", "tab" to index, "request" to request, "offset" to offset)
+    },
+    clock: () -> Long = android.os.SystemClock::elapsedRealtime,
+) : ViewModel() {
     val tab = MutableStateFlow(1)
     val feeds = Array(4) { MutableStateFlow(FeedState()) }
     private val history = Array(4) { ArrayDeque<FeedState>() }
@@ -286,11 +335,14 @@ internal class YtuiViewModel : ViewModel() {
     private val feedPages =
         FeedPageCache<FeedKey, JSONObject>(
             viewModelScope,
-            android.os.SystemClock::elapsedRealtime,
+            clock,
             { it.toString().length * 2 },
+            maxEntries = 64,
+            maxBytes = 8 * 1024 * 1024,
+            retainMs = 30 * 60_000L,
         )
     private var categoryJob: Job? = null
-    private var categoryFetch: Job? = null
+    private val categoryPreloader = FeedPagePreloader(feedPages)
     private var playbackJob: Job? = null
     private var latestPlaybackIntent = -1L
     private var lastVideoPreparation: PreparingVideo? = null
@@ -305,14 +357,51 @@ internal class YtuiViewModel : ViewModel() {
     val config = MutableStateFlow(JSONObject())
     val palette = MutableStateFlow(JSONObject())
     val themes = MutableStateFlow<List<String>>(emptyList())
+    /** Built-in palettes by theme name, loaded on demand for theme previews. */
+    val palettes = MutableStateFlow(JSONObject())
+
+    fun loadPalettes() = task {
+        if (palettes.value.length() == 0) palettes.value = RustRpc.objectCall("palettes")
+    }
     val account = MutableStateFlow(JSONObject())
     val player = MutableStateFlow(PlayerState())
     val downloads = MutableStateFlow<List<JSONObject>>(emptyList())
     val offlinePlaylists = MutableStateFlow<List<JSONObject>>(emptyList())
     val queue = MutableStateFlow<List<MediaCard>>(emptyList())
+    val upNext = MutableStateFlow(UpNextState())
+    private var upNextJob: Job? = null
+
+    /**
+     * Watch-page extras for the playing video (date, likes, subscribers), keyed by its URL. The
+     * fast playback path does not return them; one `next` request after the video starts does.
+     */
+    val watchDetails = MutableStateFlow<Pair<String, JSONObject>?>(null)
+    private var watchDetailsJob: Job? = null
+
+    fun loadWatchDetails(media: JSONObject?) {
+        val url = media?.optString("url").orEmpty()
+        if (url.isBlank() || watchDetails.value?.first == url) return
+        watchDetailsJob?.cancel()
+        watchDetails.value = null
+        if (MediaBridge.offlineUi || player.value.value.optBoolean("offline")) return
+        watchDetailsJob =
+            viewModelScope.launch {
+                val found =
+                    runCatching { RustRpc.objectCall("watch_details", "media" to media) }.getOrNull()
+                        ?: return@launch
+                watchDetails.value = url to found
+            }
+    }
+    private var shownRelated: Pair<String, List<MediaCard>>? = null
     val recent = MutableStateFlow<List<MediaCard>>(emptyList())
     val status = MutableStateFlow("Ready")
     val actionError = MutableStateFlow<String?>(null)
+    /** Completed actions as (sequence, kind) so the UI can confirm them without text. */
+    val confirmed = MutableStateFlow(0L to "")
+
+    fun confirm(kind: String) {
+        confirmed.update { (it.first + 1) to kind }
+    }
     val ready = MutableStateFlow(false)
     val playerOpen = MutableStateFlow(false)
     val sharedQuery = MutableStateFlow("")
@@ -321,6 +410,7 @@ internal class YtuiViewModel : ViewModel() {
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
+        val engineError = EngineStartup.current.error()
         viewModelScope.launch {
             runCatching {
                     mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
@@ -336,9 +426,10 @@ internal class YtuiViewModel : ViewModel() {
                         .takeUnless { it.isBlank() || it == "null" }
                         ?.let { status.value = it }
                 }
-                .onFailure { status.value = it.message ?: "Could not load settings" }
+                .onFailure { status.value = engineError ?: it.message ?: "Could not load settings" }
+            EngineStartup.current.claimNotice()?.let { actionError.value = it }
             ready.value = true
-            if (!MediaBridge.offlineUi) navigate(1, "Home", remember = false)
+            loadFeedIfNeeded(tab.value)
         }
     }
 
@@ -354,7 +445,13 @@ internal class YtuiViewModel : ViewModel() {
     suspend fun snapshot() =
         withContext(Dispatchers.Main.immediate) {
             snapshotLock.withLock {
-                val value = withContext(Dispatchers.Default) { JSONObject(MediaBridge.snapshot()) }
+                // Parse and fingerprint off the main thread: the service publishes five times a
+                // second, and serialising its JSON on the UI thread costs scroll frames.
+                val (value, playerRaw) =
+                    withContext(Dispatchers.Default) {
+                        val parsed = JSONObject(MediaBridge.snapshot())
+                        parsed to parsed.optJSONObject("player")?.toString()
+                    }
                 value.optJSONObject("player")?.let {
                     val pending = seekTarget
                     if (pending != null) {
@@ -375,7 +472,7 @@ internal class YtuiViewModel : ViewModel() {
                             it.optLong("startup_token") == preparing.token
                     // Deduplicate native snapshots without dropping a pending intent;
                     // acceptance and video mode still change in one state emission.
-                    val raw = it.toString()
+                    val raw = if (pending != null) it.toString() else playerRaw ?: it.toString()
                     if (raw != lastPlayer || accepted) {
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
@@ -424,6 +521,7 @@ internal class YtuiViewModel : ViewModel() {
                         }
                         "show_player" -> playerOpen.value = true
                         "shared" -> sharedQuery.value = text
+                        "offline_playlists_changed" -> loadOfflinePlaylists()
                         "error" -> {
                             status.value = text
                             actionError.value = text
@@ -435,6 +533,7 @@ internal class YtuiViewModel : ViewModel() {
                                         RustRpc.objectCall("import_theme", "text" to text)
                                     config.value = RustRpc.objectCall("settings")
                                     status.value = "Palette applied"
+                                    confirm("palette")
                                 }
                             }
                         "cookie_file" -> {
@@ -444,7 +543,11 @@ internal class YtuiViewModel : ViewModel() {
                         }
                         "cookies" -> changeAccount("import_cookies", "header" to text)
                         "account_updated" -> refreshAccount()
-                        "history_updated",
+                        "history_updated" -> {
+                            loadHistory()
+                            loadUpNext()
+                        }
+                        "up_next_changed" -> loadUpNext()
                         "history_cleared" -> loadHistory()
                         "lyrics_file" ->
                             if (event.optString("request_token") == lyricToken)
@@ -455,9 +558,16 @@ internal class YtuiViewModel : ViewModel() {
         }
 
     fun chooseTab(index: Int) {
+        if (index !in feeds.indices) return
         categoryJob?.cancel()
         tab.value = index
-        if (index > 0 && feeds[index].value.generation == 0L && !MediaBridge.offlineUi)
+        loadFeedIfNeeded(index)
+    }
+
+    private fun loadFeedIfNeeded(index: Int) {
+        // Wait for account/settings initialization, then load the tab currently on screen.
+        if (index !in 1..3 || !ready.value || MediaBridge.offlineUi) return
+        if (feeds[index].value.needsLoad)
             navigate(index, if (index == 3) "Cliamp" else "Home", remember = false)
         else if (index in 1..2 && !feeds[index].value.loading) preloadCategories(index)
     }
@@ -489,15 +599,23 @@ internal class YtuiViewModel : ViewModel() {
                 request != "Favorites" &&
                 (request as? JSONObject)?.has("SavedMedia") != true
         val cacheKey = FeedKey(index, request.toString(), network)
-        // Selecting the current source again is an explicit refresh.
+        // Refresh is explicit (pull-to-refresh / menu / retry). Re-tapping a chip
+        // should keep its prepared content instead of invalidating it.
         if (
             cacheable &&
+                !remember &&
+                retry == 0 &&
                 previous.generation > 0 &&
                 !previous.loading &&
                 previous.request.toString() == request.toString()
         )
             feedPages.invalidate(cacheKey)
-        if (!append && remember && previous.generation > 0) {
+        if (
+            !append &&
+                remember &&
+                previous.generation > 0 &&
+                previous.request.toString() != request.toString()
+        ) {
             history[index].addLast(previous.copy(loading = false))
             while (
                 history[index].size > 12 ||
@@ -507,7 +625,9 @@ internal class YtuiViewModel : ViewModel() {
             ) history[index].removeFirst()
         }
         val generation = previous.generation + 1
-        val loading =
+        val cached = if (cacheable) feedPages.peek(cacheKey, allowStale = true) else null
+        val fresh = cached != null && feedPages.peek(cacheKey) != null
+        var loading =
             if (append) previous.copy(loading = true, error = null, generation = generation)
             else
                 FeedState(
@@ -515,18 +635,25 @@ internal class YtuiViewModel : ViewModel() {
                     categories = if (categoryNavigation) previous.categories else emptyList(),
                     loading = true,
                     generation = generation,
+                    needsLoad = false,
+                    instantContent = categoryNavigation || cached != null,
                 )
+        // Publish prepared cards in the tap itself, before launching any coroutine.
+        // Stale cards stay visible while the same key refreshes in the background.
+        if (cached != null) loading = pageState(cached, loading, previous, categoryNavigation)
+        if (fresh) {
+            feeds[index].value = loading
+            if (autoPlay && tab.value == index)
+                loading.cards.firstOrNull { !it.collection && !it.live }?.let { play(it) }
+            if (index == tab.value) preloadCategories(index)
+            return
+        }
         feeds[index].value = loading
         feedJobs[index] =
             viewModelScope.launch {
                 try {
                     val fetch: suspend () -> JSONObject = {
-                        RustRpc.objectCall(
-                            "browse",
-                            "tab" to index,
-                            "request" to request,
-                            "offset" to if (append) previous.cards.size else 0,
-                        )
+                        browsePage(index, request, if (append) previous.cards.size else 0)
                     }
                     val page = if (cacheable) feedPages.load(cacheKey, fetch) else fetch()
                     if (feeds[index].value.generation != generation) return@launch
@@ -537,38 +664,30 @@ internal class YtuiViewModel : ViewModel() {
                     }
                     val incoming =
                         page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
-                    val cards =
-                        (if (append) previous.cards + incoming else incoming)
-                            .distinctBy { it.key }
-                            .takeLast(2000)
                     feeds[index].value =
-                        loading.copy(
-                            request = if (append) previous.request else request,
-                            title = page.optString("title", previous.title),
-                            cards = cards,
-                            categories =
-                                if (append) previous.categories
-                                else
-                                    (page.optJSONArray("categories")?.objects() ?: emptyList())
-                                        .ifEmpty {
-                                            if (categoryNavigation) previous.categories
-                                            else emptyList()
-                                        },
-                            continuation =
-                                page.optString("continuation").takeUnless {
-                                    it.isBlank() || it == "null"
-                                },
-                            notice =
-                                page.optString("notice").takeUnless {
-                                    it.isBlank() || it == "null"
-                                },
-                            loading = false,
-                            scrollIndex = feeds[index].value.scrollIndex,
-                        )
+                        pageState(page, loading, previous, categoryNavigation, append)
+                            .copy(scrollIndex = feeds[index].value.scrollIndex)
                     if (autoPlay && tab.value == index)
                         incoming.firstOrNull { !it.collection && !it.live }?.let { play(it) }
                     if (!append && index == tab.value) preloadCategories(index)
                 } catch (cancelled: CancellationException) {
+                    // A speculative fetch can be cancelled by a settings change while
+                    // this screen is still waiting for it. Retry as a foreground request.
+                    if (
+                        currentCoroutineContext().isActive &&
+                            feeds[index].value.generation == generation &&
+                            epoch == accountEpoch &&
+                            network == NetworkSettings.revision.get()
+                    ) {
+                        navigate(
+                            index,
+                            request,
+                            append,
+                            remember = false,
+                            retry = retry,
+                            autoPlay = autoPlay,
+                        )
+                    }
                     throw cancelled
                 } catch (error: Exception) {
                     if (feeds[index].value.generation != generation) return@launch
@@ -598,7 +717,35 @@ internal class YtuiViewModel : ViewModel() {
             }
     }
 
-    /** One speculative request at a time; opening it joins the same fetch. */
+    private fun pageState(
+        page: JSONObject,
+        state: FeedState,
+        previous: FeedState,
+        categoryNavigation: Boolean,
+        append: Boolean = false,
+    ): FeedState {
+        val incoming = page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
+        return state.copy(
+            request = if (append) previous.request else state.request,
+            title = page.optString("title", previous.title),
+            cards =
+                (if (append) previous.cards + incoming else incoming)
+                    .distinctBy { it.key }
+                    .takeLast(2000),
+            categories =
+                if (append) previous.categories
+                else
+                    (page.optJSONArray("categories")?.objects() ?: emptyList()).ifEmpty {
+                        if (categoryNavigation) previous.categories else emptyList()
+                    },
+            continuation =
+                page.optString("continuation").takeUnless { it.isBlank() || it == "null" },
+            notice = page.optString("notice").takeUnless { it.isBlank() || it == "null" },
+            loading = false,
+        )
+    }
+
+    /** Prepare the category strip with two bounded fetches; taps join the same work. */
     private fun preloadCategories(index: Int) {
         categoryJob?.cancel()
         if (index !in 1..2 || !categoryPreloadAllowed()) return
@@ -610,57 +757,38 @@ internal class YtuiViewModel : ViewModel() {
                 .sortedBy { kotlin.math.abs(it - selected.coerceAtLeast(0)) }
                 .map { requests[it] }
                 .filter { it.toString() != feed.request.toString() }
-                .take(3)
+                .take(24)
         val targets =
             buildList<Pair<Int, Any>> {
-                    nearby.forEach { add(index to it) }
+                    nearby.take(1).forEach { add(index to it) }
                     if (feed.request != "Home") add(index to "Home")
-                    add((if (index == 1) 2 else 1) to "Home")
                     if (account.value.optBoolean("connected")) {
                         add(index to "Playlists")
                         add(index to "Liked")
+                        if (index == 1) {
+                            add(index to "Subscriptions")
+                            add(index to "WatchLater")
+                        }
                     }
+                    nearby.drop(1).forEach { add(index to it) }
+                    add((if (index == 1) 2 else 1) to "Home")
                 }
                 .distinctBy { "${it.first}:${it.second}" }
-                .take(6)
+                .take(30)
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
         categoryJob =
             viewModelScope.launch {
-                delay(300) // Let visible content and touch handling settle first.
-                for ((target, request) in targets) {
-                    // A cancelled batch may still have one fetch that a tap can reuse.
-                    // Wait for it before starting more speculative network work.
-                    categoryFetch?.join()
-                    if (
-                        !categoryPreloadAllowed() ||
-                            epoch != accountEpoch ||
-                            network != NetworkSettings.revision.get()
-                    )
-                        return@launch
-                    try {
-                        feedPages.load(FeedKey(target, request.toString(), network)) {
-                            val work = currentCoroutineContext()[Job]
-                            categoryFetch = work
-                            try {
-                                RustRpc.objectCall(
-                                    "browse",
-                                    "tab" to target,
-                                    "request" to request,
-                                    "offset" to 0,
-                                )
-                            } finally {
-                                if (categoryFetch == work) categoryFetch = null
-                            }
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        // Stop on any failure/cooldown; background work never retries or opens
-                        // errors.
-                        return@launch
-                    }
-                }
+                categoryPreloader.prepare(
+                    targets,
+                    keyOf = { (target, request) -> FeedKey(target, request.toString(), network) },
+                    allowed = {
+                        categoryPreloadAllowed() &&
+                            epoch == accountEpoch &&
+                            network == NetworkSettings.revision.get()
+                    },
+                    fetch = { (target, request) -> browsePage(target, request, 0) },
+                )
             }
     }
 
@@ -669,7 +797,6 @@ internal class YtuiViewModel : ViewModel() {
             MediaBridge.offlineUi ||
                 !mobile.value.optBoolean("preload_next", true) ||
                 playbackJob?.isActive == true ||
-                player.value.playing ||
                 playerOpen.value
         )
             return false
@@ -711,33 +838,29 @@ internal class YtuiViewModel : ViewModel() {
     fun search(raw: String) {
         val query = raw.trim()
         if (query.isBlank()) return
-        if (query.startsWith("https://") || query.startsWith("http://")) {
-            runCatching { linked(query) }
+        val link =
+            if (query.startsWith("https://", true) || query.startsWith("http://", true)) query
+            else SharedLinks.mediaLink(query)
+        if (link != null) {
+            runCatching { linked(link) }
                 .onSuccess { play(it) }
-                .onFailure { status.value = "Enter a valid HTTP(S) video or playlist URL" }
+                .onFailure {
+                    status.value = "Enter a valid HTTP(S) video or playlist URL"
+                    actionError.value = status.value
+                }
         } else navigate(request = json((if (tab.value == 3) "RadioSearch" else "Search") to query))
     }
 
+    /** The media kind comes from the URL; the tab only decides for non-YouTube links (AR-07). */
     fun linked(raw: String): MediaCard {
-        val uri = java.net.URI(raw)
-        require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null)
-        val parsed = Uri.parse(raw)
-        val host = uri.host.lowercase(java.util.Locale.ROOT)
-        val youtube = host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be"
-        val playlist =
-            youtube &&
-                parsed.path?.trimEnd('/') == "/playlist" &&
-                !parsed.getQueryParameter("list").isNullOrBlank()
+        val link = SharedLinks.classify(raw, radioTab = tab.value == 3)
         return MediaCard(
             json(
-                "url" to raw,
-                "title" to raw,
-                "id" to if (playlist) parsed.getQueryParameter("list") else "",
-                "kind" to
-                    if (playlist) "playlist"
-                    else if (tab.value == 3) "station"
-                    else if (tab.value == 2 || host == "music.youtube.com") "song" else "video",
-                "live" to (tab.value == 3),
+                "url" to link.url,
+                "title" to link.url,
+                "id" to link.id,
+                "kind" to link.kind,
+                "live" to link.live,
             )
         )
     }
@@ -749,31 +872,24 @@ internal class YtuiViewModel : ViewModel() {
             ?.let { navigate(request = json("CliampTracks" to it)) }
     }
 
-    private fun context(media: MediaCard): JSONObject? {
-        if (media.live || media.collection) return null
-        val feed = feeds[tab.value].value
-        val request = feed.request as? JSONObject
-        val finite =
-            request != null && listOf("Collection", "Details", "CliampTracks").any(request::has)
-        val id =
-            media.value.optString("id").takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-                ?: Uri.parse(media.url)
-                    .let { uri ->
-                        uri.getQueryParameter("v")
-                            ?: if (uri.host == "youtu.be") uri.lastPathSegment else null
-                    }
-                    ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-        if (!finite && (!mobile.value.optBoolean("autoplay_related", true) || id == null))
-            return null
-        return json(
-                "op" to "prepare_context",
-                "context_id" to UUID.randomUUID().toString(),
-                "request" to if (finite) request else json("Related" to id),
-                "source_url" to media.url,
-                "source_id" to id,
-                "music" to (tab.value == 2 || media.musicSource),
-            )
-            .apply { if (finite) put("items", JSONArray(feed.cards.take(500).map { it.value })) }
+    private fun context(media: MediaCard, forceRelated: Boolean = false): JSONObject? =
+        PlaybackContexts.create(
+            media,
+            feeds[tab.value].value,
+            tab.value,
+            mobile.value.optBoolean("autoplay_related", true),
+            forceRelated,
+        )
+
+    /** Plays a home shelf from its first playable entry, continuing in shelf order. */
+    fun playAll(cards: List<MediaCard>) {
+        val (first, shelf) =
+            PlaybackContexts.shelf(cards)
+                ?: run {
+                    actionError.value = "Nothing in this section can be played in order"
+                    return
+                }
+        play(first, playContext = shelf)
     }
 
     fun playCollection(media: MediaCard) {
@@ -782,7 +898,12 @@ internal class YtuiViewModel : ViewModel() {
     }
 
     /** Prepare at most one settled row, off the touch path and without history/queue effects. */
-    suspend fun prepareVisible(cards: List<MediaCard>) {
+    suspend fun prepareVisible(cards: List<MediaCard>) = withContext(Dispatchers.Default) {
+        prepareVisibleNow(cards)
+    }
+
+    /** Settings, connectivity (a binder call) and JNI checks stay off the main thread. */
+    private suspend fun prepareVisibleNow(cards: List<MediaCard>) {
         if (
             playbackJob?.isActive == true ||
                 playerOpen.value ||
@@ -847,14 +968,23 @@ internal class YtuiViewModel : ViewModel() {
         download: Boolean = false,
         resume: Boolean = false,
         queued: Boolean = false,
+        related: Boolean = false,
+        continueContext: String? = null,
+        playContext: JSONObject? = null,
     ) {
         val quality = config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
+        val musicCollection = media.collection && (media.musicSource || tab.value == 2)
         val audio =
-            media.audio ||
-                (media.collection && (media.musicSource || tab.value == 2)) ||
-                download && config.value.optJSONObject("download")?.optBoolean("audio") == true
+            if (download)
+                PlaybackPolicy.audioForSave(
+                    media.kind,
+                    media.musicSource || musicCollection,
+                    config.value.optJSONObject("download")?.optBoolean("audio") == true,
+                )
+            else media.audio || musicCollection
         if (download && media.live) {
             status.value = "Live recording is not available"
+            actionError.value = status.value
             return
         }
         if (media.collection) {
@@ -865,6 +995,8 @@ internal class YtuiViewModel : ViewModel() {
                     "music" to (tab.value == 2 || media.musicSource),
                     "audio" to audio,
                     "quality" to quality,
+                    "title" to media.title,
+                    "create_offline_playlist" to (media.kind == "playlist"),
                 )
             else navigate(request = json("Collection" to media.collectionId))
             return
@@ -880,7 +1012,19 @@ internal class YtuiViewModel : ViewModel() {
         if (timing != 0L) StartupTimings.playerCache(timing, PlaybackService.warmReady())
         if (timing != 0L)
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
-        val context = if (!preview && !download && !queued) context(media) else null
+        val context =
+            if (!preview && !download && !queued && continueContext == null)
+                playContext ?: context(media, related)
+            else null
+        // Desktop parity (`resume_on_play`): ordinary video plays continue from the
+        // saved position; music, live media, previews and downloads start at 0.
+        val autoResume =
+            !resume &&
+                !preview &&
+                !download &&
+                !audio &&
+                !media.live &&
+                mobile.value.optBoolean("resume_on_play", true)
         val epoch = accountEpoch
         val network = NetworkSettings.revision.get()
         val prepareSurface = !download && !preview && !audio
@@ -944,10 +1088,16 @@ internal class YtuiViewModel : ViewModel() {
                             put("audio", audio)
                             put("quality", quality)
                             put("preview", preview)
-                            put("resume", resume)
+                            put("resume", resume || autoResume)
+                            put("auto_resume", autoResume)
                             put("queued", queued)
-                            put("context_id", context?.optString("context_id"))
+                            put("context_id", continueContext ?: context?.optString("context_id"))
                             put("context", context)
+                            if (continueContext != null) {
+                                // Stay in the playlist and drop the entries before this one.
+                                put("context_entry", true)
+                                put("context_skip", true)
+                            }
                         }
                 /* request retains the cache-only source marker when saved offline. */
                 effect(if (download) "download" else "play", "request" to request)
@@ -968,14 +1118,11 @@ internal class YtuiViewModel : ViewModel() {
                         )
                 }
                 handedOff = true
-                if (
-                    !download &&
-                        !prepareSurface &&
-                        (!audio ||
-                            config.value.optString("music_player_style").endsWith("-fullscreen"))
-                )
-                    playerOpen.value = true
+                // Videos open the player; music stays in the mini player (the full-screen music
+                // styles are not offered on Android).
+                if (!download && !prepareSurface && !audio) playerOpen.value = true
                 status.value = if (download) "Download queued" else "Starting playback"
+                if (download) confirm("download")
             } finally {
                 if (!handedOff && prepareSurface) {
                     StartupTimings.ended(
@@ -1050,6 +1197,7 @@ internal class YtuiViewModel : ViewModel() {
         val result = RustRpc.objectCall("save_media", "media" to media.value)
         status.value =
             if (result.optBoolean("saved")) "Saved locally" else "Removed from saved items"
+        confirm(if (result.optBoolean("saved")) "saved" else "unsaved")
         if (feeds[tab.value].value.request == "Favorites")
             navigate(request = "Favorites", remember = false)
     }
@@ -1066,15 +1214,16 @@ internal class YtuiViewModel : ViewModel() {
         loadQueue()
         effect("queue_changed")
         status.value = "Added to queue"
+        confirm("queue")
     }
 
     fun loadOfflinePlaylists() = task {
         offlinePlaylists.value = RustRpc.arrayCall("offline_playlists").objects()
     }
 
-    fun createOfflinePlaylist(title: String) = task {
+    fun createOfflinePlaylist(title: String, items: List<JSONObject> = emptyList()) = task {
         offlinePlaylists.value =
-            RustRpc.arrayCall("offline_playlist_create", "title" to title).objects()
+            RustRpc.arrayCall("offline_playlist_create", "title" to title, "items" to JSONArray(items)).objects()
     }
 
     fun updateOfflinePlaylist(id: String, title: String? = null, items: List<JSONObject>? = null) =
@@ -1128,6 +1277,76 @@ internal class YtuiViewModel : ViewModel() {
         if (!PlaybackPolicy.audioOnly(selected.optString("kind"))) playerOpen.value = true
     }
 
+    /** Mirrors Next: the manual queue first, then the playlist tail or related videos. */
+    fun loadUpNext() {
+        upNextJob?.cancel()
+        upNextJob =
+            viewModelScope.launch {
+                val media = player.value.media?.let(::MediaCard)
+                val view =
+                    runCatching { RustRpc.objectCall("up_next") }.getOrNull() ?: return@launch
+                queue.value = view.optJSONArray("queue")?.objects()?.map(::MediaCard) ?: emptyList()
+                val context = view.optJSONObject("context")
+                val items =
+                    context?.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
+                val id = context?.optString("id").orEmpty()
+                upNext.value =
+                    if (items.isNotEmpty())
+                        UpNextState(
+                            items,
+                            contextId = id,
+                            related = context?.optBoolean("related") == true,
+                            more = (context?.optInt("count") ?: 0) > items.size,
+                        )
+                    else
+                        UpNextState(
+                            loading = context != null && !context.optBoolean("prepared"),
+                        )
+                if (items.isNotEmpty() || media == null) return@launch
+                // Related autoplay is off (or unavailable here): still show recommendations.
+                if (
+                    mobile.value.optBoolean("autoplay_related", true) ||
+                        media.live ||
+                        MediaBridge.offlineUi ||
+                        player.value.value.optBoolean("offline")
+                )
+                    return@launch
+                val videoId = PlaybackContexts.videoId(media) ?: return@launch
+                val cached = shownRelated?.takeIf { it.first == media.url }?.second
+                val related =
+                    cached
+                        ?: runCatching {
+                                RustRpc.objectCall(
+                                        "browse",
+                                        "tab" to if (media.audio) 2 else 1,
+                                        "request" to json("Related" to videoId),
+                                    )
+                                    .optJSONArray("items")
+                                    ?.objects()
+                                    ?.map(::MediaCard)
+                                    ?.filter { !it.collection && !it.live && it.url != media.url }
+                                    ?.take(25)
+                            }
+                            .getOrNull()
+                        ?: return@launch
+                shownRelated = media.url to related
+                if (player.value.media?.optString("url") == media.url)
+                    upNext.value = UpNextState(related, related = true, autoplay = false)
+            }
+    }
+
+    /** Plays an Up next row the way Next would have reached it. */
+    fun playUpNext(media: MediaCard, fromQueue: Boolean) {
+        val state = upNext.value
+        when {
+            fromQueue -> play(media, queued = true)
+            state.related -> play(media, related = true)
+            state.contextId.isNotBlank() ->
+                play(media, queued = true, continueContext = state.contextId)
+            else -> play(media)
+        }
+    }
+
     fun loadQueue() = task { queue.value = RustRpc.arrayCall("queue").objects().map(::MediaCard) }
 
     fun moveQueue(index: Int, to: Int, media: MediaCard) = task {
@@ -1140,6 +1359,33 @@ internal class YtuiViewModel : ViewModel() {
     fun removeQueue(index: Int, media: MediaCard) = task {
         val result = RustRpc.objectCall("queue_remove", "index" to index, "url" to media.url)
         queue.value = result.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
+        effect("queue_changed")
+    }
+
+    /** Undo a removal: append the item again, then move it back to where it was. */
+    fun restoreQueue(index: Int, media: MediaCard) = task {
+        RustRpc.call(json("op" to "enqueue", "media" to media.value, "music" to media.musicSource))
+        val items = RustRpc.arrayCall("queue").objects()
+        val last = items.lastIndex
+        if (last >= 0 && index in 0 until last)
+            RustRpc.objectCall("queue_move", "from" to last, "to" to index, "url" to media.url)
+        loadQueue()
+        effect("queue_changed")
+    }
+
+    /** Undo a clear: queue the items again in their original order. */
+    fun requeue(items: List<MediaCard>) = task {
+        for (media in items)
+            RustRpc.call(json("op" to "enqueue", "media" to media.value, "music" to media.musicSource))
+        loadQueue()
+        effect("queue_changed")
+    }
+
+    /** Remove every queued item, newest first so indexes stay valid. */
+    fun clearQueue(items: List<MediaCard>) = task {
+        for (index in items.indices.reversed())
+            RustRpc.objectCall("queue_remove", "index" to index, "url" to items[index].url)
+        queue.value = emptyList()
         effect("queue_changed")
     }
 
@@ -1230,6 +1476,8 @@ internal class YtuiViewModel : ViewModel() {
 
     val lyricData = MutableStateFlow(JSONObject())
     val lyricVersions = MutableStateFlow<List<JSONObject>>(emptyList())
+    /** True while lyrics are fetched automatically for the open song. */
+    val lyricSearching = MutableStateFlow(false)
     val importedLyrics = MutableStateFlow<String?>(null)
     private var lyricToken = ""
     private var lyricRevision = 0L
@@ -1243,7 +1491,17 @@ internal class YtuiViewModel : ViewModel() {
         val revision = ++lyricRevision
         task {
             val result = RustRpc.objectCall("lyrics_get", "url" to media.optString("url"))
-            if (token == lyricToken && revision == lyricRevision) lyricData.value = result
+            if (token != lyricToken || revision != lyricRevision) return@task
+            lyricData.value = result
+            if (result.optJSONObject("track") != null) return@task
+            // Nothing saved: fetch YouTube Music's lyrics for this song (LRCLIB as fallback).
+            lyricSearching.value = true
+            try {
+                val found = RustRpc.arrayCall("lyrics_auto", "media" to media).objects()
+                if (token == lyricToken && revision == lyricRevision) lyricVersions.value = found
+            } finally {
+                if (token == lyricToken) lyricSearching.value = false
+            }
         }
     }
 
@@ -1252,6 +1510,7 @@ internal class YtuiViewModel : ViewModel() {
     }
 
     fun lyricClose() {
+        lyricSearching.value = false
         lyricToken = ""
         lyricRevision++
         importedLyrics.value = null
@@ -1277,6 +1536,7 @@ internal class YtuiViewModel : ViewModel() {
             )
         if (token == lyricToken && revision == lyricRevision) lyricData.value = result
         status.value = "Lyrics saved locally"
+        confirm("lyrics")
     }
 
     fun lyricRemove(media: JSONObject) = task {

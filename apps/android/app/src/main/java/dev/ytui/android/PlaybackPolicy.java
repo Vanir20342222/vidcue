@@ -2,8 +2,18 @@ package dev.ytui.android;
 
 /** The Rust MediaKind JSON contract uses lowercase names. */
 final class PlaybackPolicy {
+  static boolean refreshableStatus(int status) {
+    return status == 403 || status == 410;
+  }
+
   static boolean audioOnly(String kind) {
     return "song".equals(kind) || "station".equals(kind);
+  }
+
+  /** The save preference belongs to Music; ordinary YouTube saves retain video. */
+  static boolean audioForSave(String kind, boolean musicSource, boolean audioOnlySaves) {
+    return "station".equals(kind)
+        || (audioOnlySaves && ("song".equals(kind) || musicSource));
   }
 
   static String liveTitle(CharSequence title) {
@@ -20,7 +30,7 @@ final class PlaybackPolicy {
 
   static String exportName(String title, String extension) {
     String clean = title.replaceAll("[\\p{Cntrl}/\\\\:*?\"<>|]", "_").trim();
-    if (clean.isEmpty()) clean = "ytui-media";
+    if (clean.isEmpty()) clean = "vidcue-media";
     clean =
         clean
             .codePoints()

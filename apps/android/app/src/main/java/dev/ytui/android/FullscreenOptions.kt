@@ -96,6 +96,7 @@ private fun blurVideo(content: View?, radius: Float) {
 }
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: () -> Unit) {
     val visible by FullscreenOptions.open.collectAsState()
@@ -103,6 +104,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     val queue by vm.queue.collectAsState()
+    val upNext by vm.upNext.collectAsState()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // The main activity is stopped beneath fullscreen, so this window keeps the
     // player snapshot current (same cadence and signal as the main screen).
@@ -153,10 +155,13 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
     val content = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
     SideEffect { blurVideo(content, blur) }
     DisposableEffect(content) { onDispose { blurVideo(content, 0f) } }
-    MaterialTheme(colorScheme = scheme, typography = MediaTokens.typography) {
+    MaterialTheme(colorScheme = scheme, typography = ComposeHost.typography) {
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
             LocalReducedMotion provides reduced,
+            LocalMotion provides Motion(reduced = reduced),
+            androidx.compose.foundation.LocalIndication provides SoftIndication,
+            LocalRippleConfiguration provides null,
         ) {
             BoxWithConstraints(Modifier.fillMaxSize()) {
                 val wide = maxWidth > maxHeight
@@ -245,20 +250,23 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                                 "queue" ->
                                     UpNext(
                                         queue,
+                                        upNext,
                                         player.media?.optString("url"),
+                                        player.value.optBoolean("shuffle"),
                                         config.optBoolean("thumbnails", true),
                                         mobile.optBoolean("show_channel", true),
                                         Modifier.weight(1f),
                                         onManage = null,
                                         showHeader = false,
-                                    ) {
-                                        vm.play(it, queued = true)
-                                        // Music has no picture: return to the regular player.
-                                        if (it.audio) {
-                                            close()
-                                            exit()
-                                        }
-                                    }
+                                        play = { media, fromQueue ->
+                                            vm.playUpNext(media, fromQueue)
+                                            // Music has no picture: return to the regular player.
+                                            if (media.audio) {
+                                                close()
+                                                exit()
+                                            }
+                                        },
+                                    )
                                 "sleep" ->
                                     Column(Modifier.verticalScroll(rememberScrollState())) {
                                         SleepOptions(vm) { page = "" }

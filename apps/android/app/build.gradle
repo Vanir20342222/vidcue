@@ -3,10 +3,10 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
 }
-def requestedVersionCode = System.getenv('YTUI_ANDROID_VERSION_CODE') ?: '8'
+def requestedVersionCode = System.getenv('YTUI_ANDROID_VERSION_CODE') ?: '30001'
 if (!(requestedVersionCode ==~ /[1-9][0-9]{0,9}/) || requestedVersionCode.toLong() > 2100000000L)
     throw new GradleException('YTUI_ANDROID_VERSION_CODE must be an integer from 1 to 2100000000')
-def requestedVersionName = System.getenv('YTUI_ANDROID_VERSION_NAME') ?: '0.2.0-alpha.12-mobile.8'
+def requestedVersionName = System.getenv('YTUI_ANDROID_VERSION_NAME') ?: '0.3.0-beta.1'
 if (!(requestedVersionName ==~ /[A-Za-z0-9.+_-]{1,64}/))
     throw new GradleException('YTUI_ANDROID_VERSION_NAME must contain 1–64 letters, digits, dots, plus, underscore or hyphen')
 def signingPath = System.getenv('YTUI_ANDROID_KEYSTORE')
@@ -23,14 +23,18 @@ gradle.taskGraph.whenReady { graph ->
     // release artifacts even when their command-line names omit "Release".
     if (graph.allTasks.any { it.project == androidProject && it.name in ['assembleRelease', 'packageRelease', 'bundleRelease'] } && !signingReady)
         throw new GradleException('Release builds require YTUI_ANDROID_KEYSTORE, YTUI_ANDROID_KEY_ALIAS, YTUI_ANDROID_STORE_PASSWORD and YTUI_ANDROID_KEY_PASSWORD; no debug-key fallback is used')
+    // Every release must install over the previous one, so its version code is chosen on
+    // purpose (higher than the last published release), never taken from the default.
+    if (graph.allTasks.any { it.project == androidProject && it.name in ['assembleRelease', 'packageRelease', 'bundleRelease'] } && !System.getenv('YTUI_ANDROID_VERSION_CODE'))
+        throw new GradleException('Release builds require an explicit YTUI_ANDROID_VERSION_CODE higher than the last published release; see docs/android/SIGNING.md')
 }
 android {
     namespace 'dev.ytui.android'
     compileSdk 35
     ndkVersion '27.2.12479018'
     defaultConfig {
-        applicationId 'dev.ytui.android'
-        resValue 'string', 'app_name', 'ytui'
+        applicationId 'dev.vidcue.android'
+        resValue 'string', 'app_name', 'Vidcue'
         minSdk 26
         ndk { abiFilters 'arm64-v8a', 'x86_64' }
         targetSdk 35
@@ -58,7 +62,7 @@ android {
         debug {
             debuggable true
             applicationIdSuffix '.preview'
-            resValue 'string', 'app_name', 'ytui Preview'
+            resValue 'string', 'app_name', 'Vidcue Preview'
         }
         release {
             applicationIdSuffix '.stable'
@@ -71,7 +75,6 @@ android {
 }
 dependencies {
     implementation 'androidx.annotation:annotation-experimental:1.4.1'
-    implementation 'androidx.games:games-activity:4.4.0'
     implementation 'androidx.appcompat:appcompat:1.7.1'
     implementation platform('androidx.compose:compose-bom:2025.05.01')
     implementation 'androidx.activity:activity-compose:1.10.1'
@@ -91,6 +94,8 @@ dependencies {
     implementation 'androidx.javascriptengine:javascriptengine:1.1.1'
     implementation 'androidx.work:work-runtime:2.10.1'
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     androidTestImplementation 'androidx.test:rules:1.6.1'

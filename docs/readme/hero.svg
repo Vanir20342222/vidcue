@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="340" viewBox="0 0 1200 340" role="img" aria-labelledby="title desc">
+  <title id="title">Vidcue</title>
+  <desc id="desc">Vidcue: videos, music, radio and downloads in your terminal and on Android.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#161b2e"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#6ddbc1">
+        <animate attributeName="stop-color" values="#6ddbc1;#8b7cff;#ff7eb6;#f5c36c;#6ddbc1" dur="8s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="0.5" stop-color="#8b7cff">
+        <animate attributeName="stop-color" values="#8b7cff;#ff7eb6;#f5c36c;#6ddbc1;#8b7cff" dur="8s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="1" stop-color="#ff7eb6">
+        <animate attributeName="stop-color" values="#ff7eb6;#f5c36c;#6ddbc1;#8b7cff;#ff7eb6" dur="8s" repeatCount="indefinite"/>
+      </stop>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff7e6b" stop-opacity="0.3"/>
+      <stop offset="1" stop-color="#ff7e6b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFB547"/>
+      <stop offset="1" stop-color="#FF4D8D"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="340" rx="24" fill="url(#bg)"/>
+  <!-- soft moving glow -->
+  <circle cx="230" cy="170" r="190" fill="url(#glow)">
+    <animate attributeName="r" values="170;205;170" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <!-- Vidcue app mark: gradient "C" ring around a play cue -->
+  <g transform="translate(230 170) scale(0.7) translate(-256 -256)">
+    <path d="M370.9 159.6 A150 150 0 1 0 370.9 352.4" fill="none" stroke="url(#ring)" stroke-width="46" stroke-linecap="round"/>
+    <path d="M220 198 L322 256 L220 314 Z" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="26" stroke-linejoin="round"/>
+  </g>
+  <!-- wordmark -->
+  <text x="420" y="168" font-family="'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="112" font-weight="800" letter-spacing="-3" fill="url(#word)">Vidcue</text>
+  <text x="424" y="216" font-family="'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="27" fill="#c9d4e0">Videos, music, radio and downloads.</text>
+  <text x="424" y="252" font-family="'Segoe UI', 'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="27" fill="#8b98a8">In your terminal and on Android.</text>
+  <!-- equalizer -->
+  <g transform="translate(1000 268)" fill="url(#word)">
+    <rect x="0" width="16" rx="5" y="-60" height="60"><animate attributeName="height" values="20;72;34;60;20" dur="1.3s" repeatCount="indefinite"/><animate attributeName="y" values="-20;-72;-34;-60;-20" dur="1.3s" repeatCount="indefinite"/></rect>
+    <rect x="24" width="16" rx="5" y="-90" height="90"><animate attributeName="height" values="64;30;96;44;64" dur="1.1s" repeatCount="indefinite"/><animate attributeName="y" values="-64;-30;-96;-44;-64" dur="1.1s" repeatCount="indefinite"/></rect>
+    <rect x="48" width="16" rx="5" y="-40" height="40"><animate attributeName="height" values="40;84;26;70;40" dur="1.5s" repeatCount="indefinite"/><animate attributeName="y" values="-40;-84;-26;-70;-40" dur="1.5s" repeatCount="indefinite"/></rect>
+    <rect x="72" width="16" rx="5" y="-70" height="70"><animate attributeName="height" values="70;36;58;100;70" dur="1.2s" repeatCount="indefinite"/><animate attributeName="y" values="-70;-36;-58;-100;-70" dur="1.2s" repeatCount="indefinite"/></rect>
+    <rect x="96" width="16" rx="5" y="-30" height="30"><animate attributeName="height" values="30;66;90;40;30" dur="1.4s" repeatCount="indefinite"/><animate attributeName="y" values="-30;-66;-90;-40;-30" dur="1.4s" repeatCount="indefinite"/></rect>
+  </g>
+</svg>

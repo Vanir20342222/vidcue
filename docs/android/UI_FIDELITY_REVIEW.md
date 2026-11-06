@@ -3,14 +3,14 @@
 On 2026-11-01 the owner requested continued comparison and refinement toward
 the supplied YouTube references, with an independent judge for every revision.
 The baseline is mobile.10 app source `686e379`, main documentation `2baa9b6`.
-Work keeps ytui branding, the YouTube tab label, all themes/player styles/actions,
+Work keeps vidcue branding, the YouTube tab label, all themes/player styles/actions,
 saved private state and existing playback/network behavior.
 
 ## Evidence boundary
 
-Only `ytui-youtube-restyle-agent-prompt.md` and `youtube-style-and-feel.md` were
+Only `vidcue-youtube-restyle-agent-prompt.md` and `youtube-style-and-feel.md` were
 attached. The original YouTube screenshot ZIP and the 64 source reference images
-are still absent. Retained ytui screenshots qualify the current app; they are
+are still absent. Retained vidcue screenshots qualify the current app; they are
 not substitute YouTube references. The judge can assess the written requirements
 and concrete usability defects, but cannot certify a pixel-identical replica.
 Physical touch/OS behavior and live services remain separate gates.
@@ -258,7 +258,7 @@ keep their normal edge-to-edge distribution; only panes narrower than three
 The watch title/creator block is the meaningful `panel-header` target, at least
 48dp high, and retains downward dismiss with the existing gesture preference.
 It does not intercept the native video's tap/seek controls. The actual native
-collapse button keeps resource ID `ytui_collapse`, its Minimize player spoken
+collapse button keeps resource ID `vidcue_collapse`, its Minimize player spoken
 label and 48dp target. Its Android `View.tag` is `panel-close`; that is explicitly
 **not equivalent** to a Compose `Modifier.testTag`. Compose `panel-close` remains
 on music/modal controls. Video automation now targets the real native resource

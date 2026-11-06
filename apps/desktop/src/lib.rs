@@ -7,7 +7,10 @@ pub mod forms;
 pub mod i18n;
 pub mod lyrics;
 pub mod operations;
+pub mod related;
+pub mod setup;
 pub mod terminal;
 pub mod ui;
+pub mod updates;
 
 pub mod sleep;

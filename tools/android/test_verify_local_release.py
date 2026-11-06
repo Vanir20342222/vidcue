@@ -3,6 +3,7 @@
 import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -33,7 +34,8 @@ class PublicationBoundary(unittest.TestCase):
         )
 
     def run_fixture(self, *, wrong_digest=False, wrong_source=False,
-                    wrong_certificate=False, debuggable=False):
+                    wrong_certificate=False, debuggable=False, published_code=3, handoff=False,
+                    sdk_field="sdkVersion"):
         source = "1" * 40
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
@@ -45,30 +47,68 @@ class PublicationBoundary(unittest.TestCase):
             "GITHUB_SHA": source, "YTUI_APK_URL": "https://a.oaiusercontent.com/fixture",
             "ANDROID_HOME": "/synthetic-sdk",
         }
+        if handoff:
+            env.update(GITHUB_SHA="3" * 40, YTUI_RELEASE_SOURCE=source)
         response = io.BytesIO(payload)
         response.status = 200
         opener = Mock()
         opener.open.return_value = response
         cert = "0" * 64 if wrong_certificate else verify.STABLE_CERT
         signature = f"Signer #1 certificate SHA-256 digest: {cert}\n"
-        badging = "package: name='dev.ytui.android.stable' versionCode='4' versionName='1.0-preview' platformBuildVersionName='15'\n"
+        badging = (
+            "package: name='dev.vidcue.android.stable' versionCode='4' versionName='1.0-preview' "
+            f"platformBuildVersionName='15'\n{sdk_field}:'26'\n"
+        )
         if debuggable:
             badging += "application-debuggable\n"
         previous = Path.cwd()
         with tempfile.TemporaryDirectory() as folder:
             try:
                 os.chdir(folder)
+                releases = Path(folder) / "releases.json"
+                # Two pages, as `gh api --paginate` prints them.
+                releases.write_text(
+                    json.dumps([{"tag_name": "android-0.9", "body": f"code **{published_code}**."}])
+                    + "\n" + json.dumps([{"tag_name": "android-preview-9", "body": "code **99**"}])
+                )
+                env["YTUI_PUBLISHED_RELEASES"] = str(releases)
                 with patch.dict(os.environ, env), patch.object(
                     verify.urllib.request, "build_opener", return_value=opener
                 ), patch.object(verify.subprocess, "check_output", side_effect=[signature, badging]):
                     verify.main()
-                self.assertTrue(Path("publish/notes.md").is_file())
+                notes = Path("publish/notes.md").read_text()
+                marker = verify.release_channel.marker_of({"body": notes})
+                self.assertEqual(marker["versionCode"], 4)
+                self.assertEqual(marker["package"], "dev.vidcue.android.stable")
+                self.assertEqual(marker["apk"], "vidcue-1.0-preview.apk")
+                self.assertEqual(marker["certSha256"], verify.STABLE_CERT)
+                self.assertEqual(marker["sha256"], env["YTUI_APK_SHA256"])
+                self.assertEqual(marker["minSdk"], 26)
                 self.assertIn(source, Path("publish/APK-inspection.txt").read_text())
             finally:
                 os.chdir(previous)
 
     def test_valid_transfer_is_traceable(self):
         self.run_fixture()
+
+    def test_both_android_tool_minimum_sdk_field_names_are_supported(self):
+        for name in ("sdkVersion", "minSdkVersion"):
+            with self.subTest(name=name):
+                self.run_fixture(sdk_field=name)
+        with self.assertRaises(ValueError):
+            self.run_fixture(sdk_field="unknownSdkField")
+
+    def test_metadata_only_handoff_still_requires_the_qualified_apk_source(self):
+        self.run_fixture(handoff=True)
+        with self.assertRaises(ValueError):
+            self.run_fixture(handoff=True, wrong_source=True)
+
+    def test_version_code_must_exceed_every_published_release(self):
+        for code in (4, 5):
+            with self.subTest(published=code), self.assertRaises(
+                verify.release_channel.UpdateOrderError
+            ):
+                self.run_fixture(published_code=code)
 
     def test_tampering_other_sources_keys_and_debug_packages_are_rejected(self):
         for option in ["wrong_digest", "wrong_source", "wrong_certificate", "debuggable"]:

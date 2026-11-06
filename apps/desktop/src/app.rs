@@ -17,11 +17,11 @@ use tokio::{
     task::{JoinHandle, JoinSet},
 };
 use tokio_util::sync::CancellationToken;
-use ytui_core::{
+use vidcue_core::{
     shortcuts::{Action, REGISTRY},
     *,
 };
-use ytui_services::{
+use vidcue_services::{
     auth::{self, Session, SessionStore},
     browse::Browser,
     download,
@@ -161,6 +161,8 @@ pub enum Modal {
     Help(usize),
     Themes(usize),
     Form(Box<Form>),
+    /// Skippable first-run setup.
+    Setup(Box<crate::setup::Setup>),
     Queue(usize),
     Resume(usize),
     Watches(usize),
@@ -184,6 +186,11 @@ pub enum Modal {
         lines: Vec<String>,
         offset: usize,
     },
+    /// A newer release is on GitHub: Update now · Later · Skip this version.
+    Update {
+        release: Box<vidcue_services::update::Release>,
+        selected: usize,
+    },
 }
 pub struct Input {
     pub editor: Editor,
@@ -191,7 +198,7 @@ pub struct Input {
 pub enum UiEvent {
     Lyrics {
         id: uuid::Uuid,
-        result: Result<Vec<ytui_services::lyrics::Track>>,
+        result: Result<Vec<vidcue_services::lyrics::Track>>,
     },
     Page {
         tab: usize,
@@ -200,6 +207,11 @@ pub enum UiEvent {
         result: Result<Page>,
     },
     Prefetched,
+    /// Related videos for the item that ends the queue.
+    Related {
+        generation: u64,
+        result: Result<Page>,
+    },
     CardImage {
         generation: u64,
         key: String,
@@ -239,8 +251,12 @@ pub enum UiEvent {
         id: uuid::Uuid,
         result: Result<Vec<String>>,
     },
-    CacheCleared(Result<ytui_services::images::CacheStats>),
+    CacheCleared(Result<vidcue_services::images::CacheStats>),
     AccountProfiles(Vec<auth::BrowserProfile>),
+    Update {
+        manual: bool,
+        result: Result<Option<vidcue_services::update::Release>>,
+    },
     Collection {
         generation: u64,
         source: String,
@@ -267,6 +283,8 @@ pub struct App {
     collection_generation: u64,
     pub collection_pending: bool,
     pending_auto_play: Option<Media>,
+    playback_prepare: Option<(String, Instant, bool)>,
+    playback_prepare_not_before: Instant,
     pub sleep_timer: crate::sleep::SleepTimer,
     pub player_session_pending: bool,
     pub config: Config,
@@ -279,13 +297,17 @@ pub struct App {
     pub input: Option<Input>,
     pub status: String,
     pub palette: Palette,
+    /// Setup theme preview crossfade: (from, to, started).
+    theme_fade: Option<(Palette, Palette, Instant)>,
     pub player_status: PlayerStatus,
     pub vinyl_motion: crate::ui::vinyl::Motion,
-    pub visual_levels: Option<ytui_services::visualizer::AudioLevels>,
+    pub visual_levels: Option<vidcue_services::visualizer::AudioLevels>,
     pub demo: bool,
     pub offline: bool,
     pub quit: bool,
     pub launch_cliamp: bool,
+    /// Set by "Update now"; the event loop suspends the terminal and runs the installer.
+    pub run_update: Option<vidcue_services::update::Release>,
     pub dirty: bool,
     pub redraw: bool,
     pub tasks: JoinSet<UiEvent>,
@@ -322,7 +344,7 @@ pub struct App {
     policy: Option<schedule::Policy>,
     desktop_cancel: CancellationToken,
     clipboard_cancel: CancellationToken,
-    clipboard_monitor: ytui_services::desktop::ClipboardMonitor,
+    clipboard_monitor: vidcue_services::desktop::ClipboardMonitor,
     clipboard_generation: u64,
     clipboard_pending: bool,
     clipboard_due: Instant,
@@ -331,6 +353,39 @@ pub struct App {
     notification_pending: usize,
     notification_warned: bool,
     watch_pending: HashMap<uuid::Uuid, (u64, CancellationToken)>,
+    /// Recommendations after the queue (memory only; see `crate::related`).
+    pub related: Option<crate::related::RelatedNext>,
+    related_generation: u64,
+    related_cancel: CancellationToken,
+    /// (current URL, next URL) last sent to the player for background preparation.
+    prepared: Option<(String, String)>,
+}
+/// Seconds before the end of the current item at which the next one is prepared.
+/// Shorter than the player's stream-cache lifetime, so the result is still fresh.
+pub const PRELOAD_WINDOW: f64 = 90.0;
+/// Length of the setup theme-preview crossfade.
+const THEME_FADE: Duration = Duration::from_millis(280);
+
+/// Linear colour mix; `t` is eased (smoothstep) so the change starts and ends softly.
+fn blend_palette(from: &Palette, to: &Palette, t: f32) -> Palette {
+    let t = t.clamp(0.0, 1.0);
+    let t = t * t * (3.0 - 2.0 * t);
+    let mix = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * t).round() as u8;
+    let rgb = |a: (u8, u8, u8), b: (u8, u8, u8)| (mix(a.0, b.0), mix(a.1, b.1), mix(a.2, b.2));
+    Palette {
+        name: to.name.clone(),
+        source: to.source.clone(),
+        background: rgb(from.background, to.background),
+        surface: rgb(from.surface, to.surface),
+        text: rgb(from.text, to.text),
+        muted: rgb(from.muted, to.muted),
+        accent: rgb(from.accent, to.accent),
+        selection: rgb(from.selection, to.selection),
+        error: rgb(from.error, to.error),
+        warning: rgb(from.warning, to.warning),
+        success: rgb(from.success, to.success),
+        light: to.light,
+    }
 }
 impl App {
     fn pending_text(&mut self, title: &str) -> uuid::Uuid {
@@ -509,7 +564,7 @@ impl App {
                 ("Discover stations", "Explore Radio Browser", "radio"),
                 (
                     "Favorite stations",
-                    "Stations you saved in ytui",
+                    "Stations you saved in vidcue",
                     "favorites",
                 ),
             ],
@@ -562,7 +617,7 @@ impl App {
             &config.image_protocol,
             detected_image_protocol,
         ));
-        let client = ytui_services::http_client(config.proxy.as_deref())?;
+        let client = vidcue_services::http_client(config.proxy.as_deref())?;
         let browser = Browser::new(client.clone(), session.clone(), config.account_index);
         let radio = Radio::new(client.clone(), config.radio_servers.clone())
             .with_cache(paths.cache.join("radio"));
@@ -581,6 +636,8 @@ impl App {
             collection_generation: 0,
             collection_pending: false,
             pending_auto_play: None,
+            playback_prepare: None,
+            playback_prepare_not_before: Instant::now(),
             sleep_timer: Default::default(),
             player_session_pending: false,
             config,
@@ -598,12 +655,14 @@ impl App {
             } else {
                 "Anonymous · F2 actions · , settings · ? help".into()
             },
-            palette: theme::builtin("ytui-dark")?,
+            palette: theme::builtin("vidcue-dark")?,
+            theme_fade: None,
             player_status: PlayerStatus::default(),
             demo,
             offline,
             quit: false,
             launch_cliamp: false,
+            run_update: None,
             dirty: false,
             redraw: true,
             vinyl_motion: Default::default(),
@@ -651,6 +710,10 @@ impl App {
             notification_pending: 0,
             notification_warned: false,
             watch_pending: HashMap::new(),
+            related: None,
+            related_generation: 0,
+            related_cancel: CancellationToken::new(),
+            prepared: None,
         };
         if demo {
             app.load_demo();
@@ -665,6 +728,11 @@ impl App {
             );
         } else {
             app.navigate(1, BrowseRequest::Home, false);
+            // First-run setup, once per version, like Android's onboarding. Demo and
+            // offline launches (screenshots, fixtures, travel) never show it.
+            if app.snapshot.setup_version < crate::setup::VERSION {
+                app.open_setup();
+            }
         }
         let cache = app.images.clone();
         app.tasks.spawn(async move {
@@ -733,17 +801,17 @@ impl App {
         b.state = JobState::Done;
         self.snapshot.downloads.jobs = vec![a, b];
         self.player_status = PlayerStatus {
-            audio_levels: Some(ytui_services::visualizer::AudioLevels {
+            audio_levels: Some(vidcue_services::visualizer::AudioLevels {
                 left: 0.72,
                 right: 0.55,
                 peak: 0.86,
             }),
             backend: "demo · fictional formats".into(),
-            catalog: ytui_services::formats::Catalog::parse(&serde_json::json!({
+            catalog: vidcue_services::formats::Catalog::parse(&serde_json::json!({
                 "formats":[{"format_id":"137","height":1080,"vcodec":"avc1","acodec":"none","ext":"mp4"},{"format_id":"247","height":720,"vcodec":"vp9","acodec":"none","ext":"webm"},{"format_id":"140-de","vcodec":"none","acodec":"aac","language":"de","ext":"m4a"}],
                 "subtitles":{"de":[{"ext":"vtt","url":"https://example.invalid/fictional-caption"}]}
             })),
-            tracks: ytui_services::formats::tracks(
+            tracks: vidcue_services::formats::tracks(
                 &serde_json::json!([{"id":1,"type":"audio","lang":"en","codec":"aac","selected":true},{"id":2,"type":"audio","lang":"de","codec":"aac"},{"id":1,"type":"sub","lang":"de","codec":"vtt"}]),
             ),
             media: Some(Media {
@@ -760,7 +828,7 @@ impl App {
             speed: 1.0,
             active: true,
             sponsor_enabled: true,
-            segments: vec![ytui_services::sponsorblock::Segment {
+            segments: vec![vidcue_services::sponsorblock::Segment {
                 start: 90.0,
                 end: 115.0,
                 category: "sponsor".into(),
@@ -891,7 +959,7 @@ impl App {
                 } else if let BrowseRequest::OfflineLibrary { query, audio } = &request {
                     let queue = downloads.context("Missing offline queue snapshot")?;
                     let query = query.clone(); let audio = *audio;
-                    tokio::task::spawn_blocking(move || ytui_services::library::catalog(&queue, &query, audio)).await.map_err(anyhow::Error::from)
+                    tokio::task::spawn_blocking(move || vidcue_services::library::catalog(&queue, &query, audio)).await.map_err(anyhow::Error::from)
                 } else if tab==3 {
                     if request==BrowseRequest::Favorites {Ok(Page{title:"Favorite stations".into(),items:favorites,..Default::default()})}
                     else if request==BrowseRequest::Collection("custom".into()){Ok(Page{title:"Custom stations".into(),items:custom,..Default::default()})}
@@ -905,6 +973,45 @@ impl App {
     }
     pub fn apply(&mut self, event: UiEvent) {
         match event {
+            UiEvent::Related { generation, result } => {
+                if generation != self.related_generation {
+                    return;
+                }
+                // A list resolves once; later results for it are ignored.
+                let Some(related) = self.related.as_mut().filter(|r| r.loading) else {
+                    return;
+                };
+                related.loading = false;
+                match result {
+                    Ok(page) => {
+                        related.items = crate::related::candidates(
+                            page.items,
+                            &related.source,
+                            &self.snapshot.playback.items,
+                        );
+                        related.error = related
+                            .items
+                            .is_empty()
+                            .then(|| "No related videos".to_string());
+                    }
+                    Err(e) => {
+                        related.items.clear();
+                        related.error = Some(format!("Recommendations unavailable: {e}"));
+                    }
+                }
+                if std::mem::take(&mut related.play_when_ready)
+                    && self.snapshot.playback.current.is_none()
+                {
+                    let source = related.source.clone();
+                    if let Some(media) = self.continue_with_related(&source)
+                        && !self.play_existing(media.clone())
+                    {
+                        self.pending_auto_play = Some(media);
+                    }
+                    self.dirty = true;
+                }
+                self.redraw = true;
+            }
             UiEvent::Lyrics { id, result } => {
                 if let Some(Modal::Lyrics(view)) = &mut self.modal
                     && view.id == id
@@ -917,11 +1024,12 @@ impl App {
                         }
                         Err(error) => {
                             view.error =
-                                Some(ytui_services::process::diagnostic(&error.to_string()))
+                                Some(vidcue_services::process::diagnostic(&error.to_string()))
                         }
                     }
                 }
             }
+            UiEvent::Update { manual, result } => self.update_found(manual, result),
             UiEvent::AccountProfiles(profiles) => {
                 if matches!(self.modal, Some(Modal::Account { .. })) {
                     self.modal = Some(Modal::Account {
@@ -949,7 +1057,7 @@ impl App {
                     Err(error) => {
                         self.status = format!(
                             "Collection was not queued: {}",
-                            ytui_services::process::diagnostic(&error.to_string())
+                            vidcue_services::process::diagnostic(&error.to_string())
                         )
                     }
                 }
@@ -1082,10 +1190,10 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        view.error = Some(ytui_services::process::diagnostic(&e.to_string()));
+                        view.error = Some(vidcue_services::process::diagnostic(&e.to_string()));
                         if matches!(tab, 1 | 2)
                             && let Some(retry) =
-                                e.downcast_ref::<ytui_services::browse::FeedRetry>()
+                                e.downcast_ref::<vidcue_services::browse::FeedRetry>()
                             && let Some(load) = &mut view.load
                         {
                             let backoff = [2, 5, 15, 30, 60][(load.failures as usize).min(4)];
@@ -1174,7 +1282,7 @@ impl App {
                             self.paths.clone(),
                             self.theme_cancel.clone(),
                         );
-                        match ytui_services::http_client(self.config.proxy.as_deref()) {
+                        match vidcue_services::http_client(self.config.proxy.as_deref()) {
                             Ok(client) => {
                                 self.browser = Browser::new(
                                     client.clone(),
@@ -1260,7 +1368,7 @@ impl App {
                     Err(e) => {
                         self.status = format!(
                             "Sign-in failed: {}",
-                            ytui_services::process::diagnostic(&e.to_string())
+                            vidcue_services::process::diagnostic(&e.to_string())
                         )
                     }
                 }
@@ -1279,7 +1387,7 @@ impl App {
                     Err(e) => {
                         self.status = format!(
                             "Disconnected in memory; storage cleanup failed: {} · fix storage/unlock keyring and retry before restarting",
-                            ytui_services::process::diagnostic(&e.to_string())
+                            vidcue_services::process::diagnostic(&e.to_string())
                         )
                     }
                 }
@@ -1350,10 +1458,11 @@ impl App {
                         };
                     }
                     Err(e) => {
-                        let message = ytui_services::process::diagnostic(&e.to_string());
+                        let message = vidcue_services::process::diagnostic(&e.to_string());
                         let now = schedule::unix_now();
                         watch.failed(message.clone(), now);
-                        if let Some(retry) = e.downcast_ref::<ytui_services::browse::FeedRetry>() {
+                        if let Some(retry) = e.downcast_ref::<vidcue_services::browse::FeedRetry>()
+                        {
                             let seconds = retry
                                 .after
                                 .as_secs()
@@ -1368,11 +1477,11 @@ impl App {
             UiEvent::Import(result) => match result {
                 Ok(jobs) => {
                     let count =
-                        ytui_services::queue_import::append(&mut self.snapshot.downloads, jobs);
+                        vidcue_services::queue_import::append(&mut self.snapshot.downloads, jobs);
                     self.status = format!("Imported {count} queued items");
                     self.dirty = true;
                 }
-                Err(e) => self.status = ytui_services::process::diagnostic(&e.to_string()),
+                Err(e) => self.status = vidcue_services::process::diagnostic(&e.to_string()),
             },
             UiEvent::Text { id, result } => {
                 if let Some(Modal::PendingText { id: current, title }) = &self.modal
@@ -1381,7 +1490,7 @@ impl App {
                     self.modal = Some(Modal::Text {
                         title: title.clone(),
                         lines: result.unwrap_or_else(|error| {
-                            vec![ytui_services::process::diagnostic(&error.to_string())]
+                            vec![vidcue_services::process::diagnostic(&error.to_string())]
                         }),
                         offset: 0,
                     });
@@ -1405,6 +1514,7 @@ impl App {
         self.redraw = true;
     }
     fn reset_account(&mut self) {
+        self.playback_prepare = None;
         self.player_session_pending = true;
         self.pending_auto_play = None;
         self.collection_cancel.cancel();
@@ -1430,7 +1540,7 @@ impl App {
             self.tabs[tab].empty_pages = 0;
             self.tabs[tab].seen_tokens.clear();
         }
-        if let Ok(client) = ytui_services::http_client(self.config.proxy.as_deref()) {
+        if let Ok(client) = vidcue_services::http_client(self.config.proxy.as_deref()) {
             self.browser = Browser::new(client, self.session.clone(), self.config.account_index);
         }
         self.sync_player_session();
@@ -1481,14 +1591,14 @@ impl App {
         self.tasks.spawn(async move {
             let mut account = None;
             let result = async {
-                ytui_services::http_client(c.proxy.as_deref())?;
+                vidcue_services::http_client(c.proxy.as_deref())?;
                 if (account_changed || storage_changed)
                     && let Some(session) = current
                 {
                     let mut candidate = (*session).clone();
                     if account_changed {
                         let browser = Browser::new(
-                            ytui_services::http_client(c.proxy.as_deref())?,
+                            vidcue_services::http_client(c.proxy.as_deref())?,
                             Some(session),
                             c.account_index,
                         );
@@ -1573,11 +1683,21 @@ impl App {
         let Some(mut modal) = self.modal.take() else {
             return;
         };
+        if let Modal::Setup(setup) = modal {
+            self.setup_key(setup, key);
+            return;
+        }
+        if let Modal::Update { release, selected } = modal {
+            self.update_key(release, selected, key);
+            return;
+        }
         if key.code == KeyCode::Esc {
             return;
         }
         match &mut modal {
-            Modal::PendingText { .. } => self.modal = Some(modal),
+            Modal::PendingText { .. } | Modal::Setup(_) | Modal::Update { .. } => {
+                self.modal = Some(modal)
+            }
             Modal::Lyrics(view) => {
                 if !view.loading {
                     let limit = if view.opened {
@@ -1964,19 +2084,19 @@ impl App {
                         }
                         KeyCode::Char('o') => {
                             if let Some(media) = download.outputs.get(*selected).and_then(|path| {
-                                ytui_services::library::completed_file(download, path)
+                                vidcue_services::library::completed_file(download, path)
                             }) {
                                 let path = PathBuf::from(media.url);
                                 self.tasks.spawn(async move {
                                     UiEvent::Status(
-                                        match ytui_services::desktop::open_file(&path).await {
+                                        match vidcue_services::desktop::open_file(&path).await {
                                             Ok(()) => {
                                                 "Open with request sent to the desktop portal"
                                                     .into()
                                             }
                                             Err(error) => format!(
                                                 "Desktop open unavailable: {}",
-                                                ytui_services::process::diagnostic(
+                                                vidcue_services::process::diagnostic(
                                                     &error.to_string()
                                                 )
                                             ),
@@ -1987,7 +2107,7 @@ impl App {
                         }
                         KeyCode::Enter => {
                             if let Some(media) = download.outputs.get(*selected).and_then(|path| {
-                                ytui_services::library::completed_file(download, path)
+                                vidcue_services::library::completed_file(download, path)
                             }) {
                                 self.play(media);
                                 return;
@@ -2000,30 +2120,59 @@ impl App {
                 }
                 self.modal = Some(modal);
             }
-            Modal::Queue(index) => match key.code {
-                KeyCode::Up | KeyCode::Char('k') => {
-                    *index = index.saturating_sub(1);
-                    self.modal = Some(modal);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    *index = (*index + 1).min(self.snapshot.playback.items.len().saturating_sub(1));
-                    self.modal = Some(modal);
-                }
-                KeyCode::Delete => {
-                    self.snapshot.playback.remove(*index);
-                    self.dirty = true;
-                    self.modal = Some(modal);
-                }
-                KeyCode::Enter => {
-                    if let Some(m) = self.snapshot.playback.items.get(*index).cloned()
-                        && self.play_existing(m)
-                    {
-                        self.snapshot.playback.current = Some(*index);
-                        self.dirty = true;
+            Modal::Queue(index) => {
+                // Queue entries first, then the recommendations that follow them.
+                let queued = self.snapshot.playback.items.len();
+                let related = self.up_next_related().map_or(0, |r| r.items.len());
+                match key.code {
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        *index = index.saturating_sub(1);
+                        self.modal = Some(modal);
                     }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        *index = (*index + 1).min((queued + related).saturating_sub(1));
+                        self.modal = Some(modal);
+                    }
+                    KeyCode::Delete => {
+                        if *index < queued {
+                            self.snapshot.playback.remove(*index);
+                            self.dirty = true;
+                        } else if let Some(related) = self.related.as_mut()
+                            && *index - queued < related.items.len()
+                        {
+                            related.items.remove(*index - queued);
+                        }
+                        let total = self.snapshot.playback.items.len()
+                            + self.up_next_related().map_or(0, |r| r.items.len());
+                        *index = (*index).min(total.saturating_sub(1));
+                        self.modal = Some(modal);
+                    }
+                    KeyCode::Enter if *index < queued => {
+                        if let Some(m) = self.snapshot.playback.items.get(*index).cloned()
+                            && self.play_existing(m)
+                        {
+                            self.snapshot.playback.current = Some(*index);
+                            self.dirty = true;
+                        }
+                    }
+                    KeyCode::Enter => {
+                        let offset = *index - queued;
+                        if let Some(m) = self
+                            .up_next_related()
+                            .and_then(|r| r.items.get(offset))
+                            .cloned()
+                            && self.play_existing(m.clone())
+                        {
+                            if let Some(related) = self.related.as_mut() {
+                                related.items.remove(offset);
+                            }
+                            self.snapshot.playback.play(m);
+                            self.dirty = true;
+                        }
+                    }
+                    _ => self.modal = Some(modal),
                 }
-                _ => self.modal = Some(modal),
-            },
+            }
             Modal::Form(form) => {
                 let settings = form.is_grouped();
                 if settings && key.code == KeyCode::F(6) {
@@ -2234,6 +2383,12 @@ impl App {
                         *selected = index;
                         self.modal_key(KeyCode::Enter.into());
                     }
+                    Some(Modal::Update { selected, .. })
+                        if matches!(mouse.kind, MouseEventKind::Down(_)) =>
+                    {
+                        *selected = index;
+                        self.modal_key(KeyCode::Enter.into());
+                    }
                     _ => {}
                 }
             }
@@ -2312,6 +2467,9 @@ impl App {
         self.redraw = true;
     }
     fn selection_changed(&mut self) {
+        if self.playback_prepare.take().is_some() {
+            let _ = self.player.try_send(PlayerCommand::CancelPrepare);
+        }
         self.image_cancel.cancel();
         self.image_cancel = CancellationToken::new();
         self.image = None;
@@ -2360,7 +2518,7 @@ impl App {
             .skip(view.selected.saturating_sub(2))
             .take(10)
             .filter(|m| !m.thumbnail.is_empty())
-            .map(|m| ytui_services::images::thumbnail_url(m, width, height))
+            .map(|m| vidcue_services::images::thumbnail_url(m, width, height))
             .collect::<Vec<_>>();
         let cache = self.images.clone();
         let cancel = self.image_cancel.clone();
@@ -2375,6 +2533,93 @@ impl App {
             tokio::select! {_=cancel.cancelled()=>{},_=work=>{}};
             UiEvent::Prefetched
         });
+    }
+    fn prefetch_playback(&mut self, now: Instant) {
+        if self.demo
+            || self.offline
+            || self.player_session_pending
+            || self.sleep_timer.stopping()
+            || self.config.playback_backend == "yt-dlp"
+        {
+            return;
+        }
+        let selected = (matches!(self.tab, 1 | 2)
+            && !self.feeds_focused
+            && self.modal.is_none()
+            && self.input.is_none())
+        .then(|| self.selected())
+        .flatten()
+        .filter(|media| !media.collection() && !media.live)
+        .map(|media| {
+            let audio = self.selection_is_audio(&media);
+            (media, audio)
+        });
+        let current_url = self.player_status.media.as_ref().map(|media| &media.url);
+        let candidate = selected
+            .filter(|(media, _)| Some(&media.url) != current_url)
+            .or_else(|| {
+                if !self.player_status.active || self.snapshot.playback.shuffle {
+                    return None;
+                }
+                let mut queue = self.snapshot.playback.clone();
+                let media = queue.advance(true)?;
+                if Some(&media.url) == current_url {
+                    return None;
+                }
+                let audio = media.kind == MediaKind::Song;
+                Some((media, audio))
+            })
+            .filter(|(media, _)| vidcue_services::sponsorblock::video_id(media).is_some());
+        let Some((media, audio)) = candidate else {
+            if self.playback_prepare.take().is_some() {
+                let _ = self.player.try_send(PlayerCommand::CancelPrepare);
+            }
+            return;
+        };
+        let key = serde_json::to_string(&(
+            &media.url,
+            audio,
+            &self.config.proxy,
+            &self.config.download.quality,
+            &self.config.native_js_runtime,
+            &self.config.ffmpeg,
+            &self.config.playback_backend,
+            self.config.account_index,
+            self.session.as_ref().map(|session| session.imported_at),
+        ))
+        .unwrap_or_default();
+        if self
+            .playback_prepare
+            .as_ref()
+            .is_none_or(|(previous, _, _)| previous != &key)
+        {
+            if self.playback_prepare.is_some() {
+                let _ = self.player.try_send(PlayerCommand::CancelPrepare);
+            }
+            self.playback_prepare = Some((
+                key.clone(),
+                (now + Duration::from_millis(750)).max(self.playback_prepare_not_before),
+                false,
+            ));
+            return;
+        }
+        let Some((_, due, sent)) = self.playback_prepare.as_ref() else {
+            return;
+        };
+        if now < *due {
+            return;
+        }
+        // Refresh the cheap cache lookup periodically; never enqueue every tick.
+        if self
+            .player
+            .try_send(PlayerCommand::Prepare { media, audio })
+            .is_ok()
+        {
+            self.playback_prepare_not_before = now + Duration::from_secs(3);
+            self.playback_prepare = Some((key, now + Duration::from_secs(45), true));
+        } else if !sent {
+            self.playback_prepare = Some((key, now + Duration::from_millis(250), false));
+        }
     }
     fn recover_feed(&mut self) {
         if self.demo || self.offline || !matches!(self.tab, 1..=3) {
@@ -2464,7 +2709,7 @@ impl App {
                 area.width as u32 * fw as u32,
                 area.height as u32 * fh as u32,
             );
-            let url = ytui_services::images::thumbnail_url(&media, width, height);
+            let url = vidcue_services::images::thumbnail_url(&media, width, height);
             let cache = self.images.clone();
             let picker = self.picker.clone();
             let demo = self.demo.then(|| self.palette.clone());
@@ -2554,7 +2799,7 @@ impl App {
             return;
         }
         let (width, height) = self.thumbnail_size();
-        let url = ytui_services::images::thumbnail_url(&media, width, height);
+        let url = vidcue_services::images::thumbnail_url(&media, width, height);
         self.image_key = Some(key);
         self.image_generation += 1;
         let generation = self.image_generation;
@@ -2712,7 +2957,7 @@ impl App {
             Action::MusicPlayerStyle => {
                 if matches!(self.tab, 2 | 3) {
                     let mut config = self.config.clone();
-                    let styles = ytui_core::MUSIC_PLAYER_STYLES;
+                    let styles = vidcue_core::MUSIC_PLAYER_STYLES;
                     let index = styles
                         .iter()
                         .position(|s| *s == config.music_player_style)
@@ -2774,7 +3019,7 @@ impl App {
                     if let Some(job) = self.snapshot.downloads.jobs.get(self.download_selected) {
                         if job.outputs.len() == 1 && job.state == JobState::Done {
                             if let Some(media) =
-                                ytui_services::library::completed_file(job, &job.outputs[0])
+                                vidcue_services::library::completed_file(job, &job.outputs[0])
                             {
                                 self.play(media);
                             }
@@ -2951,13 +3196,26 @@ impl App {
                 self.modal = Some(Modal::Form(Box::new(Form::settings(self.config.clone()))))
             }
             Action::PlaybackQueue => {
+                self.ensure_related(true);
                 self.modal = Some(Modal::Queue(self.snapshot.playback.current.unwrap_or(0)))
             }
             Action::NextTrack => {
                 let previous = self.snapshot.playback.clone();
-                if let Some(m) = self.snapshot.playback.advance(false) {
+                let related = self.related.clone();
+                let source = previous
+                    .current
+                    .and_then(|i| previous.items.get(i))
+                    .map(|m| m.url.clone())
+                    .unwrap_or_default();
+                if let Some(m) = self
+                    .snapshot
+                    .playback
+                    .advance(false)
+                    .or_else(|| self.continue_with_related(&source))
+                {
                     if !self.play_existing(m) {
                         self.snapshot.playback = previous;
+                        self.related = related;
                     }
                     self.dirty = true;
                 } else {
@@ -2975,10 +3233,12 @@ impl App {
                 }
             }
             Action::SeekForward => {
-                let _ = self.player.try_send(PlayerCommand::Seek(5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(step));
             }
             Action::SeekBack => {
-                let _ = self.player.try_send(PlayerCommand::Seek(-5.0));
+                let step = self.config.seek_seconds as f64;
+                let _ = self.player.try_send(PlayerCommand::Seek(-step));
             }
             Action::VolumeUp => {
                 let _ = self.player.try_send(PlayerCommand::Volume(5.0));
@@ -3094,7 +3354,7 @@ impl App {
                 if job
                     .outputs
                     .iter()
-                    .any(|path| ytui_services::library::completed_file(job, path).is_some())
+                    .any(|path| vidcue_services::library::completed_file(job, path).is_some())
                 {
                     ready += 1;
                 } else if matches!(
@@ -3280,20 +3540,25 @@ impl App {
         }
         self.dirty = true;
     }
-    pub fn resume_positions(&self) -> Vec<&ytui_core::playback_history::Position> {
+    pub fn resume_positions(&self) -> Vec<&vidcue_core::playback_history::Position> {
         self.snapshot
             .positions
             .resumable()
             .into_iter()
-            .filter(|p| !self.offline || http_url(&p.media.url).is_err())
+            .filter(|p| {
+                !self.offline
+                    || http_url(&p.media.url).is_err()
+                    || self.offline_copy(&p.media).is_some()
+            })
             .collect()
     }
-    pub fn resume_position(&mut self, position: ytui_core::playback_history::Position) {
+    pub fn resume_position(&mut self, position: vidcue_core::playback_history::Position) {
         if self.player_session_pending {
             self.status = "Updating player account · retry resume shortly".into();
             return;
         }
-        if self.offline && http_url(&position.media.url).is_ok() {
+        let saved = self.offline_copy(&position.media);
+        if self.offline && http_url(&position.media.url).is_ok() && saved.is_none() {
             self.status = "Resume this online video after restarting without --offline".into();
             return;
         }
@@ -3302,10 +3567,18 @@ impl App {
             return;
         }
         let audio = position.media.kind == MediaKind::Song;
-        let command = PlayerCommand::PlayAt {
-            media: position.media.clone(),
-            audio,
-            seconds: position.seconds,
+        let command = match saved {
+            Some(path) => PlayerCommand::PlayLocal {
+                media: position.media.clone(),
+                audio,
+                path,
+                seconds: Some(position.seconds),
+            },
+            None => PlayerCommand::PlayAt {
+                media: position.media.clone(),
+                audio,
+                seconds: position.seconds,
+            },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; try resume again".into();
@@ -3346,7 +3619,234 @@ impl App {
                     .record(media, status.position, status.duration, false);
         }
         self.player_status = status;
+        self.ensure_related(false);
+        self.prepare_next();
         self.redraw = true;
+    }
+    /// What automatic advance plays after the current item: the next queue entry,
+    /// the first entry again for repeat-all, or the first recommendation.
+    pub fn next_up(&self) -> Option<Media> {
+        let queue = &self.snapshot.playback;
+        let related = self.up_next_related();
+        let index = crate::related::plays_next(
+            queue,
+            related.map_or(0, |r| r.items.len()),
+            self.config.autoplay_related,
+        )?;
+        match queue.items.get(index) {
+            Some(media) => Some(media.clone()),
+            None => related?.items.get(index - queue.items.len()).cloned(),
+        }
+    }
+    /// Asks the player to resolve the next item in the background once the current
+    /// one is within [`PRELOAD_WINDOW`] of its end (Android: "Preload the next item").
+    fn prepare_next(&mut self) {
+        if !self.config.preload_next || self.offline || self.demo {
+            return;
+        }
+        let status = &self.player_status;
+        if !status.active || status.preview {
+            return;
+        }
+        let Some(duration) = status.duration.filter(|d| d.is_finite() && *d > 0.0) else {
+            return;
+        };
+        if duration - status.position > PRELOAD_WINDOW {
+            return;
+        }
+        let queue = &self.snapshot.playback;
+        let Some(current) = queue.current.and_then(|i| queue.items.get(i)) else {
+            return;
+        };
+        let Some(next) = self.next_up() else {
+            return;
+        };
+        let key = (current.url.clone(), next.url.clone());
+        if self.prepared.as_ref() == Some(&key) {
+            return;
+        }
+        self.prepared = Some(key);
+        // Saved copies, local files and live streams need no preparation.
+        if next.live
+            || next.kind == MediaKind::Station
+            || http_url(&next.url).is_err()
+            || self.offline_copy(&next).is_some()
+        {
+            return;
+        }
+        let audio = matches!(next.kind, MediaKind::Song | MediaKind::Station);
+        if self
+            .player
+            .try_send(PlayerCommand::Prepare { media: next, audio })
+            .is_err()
+        {
+            // Busy channel: try again on the next status update.
+            self.prepared = None;
+        }
+    }
+    /// Opens the first-run setup (also used to replay it from the action menu).
+    pub fn open_setup(&mut self) {
+        self.modal = Some(Modal::Setup(Box::new(crate::setup::Setup::new(
+            &self.config,
+        ))));
+    }
+    fn setup_key(&mut self, mut setup: Box<crate::setup::Setup>, key: KeyEvent) {
+        use crate::setup::ACCOUNT;
+        let connected = self.session.is_some();
+        let mut preview = false;
+        match key.code {
+            KeyCode::Esc => return self.finish_setup(setup, false),
+            KeyCode::Enter | KeyCode::Tab if setup.is_last() => {
+                return self.finish_setup(setup, false);
+            }
+            KeyCode::Enter | KeyCode::Tab => setup.next(),
+            KeyCode::Backspace | KeyCode::BackTab => {
+                setup.back();
+            }
+            KeyCode::Up | KeyCode::Char('k') => setup.move_row(-1, connected),
+            KeyCode::Down | KeyCode::Char('j') => setup.move_row(1, connected),
+            KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') if setup.step == ACCOUNT => {
+                return self.finish_setup(setup, true);
+            }
+            KeyCode::Char(' ') | KeyCode::Right | KeyCode::Char('l') => preview = setup.change(1),
+            KeyCode::Left | KeyCode::Char('h') => preview = setup.change(-1),
+            _ => {}
+        }
+        if preview {
+            setup
+                .original_palette
+                .get_or_insert_with(|| self.palette.clone());
+            let target = match theme::builtin(&setup.draft.theme) {
+                Ok(palette) => Some(palette),
+                // "system" resolves through the theme provider once saved.
+                Err(_) => setup.original_palette.clone(),
+            };
+            if let Some(target) = target {
+                self.fade_to(target);
+            }
+        }
+        self.modal = Some(Modal::Setup(setup));
+    }
+    /// Crossfades to `target` over [`THEME_FADE`]; switches instantly with reduced
+    /// motion or when either palette maps to the terminal's own colours.
+    fn fade_to(&mut self, target: Palette) {
+        self.theme_fade = None;
+        if self.config.reduced_motion
+            || self.palette.name == "terminal"
+            || target.name == "terminal"
+            || self.palette == target
+        {
+            self.palette = target;
+        } else {
+            self.theme_fade = Some((self.palette.clone(), target, Instant::now()));
+        }
+        self.redraw = true;
+    }
+    fn advance_theme_fade(&mut self) {
+        let Some((from, to, started)) = &self.theme_fade else {
+            return;
+        };
+        let t = started.elapsed().as_secs_f32() / THEME_FADE.as_secs_f32();
+        if t >= 1.0 {
+            self.palette = to.clone();
+            self.theme_fade = None;
+        } else {
+            self.palette = blend_palette(from, to, t);
+        }
+        self.redraw = true;
+    }
+    /// Finishing and skipping both record completion and keep the choices made so
+    /// far, like Android's onboarding. `connect` continues to the account flow.
+    fn finish_setup(&mut self, setup: Box<crate::setup::Setup>, connect: bool) {
+        let setup = *setup;
+        self.snapshot.setup_version = crate::setup::VERSION;
+        self.dirty = true;
+        if setup.draft.theme == self.config.theme
+            && let Some(original) = setup.original_palette.clone()
+        {
+            self.palette = original;
+        }
+        // Land on the final palette instead of a half-faded one.
+        if let Some((_, to, _)) = self.theme_fade.take() {
+            self.palette = to;
+        }
+        self.status = "Setup saved · replay it any time from F2 actions".into();
+        if setup.changed(&self.config) {
+            self.save_config(setup.draft);
+        }
+        if connect && let Err(e) = self.command("auth") {
+            self.status = e.to_string();
+        }
+    }
+    /// Identifies the newest related-list request (deterministic UI fixtures).
+    pub fn related_generation(&self) -> u64 {
+        self.related_generation
+    }
+    /// The related list shown after the queue, when it belongs to the item that ends it.
+    pub fn up_next_related(&self) -> Option<&crate::related::RelatedNext> {
+        let queue = &self.snapshot.playback;
+        let current = queue.items.get(queue.current?)?;
+        self.related
+            .as_ref()
+            .filter(|r| r.source == current.url && crate::related::queue_ends_after_current(queue))
+    }
+    /// Fetches related videos for the current item when nothing follows it in the
+    /// queue. `display` fetches for the Queue popup even while autoplay is off.
+    pub fn ensure_related(&mut self, display: bool) {
+        if self.demo || self.offline || !(display || self.config.autoplay_related) {
+            return;
+        }
+        let queue = &self.snapshot.playback;
+        if !crate::related::queue_ends_after_current(queue) {
+            return;
+        }
+        let Some(current) = queue.current.and_then(|i| queue.items.get(i)) else {
+            return;
+        };
+        if self
+            .related
+            .as_ref()
+            .is_some_and(|r| r.source == current.url)
+        {
+            return;
+        }
+        let Some(id) = crate::related::video_id(current) else {
+            return;
+        };
+        let music = current.kind == MediaKind::Song;
+        self.related = Some(crate::related::RelatedNext {
+            source: current.url.clone(),
+            loading: true,
+            ..Default::default()
+        });
+        self.related_cancel.cancel();
+        self.related_cancel = CancellationToken::new();
+        self.related_generation = self.related_generation.wrapping_add(1);
+        let generation = self.related_generation;
+        let cancel = self.related_cancel.clone();
+        let browser = self.browser.clone();
+        self.tasks.spawn(async move {
+            let request = BrowseRequest::Related(id);
+            let result = tokio::select! {
+                _ = cancel.cancelled() => Err(anyhow::anyhow!("Request cancelled")),
+                page = browser.fetch(music, &request) => page,
+            };
+            UiEvent::Related { generation, result }
+        });
+    }
+    /// Moves the first recommendation for `source` into the queue as the current
+    /// item when related autoplay is on. The caller starts playback.
+    fn continue_with_related(&mut self, source: &str) -> Option<Media> {
+        if !self.config.autoplay_related || self.offline || self.demo {
+            return None;
+        }
+        let related = self.related.as_mut().filter(|r| r.source == source)?;
+        if related.items.is_empty() {
+            return None;
+        }
+        let media = related.items.remove(0);
+        self.snapshot.playback.play(media.clone());
+        Some(media)
     }
     pub fn playback_ended(&mut self, media: &Media) {
         if self.enforce_sleep_timer(Instant::now()) {
@@ -3371,7 +3871,23 @@ impl App {
                 true,
             );
         }
-        if let Some(media) = self.snapshot.playback.advance(true)
+        let next = match self.snapshot.playback.advance(true) {
+            Some(next) => Some(next),
+            None => {
+                let next = self.continue_with_related(&media.url);
+                if next.is_none()
+                    && self.config.autoplay_related
+                    && let Some(related) = self
+                        .related
+                        .as_mut()
+                        .filter(|r| r.source == media.url && r.loading)
+                {
+                    related.play_when_ready = true;
+                }
+                next
+            }
+        };
+        if let Some(media) = next
             && !self.play_existing(media.clone())
         {
             self.pending_auto_play = Some(media);
@@ -3396,7 +3912,8 @@ impl App {
             self.status = "Updating player account · retry playback shortly".into();
             return false;
         }
-        if self.offline && http_url(&media.url).is_ok() {
+        let saved = self.offline_copy(&media);
+        if self.offline && http_url(&media.url).is_ok() && saved.is_none() {
             self.status = "Queued online media waits for online mode".into();
             return false;
         }
@@ -3413,17 +3930,27 @@ impl App {
             && media.kind == MediaKind::Video)
             .then(|| self.snapshot.positions.for_media(&media).map(|p| p.seconds))
             .flatten();
-        let command = match resume_at {
-            Some(seconds) => PlayerCommand::PlayAt {
+        let command = match (saved.clone(), resume_at) {
+            // The queue, history and resume keep the original item; mpv opens the file.
+            (Some(path), seconds) => PlayerCommand::PlayLocal {
+                media,
+                audio,
+                path,
+                seconds,
+            },
+            (None, Some(seconds)) => PlayerCommand::PlayAt {
                 media,
                 audio,
                 seconds,
             },
-            None => PlayerCommand::Play { media, audio },
+            (None, None) => PlayerCommand::Play { media, audio },
         };
         if self.player.try_send(command).is_err() {
             self.status = "Player is busy; retry playback".into();
             return false;
+        }
+        if saved.is_some() && resume_at.is_none() {
+            self.status = "Playing your saved offline copy".into();
         }
         if let Some(seconds) = resume_at {
             let seconds = seconds as u64;
@@ -3434,6 +3961,33 @@ impl App {
             );
         }
         true
+    }
+    /// A completed single-file download of `media` in the same mode (audio or
+    /// video), used instead of streaming when `prefer_offline` is on. Copies with
+    /// removed segments or split chapters are skipped: their timeline differs.
+    pub fn offline_copy(&self, media: &Media) -> Option<PathBuf> {
+        if !self.config.prefer_offline || media.live || http_url(&media.url).is_err() {
+            return None;
+        }
+        let audio = matches!(media.kind, MediaKind::Song | MediaKind::Station);
+        let id = crate::related::video_id(media);
+        self.snapshot
+            .downloads
+            .jobs
+            .iter()
+            .rev()
+            .filter(|job| {
+                job.state == JobState::Done
+                    && job.options.audio == audio
+                    && job.outputs.len() == 1
+                    && !job.options.playlist
+                    && !job.options.sponsorblock_remove
+                    && !job.options.split_chapters
+                    && (job.media.url == media.url
+                        || id.is_some() && crate::related::video_id(&job.media) == id)
+            })
+            .find_map(|job| vidcue_services::library::completed_file(job, &job.outputs[0]))
+            .map(|copy| PathBuf::from(copy.url))
     }
     pub fn sleep_label(&self) -> Option<String> {
         if self.sleep_timer.stopping() {
@@ -3471,6 +4025,7 @@ impl App {
         true
     }
     pub async fn tick(&mut self) {
+        self.advance_theme_fade();
         let spinning = self.vinyl_enabled()
             && self.player_status.active
             && !self.player_status.paused
@@ -3491,10 +4046,12 @@ impl App {
                 .current
                 .and_then(|index| self.snapshot.playback.items.get(index))
                 .is_some_and(|current| current.url == media.url)
-            && (self.offline && http_url(&media.url).is_ok() || !self.play_existing(media.clone()))
+            && (self.offline && http_url(&media.url).is_ok() && self.offline_copy(&media).is_none()
+                || !self.play_existing(media.clone()))
         {
             self.pending_auto_play = Some(media);
         }
+        self.prefetch_playback(Instant::now());
         self.recover_feed();
         self.prefetch_page();
         let finished = self
@@ -3521,7 +4078,7 @@ impl App {
         }
         if !self.demo {
             let policy = self.config.schedule.policy(
-                ytui_services::desktop::local_minute(),
+                vidcue_services::desktop::local_minute(),
                 self.config.download.global_bandwidth_kib,
                 self.config.concurrency,
             );
@@ -3600,7 +4157,7 @@ impl App {
                         UiEvent::Watch {
                             id,
                             generation,
-                            result: ytui_services::watch::collect(browser, watch, cancel).await,
+                            result: vidcue_services::watch::collect(browser, watch, cancel).await,
                         }
                     });
                 }
@@ -3617,7 +4174,7 @@ impl App {
             self.tasks.spawn(async move {
                 UiEvent::Clipboard {
                     generation,
-                    result: ytui_services::desktop::read_clipboard(cancel).await,
+                    result: vidcue_services::desktop::read_clipboard(cancel).await,
                 }
             });
         }
@@ -3712,7 +4269,7 @@ impl App {
             self.notification_pending += 1;
             self.tasks.spawn(async move {
                 UiEvent::Notification(
-                    ytui_services::desktop::notify(title, &text, failed, sound).await,
+                    vidcue_services::desktop::notify(title, &text, failed, sound).await,
                 )
             });
         }
@@ -3787,7 +4344,7 @@ impl App {
                     })
                     .await?;
                 let api = Browser::new(
-                    ytui_services::http_client(config.proxy.as_deref())?,
+                    vidcue_services::http_client(config.proxy.as_deref())?,
                     Some(Arc::new(candidate.clone())),
                     config.account_index,
                 );
@@ -3876,9 +4433,9 @@ impl App {
                         _ = cancel.cancelled() => Err(anyhow::anyhow!("Lyrics request cancelled")),
                         result = async {
                             if remote {
-                                ytui_services::lyrics::lookup(proxy.as_deref(), &title, &artist).await
+                                vidcue_services::lyrics::lookup(proxy.as_deref(), &title, &artist).await
                             } else {
-                                ytui_services::lyrics::local(std::path::Path::new(&value)).await.map(|track| vec![track])
+                                vidcue_services::lyrics::local(std::path::Path::new(&value)).await.map(|track| vec![track])
                             }
                         } => result,
                     };
@@ -3910,7 +4467,7 @@ impl App {
                 self.save_config(config);
             }
             "native-runtime" => {
-                let path = ytui_services::paths::executable(&value).context("Runtime was not found. Install Node.js 22+ or Deno 2.9.7, or clear the runtime field in Settings → Tools for automatic detection.")?;
+                let path = vidcue_services::paths::executable(&value).context("Runtime was not found. Install Node.js 22+ or Deno 2.9.7, or clear the runtime field in Settings → Tools for automatic detection.")?;
                 let mut config = self.config.clone();
                 config.native_js_runtime = Some(path);
                 self.save_config(config);
@@ -3944,7 +4501,7 @@ impl App {
             "add-station" => {
                 let name = parts.get(1).context("Provide a station name")?;
                 let url = parts.get(2).context("Provide a stream URL")?;
-                ytui_core::http_url(url)?;
+                vidcue_core::http_url(url)?;
                 let mut config = self.config.clone();
                 config.custom_stations.push(Media {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -4035,7 +4592,7 @@ impl App {
             "sleep" if value.is_empty() => {
                 self.modal = Some(Modal::Text { title: self.tr("Sleep timer").into(), offset: 0,
                     lines: vec![self.sleep_label().unwrap_or_else(|| self.tr("Sleep timer is off").into()),
-                        self.tr("Set or cancel the timer in Actions → Player. Playback stops without quitting ytui; the queue stays saved. The timer lasts for this session only.").into()] });
+                        self.tr("Set or cancel the timer in Actions → Player. Playback stops without quitting vidcue; the queue stays saved. The timer lasts for this session only.").into()] });
             }
             "sleep" => {
                 let seconds = schedule::delay_seconds(&value)?;
@@ -4066,7 +4623,7 @@ impl App {
                     .request
                     .clone()
                     .context("Open a collection first")?;
-                let watch = ytui_core::watch::CollectionWatch {
+                let watch = vidcue_core::watch::CollectionWatch {
                     id: uuid::Uuid::new_v4(),
                     title: self.tabs[self.tab].page.title.clone(),
                     request,
@@ -4155,6 +4712,7 @@ impl App {
                 self.resume_position(position);
             }
             "resume" => self.modal = Some(Modal::Resume(0)),
+            "update-check" => self.check_for_updates(true),
             "thumbnail-cache" | "thumbnail-cache-clear" => {
                 let images = self.images.clone();
                 let clear = cmd == "thumbnail-cache-clear";
@@ -4197,7 +4755,7 @@ impl App {
                 self.status = "Checking installed tool capabilities…".into();
                 let id = self.pending_text("Setup & capabilities / support report");
                 self.tasks.spawn(async move {
-                    let report = ytui_services::diagnostics::Support::collect(
+                    let report = vidcue_services::diagnostics::Support::collect(
                         &config,
                         env!("CARGO_PKG_VERSION"),
                         env!("YTUI_BUILD_DESCRIPTION"),
@@ -4210,7 +4768,7 @@ impl App {
                         if let Some(path) = output {
                             let data = serde_json::to_vec_pretty(&report)?;
                             tokio::task::spawn_blocking(move || {
-                                ytui_services::paths::atomic_write_new(&path, &data)
+                                vidcue_services::paths::atomic_write_new(&path, &data)
                             })
                             .await??;
                         }
@@ -4223,7 +4781,7 @@ impl App {
             "log" | "diagnostics" => {
                 let mut lines = vec![
                     format!(
-                        "ytui {} · build {} · downloads {} · playback {}",
+                        "vidcue {} · build {} · downloads {} · playback {}",
                         env!("CARGO_PKG_VERSION"),
                         env!("YTUI_BUILD_DESCRIPTION"),
                         self.config.download_backend,
@@ -4242,7 +4800,7 @@ impl App {
                         .rev()
                         .filter_map(|j| {
                             j.error.as_ref().map(|e| {
-                                format!("{} · {}", j.id, ytui_services::process::diagnostic(e))
+                                format!("{} · {}", j.id, vidcue_services::process::diagnostic(e))
                             })
                         })
                         .take(30),
@@ -4250,9 +4808,9 @@ impl App {
                 if let Some(error) = &self.player_status.error {
                     lines.push(format!(
                         "Inferred failure phase: {}",
-                        ytui_services::diagnostics::phase(error)
+                        vidcue_services::diagnostics::phase(error)
                     ));
-                    lines.push(ytui_services::process::diagnostic(error));
+                    lines.push(vidcue_services::process::diagnostic(error));
                 }
                 self.modal = Some(Modal::Text {
                     title: "Diagnostics".into(),
@@ -4262,15 +4820,21 @@ impl App {
             }
             "update" => {
                 self.modal = Some(Modal::Text {
-                    title: "Update ytui".into(),
+                    title: "Update vidcue".into(),
                     lines: vec![
+                        "F2 → Check for a new Vidcue version asks GitHub for a newer release."
+                            .into(),
+                        "Update now rebuilds that release with ./install.sh; settings stay."
+                            .into(),
+                        "General settings → Check GitHub for new releases turns the startup popup on or off."
+                            .into(),
                         "Native extraction is compiled into the Rust application.".into(),
-                        "Update the checkout, review changes, then run ./install-rust.sh.".into(),
+                        "From a checkout: update it, review changes, then run ./install.sh.".into(),
                         "Pinned native dependencies are updated with reviewed source changes."
                             .into(),
                         "The optional Python yt-dlp fallback is managed by your package manager."
                             .into(),
-                        "No executable or dependency was downloaded/replaced by this command."
+                        "This panel downloads nothing; only Update now installs a release."
                             .into(),
                     ],
                     offset: 0,
@@ -4375,7 +4939,7 @@ impl App {
                         title,
                         options: Box::new(entry_options),
                         selection: value,
-                        result: ytui_services::watch::collect(browser, watch, cancel).await,
+                        result: vidcue_services::watch::collect(browser, watch, cancel).await,
                     }
                 });
             }
@@ -4446,17 +5010,17 @@ impl App {
                     let connect = action == "connect";
                     self.tasks.spawn(async move {
                         let result =
-                            ytui_services::vpn::change(&program, &id, connect, cancel).await;
+                            vidcue_services::vpn::change(&program, &id, connect, cancel).await;
                         UiEvent::Status(match result {
                             Ok(()) => "VPN action completed".into(),
-                            Err(e) => ytui_services::process::diagnostic(&e.to_string()),
+                            Err(e) => vidcue_services::process::diagnostic(&e.to_string()),
                         })
                     });
                 } else {
                     let id = self.pending_text("VPN connections");
                     self.tasks.spawn(async move {
                         let result =
-                            ytui_services::vpn::list(&program, cancel)
+                            vidcue_services::vpn::list(&program, cancel)
                                 .await
                                 .map(|connections| {
                                     let mut lines = vec![
@@ -4531,7 +5095,7 @@ impl App {
                 );
             }
             "profiles" => {
-                let names = ytui_services::profiles::list(&self.paths)?;
+                let names = vidcue_services::profiles::list(&self.paths)?;
                 self.status = if names.is_empty() {
                     "No saved profiles · F2 → Save settings profile".into()
                 } else {
@@ -4548,12 +5112,14 @@ impl App {
                 ensure!(!self.demo, "Profiles are disabled in demo mode");
                 match action.as_str() {
                     "save" => {
-                        ytui_services::profiles::save(&self.paths, &name, &self.config)?;
+                        vidcue_services::profiles::save(&self.paths, &name, &self.config)?;
                         self.status = format!("Saved profile {name}");
                     }
-                    "load" => self.save_config(ytui_services::profiles::load(&self.paths, &name)?),
+                    "load" => {
+                        self.save_config(vidcue_services::profiles::load(&self.paths, &name)?)
+                    }
                     "delete" => {
-                        ytui_services::profiles::delete(&self.paths, &name)?;
+                        vidcue_services::profiles::delete(&self.paths, &name)?;
                         self.status = format!("Deleted profile {name}");
                     }
                     _ => anyhow::bail!("Use :profile save/load/delete NAME"),
@@ -4562,6 +5128,7 @@ impl App {
             "settings" => {
                 self.modal = Some(Modal::Form(Box::new(Form::settings(self.config.clone()))))
             }
+            "setup" => self.open_setup(),
             "theme" => {
                 if value.is_empty() {
                     self.action(Action::Theme);
@@ -4830,7 +5397,7 @@ impl App {
                 self.tasks.spawn(async move {
                     UiEvent::Import(
                         tokio::task::spawn_blocking(move || {
-                            ytui_services::queue_import::read(&PathBuf::from(value), &config)
+                            vidcue_services::queue_import::read(&PathBuf::from(value), &config)
                         })
                         .await
                         .map_err(anyhow::Error::from)
@@ -4841,17 +5408,17 @@ impl App {
             "export" => {
                 ensure!(!value.is_empty(), "Provide an export path");
                 let data = serde_json::to_vec_pretty(&self.snapshot)?;
-                ytui_services::paths::atomic_write(&PathBuf::from(value), &data)?;
+                vidcue_services::paths::atomic_write(&PathBuf::from(value), &data)?;
                 self.status = "Queue/history exported".into();
             }
             "open" => {
                 ensure!(!self.offline, "Browser navigation requires online mode");
                 let media = self.selected().context("Select an item")?;
-                ytui_core::http_url(&media.url)?;
+                vidcue_core::http_url(&media.url)?;
                 let cancel = self.desktop_cancel.child_token();
                 self.tasks.spawn(async move {
-                    let result = ytui_services::process::run(
-                        ytui_services::process::ProcessSpec::new("xdg-open", vec![media.url], 10),
+                    let result = vidcue_services::process::run(
+                        vidcue_services::process::ProcessSpec::new("xdg-open", vec![media.url], 10),
                         cancel,
                         |_| {},
                     )
@@ -4921,4 +5488,133 @@ fn demo_art(palette: &Palette, index: usize, width: u32, height: u32) -> image::
         blend(palette.background, palette.accent, 0.08 + y / 800.0)
     });
     image::DynamicImage::ImageRgb8(image)
+}
+
+#[cfg(test)]
+mod playback_preparation_tests {
+    use super::*;
+    fn fixture() -> (App, mpsc::Receiver<PlayerCommand>, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        let paths = Paths {
+            config_override: None,
+            config: root.join("config"),
+            state: root.join("state"),
+            cache: root.join("cache"),
+            xdg_state: root.join("xdg"),
+            legacy_data: root.join("legacy"),
+            home: root.into(),
+        };
+        let (player, rx) = mpsc::channel(4);
+        let (jobs, _) = mpsc::channel(4);
+        let mut app = App::new(
+            Config {
+                auth_store: "file".into(),
+                notifications: false,
+                ..Default::default()
+            },
+            paths,
+            Snapshot::default(),
+            None,
+            RuntimeHandles {
+                player,
+                jobs,
+                picker: Picker::from_fontsize((8, 16)),
+            },
+            false,
+            true,
+        )
+        .unwrap();
+        app.offline = false;
+        app.tab = 2;
+        app.tabs[2].page.items = vec![Media {
+            url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+            kind: MediaKind::Song,
+            ..Default::default()
+        }];
+        (app, rx, temp)
+    }
+    #[tokio::test]
+    async fn selection_preparation_is_debounced_bounded_and_never_starts_playback() {
+        let (mut app, mut rx, _temp) = fixture();
+        let now = Instant::now();
+        app.prefetch_playback(now);
+        app.prefetch_playback(now + Duration::from_millis(700));
+        assert!(rx.try_recv().is_err());
+        app.prefetch_playback(now + Duration::from_millis(750));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::Prepare { audio: true, .. }
+        ));
+        for _ in 0..100 {
+            app.prefetch_playback(now + Duration::from_secs(2));
+        }
+        assert!(rx.try_recv().is_err());
+        app.selection_changed();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::CancelPrepare
+        ));
+        app.shutdown().await;
+    }
+    #[tokio::test]
+    async fn moving_between_items_does_not_start_extractors_more_often_than_the_budget() {
+        let (mut app, mut rx, _temp) = fixture();
+        let now = Instant::now();
+        app.prefetch_playback(now);
+        app.prefetch_playback(now + Duration::from_millis(750));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::Prepare { .. }
+        ));
+        app.tabs[2].page.items[0].url = "https://www.youtube.com/watch?v=01234567890".into();
+        app.selection_changed();
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::CancelPrepare
+        ));
+        app.prefetch_playback(now + Duration::from_secs(1));
+        app.prefetch_playback(now + Duration::from_secs(2));
+        assert!(rx.try_recv().is_err());
+        app.prefetch_playback(now + Duration::from_millis(3750));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::Prepare { .. }
+        ));
+        app.shutdown().await;
+    }
+    #[tokio::test]
+    async fn preparation_respects_offline_demo_account_handoff_and_next_queue_intent() {
+        let (mut app, mut rx, _temp) = fixture();
+        let now = Instant::now();
+        for condition in 0..3 {
+            app.offline = condition == 0;
+            app.demo = condition == 1;
+            app.player_session_pending = condition == 2;
+            app.prefetch_playback(now);
+            app.prefetch_playback(now + Duration::from_secs(1));
+            assert!(rx.try_recv().is_err());
+        }
+        app.offline = false;
+        app.demo = false;
+        app.player_session_pending = false;
+        app.tab = 0;
+        let current = Media {
+            url: "https://www.youtube.com/watch?v=01234567890".into(),
+            ..Default::default()
+        };
+        let next = app.tabs[2].page.items[0].clone();
+        app.snapshot.playback.items = vec![current.clone(), next];
+        app.snapshot.playback.current = Some(0);
+        app.player_status.active = true;
+        app.player_status.media = Some(current);
+        app.prefetch_playback(now);
+        app.prefetch_playback(now + Duration::from_secs(1));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::Prepare { audio: true, .. }
+        ));
+        assert_eq!(app.snapshot.playback.current, Some(0));
+        app.shutdown().await;
+    }
 }

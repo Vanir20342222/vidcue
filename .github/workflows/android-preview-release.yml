@@ -1,0 +1,105 @@
+name: Release verified Android Preview
+# Publishes the exact CI-built, debug-signed Preview APK of the current main revision as a
+# prerelease. It never rebuilds or re-signs. The permanent stable signing key is held privately
+# by the owner and is published through "Publish locally signed Android APK" instead.
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Version name the tested APK was built with, e.g. 0.2.0-alpha.12-mobile.11'
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: android-preview-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'Vanir20342222/ytui' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      YTUI_PREVIEW_VERSION: ${{ inputs.version_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate the requested version and require a new tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$YTUI_PREVIEW_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$ ]] ||
+            { echo 'Invalid version name.' >&2; exit 1; }
+          tag="android-preview-$YTUI_PREVIEW_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1 ||
+              git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "A release or tag named $tag already exists; use an increasing version." >&2
+            exit 1
+          fi
+          echo "YTUI_PREVIEW_TAG=$tag" >> "$GITHUB_ENV"
+      - name: Refuse once the beta channel exists (Preview APKs cannot update it)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          python3 tools/android/release_channel.py check-preview "$RUNNER_TEMP/releases.json" "$YTUI_PREVIEW_VERSION"
+      - name: Require successful checks for the current main revision
+        id: checks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {owner, repo} = context.repo;
+            const sha = context.sha;
+            const main = await github.rest.repos.getBranch({owner, repo, branch: 'main'});
+            if (main.data.commit.sha !== sha) throw new Error('Main moved on; dispatch again for the current revision');
+            const runs = {};
+            for (const [workflow_id, key] of [['android.yml', 'android'], ['rust.yml', 'rust'], ['security.yml', 'secrets']]) {
+              const {data} = await github.rest.actions.listWorkflowRuns({owner, repo, workflow_id, branch: 'main', event: 'push', head_sha: sha, per_page: 100});
+              const latest = data.workflow_runs.filter(r => r.head_sha === sha).sort((a, b) => b.id - a.id)[0];
+              if (!latest || latest.status !== 'completed' || latest.conclusion !== 'success') throw new Error(`Missing successful exact-main check: ${workflow_id}`);
+              runs[key] = latest.id;
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {owner, repo, run_id: runs.android, per_page: 100});
+            const artifact = artifacts.find(a => a.name === `vidcue-android-${sha}` && !a.expired);
+            if (!artifact) throw new Error('Tested APK artifact unavailable or expired');
+            core.setOutput('source', sha);
+            core.setOutput('android_run', runs.android);
+            core.setOutput('rust_run', runs.rust);
+            core.setOutput('secrets_run', runs.secrets);
+            core.setOutput('artifact', artifact.id);
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.checks.outputs.android_run }}
+          artifact-ids: ${{ steps.checks.outputs.artifact }}
+          path: tested
+          merge-multiple: true
+      - name: List the merged changes since the last stable release
+        env:
+          YTUI_PREVIEW_SOURCE: ${{ steps.checks.outputs.source }}
+        run: |
+          base="$(git describe --tags --abbrev=0 --match 'android-[0-9]*' "$YTUI_PREVIEW_SOURCE")"
+          echo "YTUI_PREVIEW_BASE=$base" >> "$GITHUB_ENV"
+          git log -n 40 --first-parent --format='%s' "$base..$YTUI_PREVIEW_SOURCE" > changes.txt
+          cat changes.txt
+      - name: Verify and prepare the exact tested APK
+        env:
+          YTUI_PREVIEW_SOURCE: ${{ steps.checks.outputs.source }}
+          YTUI_PREVIEW_ANDROID_RUN: ${{ steps.checks.outputs.android_run }}
+          YTUI_PREVIEW_RUST_RUN: ${{ steps.checks.outputs.rust_run }}
+          YTUI_PREVIEW_SECRETS_RUN: ${{ steps.checks.outputs.secrets_run }}
+        run: python3 tools/android/prepare-preview-release.py
+      - name: Publish the Preview APK without rebuilding or re-signing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          YTUI_PREVIEW_SOURCE: ${{ steps.checks.outputs.source }}
+        run: |
+          gh release create "$YTUI_PREVIEW_TAG" publish/*.apk publish/SHA256SUMS.txt publish/APK-inspection.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$YTUI_PREVIEW_SOURCE" \
+            --title "Vidcue Android Preview $YTUI_PREVIEW_VERSION (CI debug-signed)" \
+            --notes-file publish/notes.md --prerelease --latest=false

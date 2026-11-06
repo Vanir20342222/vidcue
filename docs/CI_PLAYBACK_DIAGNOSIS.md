@@ -61,7 +61,7 @@ application source changed, so this repair does not need a new application build
 or launcher installation. Existing optimized alpha.11 was independently rerun:
 
 ```sh
-YTUI_TEST_BINARY=target/release/ytui YTUI_TEST_PLAY_SECONDS=5 tools/test-native-playback.sh
+YTUI_TEST_BINARY=target/release/vidcue YTUI_TEST_PLAY_SECONDS=5 tools/test-native-playback.sh
 ```
 
 **3/3 public native cases passed on the target PC**: video positions 5.000 and
