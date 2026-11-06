@@ -673,6 +673,21 @@ impl Browser {
         }
         Ok(page)
     }
+    /// Publication date, likes and subscribers for one video, which the fast playback path
+    /// does not return (see `crate::watch_details`). One `next` request; no watch-page HTML.
+    pub async fn watch_details(&self, id: &str) -> Result<Value> {
+        ensure!(
+            id.len() == 11
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'),
+            "Invalid video ID"
+        );
+        let data = self
+            .post(false, "next", crate::watch_details::request(id))
+            .await?;
+        Ok(crate::watch_details::parse(&data))
+    }
     async fn watch_response(&self, music: bool, id: &str) -> Result<Value> {
         ensure!(
             id.len() == 11
@@ -1029,10 +1044,47 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
         .unwrap_or_default();
     let kind = r.get("contentType").and_then(Value::as_str).unwrap_or("");
     let collection = kind.contains("PLAYLIST");
+    // Modern WEB home/related cards put views and age in a second metadata row,
+    // rather than the classic renderer's viewCountText/publishedTimeText fields.
+    // Keep the server's localized labels instead of guessing numeric counts/dates.
+    let details = metadata
+        .pointer("/metadata/contentMetadataViewModel/metadataRows/1/metadataParts")
+        .and_then(Value::as_array);
+    let detail = |index: usize| {
+        details
+            .and_then(|parts| parts.get(index))
+            .and_then(|part| part.pointer("/text/content"))
+            .and_then(Value::as_str)
+            .map(clean_text)
+            .unwrap_or_default()
+    };
+    let views_text = if collection { String::new() } else { detail(0) };
+    let published_text = if collection { String::new() } else { detail(1) };
+    // Only thumbnail badges can supply a duration. Counts in collection badges
+    // and numbers in titles/menus must never become playback lengths.
+    let duration = (!collection)
+        .then(|| r.pointer("/contentImage/thumbnailViewModel/overlays"))
+        .flatten()
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|overlay| {
+            overlay
+                .pointer("/thumbnailOverlayBadgeViewModel/thumbnailBadges")
+                .and_then(Value::as_array)
+        })
+        .flatten()
+        .filter_map(|badge| badge.pointer("/thumbnailBadgeViewModel/text"))
+        .filter_map(Value::as_str)
+        .filter(|label| label.contains(':'))
+        .find_map(duration);
     Some(Media {
         id: id.into(),
         title,
         creator,
+        views_text,
+        published_text,
+        duration,
         thumbnail: thumb(r),
         thumbnails: thumbnails(r),
         kind: if collection {
@@ -1578,6 +1630,53 @@ mod tests {
 #[cfg(test)]
 mod modern_tests {
     use super::*;
+
+    #[test]
+    fn lockup_card_details_survive_the_mobile_json_boundary() {
+        let card = json!({"lockupViewModel":{
+            "contentId":"abcdefghijk", "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+            "metadata":{"lockupMetadataViewModel":{
+                "title":{"content":"Modern video"},
+                "metadata":{"contentMetadataViewModel":{"metadataRows":[
+                    {"metadataParts":[{"text":{"content":"Fixture creator"}}]},
+                    {"metadataParts":[
+                        {"text":{"content":"12.345 Aufrufe"}},
+                        {"text":{"content":"vor 3 Tagen"}}
+                    ]}
+                ]}}
+            }},
+            "contentImage":{"thumbnailViewModel":{"overlays":[
+                {"thumbnailOverlayBadgeViewModel":{"thumbnailBadges":[
+                    {"thumbnailBadgeViewModel":{"text":"4K"}},
+                    {"thumbnailBadgeViewModel":{"text":"1:02:03"}}
+                ]}}
+            ]}}
+        }});
+        let page = parse_page(&json!({"contents":[card.clone()]}), false);
+        let media = serde_json::to_value(&page.items[0]).unwrap();
+        assert_eq!(media["creator"], "Fixture creator");
+        assert_eq!(media["views_text"], "12.345 Aufrufe");
+        assert_eq!(media["published_text"], "vor 3 Tagen");
+        assert_eq!(media["duration"], 3723);
+        assert!(media.get("view_count").is_none());
+        assert!(media.get("upload_date").is_none());
+
+        let mut playlist = card.clone();
+        playlist["lockupViewModel"]["contentType"] = json!("LOCKUP_CONTENT_TYPE_PLAYLIST");
+        let page = parse_page(&json!({"contents":[playlist]}), false);
+        assert!(page.items[0].views_text.is_empty());
+        assert!(page.items[0].published_text.is_empty());
+        assert_eq!(page.items[0].duration, None);
+
+        let mut sparse = card;
+        sparse["lockupViewModel"]["metadata"]["lockupMetadataViewModel"]["metadata"] = json!({});
+        sparse["lockupViewModel"]["contentImage"] = json!({});
+        let page = parse_page(&json!({"contents":[sparse]}), false);
+        assert!(page.items[0].views_text.is_empty());
+        assert!(page.items[0].published_text.is_empty());
+        assert_eq!(page.items[0].duration, None);
+    }
+
     #[test]
     fn parses_home_lockups_and_preserves_search_continuations() {
         let data = json!({"contents":[{"lockupViewModel":{"contentId":"abcdefghijk","contentType":"LOCKUP_CONTENT_TYPE_VIDEO","metadata":{"lockupMetadataViewModel":{"title":{"content":"A modern card"},"metadata":{"contentMetadataViewModel":{"metadataRows":[{"metadataParts":[{"text":{"content":"Creator"}}]}]}}}}}}],"continuationCommand":{"token":"next"}});

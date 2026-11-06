@@ -13,6 +13,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.togetherWith
 import androidx.compose.ui.platform.testTag
@@ -80,8 +85,45 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     }
     val motion = LocalMotion.current
     val selectionBar = 88.dp
-    Box(Modifier.fillMaxSize()) {
-    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Like the Home and Music search bars: the header floats over the list, slides up as the
+    // list scrolls down and comes back with any upward scroll. Only its layer moves, so the list
+    // is never re-measured mid-scroll. Selecting or typing a search keeps it in place.
+    var headerHeight by remember { mutableIntStateOf(0) }
+    val headerOffset = remember { mutableFloatStateOf(0f) }
+    var searchFocused by remember { mutableStateOf(false) }
+    val pinned = selecting || searchFocused
+    val headerScroll =
+        remember(headerOffset) {
+            object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+                override fun onPreScroll(
+                    available: androidx.compose.ui.geometry.Offset,
+                    source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+                ): androidx.compose.ui.geometry.Offset {
+                    val dy = available.y
+                    if (dy != 0f)
+                        headerOffset.floatValue =
+                            (headerOffset.floatValue - dy).coerceIn(0f, headerHeight.toFloat())
+                    return androidx.compose.ui.geometry.Offset.Zero
+                }
+            }
+        }
+    LaunchedEffect(section, selecting, pinned) { headerOffset.floatValue = 0f }
+    val headerSpace = with(androidx.compose.ui.platform.LocalDensity.current) { headerHeight.toDp() }
+    Box(
+        Modifier.fillMaxSize()
+            .clipToBounds()
+            .nestedScroll(headerScroll)
+    ) {
+    Column(
+        Modifier.fillMaxWidth()
+            .zIndex(1f)
+            .onSizeChanged { headerHeight = it.height }
+            .graphicsLayer { translationY = if (pinned) 0f else -headerOffset.floatValue }
+            .background(MaterialTheme.colorScheme.background)
+            .padding(bottom = 8.dp)
+            .testTag("offline-header"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         // While selecting, the filter row and actions give way to a selection header.
         androidx.compose.animation.AnimatedContent(
             selecting && section == "Offline",
@@ -144,6 +186,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 { query = it },
                 if (section == "Playlists") "Search offline playlists" else "Search offline media",
                 Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
+                onFocusChange = { searchFocused = it },
             )
         // Labelled actions instead of two look-alike icons, plus what the library holds.
         FlowRow(
@@ -182,13 +225,14 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         }
         }
         }
+    }
         LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
+            Modifier.fillMaxSize(),
             contentPadding =
                 PaddingValues(
                     start = MediaTokens.textInset,
                     end = MediaTokens.textInset,
-                    top = 4.dp,
+                    top = 4.dp + headerSpace,
                     bottom =
                         4.dp + LocalBottomOverlay.current +
                             if (selecting && section == "Offline") selectionBar else 0.dp,
@@ -378,7 +422,6 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                 }
             }
         }
-    }
     OfflineSelectionActions(
         visible = selecting && section == "Offline",
         enabled = selectedItems.isNotEmpty(),

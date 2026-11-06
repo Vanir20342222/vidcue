@@ -30,11 +30,32 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
-/** "1.2M subscribers" from the stream's follower count, or blank when unknown. */
+/**
+ * "1.2M subscribers" from the stream's follower count, else YouTube's own label from the watch
+ * details, or blank when neither is known.
+ */
 internal fun subscriberLabel(media: JSONObject?): String {
     val count = media?.optLong("channel_follower_count", -1) ?: -1
-    if (count < 0) return ""
+    if (count < 0)
+        return media?.optString("subscribers_text")?.takeUnless { it == "null" }.orEmpty()
     return "${compactCount(count)} ${if (count == 1L) "subscriber" else "subscribers"}"
+}
+
+/**
+ * The playing media with the watch details filled in where the stream left gaps. Values the
+ * stream already had win; nothing is invented.
+ */
+internal fun withWatchDetails(media: JSONObject?, details: JSONObject?): JSONObject? {
+    if (media == null || details == null || details.length() == 0) return media
+    val merged = media.copyJson()
+    val date = media.optString("upload_date").takeUnless { it.isBlank() || it == "null" }
+    val published = details.optString("published_text")
+    if (date == null && published.isNotBlank()) merged.put("published_text", published)
+    if (media.optLong("like_count", -1) < 0 && details.has("like_count"))
+        merged.put("like_count", details.optLong("like_count"))
+    val subscribers = details.optString("subscribers_text")
+    if (subscribers.isNotBlank()) merged.put("subscribers_text", subscribers)
+    return merged
 }
 
 /** The description without blank runs, so a collapsed preview is not mostly empty lines. */
