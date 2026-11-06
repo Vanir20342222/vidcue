@@ -445,6 +445,7 @@ internal fun FocusedPlayer(
                                     player.media?.optBoolean("live") == true),
                         mobile = mobile,
                         thumbnails = config.optBoolean("thumbnails", true),
+                        openChannel = { vm.openChannel(it, musicSource(player.media)) },
                         headerModifier =
                             Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
                         error =
@@ -487,6 +488,12 @@ internal fun FocusedPlayer(
                         Text(" ", style = MaterialTheme.typography.bodyLarge, maxLines = 1)
                     if (showCreator)
                         Row(
+                            Modifier.opensChannel(
+                                creator,
+                                player.media?.optString("channel_id")?.takeIf(::isChannelId).orEmpty(),
+                            ) {
+                                vm.openChannel(it, musicSource(player.media))
+                            },
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
@@ -1088,3 +1095,9 @@ private fun CountdownRing(glyph: Glyph, fraction: Float, accent: Color) {
         MediaIcon(glyph, Modifier.size(15.dp), accent, filled = true)
     }
 }
+
+/** A YouTube Music item opens its artist on the Music tab; everything else on YouTube. */
+private fun musicSource(media: org.json.JSONObject?): Boolean =
+    android.net.Uri.parse(media?.optString("url").orEmpty())
+        .host
+        .equals("music.youtube.com", ignoreCase = true)

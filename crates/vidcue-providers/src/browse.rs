@@ -11,6 +11,9 @@ use tokio::sync::Mutex;
 use vidcue_core::{BrowseRequest, Media, MediaKind, Page, clean_text};
 
 const MEMBERS_ONLY_NOTICE: &str = "Members-only videos are hidden.";
+/// Browse params that select a channel's Videos tab (every upload, newest first)
+/// instead of its Home tab, which shows only a few featured shelves.
+const CHANNEL_VIDEOS_PARAMS: &str = "EgZ2aWRlb3PyBgQKAjoA";
 
 /// Only transient transport/service failures may trigger automatic feed recovery.
 #[derive(Debug)]
@@ -525,6 +528,12 @@ impl Browser {
                     "History".into(),
                 )
             }
+            // Music keeps its artist page; a YouTube channel opens on its uploads.
+            BrowseRequest::Collection(id) if !music && vidcue_core::is_channel_id(id) => (
+                "browse",
+                json!({"browseId":id,"params":CHANNEL_VIDEOS_PARAMS}),
+                "Videos".into(),
+            ),
             BrowseRequest::Collection(id) => {
                 ("browse", json!({"browseId":id}), "Collection".into())
             }
@@ -614,6 +623,12 @@ impl Browser {
                         .and_then(Value::as_str)
                         .map(clean_text)
                         .unwrap_or_default(),
+                    channel_id: details
+                        .get("channelId")
+                        .and_then(Value::as_str)
+                        .filter(|id| vidcue_core::is_channel_id(id))
+                        .unwrap_or_default()
+                        .into(),
                     chapters: vidcue_core::chapters::from_description(
                         details
                             .get("shortDescription")
@@ -667,7 +682,12 @@ impl Browser {
         } else {
             parse_page(&data, music)
         };
-        page.title = title;
+        page.title = match request {
+            BrowseRequest::Collection(id) if title == "Videos" => {
+                channel_title(&data).map_or(title, |name| format!("{name} · Videos"))
+            }
+            _ => title,
+        };
         if let Some(token) = page.continuation.take() {
             page.continuation = Some(format!("{endpoint}:{token}"));
         }
@@ -902,6 +922,39 @@ fn thumbnails(value: &Value) -> Vec<vidcue_core::Thumbnail> {
     walk(value, &mut images);
     images
 }
+/// Channel name from a channel browse response, for the page heading.
+fn channel_title(data: &Value) -> Option<String> {
+    data.pointer("/metadata/channelMetadataRenderer/title")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            data.pointer("/header/pageHeaderRenderer/pageTitle")
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            data.pointer("/header/c4TabbedHeaderRenderer/title")
+                .and_then(Value::as_str)
+        })
+        .map(clean_text)
+        .filter(|name| !name.is_empty())
+}
+/// First channel browse ID linked anywhere under `value` (a byline, avatar or metadata row).
+fn channel_link(value: &Value) -> Option<String> {
+    match value {
+        Value::Object(map) => map
+            .get("browseEndpoint")
+            .and_then(|endpoint| endpoint.get("browseId"))
+            .and_then(Value::as_str)
+            .filter(|id| vidcue_core::is_channel_id(id))
+            .map(str::to_owned)
+            .or_else(|| {
+                map.iter()
+                    .filter(|(name, _)| !matches!(name.as_str(), "menu" | "trackingParams"))
+                    .find_map(|(_, child)| channel_link(child))
+            }),
+        Value::Array(items) => items.iter().find_map(channel_link),
+        _ => None,
+    }
+}
 fn thumb(value: &Value) -> String {
     thumbnails(value)
         .into_iter()
@@ -1101,6 +1154,12 @@ fn parse_lockup(r: &Value, music: bool) -> Option<Media> {
         },
         browse_id: collection.then(|| format!("VL{id}")),
         channel_thumbnail: channel_avatar(r),
+        // The byline row and the avatar beside it both link to the publishing channel.
+        channel_id: metadata
+            .pointer("/metadata/contentMetadataViewModel/metadataRows/0")
+            .and_then(channel_link)
+            .or_else(|| metadata.get("image").and_then(channel_link))
+            .unwrap_or_default(),
         live: !collection && live_now(r),
         ..Default::default()
     })
@@ -1159,6 +1218,21 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
         item.creator = show;
     }
     item.channel_thumbnail = channel_avatar(r);
+    item.channel_id = [
+        "ownerText",
+        "shortBylineText",
+        "longBylineText",
+        "channelThumbnailSupportedRenderers",
+        "subtitle",
+    ]
+    .into_iter()
+    .filter_map(|field| r.get(field))
+    .find_map(channel_link)
+    .or_else(|| {
+        r.pointer("/flexColumns/1/musicResponsiveListItemFlexColumnRenderer/text")
+            .and_then(channel_link)
+    })
+    .unwrap_or_default();
     item.description = r.get("descriptionSnippet").map(text).unwrap_or_default();
     item.views_text = r
         .get("viewCountText")
@@ -1246,6 +1320,9 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
     } else if let Some(id) = browse {
         item.id = id.into();
         item.browse_id = Some(id.into());
+        if vidcue_core::is_channel_id(id) {
+            item.channel_id = id.into();
+        }
         item.kind = if id.starts_with("UC") {
             if music {
                 MediaKind::Artist
@@ -1285,6 +1362,7 @@ fn parse_renderer(name: &str, r: &Value, music: bool) -> Option<Media> {
     } else if name == "channelRenderer" {
         let id = r.get("channelId").and_then(Value::as_str)?;
         item.id = id.into();
+        item.channel_id = id.into();
         item.kind = MediaKind::Channel;
         item.browse_id = Some(id.into());
         item.url = format!("https://www.youtube.com/channel/{id}");
@@ -1789,6 +1867,106 @@ mod request_tests {
             "explicit refresh must fetch again"
         );
         task.abort();
+    }
+    #[tokio::test]
+    async fn youtube_channels_open_on_their_videos_tab_and_music_artists_do_not() {
+        const CHANNEL: &str = "UCsyntheticchannel0000ab";
+        let bodies = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = bodies.clone();
+        let (base, task) = crate::test_http::serve_request(move |request| {
+            let body = if request.starts_with("GET") {
+                r#"ytcfg.set({"INNERTUBE_CLIENT_VERSION":"fixture"});"#.into()
+            } else {
+                seen.lock()
+                    .unwrap()
+                    .push(request.split_once("\r\n\r\n").unwrap().1.into());
+                json!({
+                    "metadata":{"channelMetadataRenderer":{"title":"Synthetic Channel"}},
+                    "contents":{"twoColumnBrowseResultsRenderer":{"tabs":[{"tabRenderer":{
+                        "selected":true,
+                        "content":{"richGridRenderer":{"contents":[
+                            {"richItemRenderer":{"content":{"videoRenderer":{
+                                "videoId":"aaaaaaaaaaa","title":{"runs":[{"text":"Newest upload"}]}
+                            }}}},
+                            {"richItemRenderer":{"content":{"videoRenderer":{
+                                "videoId":"bbbbbbbbbbb","title":{"runs":[{"text":"Older upload"}]}
+                            }}}},
+                            {"continuationItemRenderer":{"continuationEndpoint":{
+                                "continuationCommand":{"token":"more-uploads"}
+                            }}}
+                        ]}}
+                    }}]}}
+                })
+                .to_string()
+            };
+            (200, String::new(), body.into_bytes())
+        })
+        .await;
+        let mut browser = Browser::new(client(), None, 0);
+        browser.origins = [base.clone(), base];
+        let request = BrowseRequest::Collection(CHANNEL.into());
+        let page = browser.fetch(false, &request).await.unwrap();
+        assert_eq!(page.title, "Synthetic Channel · Videos");
+        assert_eq!(
+            page.items.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+            ["aaaaaaaaaaa", "bbbbbbbbbbb"]
+        );
+        assert_eq!(page.continuation.as_deref(), Some("browse:more-uploads"));
+        browser.fetch(true, &request).await.unwrap();
+        browser
+            .fetch(false, &BrowseRequest::Collection("VLPLsynthetic".into()))
+            .await
+            .unwrap();
+        let bodies = bodies.lock().unwrap();
+        let sent: Vec<Value> = bodies
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(sent[0]["browseId"], CHANNEL);
+        assert_eq!(sent[0]["params"], CHANNEL_VIDEOS_PARAMS);
+        assert_eq!(sent[1]["browseId"], CHANNEL, "Music keeps the artist page");
+        assert!(sent[1].get("params").is_none());
+        assert!(sent[2].get("params").is_none(), "playlists are unchanged");
+        task.abort();
+    }
+    #[test]
+    fn video_cards_remember_the_channel_that_published_them() {
+        const CHANNEL: &str = "UCsyntheticchannel0000ab";
+        let link = json!({"browseEndpoint":{"browseId":CHANNEL}});
+        let page = parse_page(
+            &json!({"contents":[
+                {"videoRenderer":{
+                    "videoId":"aaaaaaaaaaa", "title":{"runs":[{"text":"Classic"}]},
+                    "ownerText":{"runs":[{"text":"Synthetic","navigationEndpoint":link}]}
+                }},
+                {"lockupViewModel":{
+                    "contentId":"bbbbbbbbbbb", "contentType":"LOCKUP_CONTENT_TYPE_VIDEO",
+                    "metadata":{"lockupMetadataViewModel":{
+                        "title":{"content":"Lockup"},
+                        "metadata":{"contentMetadataViewModel":{"metadataRows":[{"metadataParts":[{
+                            "text":{"content":"Synthetic","commandRuns":[{"onTap":{
+                                "innertubeCommand":link
+                            }}]}
+                        }]}]}}
+                    }}
+                }},
+                {"videoRenderer":{
+                    "videoId":"ccccccccccc", "title":{"runs":[{"text":"No byline link"}]},
+                    "ownerText":{"runs":[{"text":"Unknown"}]},
+                    "menu":{"menuRenderer":{"items":[{"navigationEndpoint":link}]}}
+                }},
+                {"channelRenderer":{"channelId":CHANNEL, "title":{"simpleText":"Synthetic"}}}
+            ]}),
+            false,
+        );
+        let ids: Vec<_> = page.items.iter().map(|m| m.channel_id.as_str()).collect();
+        assert_eq!(ids, [CHANNEL, CHANNEL, "", CHANNEL]);
+        let unknown = serde_json::to_value(&page.items[2]).unwrap();
+        assert!(
+            unknown.get("channel_id").is_none(),
+            "unknown channels serialize as before"
+        );
     }
     #[tokio::test]
     async fn rejected_player_api_recovers_metadata_from_the_watch_page() {

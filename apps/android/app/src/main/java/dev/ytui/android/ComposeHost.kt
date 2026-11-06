@@ -1805,6 +1805,11 @@ private fun MediaRow(
                     36.dp,
                     imageUrl = if (showChannel) media.channelThumbnail else "",
                     loadImage = thumbnails,
+                    modifier =
+                        Modifier.clip(CircleShape)
+                            .opensChannel(media.creator, if (showChannel) media.channelId else "") {
+                                vm.openChannel(it)
+                            },
                 )
                 Spacer(Modifier.width(12.dp))
             }
@@ -1834,6 +1839,7 @@ private fun MediaRow(
                             if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
                             else if (tab == 3) "Radio station" else "YouTube"
                         },
+                        Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
@@ -1902,6 +1908,15 @@ private fun MediaCardMenu(
         if (media.collection)
             ValueRow("Play all", glyph = Glyph.Queue, chevron = false) {
                 execute { vm.playCollection(media) }
+            }
+        if (media.channelId.isNotBlank() && media.kind !in setOf("channel", "artist"))
+            ValueRow(
+                "Go to channel",
+                Modifier.testTag("media-channel-${media.key}"),
+                glyph = Glyph.Account,
+                subtitle = media.creator.ifBlank { "See all their videos" },
+            ) {
+                execute { vm.openChannel(media.channelId) }
             }
         ValueRow(
             "Bookmark",
@@ -2017,6 +2032,7 @@ private fun WideMediaRow(
             CardInformation(media.value, mobile)
             if (mobile.optBoolean("show_channel", true))
                 Row(
+                    Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {

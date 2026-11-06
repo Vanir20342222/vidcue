@@ -163,6 +163,10 @@ internal data class MediaCard(val value: JSONObject) {
     val collection: Boolean
         get() = kind in setOf("playlist", "album", "artist", "channel")
 
+    /** Channel that published this item (`UC…`), or blank when the provider did not link one. */
+    val channelId: String
+        get() = value.optString("channel_id").takeIf(::isChannelId).orEmpty()
+
     val audio: Boolean
         get() = kind == "song" || kind == "station"
 
@@ -181,6 +185,12 @@ internal data class MediaCard(val value: JSONObject) {
             else id
         }
 }
+
+/** A YouTube channel browse ID: `UC` and 22 URL-safe characters, as the Rust provider checks. */
+internal fun isChannelId(id: String): Boolean =
+    id.length == 24 &&
+        id.startsWith("UC") &&
+        id.all { (it.code < 128 && it.isLetterOrDigit()) || it == '_' || it == '-' }
 
 internal data class FeedState(
     val request: Any = "Home",
@@ -890,6 +900,22 @@ internal class YtuiViewModel(
                     return
                 }
         play(first, playContext = shelf)
+    }
+
+    /**
+     * Show every upload of a channel: its Videos tab on YouTube, or the artist page on Music.
+     * The player shrinks to the mini-player so playback continues, and Back returns to the
+     * previous feed.
+     */
+    fun openChannel(channelId: String, music: Boolean = tab.value == 2) {
+        if (!isChannelId(channelId)) return
+        val index = if (music) 2 else 1
+        playerOpen.value = false
+        if (tab.value != index) {
+            categoryJob?.cancel()
+            tab.value = index
+        }
+        navigate(index, request = json("Collection" to channelId))
     }
 
     fun playCollection(media: MediaCard) {
