@@ -348,6 +348,70 @@ class CatalogUiTest {
     }
 
     @Test
+    fun offlineSelectionCreatesPopulatedPlaylistsAndAddsOnlyMissingSongs() {
+        val title = "Selection fixture " + java.util.UUID.randomUUID().toString().take(8)
+        val copies = (1..3).map { index ->
+            json(
+                "id" to index.toString().repeat(64),
+                "title" to "Selected song $index",
+                "state" to "Complete",
+                "audio" to true,
+                "media" to json("url" to "https://media.invalid/selected-$index", "title" to "Selected song $index", "kind" to "song"),
+            )
+        }
+        compose.onNodeWithTag("tab-0").performClick()
+        settleUi()
+        scenario.onActivity {
+            ViewModelProvider(it)[YtuiViewModel::class.java].downloads.value = copies
+        }
+        try {
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-add-selected").assertIsNotEnabled()
+            copies.take(2).forEach {
+                compose.onNodeWithTag("offline-item-${it.getString("id")}").performClick()
+            }
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("2 selected")
+            compose.onNodeWithTag("offline-delete-selected").performClick()
+            compose.onNodeWithText("Delete 2 offline items?").assertIsDisplayed()
+            compose.onNodeWithText("Cancel").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("2 selected")
+            compose.onNodeWithTag("offline-playlist-selected").performClick()
+            compose.onNodeWithTag("offline-playlist-name").performTextInput(title)
+            settleUi()
+            compose.onNodeWithText("Create").performClick()
+            compose.waitUntil(10_000) {
+                PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                    .any { it.optString("title") == title && it.getJSONArray("items").length() == 2 }
+            }
+            compose.onNodeWithTag("library-Offline").performClick()
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("3 selected")
+            compose.onNodeWithTag("offline-add-selected").performClick()
+            settleUi()
+            compose.onNodeWithText(title).performClick()
+            compose.waitUntil(10_000) {
+                PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                    .any { playlist ->
+                        playlist.optString("title") == title &&
+                            playlist.getJSONArray("items").objects().map { it.optString("offline_id") } == copies.map { it.optString("id") }
+                    }
+            }
+            compose.onNodeWithTag("offline-select").assertTextContains("Select")
+            compose.onNodeWithTag("offline-select").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-select-all").performClick()
+            compose.onNodeWithTag("offline-selection-count").assertTextEquals("0 selected")
+            compose.onNodeWithTag("offline-delete-selected").assertIsNotEnabled()
+        } finally {
+            PlaybackService.rpcArray(json("op" to "offline_playlists")).objects()
+                .filter { it.optString("title") == title }
+                .forEach { PlaybackService.rpcArray(json("op" to "offline_playlist_delete", "id" to it.optString("id"))) }
+            OfflineStore.dirty = true
+        }
+    }
+
+    @Test
     fun offlinePlaylistsUseEditableNativeFieldsAndRealRustPersistence() {
         compose.onNodeWithTag("tab-0").performClick()
         compose.onNodeWithTag("create-offline-playlist").performClick()
@@ -693,7 +757,7 @@ class CatalogUiTest {
             }
             val cards = populate(1)
             captureSettled("restyle-large-text-feed.png")
-            assertNavigationLabelsFit()
+            assertNavigationTabsNamed()
             compose
                 .onNodeWithTag("search-field")
                 .assertIsDisplayed()
@@ -708,8 +772,8 @@ class CatalogUiTest {
             compose.onNodeWithTag("settings-Appearance").performClick()
             compose.onNodeWithTag("theme-selector").assertIsDisplayed().performClick()
             // The fixture deliberately stores the legacy "dark" alias.
-            compose.onNodeWithTag("theme-ytui-dark").performScrollTo().assertIsSelected()
-            compose.onNodeWithTag("theme-ytui-light").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithTag("theme-vidcue-dark").performScrollTo().assertIsSelected()
+            compose.onNodeWithTag("theme-vidcue-light").performScrollTo().assertIsDisplayed()
             captureSettled("restyle-large-text-theme-dialog.png")
             compose.onNodeWithText("Cancel").performClick()
             captureSettled("restyle-large-text-settings.png")
@@ -733,7 +797,7 @@ class CatalogUiTest {
             }
             val tabletCards = populate(1)
             captureSettled("restyle-fidelity-large-text-tablet-feed.png")
-            assertNavigationLabelsFit()
+            assertNavigationTabsNamed()
             compose.onNodeWithTag("navigation-rail").assertIsDisplayed()
             awaitDecodedCovers(tabletCards)
             captureSettled("restyle-fidelity-large-text-tablet-feed.png")
@@ -912,7 +976,8 @@ class CatalogUiTest {
                 compose.onNodeWithTag("menu-button").performClick()
                 compose.onNodeWithText("Sleep timer").performClick()
                 compose.onNodeWithText("15 minutes").assertIsDisplayed()
-                compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+                // No timer runs here, so there is nothing to cancel.
+                compose.onNodeWithText("Cancel timer").assertDoesNotExist()
                 captureSettled("restyle-fidelity-$profile-sleep.png")
                 compose.onNodeWithContentDescription("Close").performClick()
                 compose.onNodeWithTag("menu-button").performClick()
@@ -1403,19 +1468,20 @@ class CatalogUiTest {
             frames(240)
             compose.onNodeWithText("Sleep timer").performClick()
             frames(600)
-            compose.onNodeWithText("Cancel timer").assertIsDisplayed()
+            // "Cancel timer" only shows while a timer runs; the first choice marks the sheet.
+            compose.onNodeWithText("15 minutes").assertIsDisplayed()
             mark("close timer sheet")
             compose.onNodeWithContentDescription("Close").performClick()
             frames(600)
             android.util.Log.e(
                 "YTUI-DIAG",
-                "timer sheet after Close: Cancel timer nodes=" +
-                    compose.onAllNodesWithText("Cancel timer").fetchSemanticsNodes().map { it.boundsInRoot } +
+                "timer sheet after Close: 15 minutes nodes=" +
+                    compose.onAllNodesWithText("15 minutes").fetchSemanticsNodes().map { it.boundsInRoot } +
                     " Close nodes=" +
                     compose.onAllNodesWithContentDescription("Close").fetchSemanticsNodes().size,
             )
             MediaRuntimeTest.capture("restyle-fidelity-timer-closed.png")
-            compose.onNodeWithText("Cancel timer").assertDoesNotExist()
+            compose.onNodeWithText("15 minutes").assertDoesNotExist()
             mark("timer dismissed")
             Assert.assertTrue(
                 "Recording must still cover the final closed sheet state",
@@ -1496,38 +1562,23 @@ class CatalogUiTest {
         }
     }
 
-    private fun assertNavigationLabelsFit() {
-        for (index in 0..3) {
+    private fun assertNavigationTabsNamed() {
+        // The dock is icon-only; every tab must still be a named, reachable 48dp tab.
+        for ((index, name) in listOf(0 to "Downloads", 1 to "Home", 2 to "Music", 3 to "Radio")) {
             compose
                 .onNodeWithTag("tab-$index")
                 .assertIsDisplayed()
                 .assertHeightIsAtLeast(androidx.compose.ui.unit.Dp(48f))
+                .assertWidthIsAtLeast(androidx.compose.ui.unit.Dp(48f))
                 .assert(
                     SemanticsMatcher.expectValue(
                         SemanticsProperties.Role,
                         androidx.compose.ui.semantics.Role.Tab,
                     )
                 )
-            val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-            compose
-                .onNodeWithTag("navigation-label-$index", useUnmergedTree = true)
-                .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            Assert.assertEquals(
-                "A full scaled navigation word must fit on one line",
-                1,
-                layouts.single().lineCount,
-            )
-            Assert.assertFalse(
-                "Navigation $index must not clip or ellipsize: " +
-                    "text=${layouts.single().layoutInput.text}, size=${layouts.single().size}, " +
-                    "constraints=${layouts.single().layoutInput.constraints}, " +
-                    "paragraphWidth=${layouts.single().multiParagraph.width}, " +
-                    "intrinsicWidth=${layouts.single().multiParagraph.maxIntrinsicWidth}, " +
-                    "lineRight=${layouts.single().getLineRight(0)}, " +
-                    "widthOverflow=${layouts.single().didOverflowWidth}, " +
-                    "heightOverflow=${layouts.single().didOverflowHeight}",
-                layouts.single().hasVisualOverflow,
-            )
+                .assert(
+                    SemanticsMatcher.expectValue(SemanticsProperties.ContentDescription, listOf(name))
+                )
         }
         compose.onNodeWithTag("tab-1").assertIsSelected()
     }
@@ -1536,7 +1587,24 @@ class CatalogUiTest {
         var diagnostics = emptyList<String>()
         try {
             compose.waitUntil(15_000) {
-                val viewport = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                // The search header and the mini player/navigation dock float over the grid;
+                // a cover is only fully visible between them.
+                val grid = compose.onNodeWithTag("feed-list").getUnclippedBoundsInRoot()
+                val header =
+                    compose.onAllNodesWithTag("browse-header").fetchSemanticsNodes().firstOrNull()?.let {
+                        with(compose.density) { it.boundsInRoot.bottom.toDp() }
+                    }
+                val dock =
+                    compose.onAllNodesWithTag("bottom-dock").fetchSemanticsNodes().firstOrNull()?.let {
+                        with(compose.density) { it.boundsInRoot.top.toDp() }
+                    }
+                val viewport =
+                    androidx.compose.ui.unit.DpRect(
+                        grid.left,
+                        if (header != null && header > grid.top) header else grid.top,
+                        grid.right,
+                        if (dock != null && dock < grid.bottom) dock else grid.bottom,
+                    )
                 var inspected = 0
                 var decoded = true
                 val checks = mutableListOf<String>()

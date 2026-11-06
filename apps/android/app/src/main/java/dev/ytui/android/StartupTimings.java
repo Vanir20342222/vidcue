@@ -192,7 +192,7 @@ final class StartupTimings {
 
   static synchronized String report() {
     StringBuilder text =
-        new StringBuilder("ytui startup timings (milliseconds)\n")
+        new StringBuilder("Vidcue startup timings (milliseconds)\n")
             .append("Target: video tap to visible frame < 1000 ms\n")
             .append("Usable start requires both visible output and active playback < 1000 ms.\n")
             .append(

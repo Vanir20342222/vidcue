@@ -163,7 +163,7 @@ class NativeUiTest {
             val document =
                 JSONObject(NativeBridge.request(json("op" to "theme", "dark" to true).toString()))
                     .getJSONObject("data")
-                    .put("name", "ytui-dark")
+                    .put("name", "vidcue-dark")
                     .put("source", "synthetic imported palette")
                     .put("background", org.json.JSONArray(listOf(12, 20, 50)))
                     .put("surface", org.json.JSONArray(listOf(20, 32, 60)))

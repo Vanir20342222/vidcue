@@ -273,6 +273,15 @@ internal object ArtworkCache {
         return null
     }
 
+    /** The latest cover decoded for each item, at any size or source. */
+    private val recentByItem = LruCache<String, Bitmap>(48)
+
+    /**
+     * Something to paint for [media] while its exact size or source loads: the last cover decoded
+     * for the same item. Never decodes or fetches.
+     */
+    fun recent(media: MediaCard): Bitmap? = recentByItem.get(media.key)
+
     suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
         if (!hasArtwork(media)) return null
         val size = decodeSize(pixels)
@@ -281,7 +290,20 @@ internal object ArtworkCache {
             return it
         }
         return loader.load(key) fetch@{
-            val data = NativeBridge.thumbnail(media.artwork.toString(), size) ?: return@fetch null
+            // YouTube's standard image exists for every video; a listed cover (for example a
+            // max-resolution one) may not. Fall back to it rather than leaving the cover empty.
+            val standard =
+                youtubeArtworkFallback(media.url, if (media.kind == "song") "song" else "video")
+                    ?.takeIf { it != media.artwork.optString("thumbnail") }
+            val data =
+                NativeBridge.thumbnail(media.artwork.toString(), size)
+                    ?: standard?.let {
+                        NativeBridge.thumbnail(
+                            media.artwork.copyJson().put("thumbnail", it).put("thumbnails", JSONArray()).toString(),
+                            size,
+                        )
+                    }
+                    ?: return@fetch null
             if (
                 data.size < 3 ||
                     data[0] !in 1..768 ||
@@ -291,6 +313,7 @@ internal object ArtworkCache {
                 return@fetch null
             Bitmap.createBitmap(data, 2, data[0], data[0], data[1], Bitmap.Config.ARGB_8888).also {
                 it.prepareToDraw()
+                recentByItem.put(media.key, it)
             }
         }
     }
@@ -347,6 +370,28 @@ internal class YtuiViewModel(
     val queue = MutableStateFlow<List<MediaCard>>(emptyList())
     val upNext = MutableStateFlow(UpNextState())
     private var upNextJob: Job? = null
+
+    /**
+     * Watch-page extras for the playing video (date, likes, subscribers), keyed by its URL. The
+     * fast playback path does not return them; one `next` request after the video starts does.
+     */
+    val watchDetails = MutableStateFlow<Pair<String, JSONObject>?>(null)
+    private var watchDetailsJob: Job? = null
+
+    fun loadWatchDetails(media: JSONObject?) {
+        val url = media?.optString("url").orEmpty()
+        if (url.isBlank() || watchDetails.value?.first == url) return
+        watchDetailsJob?.cancel()
+        watchDetails.value = null
+        if (MediaBridge.offlineUi || player.value.value.optBoolean("offline")) return
+        watchDetailsJob =
+            viewModelScope.launch {
+                val found =
+                    runCatching { RustRpc.objectCall("watch_details", "media" to media) }.getOrNull()
+                        ?: return@launch
+                watchDetails.value = url to found
+            }
+    }
     private var shownRelated: Pair<String, List<MediaCard>>? = null
     val recent = MutableStateFlow<List<MediaCard>>(emptyList())
     val status = MutableStateFlow("Ready")
@@ -365,6 +410,7 @@ internal class YtuiViewModel(
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
+        val engineError = EngineStartup.current.error()
         viewModelScope.launch {
             runCatching {
                     mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
@@ -380,7 +426,8 @@ internal class YtuiViewModel(
                         .takeUnless { it.isBlank() || it == "null" }
                         ?.let { status.value = it }
                 }
-                .onFailure { status.value = it.message ?: "Could not load settings" }
+                .onFailure { status.value = engineError ?: it.message ?: "Could not load settings" }
+            EngineStartup.current.claimNotice()?.let { actionError.value = it }
             ready.value = true
             loadFeedIfNeeded(tab.value)
         }
@@ -474,6 +521,7 @@ internal class YtuiViewModel(
                         }
                         "show_player" -> playerOpen.value = true
                         "shared" -> sharedQuery.value = text
+                        "offline_playlists_changed" -> loadOfflinePlaylists()
                         "error" -> {
                             status.value = text
                             actionError.value = text
@@ -790,8 +838,11 @@ internal class YtuiViewModel(
     fun search(raw: String) {
         val query = raw.trim()
         if (query.isBlank()) return
-        if (query.startsWith("https://") || query.startsWith("http://")) {
-            runCatching { linked(query) }
+        val link =
+            if (query.startsWith("https://", true) || query.startsWith("http://", true)) query
+            else SharedLinks.mediaLink(query)
+        if (link != null) {
+            runCatching { linked(link) }
                 .onSuccess { play(it) }
                 .onFailure {
                     status.value = "Enter a valid HTTP(S) video or playlist URL"
@@ -800,26 +851,16 @@ internal class YtuiViewModel(
         } else navigate(request = json((if (tab.value == 3) "RadioSearch" else "Search") to query))
     }
 
+    /** The media kind comes from the URL; the tab only decides for non-YouTube links (AR-07). */
     fun linked(raw: String): MediaCard {
-        val uri = java.net.URI(raw)
-        require(uri.scheme in listOf("http", "https") && uri.host != null && uri.userInfo == null)
-        val parsed = Uri.parse(raw)
-        val host = uri.host.lowercase(java.util.Locale.ROOT)
-        val youtube = host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be"
-        val playlist =
-            youtube &&
-                parsed.path?.trimEnd('/') == "/playlist" &&
-                !parsed.getQueryParameter("list").isNullOrBlank()
+        val link = SharedLinks.classify(raw, radioTab = tab.value == 3)
         return MediaCard(
             json(
-                "url" to raw,
-                "title" to raw,
-                "id" to if (playlist) parsed.getQueryParameter("list") else "",
-                "kind" to
-                    if (playlist) "playlist"
-                    else if (tab.value == 3) "station"
-                    else if (tab.value == 2 || host == "music.youtube.com") "song" else "video",
-                "live" to (tab.value == 3),
+                "url" to link.url,
+                "title" to link.url,
+                "id" to link.id,
+                "kind" to link.kind,
+                "live" to link.live,
             )
         )
     }
@@ -839,6 +880,17 @@ internal class YtuiViewModel(
             mobile.value.optBoolean("autoplay_related", true),
             forceRelated,
         )
+
+    /** Plays a home shelf from its first playable entry, continuing in shelf order. */
+    fun playAll(cards: List<MediaCard>) {
+        val (first, shelf) =
+            PlaybackContexts.shelf(cards)
+                ?: run {
+                    actionError.value = "Nothing in this section can be played in order"
+                    return
+                }
+        play(first, playContext = shelf)
+    }
 
     fun playCollection(media: MediaCard) {
         if (media.collection)
@@ -918,12 +970,18 @@ internal class YtuiViewModel(
         queued: Boolean = false,
         related: Boolean = false,
         continueContext: String? = null,
+        playContext: JSONObject? = null,
     ) {
         val quality = config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
+        val musicCollection = media.collection && (media.musicSource || tab.value == 2)
         val audio =
-            media.audio ||
-                (media.collection && (media.musicSource || tab.value == 2)) ||
-                download && config.value.optJSONObject("download")?.optBoolean("audio") == true
+            if (download)
+                PlaybackPolicy.audioForSave(
+                    media.kind,
+                    media.musicSource || musicCollection,
+                    config.value.optJSONObject("download")?.optBoolean("audio") == true,
+                )
+            else media.audio || musicCollection
         if (download && media.live) {
             status.value = "Live recording is not available"
             actionError.value = status.value
@@ -937,6 +995,8 @@ internal class YtuiViewModel(
                     "music" to (tab.value == 2 || media.musicSource),
                     "audio" to audio,
                     "quality" to quality,
+                    "title" to media.title,
+                    "create_offline_playlist" to (media.kind == "playlist"),
                 )
             else navigate(request = json("Collection" to media.collectionId))
             return
@@ -954,7 +1014,7 @@ internal class YtuiViewModel(
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context =
             if (!preview && !download && !queued && continueContext == null)
-                context(media, related)
+                playContext ?: context(media, related)
             else null
         // Desktop parity (`resume_on_play`): ordinary video plays continue from the
         // saved position; music, live media, previews and downloads start at 0.
@@ -1058,13 +1118,9 @@ internal class YtuiViewModel(
                         )
                 }
                 handedOff = true
-                if (
-                    !download &&
-                        !prepareSurface &&
-                        (!audio ||
-                            config.value.optString("music_player_style").endsWith("-fullscreen"))
-                )
-                    playerOpen.value = true
+                // Videos open the player; music stays in the mini player (the full-screen music
+                // styles are not offered on Android).
+                if (!download && !prepareSurface && !audio) playerOpen.value = true
                 status.value = if (download) "Download queued" else "Starting playback"
                 if (download) confirm("download")
             } finally {
@@ -1165,9 +1221,9 @@ internal class YtuiViewModel(
         offlinePlaylists.value = RustRpc.arrayCall("offline_playlists").objects()
     }
 
-    fun createOfflinePlaylist(title: String) = task {
+    fun createOfflinePlaylist(title: String, items: List<JSONObject> = emptyList()) = task {
         offlinePlaylists.value =
-            RustRpc.arrayCall("offline_playlist_create", "title" to title).objects()
+            RustRpc.arrayCall("offline_playlist_create", "title" to title, "items" to JSONArray(items)).objects()
     }
 
     fun updateOfflinePlaylist(id: String, title: String? = null, items: List<JSONObject>? = null) =

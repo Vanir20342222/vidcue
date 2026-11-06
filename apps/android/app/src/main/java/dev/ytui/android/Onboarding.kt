@@ -2,6 +2,7 @@ package dev.ytui.android
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -32,6 +33,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -107,6 +109,15 @@ internal object OnboardingStore {
     fun shouldShow(context: Context): Boolean =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getInt(KEY, 0) < VERSION
 
+    /**
+     * Whether this launch opens on setup. Mirrors ComposeHost: instrumented offline launches
+     * only show setup when they opt in with ytui.onboarding.
+     */
+    @JvmStatic
+    fun showsAtLaunch(activity: android.app.Activity): Boolean =
+        shouldShow(activity) &&
+            (!MediaBridge.offlineUi || activity.intent.getBooleanExtra("ytui.onboarding", false))
+
     fun complete(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putInt(KEY, VERSION).apply()
     }
@@ -167,14 +178,20 @@ internal fun themeLabel(id: String): String =
     id.split('-', '_', ' ')
         .filter { it.isNotEmpty() }
         .joinToString(" ") { word ->
-            if (word.equals("ytui", ignoreCase = true)) "ytui"
+            if (word.equals("vidcue", ignoreCase = true)) "Vidcue"
             else word.replaceFirstChar(Char::titlecase)
         }
         .ifEmpty { id }
 
-/** Full-screen first-run setup. Calls [onFinish] on skip and on completion; callers persist. */
+/** Full-screen first-run setup. Calls [onSetupDone] on skip and on completion; callers persist. */
 @Composable
-internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) {
+internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Unit) {
+    val activity = LocalActivity.current
+    // Notifications are asked for only once setup is finished or skipped, never on top of it.
+    val onFinish: () -> Unit = {
+        onSetupDone()
+        activity?.let(NotificationPermission::requestOnce)
+    }
     val reduced = LocalReducedMotion.current
     val mobile by vm.mobile.collectAsState()
     var step by rememberSaveable { mutableIntStateOf(0) }
@@ -237,7 +254,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onFinish: () -> Unit) 
                 when (page) {
                     OnboardingSteps.WELCOME -> WelcomePage(background)
                     OnboardingSteps.LOOK -> LookPage(vm, dark)
-                    OnboardingSteps.PLAYBACK -> PlaybackPage(vm)
+                    OnboardingSteps.PLAYBACK -> PlaybackPage(vm, dark)
                     OnboardingSteps.ACCOUNT -> AccountPage(vm)
                     else -> ReadyPage(vm)
                 }
@@ -431,7 +448,7 @@ private fun PageTitle(title: String, body: String, center: Boolean = false, firs
 /** Small tinted badge shown above a page title. */
 @Composable
 private fun PageBadge(glyph: Glyph) {
-    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     Staggered(0) {
         Box(
             Modifier.size(56.dp).background(brand.copy(alpha = 0.16f), CircleShape),
@@ -513,7 +530,7 @@ private fun WelcomeText(center: Boolean) {
     ) {
         Staggered(3) {
             Text(
-                "ytui",
+                "Vidcue",
                 style = MaterialTheme.typography.displaySmall,
                 fontWeight = FontWeight.Bold,
                 textAlign = align,
@@ -533,7 +550,7 @@ private fun WelcomeText(center: Boolean) {
 @Composable
 private fun WelcomeHero(background: Color, size: Dp) {
     val reduced = LocalReducedMotion.current
-    val brand = mediaBrand(background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, background)
     val pop = remember { Animatable(if (reduced) 1f else 0.4f) }
     LaunchedEffect(reduced) {
         if (reduced) pop.snapTo(1f)
@@ -693,8 +710,10 @@ private fun ThemeChip(
 // ---------------------------------------------------------------- 3 Playback
 
 @Composable
-private fun PlaybackPage(vm: YtuiViewModel) {
+private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
     val mobile by vm.mobile.collectAsState()
+    val config by vm.config.collectAsState()
+    val ready by vm.ready.collectAsState()
     PageColumn {
         PageBadge(Glyph.Play)
         PageTitle("Playback", "Choose how ytui plays. Every option is also in Settings later.")
@@ -704,6 +723,7 @@ private fun PlaybackPage(vm: YtuiViewModel) {
                 Triple("autoplay_related", Glyph.Next, "Autoplay related videos" to "Keep going when the queue ends"),
                 Triple("preload_next", Glyph.Download, "Preload the next item" to "Start the next video sooner"),
                 Triple("gestures", Glyph.Expand, "Swipe gestures" to "Swipe to seek and move between pages"),
+                Triple("auto_color_grade", Glyph.Palette, "Auto color grade" to "Analyses each video and adds a slight fitting grade"),
             )
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             rows.forEachIndexed { index, (key, glyph, text) ->
@@ -712,14 +732,66 @@ private fun PlaybackPage(vm: YtuiViewModel) {
                         glyph,
                         text.first,
                         text.second,
-                        mobile.optBoolean(key, true),
+                        mobile.optBoolean(key, MobileSettings.BOOLEANS[key] ?: true),
                         "onboarding-toggle-$key",
                     ) { value ->
                         vm.updateMobile(key, value)
                     }
                 }
             }
+            Staggered(3 + rows.size, Modifier.fillMaxWidth()) {
+                val grade = mobile.optString("color_grade", "off")
+                val presets = ColorGradeMath.PRESETS
+                SettingCycleRow(
+                    Glyph.Palette,
+                    "Color grading",
+                    "A look for videos: warm, cool, vivid or cinematic",
+                    grade.replaceFirstChar(Char::titlecase),
+                    "onboarding-color-grade",
+                ) {
+                    val next = presets[(presets.indexOf(grade) + 1).mod(presets.size)]
+                    vm.updateMobile("color_grade", next)
+                }
+            }
+            // Saving writes the whole settings document; wait until it has loaded (see LookPage).
+            Staggered(4 + rows.size, Modifier.fillMaxWidth()) {
+                EqualizerSettings(vm, dark, config, enabled = ready && config.length() > 0)
+            }
         }
+    }
+}
+
+/** A setup row that steps through a short list of choices on each tap. */
+@Composable
+private fun SettingCycleRow(
+    glyph: Glyph,
+    title: String,
+    subtitle: String,
+    value: String,
+    tag: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth()
+            .heightIn(min = 64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        MediaIcon(glyph, Modifier.size(24.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -748,7 +820,7 @@ private fun AccountPage(vm: YtuiViewModel) {
                 label = "account-state",
             ) { signedIn ->
                 if (signedIn) {
-                    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+                    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
                     Row(
                         Modifier.fillMaxWidth()
                             .heightIn(min = 64.dp)
@@ -821,6 +893,9 @@ private fun ReadyPage(vm: YtuiViewModel) {
                 SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
                 SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
                 SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))
+                SummaryRow("Color grading", mobile.optString("color_grade", "off").replaceFirstChar(Char::titlecase))
+                SummaryRow("Auto color grade", onOff(mobile.optBoolean("auto_color_grade", false)))
+                SummaryRow("Equalizer", EqualizerModel.label(EqualizerModel.selected(config)))
                 SummaryRow("Account", if (account.optBoolean("connected")) "Signed in" else "Not signed in")
             }
         }
@@ -845,7 +920,7 @@ private fun SummaryRow(label: String, value: String) {
 @Composable
 private fun AnimatedCheck() {
     val reduced = LocalReducedMotion.current
-    val brand = mediaBrand(MaterialTheme.colorScheme.background)
+    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     val pop = remember { Animatable(if (reduced) 1f else 0f) }
     val draw = remember { Animatable(if (reduced) 1f else 0f) }
     LaunchedEffect(reduced) {

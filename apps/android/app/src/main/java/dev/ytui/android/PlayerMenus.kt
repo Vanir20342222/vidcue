@@ -209,3 +209,54 @@ internal fun AudioTrackOptions(player: JSONObject, command: (String, Array<Pair<
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 }
+
+/** Playback speeds offered in the options sheet, slowest first. */
+internal val PLAYBACK_SPEEDS = listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)
+
+/**
+ * Speed as one row of chips under a small label: every common speed is a single tap, and the
+ * chosen chip is filled. Replaces a row that opened a separate list page.
+ */
+@Composable
+internal fun SpeedChips(speed: Double, label: (Double) -> String, choose: (Double) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 6.dp, bottom = 10.dp).testTag("speed-chips"),
+    ) {
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(16.dp),
+        ) {
+            MediaIcon(Glyph.Speed, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Playback speed",
+                Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                label(speed),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        androidx.compose.foundation.lazy.LazyRow(
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 40.dp),
+        ) {
+            items(PLAYBACK_SPEEDS.size) { index ->
+                val value = PLAYBACK_SPEEDS[index]
+                MediaChip(
+                    if (value == 1.0) "1×" else label(value),
+                    selected = value == speed,
+                    modifier =
+                        Modifier.testTag("speed-$value").semantics {
+                            selected = value == speed
+                        },
+                ) {
+                    choose(value)
+                }
+            }
+        }
+    }
+}

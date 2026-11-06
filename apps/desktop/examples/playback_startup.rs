@@ -7,8 +7,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
-use ytui_core::{Config, Media};
-use ytui_services::{
+use vidcue_core::{Config, Media};
+use vidcue_services::{
     paths::Paths,
     player::{Player, PlayerCommand},
 };
@@ -36,12 +36,12 @@ async fn main() -> Result<()> {
     let raw: Vec<String> = std::env::args().collect();
     if raw.get(1).is_some_and(|arg| arg == "__native-worker") {
         let path = PathBuf::from(raw.get(2).context("missing worker request")?);
-        return tokio::task::spawn_blocking(move || ytui_services::native::worker(&path)).await?;
+        return tokio::task::spawn_blocking(move || vidcue_services::native::worker(&path)).await?;
     }
     let args = Args::parse();
     let temp = tempfile::tempdir()?;
     let root = temp.path();
-    let mpv = ytui_services::paths::executable("mpv").context("mpv missing")?;
+    let mpv = vidcue_services::paths::executable("mpv").context("mpv missing")?;
     let wrapper = root.join("mpv-null");
     std::fs::write(
         &wrapper,
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
         .as_ref()
         .map(|path| -> Result<_> {
             Ok(std::sync::Arc::new(serde_json::from_slice::<
-                ytui_services::auth::Session,
+                vidcue_services::auth::Session,
             >(&std::fs::read(path)?)?))
         })
         .transpose()?;
@@ -109,13 +109,13 @@ async fn main() -> Result<()> {
                         ensure!(state.error.is_none(), "{}", state.error.unwrap_or_default());
                         tokio::select! {
                             event = player.events.recv() => match event {
-                                Some(ytui_services::player::PlayerEvent::Ended(_)) => {
+                                Some(vidcue_services::player::PlayerEvent::Ended(_)) => {
                                     let state = player.status.borrow().clone();
                                     ensure!(state.duration.is_some_and(|duration| state.position >= duration - 2.0), "premature completion");
                                     println!("{}", json!({"round":round,"completed":true,"position":state.position,"duration":state.duration,"elapsed_ms":started.elapsed().as_millis()}));
                                     return Ok::<_, anyhow::Error>(());
                                 },
-                                Some(ytui_services::player::PlayerEvent::Error(error)) => anyhow::bail!("{error}"),
+                                Some(vidcue_services::player::PlayerEvent::Error(error)) => anyhow::bail!("{error}"),
                                 None => anyhow::bail!("player event channel closed"),
                             },
                             result = player.status.changed() => result?,

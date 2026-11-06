@@ -10,7 +10,10 @@ import stat
 import subprocess
 import sys
 
-STABLE_CERT = "b3e9f1a70dd6597884d1dbba09eafad3d4d73ea62c4074a9b8cec1ac1e034848"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import release_channel  # noqa: E402
+
+STABLE_CERT = release_channel.CERT_SHA256
 
 
 def private_path(path, directory=False):
@@ -32,7 +35,7 @@ def main():
     if identity.is_relative_to(root):
         raise ValueError("Keep the signing identity outside the repository")
     private_path(identity, directory=True)
-    keystore = identity / "ytui-stable.jks"
+    keystore = identity / release_channel.KEYSTORE_FILENAME
     credentials = identity / "credentials.json"
     private_path(keystore)
     private_path(credentials)

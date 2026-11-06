@@ -139,6 +139,59 @@ internal object PlayerChrome {
 
     private const val COMPACT_WIDTH_DP = 560f
 
+    /** Reduced motion (the app setting); system animator scale is checked per touch. */
+    @JvmStatic var reducedMotion = false
+
+    /**
+     * Springy press feedback for the video controls, matching the app's Compose buttons: a
+     * control sinks while held and springs back with a little overshoot when released. The
+     * listener only observes touches; Media3 keeps handling the clicks.
+     */
+    @JvmStatic
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    fun softenPresses(view: PlayerView) {
+        val ids =
+            listOf(
+                androidx.media3.ui.R.id.exo_play_pause,
+                androidx.media3.ui.R.id.exo_prev,
+                androidx.media3.ui.R.id.exo_next,
+                androidx.media3.ui.R.id.exo_rew_with_amount,
+                androidx.media3.ui.R.id.exo_ffwd_with_amount,
+                androidx.media3.ui.R.id.exo_fullscreen,
+                androidx.media3.ui.R.id.exo_minimal_fullscreen,
+                R.id.ytui_collapse,
+                R.id.ytui_captions,
+                R.id.ytui_settings,
+            )
+        for (id in ids) {
+            val button = view.findViewById<View>(id) ?: continue
+            button.setOnTouchListener { v, event ->
+                if (reducedMotion || !android.animation.ValueAnimator.areAnimatorsEnabled())
+                    return@setOnTouchListener false
+                when (event.actionMasked) {
+                    android.view.MotionEvent.ACTION_DOWN ->
+                        v.animate()
+                            .scaleX(PRESSED)
+                            .scaleY(PRESSED)
+                            .setDuration(110)
+                            .setInterpolator(android.view.animation.DecelerateInterpolator())
+                            .start()
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL ->
+                        v.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(360)
+                            .setInterpolator(android.view.animation.OvershootInterpolator(2.4f))
+                            .start()
+                }
+                false
+            }
+        }
+    }
+
+    private const val PRESSED = 0.84f
+
     /**
      * Flat dark disc behind a transport: no glass edge, so the controls sit quietly on the
      * picture. [insetDp] draws it slightly inside a 48dp touch target; the disc still reaches the
@@ -160,10 +213,12 @@ internal object PlayerChrome {
         view.setTag(R.id.ytui_top_scrim, accent)
         val clear = MediaTokens.transparent.toArgb()
         val scrim = MediaTokens.videoScrim.toArgb()
+        // Ease out of the scrim: full at the edge, under half by the middle, clear at the end.
+        val half = MediaTokens.videoScrim.copy(alpha = MediaTokens.videoScrim.alpha * 0.4f).toArgb()
         view.findViewById<View>(R.id.ytui_top_scrim)?.background =
-            GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(scrim, clear))
+            GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(scrim, half, clear))
         view.findViewById<View>(R.id.ytui_bottom_scrim)?.background =
-            GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(scrim, clear))
+            GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(scrim, half, clear))
         // Keep every transport legible even over a uniformly bright frame.
         // Each view needs its own drawable; shared drawable bounds are mutable.
         for (id in
@@ -186,23 +241,36 @@ internal object PlayerChrome {
             )) {
             view.findViewById<View>(id)?.apply {
                 val disc = disc(resources, 2f)
-                val glyph =
-                    (background as? LayerDrawable)?.findDrawableByLayerId(android.R.id.icon)
-                        ?: background
+                // Media3's own arrows are not centred on their ring, so the seek amount sat
+                // off-centre. Use the app's symmetric ring (centred at 12,12) for both.
+                val ring =
+                    androidx.core.content.ContextCompat.getDrawable(
+                        context,
+                        if (id == androidx.media3.ui.R.id.exo_rew_with_amount) R.drawable.ytui_rewind
+                        else R.drawable.ytui_forward,
+                    )
                 ViewCompat.setBackgroundTintList(this, null)
+                foreground = null
                 background =
-                    if (foreground != null || glyph == null) disc
-                    else LayerDrawable(arrayOf(disc, glyph)).apply { setId(1, android.R.id.icon) }
-                // Media3 writes the seek amount ("10") as button text; centre it inside the
-                // ring in the app's face instead of leaving it on the disc's lower edge.
+                    if (ring == null) disc
+                    else LayerDrawable(arrayOf(disc, ring)).apply { setId(1, android.R.id.icon) }
+                // Media3 writes the seek amount ("10") as button text. Centre the digits
+                // themselves: a centred text box puts them off by the font's spare ascent and
+                // descent.
                 (this as? android.widget.TextView)?.apply {
                     gravity = Gravity.CENTER
-                    setPadding(0, 0, 0, 0)
                     includeFontPadding = false
                     textSize = 10f
                     typeface =
                         androidx.core.content.res.ResourcesCompat.getFont(context, R.font.instrument_sans)
                             ?.let { android.graphics.Typeface.create(it, android.graphics.Typeface.BOLD) }
+                    val digits = android.graphics.Rect()
+                    paint.getTextBounds("0", 0, 1, digits)
+                    val metrics = paint.fontMetrics
+                    // How far the digits' middle sits below the text box's middle.
+                    val below = (-metrics.ascent - metrics.descent - digits.height()) / 2f
+                    val shift = kotlin.math.round(kotlin.math.abs(below) * 2).toInt()
+                    if (below > 0) setPadding(0, 0, 0, shift) else setPadding(0, shift, 0, 0)
                 }
             }
         }
@@ -212,9 +280,9 @@ internal object PlayerChrome {
             // SponsorBlock ticks: a fixed warm marker stays distinct from any accent.
             setAdMarkerColor(MediaTokens.sponsorMark.toArgb())
             setPlayedAdMarkerColor(MediaTokens.sponsorMark.toArgb())
-            // Choose the narrow keyline from the actual accent: fixed dark
-            // backing would hide dark accents from light/imported palettes.
-            val backing = mediaOnAccent(Color(accent))
+            // Choose the narrow keyline from the actual accent: dark over the scrim,
+            // light only when a dark accent from a light/imported palette needs it.
+            val backing = mediaTimeBarBacking(Color(accent))
             val ink = mediaOnAccent(backing)
             setUnplayedColor(lerp(backing, ink, 0.45f).toArgb())
             setBufferedColor(lerp(backing, ink, 0.65f).toArgb())

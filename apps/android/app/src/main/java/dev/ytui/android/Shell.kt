@@ -123,33 +123,14 @@ internal fun AccountButton(connected: Boolean, open: () -> Unit) {
 }
 
 /**
- * The floating navigation dock. A soft highlight slides between destinations with a stretch: the
- * leading edge arrives first and the trailing edge follows, so the move reads as one gesture.
+ * The floating navigation dock: icons only (the page title names where you are). A soft highlight
+ * slides between destinations with a stretch: the leading edge arrives first and the trailing edge
+ * follows, so the move reads as one gesture. Each tab keeps its name for accessibility.
  */
 @Composable
 internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = false) {
-    val density = LocalDensity.current
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
-    // Text merges unspecified fields (for example letter spacing) with the
-    // ambient style. Measure that same resolved style at the user's font scale.
-    val labelStyle = LocalTextStyle.current.merge(MaterialTheme.typography.labelMedium)
-    val measurer = rememberTextMeasurer()
-    val labelMeasurements =
-        remember(measurer, labelStyle, density) {
-            DESTINATIONS.associate { (index, title, _) ->
-                index to
-                    measurer
-                        .measure(
-                            AnnotatedString(title),
-                            style = labelStyle.copy(fontWeight = FontWeight.Bold),
-                            softWrap = false,
-                        )
-                        .size
-            }
-        }
-    val widest = with(density) { labelMeasurements.values.maxOf { it.width }.toDp() + 2.dp }
-    val labelHeight = with(density) { labelMeasurements.values.maxOf { it.height }.toDp() + 2.dp }
     val position = DESTINATIONS.indexOfFirst { it.first == tab }.coerceAtLeast(0)
     // Edges of the highlight, in cells; animated separately for the stretch.
     val lead = remember { Animatable(position.toFloat()) }
@@ -173,37 +154,7 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
     val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.08f)
 
     @Composable
-    fun Label(index: Int, title: String, alignStart: Boolean = false) {
-        val selected = tab == index
-        val tint by
-            animateColorAsState(
-                if (selected) colors.onBackground else colors.onSurfaceVariant,
-                motion.fade(200),
-                label = "nav-label",
-            )
-        Text(
-            title,
-            style = labelStyle,
-            maxLines = 1,
-            softWrap = false,
-            textAlign = if (alignStart) TextAlign.Start else TextAlign.Center,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-            color = tint,
-            modifier =
-                with(density) { labelMeasurements.getValue(index).width.toDp() + 2.dp }
-                    .let { measured ->
-                        // Beside an icon the label takes exactly its measured (bold) width, so
-                        // its layout is as wide as the paragraph laid out in it and the group
-                        // can stay centred. Under an icon it fills the cell, as before.
-                        if (alignStart) Modifier.width(measured)
-                        else Modifier.widthIn(min = measured).fillMaxWidth()
-                    }
-                    .testTag("navigation-label-$index"),
-        )
-    }
-
-    @Composable
-    fun Cell(index: Int, title: String, glyph: Glyph, modifier: Modifier, sideways: Boolean) {
+    fun Cell(index: Int, title: String, glyph: Glyph, modifier: Modifier) {
         val selected = tab == index
         val source = remember(index) { MutableInteractionSource() }
         val tint by
@@ -214,6 +165,9 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
             )
         // Downloads catches covers flying in from Save, and bounces when one lands.
         val bounce = remember { Animatable(1f) }
+        // Once this tab leaves the screen (the keyboard hides the phone dock), covers must not
+        // aim at its stale position; they land on the temporary shortcut instead.
+        if (index == 0) DisposableEffect(Unit) { onDispose { DownloadFlight.target = null } }
         if (index == 0)
             LaunchedEffect(DownloadFlight.landed) {
                 if (DownloadFlight.landed > 0 && motion.animate) {
@@ -224,34 +178,20 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
         Box(
             modifier
                 .selectable(selected, source, indication = null, role = Role.Tab) { choose(index) }
+                .semantics { contentDescription = title }
                 .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
                 .testTag("tab-$index"),
             contentAlignment = Alignment.Center,
         ) {
-            Box(
-                Modifier.pressScale(source, 0.9f).graphicsLayer {
+            MediaIcon(
+                glyph,
+                Modifier.size(26.dp).pressScale(source, 0.9f).graphicsLayer {
                     scaleX = bounce.value
                     scaleY = bounce.value
                 },
-                contentAlignment = Alignment.Center,
-            ) {
-                if (sideways)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        MediaIcon(glyph, tint = tint, filled = selected)
-                        Label(index, title, alignStart = true)
-                    }
-                else
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        MediaIcon(glyph, tint = tint, filled = selected)
-                        Label(index, title)
-                    }
-            }
+                tint,
+                filled = selected,
+            )
         }
     }
 
@@ -263,15 +203,10 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
 
     if (vertical)
         BoxWithConstraints(Modifier.fillMaxHeight().padding(start = 12.dp, top = 4.dp, bottom = 16.dp)) {
-            // Short windows (phone landscape) must still show all four labelled
-            // destinations: share the height evenly before falling back to scrolling.
-            val natural = maxOf(76.dp, labelHeight + 48.dp)
-            val fit = (maxHeight - 16.dp) / DESTINATIONS.size
-            val compact = fit < natural + 8.dp
-            val itemHeight = if (compact) maxOf(fit, labelHeight + 40.dp) else natural
-            val width = maxOf(84.dp, widest + 24.dp)
+            // Short windows (phone landscape) share the height evenly, never below a touch target.
+            val itemHeight = minOf(68.dp, (maxHeight - 16.dp) / DESTINATIONS.size).coerceAtLeast(56.dp)
             Box(
-                Modifier.width(width)
+                Modifier.width(72.dp)
                     .then(dock)
                     .verticalScroll(rememberScrollState())
                     .selectableGroup()
@@ -281,7 +216,7 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
                 Highlight(lead.value, trail.value, itemHeight, highlight, vertical = true)
                 Column(Modifier.fillMaxWidth()) {
                     DESTINATIONS.forEach { (index, title, glyph) ->
-                        Cell(index, title, glyph, Modifier.fillMaxWidth().height(itemHeight), false)
+                        Cell(index, title, glyph, Modifier.fillMaxWidth().height(itemHeight))
                     }
                 }
             }
@@ -290,52 +225,18 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
         BoxWithConstraints(
             Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
         ) {
-            // Adapt to measured full-size words, not a font-scale guess or a font cap.
-            val twoRows = maxWidth < (widest + 24.dp) * 4
-            val sidewaysCells = maxWidth / 2 >= widest + 52.dp
-            if (twoRows) {
-                Column(Modifier.fillMaxWidth().then(dock).selectableGroup().testTag("bottom-navigation")) {
-                    DESTINATIONS.chunked(2).forEach { row ->
-                        Row(Modifier.fillMaxWidth()) {
-                            row.forEach { (index, title, glyph) ->
-                                Cell(
-                                    index,
-                                    title,
-                                    glyph,
-                                    Modifier.weight(1f)
-                                        .heightIn(
-                                            min =
-                                                // The cell's own padding (4dp outside the highlight,
-                                                // 4dp inside) is 16dp of this, and the tab itself
-                                                // must still reach the 48dp touch target.
-                                                if (sidewaysCells) maxOf(66.dp, labelHeight + 24.dp)
-                                                else maxOf(76.dp, labelHeight + 44.dp)
-                                        )
-                                        .padding(4.dp)
-                                        .clip(MediaTokens.medium)
-                                        .background(if (tab == index) highlight else Color.Transparent)
-                                        .padding(horizontal = 4.dp, vertical = 4.dp),
-                                    sidewaysCells,
-                                )
-                            }
-                        }
-                    }
-                }
-            } else {
-                val height = maxOf(64.dp, labelHeight + 42.dp)
-                val cell = maxWidth / DESTINATIONS.size
-                Box(
-                    Modifier.fillMaxWidth()
-                        .height(height)
-                        .then(dock)
-                        .selectableGroup()
-                        .testTag("bottom-navigation")
-                ) {
-                    Highlight(lead.value, trail.value, cell, highlight, vertical = false)
-                    Row(Modifier.fillMaxSize()) {
-                        DESTINATIONS.forEach { (index, title, glyph) ->
-                            Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight(), false)
-                        }
+            val cell = maxWidth / DESTINATIONS.size
+            Box(
+                Modifier.fillMaxWidth()
+                    .height(64.dp)
+                    .then(dock)
+                    .selectableGroup()
+                    .testTag("bottom-navigation")
+            ) {
+                Highlight(lead.value, trail.value, cell, highlight, vertical = false)
+                Row(Modifier.fillMaxSize()) {
+                    DESTINATIONS.forEach { (index, title, glyph) ->
+                        Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
                     }
                 }
             }
@@ -365,7 +266,30 @@ private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color
  */
 @Composable
 internal fun PlayerDock(vm: YtuiViewModel) {
-    val player by vm.player.collectAsState()
+    val live by vm.player.collectAsState()
+    // Keep drawing the last item while the card leaves, so Stop or the close button slide it
+    // away instead of it vanishing between frames.
+    // A plain holder, not state: this function recomposes whenever `live` changes anyway.
+    val last = remember { arrayOf(live) }
+    if (live.media != null) last[0] = live
+    val motion = LocalMotion.current
+    androidx.compose.animation.AnimatedVisibility(
+        live.media != null,
+        // The card runs its own rise (see `appear`).
+        enter = androidx.compose.animation.EnterTransition.None,
+        exit =
+            if (motion.animate)
+                androidx.compose.animation.fadeOut(motion.fade(200)) +
+                    androidx.compose.animation.slideOutVertically(motion.exit(260)) { it / 2 } +
+                    androidx.compose.animation.shrinkVertically(motion.exit(300))
+            else androidx.compose.animation.ExitTransition.None,
+    ) {
+        PlayerDockCard(vm, last[0])
+    }
+}
+
+@Composable
+private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
     val media = player.media?.let(::MediaCard) ?: return
@@ -508,7 +432,9 @@ internal fun PlayerDock(vm: YtuiViewModel) {
                         Text(
                             media.creator.ifBlank {
                                 if (player.preview) "Muted preview"
-                                else if (media.live) "Live radio" else "Now playing"
+                                else if (media.live && media.kind == "station") "Live radio"
+                                else if (media.live) "Live stream"
+                                else "Now playing"
                             },
                             Modifier.weight(1f, fill = false),
                             maxLines = 1,
@@ -536,9 +462,14 @@ internal fun PlayerDock(vm: YtuiViewModel) {
                         PlayPauseIcon(player.playing, Modifier.size(20.dp), card)
                     }
                 }
-                // The mini player can be dismissed; this is the existing stop command.
-                MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
-                    vm.command("stop")
+                if (player.video) {
+                    MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
+                        vm.command("stop")
+                    }
+                } else {
+                    MediaIconButton(Glyph.Next, "Next track", "dock-next") {
+                        vm.command("next")
+                    }
                 }
             }
             if (player.duration > 0)
@@ -692,8 +623,11 @@ internal fun Modifier.sharedCover(key: String, visible: Boolean): Modifier {
     val shared = LocalSharedScope.current ?: return this
     if (!LocalMotion.current.animate) return this
     return with(shared) {
+        // One shared cover for whatever is playing. A per-track key made every Next create a new
+        // pair between the hidden mini player and the open player, which flew or mis-placed the
+        // new cover instead of simply showing it.
         this@sharedCover.sharedElementWithCallerManagedVisibility(
-            rememberSharedContentState("cover:$key"),
+            rememberSharedContentState("cover:now-playing"),
             visible,
         )
     }

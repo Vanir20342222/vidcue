@@ -37,12 +37,20 @@ final class MobileSettings {
           "gesture_pinch_zoom"
         }) values.put(key, true);
     for (String key :
-        new String[] {"preload_mobile", "show_description", "show_section", "show_likes"})
+        new String[] {
+          "preload_mobile",
+          "show_description",
+          "show_section",
+          "show_likes",
+          "auto_color_grade",
+          "download_unmetered"
+        })
       values.put(key, false);
     BOOLEANS = Collections.unmodifiableMap(values);
     Map<String, List<String>> choices = new LinkedHashMap<>();
     // First entry is the default.
     choices.put("animation_style", Collections.unmodifiableList(Arrays.asList("smooth", "snappy", "bouncy", "gentle")));
+    choices.put("color_grade", ColorGradeMath.INSTANCE.getPRESETS());
     STRINGS = Collections.unmodifiableMap(choices);
   }
 
@@ -145,6 +153,7 @@ final class MobileSettings {
         () -> {
           if (OfflineStore.manager != null)
             OfflineStore.manager.setMaxParallelDownloads(integer("download_parallel"));
+          OfflineStore.applyNetworkRequirement();
           if (PlaybackService.current != null) PlaybackService.current.refreshPrefetch();
           if (value.optBoolean("auto_save_folders")) OfflineStore.exportPending();
         });

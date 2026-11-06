@@ -26,7 +26,7 @@ if install_media "$@"; then
     exit 0
 fi
 echo 'Runner package mirror failed or timed out; retrying official Ubuntu HTTPS mirrors.' >&2
-fallback_sources="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ytui-ubuntu.XXXXXX.list")"
+fallback_sources="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vidcue-ubuntu.XXXXXX.list")"
 trap 'rm -f -- "$fallback_sources"' EXIT
 cat > "$fallback_sources" <<'EOF'
 deb https://archive.ubuntu.com/ubuntu noble main restricted universe multiverse

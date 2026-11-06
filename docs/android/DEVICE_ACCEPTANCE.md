@@ -1,6 +1,6 @@
 # Native Android UI device acceptance (M9)
 
-Use the [signed mobile.4 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.4/ytui-0.2.0-alpha.12-mobile.4.apk) for the current checks. Open **ytui** (`dev.ytui.android.stable`), version **0.2.0-alpha.12-mobile.4**, code **4**. It installs separately from older Preview/original apps, retaining their private data. Account/settings/library are separate; reconnect and choose Music/Video folders once. About shows the exact source; [qualified build](PLAYER_LIBRARY_VALIDATION_2026-10-29.md) records the public checksum and certificate.
+Use the [signed mobile.4 APK](https://github.com/Vanir20342222/ytui/releases/download/android-0.2.0-alpha.12-mobile.4/ytui-0.2.0-alpha.12-mobile.4.apk) for the current checks. Open **vidcue** (`dev.ytui.android.stable`), version **0.2.0-alpha.12-mobile.4**, code **4**. It installs separately from older Preview/original apps, retaining their private data. Account/settings/library are separate; reconnect and choose Music/Video folders once. About shows the exact source; [qualified build](PLAYER_LIBRARY_VALIDATION_2026-10-29.md) records the public checksum and certificate.
 
 This checklist supplements emulator tests. Do not send cookies, account files,
 authorization headers or signed media URLs in a bug report. Keep wanted app data

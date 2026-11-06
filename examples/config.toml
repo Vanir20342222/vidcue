@@ -1,5 +1,5 @@
 # Playback defaults to native Rust; downloads use native Rust with yt-dlp fallback.
-# Empty output directories use ~/Videos/ytui and ~/Music/ytui.
+# Empty output directories use ~/Videos/vidcue and ~/Music/vidcue.
 # Installed Node.js 22+ or Deno 2.9.7 is detected for native challenge solving.
 # Set native_js_runtime = "/path/to/supported/runtime" at the top level to override.
 

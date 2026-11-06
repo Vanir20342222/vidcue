@@ -197,7 +197,10 @@ internal fun Modifier.appearance(
         remember(key) {
             motion.animate && motion.cards && seen.add(key) && index < 12 && !isScrolling()
         }
-    val progress = remember(key) { Animatable(if (first) 0f else 1f) }
+    // Most cards (anything scrolled in) never animate: they skip the animation state, the
+    // effect and the extra layer entirely.
+    if (!first) return this
+    val progress = remember(key) { Animatable(0f) }
     androidx.compose.runtime.LaunchedEffect(key) {
         if (progress.value < 1f) progress.animateTo(1f, motion.enter(300, delay = index * 22))
     }

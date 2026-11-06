@@ -4,7 +4,6 @@ import android.content.*;
 import android.content.res.Configuration;
 import android.graphics.SurfaceTexture;
 import android.os.*;
-import android.view.Surface;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import org.json.*;
 
@@ -24,9 +23,8 @@ public final class MediaBridge {
   static final java.util.concurrent.ExecutorService playbackStore =
       java.util.concurrent.Executors.newSingleThreadExecutor();
   static volatile String playerSnapshot = "{}";
+  // Always null since the egui GLES video path was retired; PlaybackService still reads it.
   static SurfaceTexture texture;
-  static Surface surface;
-  static int textureId;
   static volatile int videoWidth = 1280, videoHeight = 720;
   static volatile int topInset, bottomInset, leftInset, rightInset;
   static volatile boolean uiVisible;
@@ -42,8 +40,6 @@ public final class MediaBridge {
 
   static final java.util.concurrent.atomic.AtomicLong videoFrames =
       new java.util.concurrent.atomic.AtomicLong();
-  static final java.util.concurrent.atomic.AtomicBoolean frameReady =
-      new java.util.concurrent.atomic.AtomicBoolean();
 
   static void attach(Context ctx) {
     context = (android.app.Application) ctx.getApplicationContext();
@@ -303,51 +299,6 @@ public final class MediaBridge {
             }
           } catch (Exception error) {
             event("error", "Android operation failed: " + error.getClass().getSimpleName());
-          }
-        });
-  }
-
-  public static synchronized float[] videoFrame(int id) {
-    try {
-      if (texture == null || textureId != id) {
-        if (surface != null) surface.release();
-        if (texture != null) texture.release();
-        textureId = id;
-        texture = new SurfaceTexture(id);
-        texture.setDefaultBufferSize(videoWidth, videoHeight);
-        surface = new Surface(texture);
-        texture.setOnFrameAvailableListener(
-            t -> {
-              videoFrames.incrementAndGet();
-              frameReady.set(true);
-              notifyUi();
-            });
-        Surface ready = surface;
-        main.post(
-            () -> {
-              if (PlaybackService.current != null)
-                PlaybackService.current.player.setVideoSurface(ready);
-            });
-      }
-      if (frameReady.getAndSet(false)) texture.updateTexImage();
-      float[] matrix = new float[16];
-      texture.getTransformMatrix(matrix);
-      return matrix;
-    } catch (RuntimeException error) {
-      return null;
-    }
-  }
-
-  public static void releaseVideo(String unused) {
-    main.post(
-        () -> {
-          if (PlaybackService.current != null) PlaybackService.current.player.clearVideoSurface();
-          synchronized (MediaBridge.class) {
-            if (surface != null) surface.release();
-            if (texture != null) texture.release();
-            surface = null;
-            texture = null;
-            textureId = 0;
           }
         });
   }

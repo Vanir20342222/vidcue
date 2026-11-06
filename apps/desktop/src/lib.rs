@@ -11,5 +11,6 @@ pub mod related;
 pub mod setup;
 pub mod terminal;
 pub mod ui;
+pub mod updates;
 
 pub mod sleep;

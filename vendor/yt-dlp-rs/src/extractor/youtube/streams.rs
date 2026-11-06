@@ -582,6 +582,7 @@ pub(super) fn extract(
     let mut formats: Vec<Map<String, Value>> = Vec::new();
     let mut manifest_formats: Vec<VideoFormat> = Vec::new();
     let mut order: Vec<(bool, usize)> = Vec::new();
+    let mut live_manifests = BTreeSet::new();
     let needs_live = matches!(context.live_status, Some("post_live"));
     for response in responses {
         let Some(data) = response
@@ -609,6 +610,11 @@ pub(super) fn extract(
                 .into_iter()
                 .flatten()
             {
+                // YouTube's live HTTPS URLs require sequence-based fetching;
+                // Android playback delegates the rolling HLS stream to Media3.
+                if context.playback && context.live_status == Some("is_live") {
+                    continue;
+                }
                 if truthy(stream.get("targetDurationSec"))
                     && context.skip_bad_formats
                     && !needs_live
@@ -868,6 +874,12 @@ pub(super) fn extract(
             }
             let mut manifest_url = parsed.clone();
             manifest_url.set_path(&format!("{path}{suffix}"));
+            // Full reacquisition can return the same live master from several
+            // clients. Reuse its catalog within this extraction only.
+            let live_playback = context.playback && context.live_status == Some("is_live");
+            if live_playback && live_manifests.contains(&manifest_url) {
+                continue;
+            }
             let manifest_at = std::time::Instant::now();
             let stream = if proto == "hls" && context.playback {
                 super::super::extract_m3u8_for_playback(
@@ -897,6 +909,9 @@ pub(super) fn extract(
             let Some(stream) = stream else {
                 continue;
             };
+            if live_playback {
+                live_manifests.insert(manifest_url);
+            }
             merge_subtitles(&mut subtitles, stream.subtitles);
             for mut format in stream.formats {
                 if proto == "hls" {

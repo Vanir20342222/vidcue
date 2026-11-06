@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=vidcue
+GenericName=Terminal media browser
+Comment=YouTube, Music, downloads and radio
+Exec=vidcue
+Icon=vidcue
+Terminal=true
+Categories=AudioVideo;Player;Network;
+StartupNotify=false

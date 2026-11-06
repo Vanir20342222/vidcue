@@ -90,9 +90,11 @@ internal fun VideoSurface(
                     }
                     tag = VisibleFrameTracker(this)
                     VideoGestures.attach(this)
+                    ColorGrade.attach(this)
                     PlayerChrome.trackSponsorMarks(this)
                     PlayerChrome.fitTransport(this)
                     PlayerChrome.bindCaptions(this)
+                    PlayerChrome.softenPresses(this)
                     VideoGestures.setPanelSwipe(
                         this,
                         object : VideoGestures.PanelSwipe {
@@ -112,6 +114,7 @@ internal fun VideoSurface(
             view.setControllerAnimationEnabled(
                 !reduced && android.animation.ValueAnimator.areAnimatorsEnabled()
             )
+            PlayerChrome.reducedMotion = reduced
             PlayerChrome.rememberAccent(accent)
             PlayerChrome.apply(view)
             PlayerChrome.showSponsorMarks(view)
@@ -155,6 +158,7 @@ internal fun FocusedPlayer(
     onMore: () -> Unit,
     onLyrics: () -> Unit = {},
     onSleep: () -> Unit = {},
+    onOutput: () -> Unit = {},
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -165,6 +169,9 @@ internal fun FocusedPlayer(
     val mediaUrl = player.media?.optString("url")
     // Keep the inline Up next list current as playback advances.
     LaunchedEffect(mediaUrl) { vm.loadUpNext() }
+    // Date, likes and subscribers arrive after the video starts (see loadWatchDetails).
+    LaunchedEffect(mediaUrl, player.video) { if (player.video) vm.loadWatchDetails(player.media) }
+    val watchDetails by vm.watchDetails.collectAsState()
     val threshold = with(LocalDensity.current) { 72.dp.toPx() }
     val motion = LocalMotion.current
     val panelDrag = LocalPanelDrag.current
@@ -212,6 +219,11 @@ internal fun FocusedPlayer(
                 )
         }
     val scope = rememberCoroutineScope()
+    // The collapse buttons leave the way the swipe does: the panel glides down off screen.
+    val animatedMinimize: () -> Unit = {
+        if (panelDrag != null && motion.animate) scope.launch { panelDrag.dismiss(this, 1) }
+        else minimize()
+    }
     val openFullscreen = {
         context.startActivity(
             Intent(context, FullscreenActivity::class.java)
@@ -257,6 +269,8 @@ internal fun FocusedPlayer(
         val landscape = maxWidth > maxHeight * 1.25f
         val portraitVideoHeight =
             minOf(maxWidth * (9f / 16f), (maxHeight - 60.dp).coerceAtLeast(1.dp))
+        // Details may open their description; Up next always keeps some room.
+        val portraitDetailsMax = ((maxHeight - portraitVideoHeight) * 0.68f).coerceAtLeast(120.dp)
         @Composable
         fun Controls(modifier: Modifier) {
             val preparing = player.preparing
@@ -286,9 +300,9 @@ internal fun FocusedPlayer(
             }
             @Composable
             fun ActionRow() {
-                // Labelled pill actions under the title (YouTube watch-page pattern), with
-                // More pinned to the trailing edge. Every entry maps to an existing action;
-                // fullscreen lives on the video itself. Narrow columns scroll the pills.
+                // One soft tray of evenly spaced icons, music and video alike, so nothing has to
+                // be scrolled sideways on a phone. Each icon keeps its spoken name; video puts
+                // ⋮ in the tray so the first and last icons line up with the title's edges.
                 val media = player.media
                 val canSave =
                     media != null &&
@@ -298,30 +312,27 @@ internal fun FocusedPlayer(
                 Row(
                     Modifier.fillMaxWidth()
                         .then(
-                            // Music: one soft tray, the same shape language as the dock, instead
-                            // of loose icons floating above the gesture bar.
-                            if (player.video) Modifier
-                            else
-                                Modifier.clip(MediaTokens.card)
-                                    .background(LocalContentColor.current.copy(alpha = 0.07f))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            // One soft tray, the same shape language as the dock, instead of
+                            // loose icons or pills that overflow a narrow screen.
+                            Modifier.clip(MediaTokens.card)
+                                .background(LocalContentColor.current.copy(alpha = 0.07f))
+                                .padding(
+                                    horizontal = if (player.video) 0.dp else 4.dp,
+                                    vertical = 2.dp,
+                                )
                         )
                         .testTag("player-actions"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
-                        Modifier.weight(1f)
-                            .then(
-                                if (player.video) Modifier.horizontalScroll(rememberScrollState())
-                                else Modifier
-                            ),
-                        horizontalArrangement =
-                            if (player.video) Arrangement.spacedBy(8.dp)
-                            else Arrangement.SpaceEvenly,
+                        Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val compact = !player.video
-                        PlayerAction(Glyph.Queue, "Queue", "Playback queue", compact = compact, action = onQueue)
+                        val compact = true
+                        // Video: equal cells, so five or six actions always fit the width.
+                        val cell = if (player.video) Modifier.weight(1f) else Modifier
+                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, modifier = cell, action = onQueue)
                         if (!player.video)
                             PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
                         if (canSave && media != null) {
@@ -332,30 +343,75 @@ internal fun FocusedPlayer(
                                 "Save offline",
                                 "player-download",
                                 compact,
-                                modifier = Modifier.trackCentre { saveCentre = it },
+                                modifier = cell.trackCentre { saveCentre = it },
                             ) {
                                 val card = MediaCard(media)
                                 DownloadFlight.launch(card, saveCentre)
                                 vm.play(card, download = true)
                             }
                         }
+                        player.output?.let { output ->
+                            // Accent while audio goes to Bluetooth; opens the output picker.
+                            PlayerAction(
+                                Glyph.Bluetooth,
+                                output.name,
+                                "Audio output, ${output.name}",
+                                "player-output",
+                                compact,
+                                active = output.bluetooth,
+                                modifier = cell,
+                                action = onOutput,
+                            )
+                        }
+                        val shareUrl = media?.optString("url").orEmpty()
+                        if (player.video && shareUrl.startsWith("http"))
+                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact, modifier = cell) {
+                                val send =
+                                    Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_SUBJECT, player.title)
+                                        .putExtra(Intent.EXTRA_TEXT, shareUrl)
+                                runCatching {
+                                    context.startActivity(
+                                        Intent.createChooser(send, null)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    )
+                                }
+                            }
                         val sleepLeft = rememberSleepLeft(player)
-                        PlayerAction(
-                            Glyph.Sleep,
-                            if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
-                            if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
-                            compact = compact,
-                            active = sleepLeft > 0,
-                            action = onSleep,
+                        // Video keeps the row short: the timer lives in ⋮ until it is running.
+                        if (!player.video || sleepLeft > 0) {
+                            PlayerAction(
+                                Glyph.Sleep,
+                                if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
+                                if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
+                                compact = compact,
+                                active = sleepLeft > 0,
+                                countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
+                                modifier = cell,
+                                action = onSleep,
+                            )
+                        }
+                        if (player.video)
+                            PlayerAction(
+                                Glyph.More,
+                                "More",
+                                "Playback options",
+                                "player-options",
+                                compact,
+                                modifier = cell,
+                                action = onMore,
+                            )
+                    }
+                    if (!player.video) {
+                        Spacer(Modifier.width(4.dp))
+                        MediaIconButton(
+                            Glyph.More,
+                            "Playback options",
+                            "player-options",
+                            action = onMore,
                         )
                     }
-                    Spacer(Modifier.width(4.dp))
-                    MediaIconButton(
-                        Glyph.More,
-                        "Playback options",
-                        "player-options",
-                        action = onMore,
-                    )
                 }
             }
             Column(
@@ -368,13 +424,39 @@ internal fun FocusedPlayer(
                     ),
                 verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
             ) {
+                if (player.video) {
+                    val creator =
+                        player.value.optString("station").ifBlank {
+                            player.media?.optString("creator") ?: ""
+                        }
+                    WatchDetails(
+                        title = player.title,
+                        media =
+                            remember(player.media, watchDetails) {
+                                withWatchDetails(
+                                    player.media,
+                                    watchDetails?.takeIf { it.first == mediaUrl }?.second,
+                                )
+                            },
+                        creator = creator,
+                        showCreator =
+                            creator.isNotBlank() &&
+                                (mobile.optBoolean("show_channel", true) ||
+                                    player.media?.optBoolean("live") == true),
+                        mobile = mobile,
+                        thumbnails = config.optBoolean("thumbnails", true),
+                        headerModifier =
+                            Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss),
+                        error =
+                            player.value.optString("error").takeUnless { it.isBlank() || it == "null" },
+                    ) {
+                        ActionRow()
+                    }
+                    // Breathing room above Up next.
+                    Spacer(Modifier.height(4.dp))
+                } else {
                 Column(
-                    Modifier.fillMaxWidth()
-                        .then(
-                            if (player.video)
-                                Modifier.heightIn(min = 48.dp).testTag("panel-header").then(dismiss)
-                            else Modifier
-                        ),
+                    Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
                 ) {
                     // Music keeps one line (long titles scroll) so the controls below never move
@@ -429,11 +511,11 @@ internal fun FocusedPlayer(
                             )
                         }
                 }
-                player.value
-                    .optString("error")
-                    .takeUnless { it.isBlank() || it == "null" }
-                    ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                if (player.video) ActionRow()
+                if (!player.video)
+                    player.value
+                        .optString("error")
+                        .takeUnless { it.isBlank() || it == "null" }
+                        ?.let { Text(it, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 if (!player.video)
                     // Fixed height: a track change (no duration yet) or a live station must not
                     // shrink this slot and shift the title above it.
@@ -473,6 +555,7 @@ internal fun FocusedPlayer(
                     ActionRow()
                 }
             }
+                }
         }
         @Composable
         fun Art(modifier: Modifier) {
@@ -488,10 +571,20 @@ internal fun FocusedPlayer(
                     Box(
                         Modifier.width(minOf(maxWidth, maxHeight * (16f / 9f)))
                             .aspectRatio(16f / 9f)
+                            // Soft corners: full bleed at the top edge in portrait, a rounded
+                            // pane beside the details in landscape.
+                            .clip(
+                                if (landscape) androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
+                                else
+                                    androidx.compose.foundation.shape.RoundedCornerShape(
+                                        bottomStart = 16.dp,
+                                        bottomEnd = 16.dp,
+                                    )
+                            )
                     ) {
                         VideoSurface(
                             Modifier.fillMaxSize(),
-                            onCollapse = minimize,
+                            onCollapse = animatedMinimize,
                             onSettings = onMore,
                             onPanelDrag = videoDrag,
                             onPanelEnd = videoEnd,
@@ -526,7 +619,7 @@ internal fun FocusedPlayer(
                                             Glyph.Down,
                                             "Minimize player",
                                             "panel-close",
-                                            minimize,
+                                            animatedMinimize,
                                         )
                                     }
                                 }
@@ -538,7 +631,7 @@ internal fun FocusedPlayer(
                     // by one frame. Never create a native view in the music animation.
                     Spacer(Modifier.fillMaxSize().background(Color.Black))
                 } else {
-                    val ratio = visualizerRatio(config.optString("music_player_style", "classic"))
+                    val ratio = visualizerRatio(androidPlayerStyle(config))
                     // The cover eases back while paused and steps forward when playing.
                     val rest by
                         animateFloatAsState(
@@ -546,14 +639,15 @@ internal fun FocusedPlayer(
                             motion.spring(),
                             label = "cover-rest",
                         )
+                    // The paused size is a real layout size, not a layer scale: the cover is a shared
+                    // element, which is placed without its parents' layer scale, so a scaled-down
+                    // parent drew it towards the bottom right.
                     Visualizer(
                         player,
                         config,
-                        Modifier.width(minOf(maxWidth, maxHeight * ratio))
+                        Modifier.width(minOf(maxWidth, maxHeight * ratio) * rest)
                             .aspectRatio(ratio)
                             .graphicsLayer {
-                                scaleX = rest
-                                scaleY = rest
                                 translationX = trackShift.value
                                 val away = (abs(trackShift.value) / trackWidth).coerceIn(0f, 1f)
                                 alpha = 1f - away * 0.7f
@@ -574,7 +668,7 @@ internal fun FocusedPlayer(
             } else {
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Art(Modifier.fillMaxWidth().height(portraitVideoHeight))
-                    Controls(Modifier.fillMaxWidth())
+                    Controls(Modifier.fillMaxWidth().heightIn(max = portraitDetailsMax))
                     UpNext(
                         queue,
                         upNext,
@@ -716,14 +810,16 @@ internal fun PlayerAction(
     tag: String = "",
     compact: Boolean = false,
     active: Boolean = false,
+    /** Remaining share of a running timer; draws a draining clock ring around the icon. */
+    countdown: Float? = null,
     modifier: Modifier = Modifier,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
     val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     if (compact) {
-        // Music: an evenly spaced icon row with small captions, like a transport's second line.
-        Column(
+        // Music: an evenly spaced, icon-only row; the accessible name carries the label.
+        Box(
             modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
@@ -731,21 +827,11 @@ internal fun PlayerAction(
                 .clip(MediaTokens.medium)
                 .clickable(source, SoftIndication, role = Role.Button, onClick = action)
                 .semantics { contentDescription = description }
-                .padding(horizontal = 6.dp, vertical = 6.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(6.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
-            Text(
-                label,
-                Modifier.clearAndSetSemantics {},
-                style =
-                    MaterialTheme.typography.labelSmall.merge(
-                        androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
-                    ),
-                color = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
+            if (countdown != null) CountdownRing(glyph, countdown, accent)
+            else MediaIcon(glyph, Modifier.size(24.dp), if (active) accent else LocalContentColor.current, filled = active)
         }
         return
     }
@@ -941,5 +1027,64 @@ internal fun SeekJump(label: String, description: String, action: () -> Unit) {
                 ),
             modifier = Modifier.clearAndSetSemantics {},
         )
+    }
+}
+
+/**
+ * Clock-face countdown: a faint full track with an accent arc that drains clockwise from
+ * twelve o'clock, a dot at its leading end like a clock hand, and the glyph in the middle.
+ */
+@Composable
+private fun CountdownRing(glyph: Glyph, fraction: Float, accent: Color) {
+    val ink = LocalContentColor.current
+    // The service ticks once a second; ease between ticks so the ring drains continuously.
+    val sweep by
+        animateFloatAsState(
+            fraction.coerceIn(0f, 1f),
+            androidx.compose.animation.core.tween(1000, easing = androidx.compose.animation.core.LinearEasing),
+            label = "sleep-countdown",
+        )
+    Box(Modifier.size(28.dp).clearAndSetSemantics {}, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.matchParentSize()) {
+            val stroke = 2.dp.toPx()
+            val inset = stroke / 2
+            val arcSize = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(
+                ink.copy(alpha = 0.18f),
+                0f,
+                360f,
+                false,
+                topLeft,
+                arcSize,
+                style = androidx.compose.ui.graphics.drawscope.Stroke(stroke),
+            )
+            if (sweep > 0f) {
+                drawArc(
+                    accent,
+                    -90f,
+                    360f * sweep,
+                    false,
+                    topLeft,
+                    arcSize,
+                    style =
+                        androidx.compose.ui.graphics.drawscope.Stroke(
+                            stroke,
+                            cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                        ),
+                )
+                val angle = Math.toRadians((-90f + 360f * sweep).toDouble())
+                val r = arcSize.width / 2
+                drawCircle(
+                    accent,
+                    stroke * 1.1f,
+                    center + androidx.compose.ui.geometry.Offset(
+                        (r * kotlin.math.cos(angle)).toFloat(),
+                        (r * kotlin.math.sin(angle)).toFloat(),
+                    ),
+                )
+            }
+        }
+        MediaIcon(glyph, Modifier.size(15.dp), accent, filled = true)
     }
 }

@@ -138,7 +138,7 @@ class StartupUiTest {
                         val visible = StartupTimings.elapsed(token, frame.capturedAt)
                         val usable = StartupTimings.usable(token)
                         evidence.append(
-                            "$name subsecond_usable_ms=$usable subsecond_screenshot_confirmation_ms=$visible\n"
+                            "$name subsecond_usable_ms=$usable subsecond_screenshot_confirmation_ms=$visible copy_request_ms=${StartupTimings.elapsed(token, frame.requestedAt)}\n"
                         )
                         if (!SubsecondTarget.met(frame.rgb, visible, usable)) {
                             evidence.append(StartupTimings.report())

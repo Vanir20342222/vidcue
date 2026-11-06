@@ -3,7 +3,7 @@ package dev.ytui.android;
 /** Shared Rust engine contract; Android presentation uses native Compose controls. */
 public final class NativeBridge {
   static {
-    System.loadLibrary("ytui_mobile");
+    System.loadLibrary("vidcue_mobile");
   }
 
   private NativeBridge() {}
@@ -22,13 +22,16 @@ public final class NativeBridge {
 
   public static native void activateContext(String id);
 
-  public static native void frameAvailable();
-
-  public static native long uiGeneration();
-
-  public static native long uiShutdowns();
-
   public static native long meter(java.nio.ByteBuffer buffer, int offset, int length, int channels);
+
+  /** Filters 16-bit PCM in place with the saved equalizer curve; a no-op when it is off. */
+  public static native void equalize(
+      java.nio.ByteBuffer buffer, int offset, int length, int channels, int sampleRate);
+
+  public static native boolean equalizerEnabled();
+
+  /** Clears equalizer filter memory, e.g. after a seek. */
+  public static native void equalizerReset();
 
   /**
    * Writes {@code out.length} log-spaced band levels (0..65535, low to high frequency) from the

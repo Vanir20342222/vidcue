@@ -16,9 +16,12 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
     } else {
         " ↑/↓ choose · Space/←/→ change · Enter continue · Backspace back · Esc skip "
     };
-    let block = panel(format!(" ytui setup · {} ", app.tr(&setup.progress())), app)
-        .title_bottom(translated(app, hint))
-        .border_style(accent);
+    let block = panel(
+        format!(" vidcue setup · {} ", app.tr(&setup.progress())),
+        app,
+    )
+    .title_bottom(translated(app, hint))
+    .border_style(accent);
     let inner = block.inner(rect);
     f.render_widget(block, rect);
     // Step dots: filled for done, wide for the current step.
@@ -48,14 +51,17 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
         crate::setup::LOOK => {
             "Pick a colour theme. It previews right away and you can change it any time in Settings."
         }
-        crate::setup::PLAYBACK => "Choose how ytui plays. Every option is also in Settings later.",
+        crate::setup::PLAYBACK => {
+            "Choose how vidcue plays. Every option is also in Settings later."
+        }
         ACCOUNT => {
-            "Signing in is optional. It unlocks your subscriptions, playlists and music library. ytui imports your browser session; cookie databases stay closed until you choose a profile."
+            "Signing in is optional. It unlocks your subscriptions, playlists and music library. vidcue imports your browser session; cookie databases stay closed until you choose a profile."
         }
         _ => "Here's what you chose. Everything lives in Settings if you change your mind.",
     };
     lines.push(Line::styled(app.tr(body), text));
     lines.push(Line::default());
+    let mut selected_line = 0;
     for (index, row) in setup.rows(connected).iter().enumerate() {
         let selected = index == setup.row;
         let style = if selected {
@@ -68,7 +74,12 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
             Span::styled(format!("{:<34}", app.tr(row.label)), style),
             Span::styled(app.tr(&row.value).to_string(), accent),
         ]));
-        lines.push(Line::styled(format!("     {}", app.tr(row.hint)), muted));
+        if !row.hint.is_empty() {
+            lines.push(Line::styled(format!("     {}", app.tr(row.hint)), muted));
+        }
+        if selected {
+            selected_line = lines.len();
+        }
     }
     if setup.step == READY {
         for (label, value) in setup.summary(connected) {
@@ -78,5 +89,13 @@ pub(super) fn render(f: &mut Frame, app: &App, setup: &Setup, rect: Rect) {
             ]));
         }
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    // Long steps (a custom equalizer's band rows) scroll to keep the selection visible;
+    // the margin allows for wrapped text above it.
+    let scroll = (selected_line as u16 + 3).saturating_sub(inner.height);
+    f.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        inner,
+    );
 }

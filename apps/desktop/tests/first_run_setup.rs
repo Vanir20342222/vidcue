@@ -4,12 +4,12 @@ use crossterm::event::KeyCode;
 use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, Modal, RuntimeHandles},
     setup, ui,
 };
-use ytui_core::Config;
-use ytui_services::{paths::Paths, store::Snapshot, theme};
+use vidcue_core::Config;
+use vidcue_services::{paths::Paths, store::Snapshot, theme};
 
 fn fixture(snapshot: Snapshot, demo: bool, offline: bool) -> (App, tempfile::TempDir) {
     let temp = tempfile::tempdir().unwrap();
@@ -25,7 +25,7 @@ fn fixture(snapshot: Snapshot, demo: bool, offline: bool) -> (App, tempfile::Tem
     };
     paths.create().unwrap();
     let config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         image_protocol: "none".into(),
@@ -159,7 +159,7 @@ async fn finishing_applies_the_drafted_choices_and_replay_starts_over() {
         Some(Modal::Setup(s)) => s.draft.theme.clone(),
         _ => unreachable!(),
     };
-    assert_ne!(theme, "ytui-dark");
+    assert_ne!(theme, "vidcue-dark");
     app.key(KeyCode::Down.into());
     app.key(KeyCode::Char(' ').into()); // reduce motion on
     app.key(KeyCode::Enter.into());

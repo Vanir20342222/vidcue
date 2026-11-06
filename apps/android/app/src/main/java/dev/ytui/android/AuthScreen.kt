@@ -60,7 +60,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * State of the explicit account sign-in activity. The layout follows the familiar
  * in-app browser sign-in pattern: a close button and address pill on top, a
  * two-column account card (or the provider page) in the middle and a
- * "you'll come back here" strip at the bottom. Colours stay the user's ytui theme.
+ * "you'll come back here" strip at the bottom. Colours stay the user's Vidcue theme.
  *
  * The provider page opens straight on Google's sign-in form. Once a signed-in session
  * cookie appears, a native card replaces the page (YouTube's mobile shell can stay blank)
@@ -316,7 +316,7 @@ private fun AuthSignedInCard(busy: Boolean, use: () -> Unit) {
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
-                "ytui found your YouTube session. Save it to finish; it stays encrypted on this device.",
+                "Vidcue found your YouTube session. Save it to finish; it stays encrypted on this device.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -519,7 +519,7 @@ private fun AuthChoices(
                     append("Terms of Service")
                 }
                 append(
-                    ". ytui never sees your password; only the resulting session is kept, encrypted on this device."
+                    ". Vidcue never sees your password; only the resulting session is kept, encrypted on this device."
                 )
             },
             style = MaterialTheme.typography.bodyMedium,
@@ -573,7 +573,7 @@ private fun AuthReturnStrip(
                         message.isNotBlank() -> message
                         busy -> "Saving your session…"
                         found && showWeb -> "Signed in. Tap Use this session to finish."
-                        showWeb -> "Sign in with Google. ytui detects it and returns you here."
+                        showWeb -> "Sign in with Google. Vidcue detects it and returns you here."
                         else -> "You'll come back here once you're signed in"
                     }
                 AnimatedContent(

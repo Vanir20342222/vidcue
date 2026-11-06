@@ -27,3 +27,11 @@ six-hour lifetime, four MiB per response). Duplicate requests coalesce per URL;
 independent versions never hold a global lock during HTTP I/O. Account/player
 API replies, cookies and signed stream URLs are not stored in this cache.
 Challenge algorithms and validation remain unchanged.
+
+M9 live-playback follow-up permits on-air YouTube broadcasts only in the opt-in
+playback extractor. It selects rolling HLS variants and leaves playlist refreshes
+and segment loading to Media3. Live HTTPS sequence URLs are excluded, and their
+advertised quality does not trigger VOD direct-format recovery. Initial playback,
+audio playback, full reacquisition and alternative-client recovery are covered by
+the offline `mobile_playback` suite. Upcoming/post-live processing and live
+downloads remain unsupported; ordinary VOD/download extraction is unchanged.

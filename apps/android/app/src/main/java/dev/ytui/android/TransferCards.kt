@@ -194,9 +194,21 @@ internal fun TransferCard(
                 }
             }
         }
+        // Progress arrives twice a second; the bar glides between samples instead of stepping.
+        val shownProgress by
+            androidx.compose.animation.core.animateFloatAsState(
+                progress,
+                if (LocalMotion.current.animate)
+                    androidx.compose.animation.core.tween(
+                        520,
+                        easing = androidx.compose.animation.core.LinearEasing,
+                    )
+                else androidx.compose.animation.core.snap(),
+                label = "transfer-progress",
+            )
         if (byteTransfer)
             MediaProgressBar(
-                progress,
+                shownProgress,
                 Modifier.semantics {
                     contentDescription = "Download progress"
                     progressBarRangeInfo = ProgressBarRangeInfo(progress, 0f..1f)

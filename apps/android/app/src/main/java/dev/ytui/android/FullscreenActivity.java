@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.view.*;
 import androidx.lifecycle.Lifecycle;
+import androidx.media3.common.Player;
+import androidx.media3.common.VideoSize;
 import androidx.media3.ui.PlayerView;
 
 /** One shared decoder/session: fullscreen never extracts or prepares again. */
@@ -13,6 +15,25 @@ public final class FullscreenActivity extends ComponentActivity {
   static volatile boolean visible;
   private PlayerView view;
   private VisibleFrameTracker frames;
+  private Player watched;
+  // Orientation follows the video's shape; the screen stays on only while playing.
+  private final Player.Listener watcher =
+      new Player.Listener() {
+        @Override
+        public void onVideoSizeChanged(VideoSize size) {
+          fitOrientation();
+        }
+
+        @Override
+        public void onPlayWhenReadyChanged(boolean playWhenReady, int reason) {
+          fitScreenOn();
+        }
+
+        @Override
+        public void onPlaybackStateChanged(int state) {
+          fitScreenOn();
+        }
+      };
 
   @Override
   protected void onCreate(Bundle state) {
@@ -38,7 +59,6 @@ public final class FullscreenActivity extends ComponentActivity {
         WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
     bars.hide(WindowInsetsCompat.Type.systemBars());
     bars.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-    getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     view = (PlayerView) getLayoutInflater().inflate(R.layout.ytui_player, null);
     view.setBackgroundColor(android.graphics.Color.BLACK);
     view.setUseController(true);
@@ -51,6 +71,8 @@ public final class FullscreenActivity extends ComponentActivity {
             && android.animation.ValueAnimator.areAnimatorsEnabled());
     // Captions use ytui's own on/off button instead of Media3's track list.
     PlayerChrome.bindCaptions(view);
+    PlayerChrome.setReducedMotion(getIntent().getBooleanExtra("reduced_motion", false));
+    PlayerChrome.softenPresses(view);
     // Queue modes live in the app's player; the fullscreen chrome is for watching.
     view.setShowShuffleButton(false);
     view.setFullscreenButtonState(true);
@@ -60,6 +82,7 @@ public final class FullscreenActivity extends ComponentActivity {
         });
     frames = new VisibleFrameTracker(view);
     VideoGestures.attach(view);
+    ColorGrade.attach(view);
     PlayerChrome.trackSponsorMarks(view);
     // The options layer sits above the video in this same window: every playback
     // option is reachable without leaving fullscreen or revealing system bars.
@@ -105,24 +128,60 @@ public final class FullscreenActivity extends ComponentActivity {
     }
   }
 
+  /** Watch the shared player: the video size picks the orientation, playback the screen lock. */
+  private void watch(Player next) {
+    if (watched != next) {
+      if (watched != null) watched.removeListener(watcher);
+      watched = next;
+      if (next != null) next.addListener(watcher);
+    }
+    fitOrientation();
+    fitScreenOn();
+  }
+
+  private void fitOrientation() {
+    if (watched == null) return;
+    VideoSize size = watched.getVideoSize();
+    int current = getRequestedOrientation();
+    int next =
+        FullscreenPolicy.orientation(size.width, size.height, size.pixelWidthHeightRatio, current);
+    if (next != current) setRequestedOrientation(next);
+  }
+
+  private void fitScreenOn() {
+    if (view == null) return;
+    view.setKeepScreenOn(
+        watched != null
+            && FullscreenPolicy.keepScreenOn(
+                watched.getPlayWhenReady(), watched.getPlaybackState()));
+  }
+
+  // Bound while visible, not only while focused: a split-screen neighbour taking focus
+  // must not turn the still-visible video black (AR-11).
+  @Override
+  protected void onStart() {
+    super.onStart();
+    PlaybackService service = PlaybackService.current;
+    if (view != null && service != null) {
+      frames.bind(service.controlsPlayer);
+      watch(service.controlsPlayer);
+    }
+  }
+
   @Override
   protected void onResume() {
     super.onResume();
     visible = true;
     MediaBridge.uiVisible = true;
-    PlaybackService service = PlaybackService.current;
-    if (view != null && service != null) frames.bind(service.controlsPlayer);
     MediaBridge.notifyUi();
   }
 
   @Override
-  protected void onPause() {
-    if (view != null) frames.bind(null);
-    super.onPause();
-  }
-
-  @Override
   protected void onStop() {
+    if (view != null) {
+      frames.bind(null);
+      watch(null);
+    }
     visible = false;
     RustActivity activity = RustActivity.current();
     if (activity == null
@@ -137,7 +196,10 @@ public final class FullscreenActivity extends ComponentActivity {
   @Override
   protected void onDestroy() {
     visible = false;
-    if (view != null) frames.bind(null);
+    if (view != null) {
+      frames.bind(null);
+      watch(null);
+    }
     ComposeHost.fullscreenChanged(false);
     super.onDestroy();
   }

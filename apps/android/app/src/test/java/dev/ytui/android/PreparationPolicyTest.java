@@ -69,4 +69,30 @@ public final class PreparationPolicyTest {
       }
     }
   }
+
+  @Test
+  public void retriesStopAfterTheLastAllowedRun() {
+    int runs = 0;
+    while (PreparationPolicy.retryAllowed(runs)) runs++;
+    // Run attempt counts start at 0, so the last allowed run is MAX_RUNS - 1.
+    assertEquals(PreparationPolicy.MAX_RUNS - 1, runs);
+    assertFalse(PreparationPolicy.retryAllowed(Integer.MAX_VALUE - 1));
+  }
+
+  @Test
+  public void aRetriedJobKeepsItsWorkNameAndProgressKeys() {
+    String key = "8f0c2a4e-0000-4000-8000-000000000001";
+    assertEquals(PreparationPolicy.uniqueWork(key), PreparationPolicy.uniqueWork(key));
+    assertNotEquals(PreparationPolicy.uniqueWork(key), PreparationPolicy.uniqueWork(key + "x"));
+    assertArrayEquals(
+        new String[] {key, key + "-failed", key + "-retry"}, PreparationPolicy.progressKeys(key));
+  }
+
+  @Test
+  public void nestedCollectionsAreSkippedNotResolved() {
+    for (String kind : new String[] {"playlist", "album", "artist", "channel"})
+      assertTrue(kind, PreparationPolicy.collection(kind));
+    for (String kind : new String[] {"video", "song", "station", ""})
+      assertFalse(kind, PreparationPolicy.collection(kind));
+  }
 }

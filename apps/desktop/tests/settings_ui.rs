@@ -2,14 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, HitTarget, Modal, RuntimeHandles},
     editor::Editor,
     forms::{Form, SETTINGS_SECTIONS},
     ui,
 };
-use ytui_core::{Config, shortcuts::Action};
-use ytui_services::{paths::Paths, store::Snapshot};
+use vidcue_core::{Config, shortcuts::Action};
+use vidcue_services::{paths::Paths, store::Snapshot};
 
 fn fixture() -> (App, tempfile::TempDir) {
     let temp = tempfile::tempdir().unwrap();
@@ -25,7 +25,7 @@ fn fixture() -> (App, tempfile::TempDir) {
     };
     paths.create().unwrap();
     let mut config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         ..Default::default()
@@ -122,8 +122,8 @@ async fn every_settings_section_renders_first_and_last_fields_in_all_themes_and_
     let (mut app, _temp) = fixture();
     for language in ["en", "de"] {
         app.config.language = language.into();
-        for theme in ytui_services::theme::THEMES {
-            app.palette = ytui_services::theme::builtin(theme).unwrap();
+        for theme in vidcue_services::theme::THEMES {
+            app.palette = vidcue_services::theme::builtin(theme).unwrap();
             for (cols, rows) in [(35, 12), (80, 24), (120, 40), (180, 50), (212, 58)] {
                 let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
                 for (section, (_, indices)) in SETTINGS_SECTIONS.iter().enumerate() {
@@ -179,7 +179,7 @@ async fn every_settings_section_renders_first_and_last_fields_in_all_themes_and_
 
 #[test]
 fn language_is_backward_compatible_validated_and_saved_without_changing_other_fields() {
-    let old: Config = toml::from_str("theme = 'ytui-dark'").unwrap();
+    let old: Config = toml::from_str("theme = 'vidcue-dark'").unwrap();
     assert_eq!(old.language, "en");
     let mut form = Form::settings(old.clone());
     form.fields[54].value = Editor::new("de");
@@ -193,15 +193,15 @@ fn language_is_backward_compatible_validated_and_saved_without_changing_other_fi
     );
     form.fields[54].value = Editor::new("invalid");
     assert!(form.config_values().is_err());
-    let matches = ytui::actions::matching_localized("Allgemeine Einstellungen", "de");
+    let matches = vidcue::actions::matching_localized("Allgemeine Einstellungen", "de");
     assert!(
         matches
             .iter()
-            .any(|index| ytui::actions::ENTRIES[*index].command == "settings")
+            .any(|index| vidcue::actions::ENTRIES[*index].command == "settings")
     );
     assert_eq!(
-        ytui::actions::matching("General settings"),
-        ytui::actions::matching_localized("General settings", "de")
+        vidcue::actions::matching("General settings"),
+        vidcue::actions::matching_localized("General settings", "de")
     );
 }
 
@@ -318,8 +318,8 @@ async fn settings_mouse_buttons_and_persistence_use_the_visible_window() {
 
 #[tokio::test]
 async fn catalog_append_is_stable_and_repeated_continuations_stop() {
-    use ytui::app::UiEvent;
-    use ytui_core::{Media, Page};
+    use vidcue::app::UiEvent;
+    use vidcue_core::{Media, Page};
     let (mut app, _temp) = fixture();
     app.tab = 1;
     app.tabs[1].generation = 4;
@@ -379,8 +379,8 @@ async fn catalog_append_is_stable_and_repeated_continuations_stop() {
 }
 #[tokio::test]
 async fn live_stations_play_directly_and_songs_continue_through_the_collection() {
-    use ytui_core::{Media, MediaKind, Page};
-    use ytui_services::player::PlayerCommand;
+    use vidcue_core::{Media, MediaKind, Page};
+    use vidcue_services::player::PlayerCommand;
     let (mut app, _temp) = fixture();
     let (sender, mut receiver) = mpsc::channel(32);
     app.player = sender;
@@ -444,10 +444,10 @@ async fn action_menu_filters_and_parameter_forms_isolate_typing_and_download_sec
     app.paste("Connect browser");
     app.key(KeyCode::Enter.into());
     assert!(
-        matches!(app.modal,Some(Modal::Form(ref form)) if matches!(form.kind,ytui::forms::FormKind::Auth))
+        matches!(app.modal,Some(Modal::Form(ref form)) if matches!(form.kind,vidcue::forms::FormKind::Auth))
     );
     app.key(KeyCode::Esc.into());
-    let entry = ytui::actions::ENTRIES
+    let entry = vidcue::actions::ENTRIES
         .iter()
         .position(|e| e.command == "add")
         .unwrap();
@@ -455,13 +455,13 @@ async fn action_menu_filters_and_parameter_forms_isolate_typing_and_download_sec
     app.paste("https://www.youtube.com/watch?v=fixture1234");
     app.key(KeyCode::Enter.into());
     assert!(
-        matches!(app.modal,Some(Modal::Form(ref form)) if matches!(form.kind,ytui::forms::FormKind::Download(..)))
+        matches!(app.modal,Some(Modal::Form(ref form)) if matches!(form.kind,vidcue::forms::FormKind::Download(..)))
     );
-    for theme in ytui_services::theme::THEMES {
-        app.palette = ytui_services::theme::builtin(theme).unwrap();
+    for theme in vidcue_services::theme::THEMES {
+        app.palette = vidcue_services::theme::builtin(theme).unwrap();
         for (cols, rows) in [(35, 12), (80, 24), (120, 40), (180, 50), (212, 58)] {
             let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
-            for section in 0..ytui::forms::DOWNLOAD_SECTIONS.len() {
+            for section in 0..vidcue::forms::DOWNLOAD_SECTIONS.len() {
                 for edge in [false, true] {
                     if let Some(Modal::Form(form)) = &mut app.modal {
                         form.select_section(section);
@@ -486,12 +486,12 @@ async fn action_menu_filters_and_parameter_forms_isolate_typing_and_download_sec
     app.shutdown().await;
 }
 
-fn feed_fixture(app: &mut App, request: ytui_core::BrowseRequest, append: bool) {
-    use ytui::app::FeedLoad;
-    use ytui_core::{Media, Page};
+fn feed_fixture(app: &mut App, request: vidcue_core::BrowseRequest, append: bool) {
+    use vidcue::app::FeedLoad;
+    use vidcue_core::{Media, Page};
     app.tab = 1;
     app.tabs[1].generation = 10;
-    app.tabs[1].request = Some(ytui_core::BrowseRequest::Home);
+    app.tabs[1].request = Some(vidcue_core::BrowseRequest::Home);
     app.tabs[1].selected = 1;
     app.tabs[1].page = Page {
         title: "Home".into(),
@@ -518,9 +518,9 @@ fn feed_fixture(app: &mut App, request: ytui_core::BrowseRequest, append: bool) 
 #[tokio::test]
 async fn failed_continuation_recovers_on_tick_without_refresh_and_ignores_old_results() {
     use std::time::{Duration, Instant};
-    use ytui::app::UiEvent;
-    use ytui_core::{BrowseRequest, Media, Page};
-    use ytui_services::browse::FeedRetry;
+    use vidcue::app::UiEvent;
+    use vidcue_core::{BrowseRequest, Media, Page};
+    use vidcue_services::browse::FeedRetry;
     let (mut app, _temp) = fixture();
     app.demo = false;
     app.config.thumbnails = false;
@@ -585,9 +585,9 @@ async fn failed_continuation_recovers_on_tick_without_refresh_and_ignores_old_re
 #[tokio::test]
 async fn permanent_feed_errors_do_not_retry_and_offline_waits_for_recovery() {
     use std::time::{Duration, Instant};
-    use ytui::app::UiEvent;
-    use ytui_core::BrowseRequest;
-    use ytui_services::browse::FeedRetry;
+    use vidcue::app::UiEvent;
+    use vidcue_core::BrowseRequest;
+    use vidcue_services::browse::FeedRetry;
     let (mut app, _temp) = fixture();
     feed_fixture(&mut app, BrowseRequest::Home, false);
     app.apply(UiEvent::Page {
@@ -616,8 +616,8 @@ async fn permanent_feed_errors_do_not_retry_and_offline_waits_for_recovery() {
 }
 #[tokio::test]
 async fn refreshing_same_feed_preserves_selected_video_and_does_not_add_history() {
-    use ytui::app::UiEvent;
-    use ytui_core::{BrowseRequest, Media, Page};
+    use vidcue::app::UiEvent;
+    use vidcue_core::{BrowseRequest, Media, Page};
     let (mut app, _temp) = fixture();
     feed_fixture(&mut app, BrowseRequest::Home, false);
     app.tabs[1].load = None;
@@ -650,8 +650,8 @@ async fn refreshing_same_feed_preserves_selected_video_and_does_not_add_history(
 }
 #[tokio::test]
 async fn overlapping_pages_follow_new_tokens_but_cycles_and_empty_runs_stop() {
-    use ytui::app::UiEvent;
-    use ytui_core::{BrowseRequest, Media, Page};
+    use vidcue::app::UiEvent;
+    use vidcue_core::{BrowseRequest, Media, Page};
     let (mut app, _temp) = fixture();
     for tokens in [
         ["browse:3", "browse:2", "browse:4"],
@@ -695,7 +695,7 @@ async fn overlapping_pages_follow_new_tokens_but_cycles_and_empty_runs_stop() {
 }
 #[tokio::test]
 async fn prefetch_uses_visible_items_and_repeated_next_page_does_not_restart_request() {
-    use ytui_core::{BrowseRequest, Media};
+    use vidcue_core::{BrowseRequest, Media};
     let (mut app, _temp) = fixture();
     feed_fixture(&mut app, BrowseRequest::Home, false);
     app.tabs[1].load = None;
@@ -728,9 +728,9 @@ async fn prefetch_uses_visible_items_and_repeated_next_page_does_not_restart_req
 #[tokio::test]
 async fn reconnecting_feed_keeps_content_and_explains_automatic_recovery_in_all_themes() {
     use std::time::{Duration, Instant};
-    use ytui::app::UiEvent;
-    use ytui_core::BrowseRequest;
-    use ytui_services::browse::FeedRetry;
+    use vidcue::app::UiEvent;
+    use vidcue_core::BrowseRequest;
+    use vidcue_services::browse::FeedRetry;
     let (mut app, _temp) = fixture();
     feed_fixture(&mut app, BrowseRequest::Home, false);
     app.apply(UiEvent::Page {
@@ -739,8 +739,8 @@ async fn reconnecting_feed_keeps_content_and_explains_automatic_recovery_in_all_
         append: false,
         result: Err(FeedRetry::new("Temporary timeout", Duration::ZERO).into()),
     });
-    for theme in ytui_services::theme::THEMES {
-        app.palette = ytui_services::theme::builtin(theme).unwrap();
+    for theme in vidcue_services::theme::THEMES {
+        app.palette = vidcue_services::theme::builtin(theme).unwrap();
         for (cols, rows) in [(80, 24), (180, 50)] {
             let mut terminal = Terminal::new(TestBackend::new(cols, rows)).unwrap();
             terminal.draw(|f| ui::render(f, &mut app)).unwrap();
@@ -764,7 +764,7 @@ async fn reconnecting_feed_keeps_content_and_explains_automatic_recovery_in_all_
 
 #[tokio::test]
 async fn music_playlist_paste_sets_audio_and_playlist_intent_and_single_jobs_do_not_block_it() {
-    use ytui_core::{DownloadOptions, Media};
+    use vidcue_core::{DownloadOptions, Media};
     let (mut app, _temp) = fixture();
     app.tab = 2;
     app.search("https://music.youtube.com/playlist?list=PLsynthetic");

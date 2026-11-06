@@ -16,6 +16,25 @@ internal object PlaybackContexts {
                 }
                 ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
 
+    /**
+     * "Play all" on a home shelf: start its first playable entry and continue through the
+     * rest in shelf order. Reuses the complete visible-list context that radio lists use, so
+     * the engine treats the shelf as finite and never swaps in related recommendations.
+     */
+    fun shelf(cards: List<MediaCard>): Pair<MediaCard, JSONObject>? {
+        val items = cards.filter { !it.collection && !it.live && it.url.isNotBlank() }
+            .distinctBy { it.url }
+            .take(500)
+        val first = items.firstOrNull() ?: return null
+        return first to
+            json(
+                "op" to "radio_context",
+                "context_id" to UUID.randomUUID().toString(),
+                "source_url" to first.url,
+                "items" to JSONArray(items.map { it.value }),
+            )
+    }
+
     fun create(
         media: MediaCard,
         feed: FeedState,

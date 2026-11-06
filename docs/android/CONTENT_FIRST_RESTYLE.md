@@ -1,9 +1,9 @@
 # Content-first Android restyle (M9)
 
-The owner supplied `ytui-youtube-restyle-agent-prompt.md` and
+The owner supplied `vidcue-youtube-restyle-agent-prompt.md` and
 `youtube-style-and-feel.md` on 2026-10-30 and requested implementation. Scope is
 presentation only: preserve playback, Rust, provider/network/cache/account/data
-contracts, navigation actions and all existing options. Keep ytui branding and
+contracts, navigation actions and all existing options. Keep vidcue branding and
 shared palettes. No YouTube logos, proprietary fonts or new service features.
 
 ## Baseline and decisions
@@ -12,12 +12,12 @@ The brief names `427842c`, superseded by mobile.8 playback and the merged PR27 U
 Work starts at current main `05903aa`, preserving those changes. The screenshot
 ZIP named in the brief was not supplied. Equivalent exact-source mobile.9
 qualification captures (app source `553fe49`, unchanged app code at `05903aa`)
-are retained at `/workspace/ytui-restyle-evidence/before`. This is retained prior
+are retained at `/workspace/vidcue-restyle-evidence/before`. This is retained prior
 emulator evidence, not a fresh baseline run or a comparison against the missing
 ZIP. Pixel 7 API35 suite and 2560x1600 tablet captures are the existing profiles.
 
 The owner explicitly kept the YouTube label. The owner requested neutral dark as the default. Fresh mobile configuration now
-selects ytui-dark; existing saved selections remain intact. Android maps that
+selects vidcue-dark; existing saved selections remain intact. Android maps that
 palette's background/surface/text to central neutral tokens, keeping its teal
 accent. Other shared palettes and desktop rendering remain unchanged. This
 explicitly authorized default-only change is the sole Rust change; it does not
@@ -115,11 +115,11 @@ are kept with the initial artifact rather than represented as final passes.
 | Group | Files |
 | --- | --- |
 | Tokens/P0 | `MediaDesign.kt`, browsing/app-bar/search/cards/navigation/mini-player portions of `ComposeHost.kt` |
-| P1 | `FocusedPlayer.kt`, `PlayerChrome.kt`, `FullscreenActivity.java` (presentation bindings only), panel/settings/account portions of `ComposeHost.kt`, `ytui_controller.xml`, `ytui_player.xml`, original glyph vectors `ytui_{collapse,play,pause}.xml`, collapse accessibility string |
+| P1 | `FocusedPlayer.kt`, `PlayerChrome.kt`, `FullscreenActivity.java` (presentation bindings only), panel/settings/account portions of `ComposeHost.kt`, `vidcue_controller.xml`, `vidcue_player.xml`, original glyph vectors `vidcue_{collapse,play,pause}.xml`, collapse accessibility string |
 | P2 | Wide search and accessibility geometry in `ComposeHost.kt`; `CatalogUiTest.kt`, `NativeUiTest.kt`, `MediaDesignTest.kt`, screenshot collection in `tools/android/run-device-tests.sh` |
-| Explicit owner exception | Fresh-config theme default and preservation test in `crates/ytui-mobile/src/lib.rs`; no extraction/network/cache/media behavior changes |
+| Explicit owner exception | Fresh-config theme default and preservation test in `crates/vidcue-mobile/src/lib.rs`; no extraction/network/cache/media behavior changes |
 
-`ytui_controller.xml` adapts the existing Apache-licensed Media3 control layout;
+`vidcue_controller.xml` adapts the existing Apache-licensed Media3 control layout;
 its copyright/license header is retained. Glyphs are original simple vectors.
 No font, asset service, tracking endpoint or dependency was added. Stable signing
 identity, account/session files, library state and release assets are untouched.
@@ -161,7 +161,7 @@ fix. A separate desktop fake-executable ETXTBSY fixture finding/fix is tracked i
 [PR #30](https://github.com/Vanir20342222/ytui/pull/30).
 
 
-A final palette-import review found that a custom document named `ytui-dark` could
+A final palette-import review found that a custom document named `vidcue-dark` could
 collide with the neutral built-in presentation. The override now checks that the
 selected theme is not `custom`; imported background/surface/text values remain
 exactly their document's values. An actual native synthetic import regression

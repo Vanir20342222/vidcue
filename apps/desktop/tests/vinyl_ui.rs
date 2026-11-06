@@ -1,14 +1,14 @@
 use ratatui::{Terminal, backend::TestBackend};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc;
-use ytui::{
+use vidcue::{
     app::{App, RuntimeHandles},
     editor::Editor,
     forms::Form,
     ui,
 };
-use ytui_core::{Config, shortcuts::Action};
-use ytui_services::{paths::Paths, store::Snapshot};
+use vidcue_core::{Config, shortcuts::Action};
+use vidcue_services::{paths::Paths, store::Snapshot};
 fn fixture() -> (App, tempfile::TempDir) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -23,7 +23,7 @@ fn fixture() -> (App, tempfile::TempDir) {
     };
     paths.create().unwrap();
     let mut config = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         ..Default::default()
@@ -61,10 +61,10 @@ fn render(app: &mut App, w: u16, h: u16) -> String {
 }
 #[test]
 fn legacy_config_and_settings_style_roundtrip_and_validate() {
-    let c: Config = toml::from_str("theme='ytui-dark'").unwrap();
+    let c: Config = toml::from_str("theme='vidcue-dark'").unwrap();
     assert_eq!(c.music_player_style, "classic");
     let mut f = Form::settings(c);
-    for style in ytui_core::MUSIC_PLAYER_STYLES.iter().copied() {
+    for style in vidcue_core::MUSIC_PLAYER_STYLES.iter().copied() {
         f.fields[55].value = Editor::new(style);
         let c = f.config_values().unwrap();
         assert_eq!(
@@ -105,8 +105,8 @@ async fn modes_are_scoped_to_music_radio_and_escape_keeps_playback() {
 async fn all_themes_sizes_modes_and_modal_overlays_render_playing_track() {
     let (mut app, _temp) = fixture();
     app.player_status.media.as_mut().unwrap().title = "Currently playing fixture".into();
-    for theme in ytui_services::theme::THEMES {
-        app.palette = ytui_services::theme::builtin(theme).unwrap();
+    for theme in vidcue_services::theme::THEMES {
+        app.palette = vidcue_services::theme::builtin(theme).unwrap();
         for tab in [2, 3] {
             app.tab = tab;
             for style in ["vinyl", "vinyl-fullscreen"] {
@@ -122,7 +122,7 @@ async fn all_themes_sizes_modes_and_modal_overlays_render_playing_track() {
             }
         }
     }
-    app.modal = Some(ytui::app::Modal::Help(0));
+    app.modal = Some(vidcue::app::Modal::Help(0));
     assert!(render(&mut app, 120, 40).contains("Keyboard & navigation"));
 }
 #[tokio::test]
@@ -179,8 +179,8 @@ async fn artwork_is_cached_for_the_playing_song_independently_of_browse_selectio
 async fn new_visualizers_render_all_themes_and_sizes_and_exit_to_their_panes() {
     let (mut app, _temp) = fixture();
     app.tab = 2;
-    for theme in ytui_services::theme::THEMES {
-        app.palette = ytui_services::theme::builtin(theme).unwrap();
+    for theme in vidcue_services::theme::THEMES {
+        app.palette = vidcue_services::theme::builtin(theme).unwrap();
         for (style, label) in [
             ("vu", "Neon VU"),
             ("vu-fullscreen", "Neon VU"),
@@ -212,17 +212,17 @@ async fn visualizers_freeze_levels_and_motion_and_never_invent_missing_audio() {
     app.tick().await;
     app.player_status.paused = true;
     let before = render(&mut app, 120, 40);
-    app.player_status.audio_levels = Some(ytui_services::visualizer::AudioLevels::default());
+    app.player_status.audio_levels = Some(vidcue_services::visualizer::AudioLevels::default());
     app.tick().await;
     assert_eq!(before, render(&mut app, 120, 40));
     app.player_status.audio_levels = None;
     assert!(render(&mut app, 120, 40).contains("Audio meter unavailable"));
     app.config.music_player_style = "classic".into();
-    for expected in ytui_core::MUSIC_PLAYER_STYLES
+    for expected in vidcue_core::MUSIC_PLAYER_STYLES
         .iter()
         .cycle()
         .skip(1)
-        .take(ytui_core::MUSIC_PLAYER_STYLES.len())
+        .take(vidcue_core::MUSIC_PLAYER_STYLES.len())
     {
         app.action(Action::MusicPlayerStyle);
         assert_eq!(&app.config.music_player_style, expected);

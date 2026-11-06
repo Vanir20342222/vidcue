@@ -1,7 +1,7 @@
 # M9: complete UI/UX overhaul pass
 
 On 2026-11-02 the owner asked for the Android app to be redesigned after the
-restyle brief (`ytui-youtube-restyle-agent-prompt.md`) and its reference
+restyle brief (`vidcue-youtube-restyle-agent-prompt.md`) and its reference
 (`youtube-style-and-feel.md`). The goal is a fully usable UI and UX, and the
 owner allowed deviations from the brief where it is wrong. This pass builds on
 the judged refinement in PR #31 (`feat/android-ui-fidelity`, revision 3
@@ -283,7 +283,7 @@ with an always-enabled "Use this session" button.
 - When a session is detected, a native "You're signed in" card (`sign-in-detected`,
   action `sign-in-finish`) covers the possibly blank YouTube page.
 - The bottom "Use this session" button (`sign-in-complete`) is disabled until a session
-  is detected; the hint reads "Sign in with Google. ytui detects it and returns you here."
+  is detected; the hint reads "Sign in with Google. vidcue detects it and returns you here."
 - Confirmation stays explicit; only cookie names are inspected.
 
 Evidence: not compiled or run in this environment (no Android SDK). Needs CI

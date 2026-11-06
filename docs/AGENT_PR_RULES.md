@@ -95,15 +95,15 @@ establishes a live-service, physical-device or stable-release claim.
   - **Merge notes**: fill every label; they are machine-checked.
 - Use plain statements. No marketing words ("robust", "seamless"), no claims you did not test, no
   history of your attempts. Put design reasoning in the change note, not the description.
-- **Auto-merge:** write `yes` only if nothing needs an owner decision and no live, device or
-  account check is still outstanding for the claim in the title. Otherwise write
-  `no, because ...`. Do not enable auto-merge yourself unless the task prompt says to
-  (`enable_pr_auto_merge`); the owner enables it with one click.
+- **Auto-merge:** always write `yes`. Every agent PR merges automatically as soon as its required
+  checks pass. Enable it yourself on the PR once it is open and ready for review
+  (`enable_pr_auto_merge`). If a PR must not merge yet (it needs an owner decision, or a device or
+  account check is still outstanding), open it as a **draft**: drafts do not auto-merge.
 
 ## 8. After you push
 
 - Subscribe to the PR only if the task says to watch it. When subscribed, follow section 6.
 - When the PR is merged, the work is finished. Follow-up work is a new branch from the new `main`,
   never new commits on the merged branch.
-- End your turn with: the PR link, a one-line status (draft/ready, CI state, auto-merge yes/no),
+- End your turn with: the PR link, a one-line status (draft/ready, CI state, auto-merge enabled or draft),
   what was and was not verified, and any question for the owner.

@@ -222,7 +222,24 @@ private fun ConfirmationDisc(glyph: Glyph, text: String) {
     }
 }
 
-/** Remaining sleep-timer milliseconds from the published deadline, ticking once a second. */
+/**
+ * Remaining sleep-timer milliseconds at [now] (elapsed realtime), 0 when no timer runs. An
+ * end-of-track timer has no deadline: it lasts as long as the track has left to play at the
+ * current speed, so pausing, seeking or a speed change move it with the track.
+ */
+internal fun sleepLeftAt(status: org.json.JSONObject, now: Long): Long {
+    if (status.optBoolean("sleep_end_of_track")) {
+        val speed = status.optDouble("speed", 1.0).takeIf { it.isFinite() && it > 0 } ?: 1.0
+        val left =
+            (status.optDouble("duration", 0.0) - status.optDouble("position", 0.0)) * 1000 / speed
+        // Still running until the item ends, even when the duration is not known yet.
+        return if (left.isFinite()) left.toLong().coerceAtLeast(1) else 1
+    }
+    val deadline = status.optLong("sleep_deadline")
+    return if (deadline <= 0) 0 else (deadline - now).coerceAtLeast(0)
+}
+
+/** Remaining sleep-timer milliseconds from the published state, ticking once a second. */
 @Composable
 internal fun rememberSleepLeft(player: PlayerState): Long {
     val deadline = player.value.optLong("sleep_deadline")
@@ -233,7 +250,18 @@ internal fun rememberSleepLeft(player: PlayerState): Long {
             delay(1000)
         }
     }
-    return if (deadline <= 0) 0 else (deadline - now).coerceAtLeast(0)
+    return sleepLeftAt(player.value, now)
+}
+
+/** Share of the running sleep timer still left (1 = just started, 0 = off or finished). */
+internal fun sleepFraction(player: PlayerState, left: Long): Float {
+    if (left <= 0) return 0f
+    if (player.value.optBoolean("sleep_end_of_track")) {
+        val duration = player.duration
+        return if (duration > 0) ((duration - player.position) / duration).coerceIn(0f, 1f) else 1f
+    }
+    val total = player.value.optLong("sleep_total").coerceAtLeast(left)
+    return (left.toFloat() / total).coerceIn(0f, 1f)
 }
 
 internal fun sleepLabel(ms: Long): String {
@@ -275,6 +303,7 @@ internal fun SleepBadge(player: PlayerState, modifier: Modifier = Modifier, onCl
 internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
     val player by vm.player.collectAsState()
     val left = rememberSleepLeft(player)
+    val endOfTrack = player.value.optBoolean("sleep_end_of_track")
     val colors = MaterialTheme.colorScheme
     if (left > 0)
         Column(
@@ -294,11 +323,17 @@ internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
                         ),
                         modifier = Modifier.testTag("sleep-remaining"),
                     )
-                    Text("until playback pauses", style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                    Text(
+                        if (endOfTrack) "until this track ends" else "until playback pauses",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                    )
                 }
-                SecondaryAction("+15 min") {
-                    vm.command("sleep", "seconds" to (left / 1000 + 15 * 60))
-                }
+                // Extending only makes sense for a countdown; the track's end does not move.
+                if (!endOfTrack)
+                    SecondaryAction("+15 min") {
+                        vm.command("sleep", "seconds" to (left / 1000 + 15 * 60))
+                    }
             }
         }
     for (minutes in listOf(15, 30, 60, 120)) {
@@ -326,16 +361,19 @@ internal fun SleepOptions(vm: YtuiViewModel, done: () -> Unit) {
             },
             leadingIcon = { MediaIcon(Glyph.Stop) },
             onClick = {
-                vm.command("sleep", "seconds" to remaining)
+                // Pauses when the item ends, however long pauses, seeks or speed make that.
+                vm.command("sleep", "end_of_track" to true)
                 done()
             },
         )
-    SheetAction(
-        text = { Text("Cancel timer") },
-        leadingIcon = { MediaIcon(Glyph.Close) },
-        onClick = {
-            vm.command("sleep_cancel")
-            done()
-        },
-    )
+    // Only a running timer can be cancelled.
+    if (left > 0)
+        SheetAction(
+            text = { Text("Cancel timer") },
+            leadingIcon = { MediaIcon(Glyph.Close) },
+            onClick = {
+                vm.command("sleep_cancel")
+                done()
+            },
+        )
 }

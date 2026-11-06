@@ -1,6 +1,6 @@
 //! Explicit public YouTube smoke checks. No browser profile or account is imported.
 use std::{os::unix::fs::PermissionsExt, path::Path, process::Stdio, time::Duration};
-use ytui_core::{Config, JobState};
+use vidcue_core::{Config, JobState};
 
 fn backend() -> String {
     let backend = std::env::var("YTUI_LIVE_BACKEND").unwrap_or_else(|_| "auto".into());
@@ -28,7 +28,7 @@ async fn run(args: &[&str]) -> (std::process::Output, tempfile::TempDir) {
     let wrapper = root.join("mpv-headless");
     if args.first() == Some(&"playback-check") {
         let program =
-            ytui_services::paths::executable(&mpv).expect("Install mpv or set YTUI_TEST_MPV");
+            vidcue_services::paths::executable(&mpv).expect("Install mpv or set YTUI_TEST_MPV");
         let quoted = program.to_string_lossy().replace('\'', "'\\''");
         std::fs::write(
             &wrapper,
@@ -38,7 +38,7 @@ async fn run(args: &[&str]) -> (std::process::Output, tempfile::TempDir) {
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     let mut settings = Config {
-        theme: "ytui-dark".into(),
+        theme: "vidcue-dark".into(),
         auth_store: "file".into(),
         notifications: false,
         download_backend: backend(),
@@ -53,7 +53,7 @@ async fn run(args: &[&str]) -> (std::process::Output, tempfile::TempDir) {
     // No thumbnail/sidecar fetches or third-party SponsorBlock requests in these checks.
     settings.download.metadata = false;
     std::fs::write(&config, toml::to_string(&settings).unwrap()).unwrap();
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_ytui"));
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_vidcue"));
     command
         .args([
             "--config",
@@ -84,14 +84,14 @@ fn success(output: &std::process::Output) {
     assert!(
         output.status.success(),
         "{}",
-        ytui_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
+        vidcue_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
     );
 }
-fn page(output: std::process::Output) -> ytui_core::Page {
+fn page(output: std::process::Output) -> vidcue_core::Page {
     assert!(
         output.status.success(),
         "{}",
-        ytui_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
+        vidcue_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
     );
     serde_json::from_slice(&output.stdout).expect("CLI did not return a page")
 }
@@ -142,17 +142,17 @@ async fn playback(music: bool, audio: bool) {
     println!("Actual mpv playback advanced: {}", result);
 }
 #[tokio::test]
-#[ignore = "real public YouTube video playback through ytui, yt-dlp/native and mpv; no cookies"]
+#[ignore = "real public YouTube video playback through vidcue, yt-dlp/native and mpv; no cookies"]
 async fn live_youtube_video_playback() {
     playback(false, false).await;
 }
 #[tokio::test]
-#[ignore = "real public YouTube audio playback through ytui and mpv; no cookies"]
+#[ignore = "real public YouTube audio playback through vidcue and mpv; no cookies"]
 async fn live_youtube_audio_playback() {
     playback(false, true).await;
 }
 #[tokio::test]
-#[ignore = "real public Music URL audio playback through ytui and mpv; no cookies"]
+#[ignore = "real public Music URL audio playback through vidcue and mpv; no cookies"]
 async fn live_music_audio_playback() {
     playback(true, true).await;
 }
@@ -182,7 +182,7 @@ async fn download(audio: bool, playlist: bool) {
     }
     let (output, temp) = run(&args).await;
     success(&output);
-    let store = ytui_services::store::Store::open(&temp.path().join("state")).unwrap();
+    let store = vidcue_services::store::Store::open(&temp.path().join("state")).unwrap();
     let snapshot = store.load().await.unwrap();
     store.close().await.unwrap();
     let job = &snapshot.downloads.jobs[0];
@@ -292,7 +292,7 @@ async fn live_native_youtube_test_video_download() {
     assert!(
         output.status.success(),
         "{}",
-        ytui_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
+        vidcue_services::process::diagnostic(&String::from_utf8_lossy(&output.stderr))
     );
     assert!(
         std::fs::read_dir(destination.path())

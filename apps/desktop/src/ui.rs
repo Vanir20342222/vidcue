@@ -12,7 +12,7 @@ use ratatui::{
 use ratatui_image::Image;
 use std::borrow::Cow;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
-use ytui_core::{JobState, shortcuts::REGISTRY};
+use vidcue_core::{JobState, shortcuts::REGISTRY};
 
 pub fn rgb(c: (u8, u8, u8)) -> Color {
     Color::Rgb(c.0, c.1, c.2)
@@ -72,6 +72,7 @@ mod lyrics;
 mod menus;
 mod settings;
 mod setup;
+mod update;
 pub mod vinyl;
 mod visualizer;
 mod workspace;
@@ -171,6 +172,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         ),
         Modal::Text { .. } => (90, 28),
         Modal::Setup(_) => (84, 24),
+        Modal::Update { release, .. } => (80, release.notes.len() as u16 + 14),
     };
     let rect = centered(area, size.0, size.1);
     f.render_widget(Clear, rect);
@@ -184,6 +186,10 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Modal::Lyrics(view) => lyrics::render(f, app, view, rect),
         Modal::Setup(view) => setup::render(f, app, view, rect),
+        Modal::Update { release, selected } => {
+            let (release, selected) = (release.clone(), *selected);
+            update::render(f, app, &release, selected, rect);
+        }
         Modal::Actions { selected, query } => {
             let hits = menus::actions(f, app, *selected, query, rect);
             app.hit_targets.extend(hits);
@@ -291,7 +297,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
         }
         Modal::History(view) => {
             let rows = view.rows(&app.snapshot.downloads.jobs);
-            let stats = ytui_core::history::Statistics::from_jobs(rows.iter().map(|(_, j)| *j));
+            let stats = vidcue_core::history::Statistics::from_jobs(rows.iter().map(|(_, j)| *j));
             let block = panel(
                 format!(
                     " Downloads · {}{} · {} matches ",
@@ -531,7 +537,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
             let inner = block.inner(rect);
             f.render_widget(block, rect);
             let chunks = Layout::vertical([Constraint::Length(6), Constraint::Min(1)]).split(inner);
-            f.render_widget(Paragraph::new(" Sign in to YouTube in your browser and complete any consent/verification there.\n Choose a profile below, then confirm the import in the next form.\n Discovery reads directory names only; cookies stay on this computer.\n Keyring must be unlocked. File storage is an explicit Settings → Account option.\n Session expired? Reconnect the selected profile; ytui never accepts consent for you.").wrap(Wrap { trim: false }), chunks[0]);
+            f.render_widget(Paragraph::new(" Sign in to YouTube in your browser and complete any consent/verification there.\n Choose a profile below, then confirm the import in the next form.\n Discovery reads directory names only; cookies stay on this computer.\n Keyring must be unlocked. File storage is an explicit Settings → Account option.\n Session expired? Reconnect the selected profile; vidcue never accepts consent for you.").wrap(Wrap { trim: false }), chunks[0]);
             let mut items = vec![ListItem::new("Manual profile path / Netscape cookie file…")];
             items.extend(profiles.iter().map(|profile| {
                 ListItem::new(vec![
@@ -560,14 +566,16 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
                 let ready = download
                     .outputs
                     .iter()
-                    .filter(|path| ytui_services::library::completed_file(download, path).is_some())
+                    .filter(|path| {
+                        vidcue_services::library::completed_file(download, path).is_some()
+                    })
                     .count();
                 let items = download
                     .outputs
                     .iter()
                     .map(|path| {
                         let available =
-                            ytui_services::library::completed_file(download, path).is_some();
+                            vidcue_services::library::completed_file(download, path).is_some();
                         ListItem::new(vec![
                             Line::styled(
                                 format!(
@@ -816,7 +824,7 @@ fn modal(f: &mut Frame, app: &mut App, area: Rect) {
     }
 }
 fn theme_items(app: &App) -> Vec<ListItem<'static>> {
-    ytui_services::theme::THEMES
+    vidcue_services::theme::THEMES
         .iter()
         .map(|name| {
             ListItem::new(format!(

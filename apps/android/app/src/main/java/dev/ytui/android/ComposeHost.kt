@@ -2,7 +2,12 @@ package dev.ytui.android
 
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -14,8 +19,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.foundation.*
@@ -47,6 +50,7 @@ import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -75,6 +79,7 @@ import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -175,7 +180,7 @@ object ComposeHost {
 }
 
 internal fun JSONObject.color(key: String, fallback: Color, neutralPreset: Boolean = true): Color {
-    if (neutralPreset && optString("name") == "ytui-dark")
+    if (neutralPreset && optString("name") == "vidcue-dark")
         when (key) {
             "background" -> return MediaTokens.neutralBackground
             "surface" -> return MediaTokens.neutralSurface
@@ -234,6 +239,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         keyboard?.hide()
         searchFocused = false
     }
+    // The player covers the page but leaves it composed, so a search field there
+    // (browse or the offline library filter) would keep input focus underneath and
+    // reopen the IME whenever the window regains focus. Opening the player moves
+    // focus to the non-text sink; fields inside the player's own sheets are unaffected.
+    LaunchedEffect(playerOpen) {
+        if (playerOpen) {
+            if (runCatching { focusSink.requestFocus() }.isFailure)
+                focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
     val searchRequestState =
         remember(vm, tab) {
             val feed = vm.feeds[tab]
@@ -268,7 +284,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val background = palette.color("background", Color(0xff101418), neutralPreset)
     val surface = palette.color("surface", Color(0xff202830), neutralPreset)
     val foreground = palette.color("text", Color(0xffd5dee6), neutralPreset)
-    val accent = palette.color("accent", Color(0xff80cbc4), neutralPreset)
+    // A palette without an accent stays neutral rather than borrowing a fixed hue.
+    val accent = palette.color("accent", foreground, neutralPreset)
     val light = palette.optBoolean("light")
     val base = if (light) lightColorScheme() else darkColorScheme()
     val colors =
@@ -344,6 +361,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         remember(mobile, config.optBoolean("reduced_motion")) {
             Motion.from(mobile, config.optBoolean("reduced_motion"))
         }
+    // Once the music player has finished opening it covers the whole window, so the page
+    // underneath stops drawing (it stays composed). Dragging the player down or closing it shows
+    // the page again at once.
+    var musicPlayerCovers by remember { mutableStateOf(false) }
+    LaunchedEffect(playerOpen, videoPlayer, motion) {
+        musicPlayerCovers = false
+        if (playerOpen && !videoPlayer) {
+            delay(motion.millis(400).toLong() + 100)
+            musicPlayerCovers = true
+        }
+    }
     MaterialTheme(
         colorScheme = colors,
         typography = typography,
@@ -376,7 +404,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .background(background)
                         // The video panel is opaque. Keep browse state/artwork
                         // attached, but skip drawing the covered content.
-                        .graphicsLayer { alpha = if (playerOpen && videoPlayer) 0f else 1f }
+                        .graphicsLayer {
+                            alpha =
+                                if (playerOpen && (videoPlayer || (musicPlayerCovers && !PanelPull.active.value))) 0f
+                                else 1f
+                        }
                         .then(if (playerOpen) Modifier.clearAndSetSemantics {} else Modifier)
                         .testTag("app-background")
                         .semantics { stateDescription = if (ready) "Ready" else "Loading settings" }
@@ -461,7 +493,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         }
                                         for ((label, name, icon) in
                                             listOf(
-                                                Triple("Playback queue", "queue", Glyph.Queue),
+                                                Triple("Playback queue", "queue", Glyph.UpNext),
                                                 Triple("Recently played", "history", Glyph.History),
                                                 Triple("Lyrics", "lyrics", Glyph.Lyrics),
                                                 Triple("Sleep timer", "sleep", Glyph.Sleep),
@@ -577,6 +609,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             showHeader = !videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.gesture("gesture_swipe_dismiss"),
+                            enterFromBottom = true,
                             backdrop =
                                 if (videoPlayer) Modifier else Modifier.ambientGlow(glow, background),
                         ) {
@@ -594,6 +627,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     vm.player.value.media?.let(vm::lyricLoad)
                                 },
                                 onSleep = { dialog = "sleep" },
+                                onOutput = { dialog = "output" },
                             )
                         }
                     }
@@ -604,17 +638,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     } else {
                         AnimatedVisibility(
                             visible = playerOpen,
-                            // Rises from the mini player: slide most of the way with a
-                            // slight scale, so it reads as the dock expanding.
-                            enter =
-                                if (motion.animate)
-                                    fadeIn(motion.fade(160)) +
-                                        slideInVertically(motion.enter(320)) { it / 3 }
-                                else EnterTransition.None,
+                            // The panel itself rises from the bottom and flies back down
+                            // (Panel enterFromBottom), mirroring the swipe-away. Only a close
+                            // that bypasses the panel (Stop, a shortcut) fades it here.
+                            enter = EnterTransition.None,
                             exit =
-                                if (motion.animate)
-                                    fadeOut(motion.exit(200)) +
-                                        slideOutVertically(motion.exit(240)) { it / 3 }
+                                if (motion.animate) fadeOut(motion.exit(200))
                                 else ExitTransition.None,
                         ) {
                             PlaybackPanel(allowVideoSurface = false)
@@ -661,14 +690,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         }
                     "sleep" ->
                         Panel("Sleep timer", { dialog = "" }) { SleepOptions(vm) { dialog = "" } }
+                    "output" ->
+                        Panel("Audio output", { dialog = "" }) { OutputOptions(vm) { dialog = "" } }
                     "about" ->
-                        Panel("About ytui", { dialog = "" }) {
+                        Panel("About Vidcue", { dialog = "" }) {
                             Text(
                                 "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nRust engine · native Android UI\nSource ${BuildConfig.SOURCE_REVISION}"
                             )
                             Text(
                                 "All provider, extraction, account and library operations use the shared Rust engine. Android supplies touch, keyboard, video and background media. Development preview. Device playback, network and update checks are tracked in the validation report."
                             )
+                            AppUpdateSettings()
                             ValueRow("Radio artwork credits", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
@@ -685,7 +717,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             }
                         }
                 }
-                if (!onboarding && !fullscreen) DownloadFlightHost(config.optBoolean("thumbnails", true))
+                if (!onboarding && !fullscreen)
+                    DownloadFlightHost(
+                        config.optBoolean("thumbnails", true),
+                        // The full-screen player and panels cover the Downloads tab.
+                        navigationHidden = playerOpen || dialog.isNotEmpty(),
+                        downloads = vm.downloads,
+                    ) {
+                        dialog = ""
+                        vm.playerOpen.value = false
+                        selectTab(0)
+                    }
                 if (!onboarding && !fullscreen)
                     NoticeHost(
                         vm,
@@ -694,6 +736,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 WindowInsets.safeDrawing.getBottom(this).toDp()
                             } + if (playerOpen || tabletLayoutOf()) 24.dp else if (hasPlayer) 156.dp else 92.dp,
                     )
+                if (!onboarding && !fullscreen) AppUpdateHost()
+                SharedLinkPlayer(vm, blocked = onboarding)
                 val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,
@@ -737,19 +781,39 @@ internal fun Panel(
     headerBackTag: String = "",
     showHeader: Boolean = true,
     backdrop: Modifier = Modifier,
+    enterFromBottom: Boolean = false,
+    actions: @Composable RowScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    // Full-screen panels follow a downward drag and fly off when released past the threshold.
-    val drag = remember { Animatable(0f) }
     val motion = LocalMotion.current
     val height = with(LocalDensity.current) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    // Full-screen panels follow a downward drag and fly off when released past the threshold.
+    // A player panel also rises the same way it leaves: it starts one screen down, slightly
+    // shrunk, and settles into place, the exact reverse of the swipe-away.
+    val rise = full && enterFromBottom && motion.animate
+    val drag = remember { Animatable(if (rise) height else 0f) }
+    if (rise) LaunchedEffect(Unit) { drag.animateTo(0f, motion.enter(460)) }
+    // Tell the app shell while a full panel is pulled away, so the page behind can show.
+    if (full) {
+        LaunchedEffect(drag) { snapshotFlow { drag.value != 0f }.collect { PanelPull.active.value = it } }
+        DisposableEffect(Unit) { onDispose { PanelPull.active.value = false } }
+    }
     val dismissThreshold = with(LocalDensity.current) { 96.dp.toPx() }
-    val flyOff: suspend kotlinx.coroutines.CoroutineScope.(Int) -> Unit = {
-        drag.animateTo(height, motion.exit(240))
+    var leaving by remember { mutableStateOf(false) }
+    val flyOff: suspend kotlinx.coroutines.CoroutineScope.(Int) -> Unit = flyOff@{
+        if (leaving) return@flyOff
+        leaving = true
+        drag.animateTo(height, motion.exit(300))
         close()
     }
+    val panelScope = rememberCoroutineScope()
+    // Every way out of a full panel (header button, system Back) leaves like the swipe does.
+    val animatedClose: () -> Unit = {
+        if (full && motion.animate) panelScope.launch { flyOff(1) } else if (!leaving) close()
+    }
+    if (full && enterFromBottom) BackHandler(enabled = motion.animate && !leaving) { animatedClose() }
     @Composable
-    fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = close) {
+    fun Body(modifier: Modifier = Modifier, dismiss: () -> Unit = if (full) animatedClose else close) {
         Column(modifier.testTag("panel-body")) {
             if (showHeader && title.isNotBlank())
                 Row(
@@ -784,6 +848,7 @@ internal fun Panel(
                             else MaterialTheme.typography.titleLarge,
                         textAlign = if (full) TextAlign.Center else TextAlign.Start,
                     )
+                    actions()
                     if (full) Spacer(Modifier.size(48.dp))
                     // Sub-pages go back one level; only the top page and sheets close.
                     if (!full && !page) SheetClose(dismiss)
@@ -850,7 +915,7 @@ internal fun Panel(
                 }
             }
         }
-    } else if (title == "About ytui") {
+    } else if (title == "About Vidcue") {
         MediaDialog(
             close,
             title,
@@ -922,6 +987,11 @@ internal fun Panel(
             )
         }
     }
+}
+
+/** True while a full-screen panel is being dragged or flung away. */
+internal object PanelPull {
+    val active = mutableStateOf(false)
 }
 
 /** Slide-in side for the next BrowsePane after a tab swipe (main thread only). */
@@ -1045,28 +1115,26 @@ private fun BrowsePane(
     // Re-selecting the current tab scrolls to the top; a freshly shown pane keeps
     // its restored position.
     val initialScrollToTop = remember { scrollToTop }
-    // The search bar and filters slide away while scrolling down through results and come
-    // back on any upward scroll, at the top, or while the field is in use.
-    var headerShown by remember(tab) { mutableStateOf(true) }
-    val headerTravel = with(density) { 28.dp.toPx() }
+    // The search bar and filters move with the scroll: they slide up as the feed scrolls down
+    // and come back with any upward scroll. They float over the grid and only their layer moves,
+    // so hiding them never re-measures the grid mid-scroll.
+    var headerHeight by remember { mutableIntStateOf(0) }
+    val headerOffset = remember(tab) { mutableFloatStateOf(0f) }
     val headerScroll =
-        remember(headerTravel) {
+        remember(headerOffset) {
             object : NestedScrollConnection {
-                var travel = 0f
-
                 override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                     val dy = available.y
-                    if (dy == 0f) return Offset.Zero
-                    if ((dy < 0f) != (travel < 0f)) travel = 0f
-                    travel += dy
-                    if (travel < -headerTravel) headerShown = false
-                    else if (travel > headerTravel) headerShown = true
+                    if (dy != 0f)
+                        headerOffset.floatValue =
+                            (headerOffset.floatValue - dy).coerceIn(0f, headerHeight.toFloat())
                     return Offset.Zero
                 }
             }
         }
+    LaunchedEffect(searchActive, feed.request) { headerOffset.floatValue = 0f }
     LaunchedEffect(scrollToTop) {
-        headerShown = true
+        headerOffset.floatValue = 0f
         if (scrollToTop != initialScrollToTop) {
             if (reduced) grid.scrollToItem(0) else grid.animateScrollToItem(0)
         }
@@ -1075,11 +1143,6 @@ private fun BrowsePane(
         snapshotFlow { grid.firstVisibleItemIndex }
             .distinctUntilChanged()
             .collect { vm.rememberScroll(tab, it) }
-    }
-    LaunchedEffect(grid) {
-        snapshotFlow { grid.firstVisibleItemIndex == 0 && grid.firstVisibleItemScrollOffset == 0 }
-            .distinctUntilChanged()
-            .collect { top -> if (top) headerShown = true }
     }
     val focused by vm.playerOpen.collectAsState()
     val playingUrl by
@@ -1127,7 +1190,8 @@ private fun BrowsePane(
         if (grid.firstVisibleItemIndex != feed.scrollIndex) grid.scrollToItem(feed.scrollIndex)
     }
     LaunchedEffect(shared) {
-        if (shared.isNotBlank()) {
+        // YouTube links are played by SharedLinkPlayer; other shared text is a search.
+        if (shared.isNotBlank() && SharedLinks.mediaLink(shared) == null) {
             query = shared
             vm.sharedQuery.value = ""
         }
@@ -1137,6 +1201,21 @@ private fun BrowsePane(
     val pageItemCount =
         (shelves?.let { it.size * 2 } ?: feed.cards.size) +
             (if (showFeedBack) 1 else 0) + (if (feed.notice != null) 1 else 0)
+    // A page that arrived empty but says more exists (a shell whose shelves load separately)
+    // fetches its next part once, instead of waiting for a scroll that cannot happen.
+    var emptyFollowed by remember(tab, feed.request) { mutableStateOf(false) }
+    LaunchedEffect(feed.cards.isEmpty(), feed.continuation, feed.loading, feed.error) {
+        if (
+            feed.cards.isEmpty() &&
+                feed.continuation != null &&
+                !feed.loading &&
+                feed.error == null &&
+                !emptyFollowed
+        ) {
+            emptyFollowed = true
+            vm.more()
+        }
+    }
     LaunchedEffect(grid, feed.continuation, feed.loading, feed.error, feed.cards.size, pageItemCount) {
         if (
             feed.cards.isNotEmpty() &&
@@ -1157,20 +1236,320 @@ private fun BrowsePane(
                 .collect { nearEnd -> if (nearEnd) vm.more() }
         }
     }
-    Column(
-        Modifier.fillMaxSize().testTag("browse-pane"),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        AnimatedVisibility(
-            headerShown || searchActive,
-            enter =
-                if (!motion.animate) EnterTransition.None
-                else fadeIn(motion.fade(160)) + expandVertically(motion.enter(240), expandFrom = Alignment.Top),
-            exit =
-                if (!motion.animate) ExitTransition.None
-                else fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(220), shrinkTowards = Alignment.Top),
+    val headerSpace = with(density) { headerHeight.toDp() }
+    Box(Modifier.fillMaxSize().clipToBounds().testTag("browse-pane")) {
+        // Pull to refresh reuses the overflow menu's "Refresh feed" request.
+        var refreshing by remember { mutableStateOf(false) }
+        LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
+        val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
+        Box(Modifier.fillMaxSize().nestedScroll(headerScroll)) {
+        PullToRefreshBox(
+            refreshing && feed.loading,
+            onRefresh = {
+                refreshing = true
+                vm.navigate(request = feed.request, remember = false)
+            },
+            state = pullState,
+            indicator = {
+                Box(Modifier.matchParentSize().padding(top = headerSpace)) {
+                    RefreshDisc(pullState, refreshing && feed.loading)
+                }
+            },
+            modifier =
+                Modifier.fillMaxSize().pointerInput(searchActive) {
+                    // Touching content ends an unsubmitted search session, as tapping
+                    // outside a field does elsewhere. The touch itself is not consumed.
+                    if (searchActive)
+                        awaitEachGesture {
+                            awaitFirstDown(
+                                requireUnconsumed = false,
+                                pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
+                            )
+                            releaseSearchFocus()
+                        }
+                },
         ) {
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            val fixedColumns = tab == 2 && LocalConfiguration.current.screenWidthDp < 600
+            val minCell = if (tab in 2..3) 164.dp else 280.dp
+            val sidePadding = if (tab in 2..3) 16.dp else 0.dp
+            val cellGap = if (tab in 2..3) 12.dp else 8.dp
+            // Cover width in pixels, as the grid lays its cells out; covers use it instead of
+            // measuring themselves.
+            val cellPixels =
+                remember(gridWidth, fixedColumns, minCell, density) {
+                    with(density) {
+                        val available = gridWidth - 2 * sidePadding.roundToPx()
+                        val gap = cellGap.roundToPx()
+                        val count =
+                            if (fixedColumns) 2
+                            else maxOf(1, (available + gap) / (minCell.roundToPx() + gap))
+                        if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
+                    }
+                }
+            // Covers read these once from the grid's composition instead of every card
+            // providing its own copies.
+            val scrollingProbe = remember(grid) { { grid.isScrollInProgress } }
+            CompositionLocalProvider(
+                LocalArtworkScrolling provides scrollingProbe,
+                LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
+            ) {
+            LazyVerticalGrid(
+                columns =
+                    if (fixedColumns) GridCells.Fixed(2)
+                    else GridCells.Adaptive(minCell),
+                modifier =
+                    Modifier.fillMaxSize()
+                        .onSizeChanged { gridWidth = it.width }
+                        .graphicsLayer {
+                            // No offscreen buffer for a screen-sized scrolling grid.
+                            compositingStrategy = CompositingStrategy.ModulateAlpha
+                            val settle = if (feed.instantContent) 0f else 1f - entry.value
+                            alpha = 1f - settle.coerceIn(0f, 1f)
+                            translationX = settle * enterFrom * 64.dp.toPx()
+                        }
+                        .testTag("feed-list")
+                        .focusRequester(browseFocus)
+                        .focusable(),
+                state = grid,
+                contentPadding =
+                    PaddingValues(
+                        start = if (tab in 2..3) 16.dp else 0.dp,
+                        end = if (tab in 2..3) 16.dp else 0.dp,
+                        top = 4.dp + headerSpace,
+                        bottom = 24.dp + LocalBottomOverlay.current,
+                    ),
+                horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
+                verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
+            ) {
+                if (showFeedBack)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
+                            Pill(
+                                "Back to previous feed",
+                                style = PillStyle.Quiet,
+                                glyph = Glyph.Back,
+                            ) {
+                                vm.back()
+                            }
+                        }
+                    }
+                if (feed.notice != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Text(
+                            feed.notice!!,
+                            Modifier.padding(horizontal = MediaTokens.textInset),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                if (feed.error != null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        val needsAccount =
+                            feed.errorCode in listOf("auth_required", "consent_required")
+                        EmptyMediaState(
+                            if (needsAccount) Glyph.Account else Glyph.Info,
+                            if (needsAccount) "Account needed" else "This feed is unavailable",
+                            feed.error!!,
+                        ) {
+                            FlowRow(
+                                horizontalArrangement =
+                                    Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                if (needsAccount) {
+                                    Action("Sign in / import cookies", "feed-account-action") {
+                                        onAccount()
+                                    }
+                                    QuietAction("Try again") { vm.retryFeed() }
+                                } else Action("Try again") { vm.retryFeed() }
+                            }
+                            Text(
+                                "You can still search or open a video link.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                if (shelves != null)
+                    for ((section, cards) in shelves) {
+                        item(
+                            span = { GridItemSpan(maxLineSpan) },
+                            key = "shelf-head:$section",
+                            contentType = "shelf-head",
+                        ) {
+                            val inset = if (tab == 1) MediaTokens.textInset else 0.dp
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = inset, end = inset, top = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    section.ifBlank { "More for you" },
+                                    Modifier.weight(1f)
+                                        .semantics { heading() }
+                                        .testTag("shelf-$section"),
+                                    style = MaterialTheme.typography.titleLarge,
+                                )
+                                // Albums and playlists open as their own pages, so a shelf of
+                                // only collections or live entries has nothing to play in order.
+                                if (cards.any { !it.collection && !it.live && it.url.isNotBlank() })
+                                    // Icon only, sized to the title; the label stays for TalkBack.
+                                    RoundIconButton(
+                                        Glyph.Play,
+                                        "Play all ${section.ifBlank { "More for you" }}",
+                                        Modifier.border(
+                                                1.dp,
+                                                MaterialTheme.colorScheme.outlineVariant,
+                                                CircleShape,
+                                            )
+                                            .testTag("shelf-play-all-$section"),
+                                        size = 40.dp,
+                                        iconSize = 20.dp,
+                                    ) {
+                                        vm.playAll(cards)
+                                    }
+                            }
+                        }
+                        item(
+                            span = { GridItemSpan(maxLineSpan) },
+                            key = "shelf:$section",
+                            contentType = "shelf",
+                        ) {
+                            LazyRow(
+                                Modifier.fillMaxWidth(),
+                                contentPadding =
+                                    PaddingValues(horizontal = if (tab == 1) MediaTokens.textInset else 0.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
+                                    val shelfWidth = if (tab == 1) 272.dp else 152.dp
+                                    CompositionLocalProvider(
+                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() }
+                                    ) {
+                                        Box(
+                                            Modifier.width(shelfWidth).pressFeedback()
+                                        ) {
+                                            val current = media.url.isNotBlank() && media.url == playingUrl
+                                            MediaRow(
+                                                vm,
+                                                media,
+                                                tab,
+                                                thumbnails,
+                                                mobile,
+                                                current,
+                                                current && playingNow,
+                                                shelf = true,
+                                                openMenu = openCardMenu,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                else items(
+                    feed.cards,
+                    key = { it.key },
+                    span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
+                    contentType = { "media-card" },
+                ) { media ->
+                    // Scroll state is read in image effects, without recomposing every card.
+                    run {
+                        Box(
+                            Modifier.then(
+                                    // Cached categories display at once, without card entrances.
+                                    if (feed.instantContent) Modifier
+                                    else
+                                        Modifier.appearance(
+                                            media.key,
+                                            cardIndex[media.key] ?: 0,
+                                            seen,
+                                            isScrolling = { grid.isScrollInProgress },
+                                        )
+                                )
+                                .pressFeedback()
+                        ) {
+                            val current = media.url.isNotBlank() && media.url == playingUrl
+                            if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile, openCardMenu)
+                            else
+                                MediaRow(
+                                    vm, media, tab, thumbnails, mobile, current,
+                                    current && playingNow, openMenu = openCardMenu,
+                                )
+                        }
+                    }
+                }
+                if (feed.loading && feed.cards.isEmpty() && feed.error == null)
+                    items(if (tab in 2..3) 6 else 3, contentType = { "skeleton" }) {
+                        FeedSkeleton(square = tab in 2..3)
+                    }
+                else if (feed.loading)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(24.dp).semantics {
+                                contentDescription = "Loading…"
+                            },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            MediaSpinner()
+                        }
+                    }
+                if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        EmptyMediaState(
+                            if (tab == 2) Glyph.Music
+                            else if (tab == 3) Glyph.Radio else Glyph.Search,
+                            if (tab == 2) "No music loaded"
+                            else if (tab == 3) "No stations loaded" else "No videos loaded",
+                            if (tab == 3)
+                                "Search a station, explore a genre or browse cliamp channels."
+                            else
+                                "Search above or connect your YouTube account for a feed made for you.",
+                        ) {
+                            Action(if (tab == 3) "Browse stations" else "Explore feeds") {
+                                onFeeds()
+                            }
+                        }
+                    }
+            }
+            }
+        }
+        // While the field is focused and empty, recent searches cover the feed (which stays
+        // composed underneath so focus and scroll position survive).
+        androidx.compose.animation.AnimatedVisibility(
+            searchActive && query.isBlank(),
+            Modifier.matchParentSize(),
+            enter = fadeIn(motion.fade(160)),
+            exit = fadeOut(motion.fade(120)),
+        ) {
+            SearchSuggestions(
+                radio = tab == 3,
+                remember = rememberSearches,
+                onSearch = {
+                    query = it
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
+                    vm.search(it)
+                },
+                onPaste = {
+                    query = it
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
+                    vm.search(it)
+                },
+                modifier = Modifier.fillMaxSize().padding(top = headerSpace),
+            )
+        }
+        }
+        Column(
+            Modifier.fillMaxWidth()
+                .onSizeChanged { headerHeight = it.height }
+                .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
+                .background(MaterialTheme.colorScheme.background)
+                .padding(bottom = 12.dp)
+                .testTag("browse-header"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
         Row(
             Modifier.align(Alignment.CenterHorizontally)
                 .padding(horizontal = MediaTokens.textInset)
@@ -1250,280 +1629,6 @@ private fun BrowsePane(
                     }
                 }
             }
-        }
-        }
-        // Pull to refresh reuses the overflow menu's "Refresh feed" request.
-        var refreshing by remember { mutableStateOf(false) }
-        LaunchedEffect(feed.loading) { if (!feed.loading) refreshing = false }
-        val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
-        Box(Modifier.weight(1f).fillMaxWidth().nestedScroll(headerScroll)) {
-        PullToRefreshBox(
-            refreshing && feed.loading,
-            onRefresh = {
-                refreshing = true
-                vm.navigate(request = feed.request, remember = false)
-            },
-            state = pullState,
-            indicator = { RefreshDisc(pullState, refreshing && feed.loading) },
-            modifier =
-                Modifier.fillMaxSize().pointerInput(searchActive) {
-                    // Touching content ends an unsubmitted search session, as tapping
-                    // outside a field does elsewhere. The touch itself is not consumed.
-                    if (searchActive)
-                        awaitEachGesture {
-                            awaitFirstDown(
-                                requireUnconsumed = false,
-                                pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial,
-                            )
-                            releaseSearchFocus()
-                        }
-                },
-        ) {
-            val fixedColumns = tab == 2 && LocalConfiguration.current.screenWidthDp < 600
-            val minCell = if (tab in 2..3) 164.dp else 280.dp
-            val sidePadding = if (tab in 2..3) 16.dp else 0.dp
-            val cellGap = if (tab in 2..3) 12.dp else 8.dp
-            // Cover width in pixels, as the grid lays its cells out; covers use it instead of
-            // measuring themselves.
-            val cellPixels =
-                remember(gridWidth, fixedColumns, minCell, density) {
-                    with(density) {
-                        val available = gridWidth - 2 * sidePadding.roundToPx()
-                        val gap = cellGap.roundToPx()
-                        val count =
-                            if (fixedColumns) 2
-                            else maxOf(1, (available + gap) / (minCell.roundToPx() + gap))
-                        if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
-                    }
-                }
-            LazyVerticalGrid(
-                columns =
-                    if (fixedColumns) GridCells.Fixed(2)
-                    else GridCells.Adaptive(minCell),
-                modifier =
-                    Modifier.fillMaxSize()
-                        .onSizeChanged { gridWidth = it.width }
-                        .graphicsLayer {
-                            // No offscreen buffer for a screen-sized scrolling grid.
-                            compositingStrategy = CompositingStrategy.ModulateAlpha
-                            val settle = if (feed.instantContent) 0f else 1f - entry.value
-                            alpha = 1f - settle.coerceIn(0f, 1f)
-                            translationX = settle * enterFrom * 64.dp.toPx()
-                        }
-                        .testTag("feed-list")
-                        .focusRequester(browseFocus)
-                        .focusable(),
-                state = grid,
-                contentPadding =
-                    PaddingValues(
-                        start = if (tab in 2..3) 16.dp else 0.dp,
-                        end = if (tab in 2..3) 16.dp else 0.dp,
-                        top = 4.dp,
-                        bottom = 24.dp + LocalBottomOverlay.current,
-                    ),
-                horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
-                verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
-            ) {
-                if (showFeedBack)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
-                            Pill(
-                                "Back to previous feed",
-                                style = PillStyle.Quiet,
-                                glyph = Glyph.Back,
-                            ) {
-                                vm.back()
-                            }
-                        }
-                    }
-                if (feed.notice != null)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Text(
-                            feed.notice!!,
-                            Modifier.padding(horizontal = MediaTokens.textInset),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                if (feed.error != null)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        val needsAccount =
-                            feed.errorCode in listOf("auth_required", "consent_required")
-                        EmptyMediaState(
-                            if (needsAccount) Glyph.Account else Glyph.Info,
-                            if (needsAccount) "Account needed" else "This feed is unavailable",
-                            feed.error!!,
-                        ) {
-                            FlowRow(
-                                horizontalArrangement =
-                                    Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                if (needsAccount) {
-                                    Action("Sign in / import cookies", "feed-account-action") {
-                                        onAccount()
-                                    }
-                                    QuietAction("Try again") { vm.retryFeed() }
-                                } else Action("Try again") { vm.retryFeed() }
-                            }
-                            Text(
-                                "You can still search or open a video link.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                if (shelves != null)
-                    for ((section, cards) in shelves) {
-                        item(
-                            span = { GridItemSpan(maxLineSpan) },
-                            key = "shelf-head:$section",
-                            contentType = "shelf-head",
-                        ) {
-                            Text(
-                                section.ifBlank { "More for you" },
-                                Modifier.padding(
-                                        start = if (tab == 1) MediaTokens.textInset else 0.dp,
-                                        top = 4.dp,
-                                    )
-                                    .semantics { heading() }
-                                    .testTag("shelf-$section"),
-                                style = MaterialTheme.typography.titleLarge,
-                            )
-                        }
-                        item(
-                            span = { GridItemSpan(maxLineSpan) },
-                            key = "shelf:$section",
-                            contentType = "shelf",
-                        ) {
-                            LazyRow(
-                                Modifier.fillMaxWidth(),
-                                contentPadding =
-                                    PaddingValues(horizontal = if (tab == 1) MediaTokens.textInset else 0.dp),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
-                                    val shelfWidth = if (tab == 1) 272.dp else 152.dp
-                                    CompositionLocalProvider(
-                                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                                        LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() },
-                                    ) {
-                                        Box(
-                                            Modifier.width(shelfWidth).pressFeedback()
-                                        ) {
-                                            val current = media.url.isNotBlank() && media.url == playingUrl
-                                            MediaRow(
-                                                vm,
-                                                media,
-                                                tab,
-                                                thumbnails,
-                                                mobile,
-                                                current,
-                                                current && playingNow,
-                                                shelf = true,
-                                                openMenu = openCardMenu,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                else items(
-                    feed.cards,
-                    key = { it.key },
-                    span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
-                    contentType = { "media-card" },
-                ) { media ->
-                    // Scroll state is read in image effects, without recomposing every card.
-                    CompositionLocalProvider(
-                        LocalArtworkScrolling provides remember(grid) { { grid.isScrollInProgress } },
-                        LocalArtworkPixels provides if (wideSearch) 0 else cellPixels,
-                    ) {
-                        Box(
-                            Modifier.then(
-                                    // Cached categories display at once, without card entrances.
-                                    if (feed.instantContent) Modifier
-                                    else
-                                        Modifier.appearance(
-                                            media.key,
-                                            cardIndex[media.key] ?: 0,
-                                            seen,
-                                            isScrolling = { grid.isScrollInProgress },
-                                        )
-                                )
-                                .pressFeedback()
-                        ) {
-                            val current = media.url.isNotBlank() && media.url == playingUrl
-                            if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile, openCardMenu)
-                            else
-                                MediaRow(
-                                    vm, media, tab, thumbnails, mobile, current,
-                                    current && playingNow, openMenu = openCardMenu,
-                                )
-                        }
-                    }
-                }
-                if (feed.loading && feed.cards.isEmpty() && feed.error == null)
-                    items(if (tab in 2..3) 6 else 3, contentType = { "skeleton" }) {
-                        FeedSkeleton(square = tab in 2..3)
-                    }
-                else if (feed.loading)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(
-                            Modifier.fillMaxWidth().padding(24.dp).semantics {
-                                contentDescription = "Loading…"
-                            },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            MediaSpinner()
-                        }
-                    }
-                if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        EmptyMediaState(
-                            if (tab == 2) Glyph.Music
-                            else if (tab == 3) Glyph.Radio else Glyph.Search,
-                            if (tab == 2) "No music loaded"
-                            else if (tab == 3) "No stations loaded" else "No videos loaded",
-                            if (tab == 3)
-                                "Search a station, explore a genre or browse cliamp channels."
-                            else
-                                "Search above or connect your YouTube account for a feed made for you.",
-                        ) {
-                            Action(if (tab == 3) "Browse stations" else "Explore feeds") {
-                                onFeeds()
-                            }
-                        }
-                    }
-            }
-        }
-        // While the field is focused and empty, recent searches cover the feed (which stays
-        // composed underneath so focus and scroll position survive).
-        androidx.compose.animation.AnimatedVisibility(
-            searchActive && query.isBlank(),
-            Modifier.matchParentSize(),
-            enter = fadeIn(motion.fade(160)),
-            exit = fadeOut(motion.fade(120)),
-        ) {
-            SearchSuggestions(
-                radio = tab == 3,
-                remember = rememberSearches,
-                onSearch = {
-                    query = it
-                    keyboard?.hide()
-                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
-                    vm.search(it)
-                },
-                onPaste = {
-                    query = it
-                    keyboard?.hide()
-                    if (rememberSearches) RecentSearches.add(context, tab == 3, it)
-                    vm.search(it)
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
         }
     }
     cardMenu?.let { (media, square) ->
@@ -1612,11 +1717,15 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 pause = (pause * 2).coerceAtMost(15_000L)
             }
         }
+        // While the exact size or a new source loads, keep painting the last cover of the same
+        // item (for example after Next, or a larger size for the full player) instead of
+        // flashing the placeholder.
+        val shown = bitmap ?: if (enabled) ArtworkCache.recent(media) else null
         // Cached art paints at once; art that arrives later fades in over the placeholder.
         val motion = LocalMotion.current
         val reveal =
             remember(media.key, source, pixels, enabled) {
-                Animatable(if (bitmap != null || !motion.animate) 1f else 0f)
+                Animatable(if (shown != null || !motion.animate) 1f else 0f)
             }
         LaunchedEffect(reveal, bitmap, motion) {
             if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
@@ -1625,7 +1734,7 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
         // and briefly exposing a different background as soon as the image arrives.
         Box(
             Modifier.fillMaxSize()
-                .graphicsLayer { alpha = if (bitmap == null) 1f else 1f - reveal.value }
+                .graphicsLayer { alpha = if (shown == null) 1f else 1f - reveal.value }
                 .background(MaterialTheme.colorScheme.surfaceContainer),
             contentAlignment = Alignment.Center,
         ) {
@@ -1635,14 +1744,18 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
                 MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
             )
         }
-        if (bitmap != null)
+        if (shown != null)
             Image(
-                bitmap!!.asImageBitmap(),
+                shown.asImageBitmap(),
                 media.title,
                 Modifier.fillMaxSize()
                     .graphicsLayer { alpha = reveal.value }
-                    .testTag("artwork-${media.key}")
-                    .semantics { stateDescription = "Ready" },
+                    .then(
+                        // Only the exact cover counts as ready; a stand-in is just painted.
+                        if (bitmap != null)
+                            Modifier.testTag("artwork-${media.key}").semantics { stateDescription = "Ready" }
+                        else Modifier
+                    ),
                 contentScale = ContentScale.Crop,
                 // Crop from the leading edge so captions composed near the left of
                 // wide artwork survive inside a squarer container instead of being
@@ -1684,14 +1797,9 @@ private fun MediaRow(
             )
             if (media.live || !square)
                 MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
-            androidx.compose.animation.AnimatedVisibility(
-                current,
-                Modifier.align(Alignment.TopStart),
-                enter = fadeIn() + scaleIn(initialScale = 0.6f),
-                exit = fadeOut() + scaleOut(targetScale = 0.6f),
-            ) {
-                PlayingBars(playing)
-            }
+            // Only the playing card composes its bars; an AnimatedVisibility per card kept a
+            // transition alive in every cell of the grid.
+            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
         }
         Row(
             Modifier.fillMaxWidth()
@@ -1732,43 +1840,18 @@ private fun MediaRow(
                             )
                         else Color.Unspecified,
                 )
-                val information = if (tab == 1) mediaInformation(media.value, mobile) else ""
-                val metadata =
-                    listOfNotNull(
-                            if (mobile.optBoolean("show_channel", true))
-                                media.creator.ifBlank {
-                                    if (media.collection)
-                                        media.kind.replaceFirstChar(Char::titlecase)
-                                    else if (tab == 3) "Radio station" else "YouTube"
-                                }
-                            else null,
-                            information.ifBlank { null },
-                        )
-                        .joinToString(" · ")
-                if (metadata.isNotBlank())
+                if (mobile.optBoolean("show_channel", true))
                     Text(
-                        metadata,
-                        Modifier.then(
-                            if (information.isNotBlank()) Modifier.testTag("video-information")
-                            else Modifier
-                        ),
+                        media.creator.ifBlank {
+                            if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
+                            else if (tab == 3) "Radio station" else "YouTube"
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                media.value
-                    .optString("section")
-                    .takeIf { it.isNotBlank() && !shelf && mobile.optBoolean("show_section") }
-                    ?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                CardInformation(media.value, mobile)
             }
             MediaCardActions(media) { openMenu(media, square) }
         }
@@ -1943,7 +2026,7 @@ private fun WideMediaRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            MediaInformation(media.value, mobile)
+            CardInformation(media.value, mobile)
             if (mobile.optBoolean("show_channel", true))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2001,6 +2084,7 @@ internal fun PlayerPane(
     val tab by vm.tab.collectAsState()
     // In-sheet sub-pages (YouTube's quality/speed menus) keep one sheet and one Close.
     var page by remember { mutableStateOf("") }
+    val optionsMotion = LocalMotion.current
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = if (player.video) 840.dp else 480.dp).fillMaxWidth(),
@@ -2139,7 +2223,7 @@ internal fun PlayerPane(
                     ) {
                         vm.command("repeat")
                     }
-                    MediaIconButton(Glyph.Queue, "Playback queue") { onQueue() }
+                    MediaIconButton(Glyph.UpNext, "Playback queue") { onQueue() }
                     MediaIconButton(Glyph.Stop, "Stop playback") { vm.command("stop") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
@@ -2180,17 +2264,25 @@ internal fun PlayerPane(
                 player.video &&
                     !player.value.optBoolean("offline") &&
                     player.media?.optBoolean("live") != true
-            when (page) {
-                "speed" ->
-                    SubPage("Playback speed") {
-                        for (value in listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)) Option(
-                            speedLabel(value),
-                            value == speed,
-                        ) {
-                            vm.command("speed", "value" to value)
-                            page = ""
-                        }
+            // Sub-pages slide in from the side and back, like a navigation stack, and the
+            // sheet's height eases to fit instead of jumping.
+            AnimatedContent(
+                page,
+                transitionSpec = {
+                    if (!optionsMotion.animate) EnterTransition.None togetherWith ExitTransition.None
+                    else {
+                        val forward = targetState.isNotEmpty()
+                        (fadeIn(optionsMotion.fade(180)) +
+                            slideInHorizontally(optionsMotion.enter(300)) { if (forward) it / 3 else -it / 3 }) togetherWith
+                            (fadeOut(optionsMotion.fade(120)) +
+                                slideOutHorizontally(optionsMotion.exit(220)) { if (forward) -it / 4 else it / 4 }) using
+                            SizeTransform(clip = false) { _, _ -> optionsMotion.spring() }
                     }
+                },
+                label = "player-options-page",
+            ) { shownPage ->
+            Column {
+            when (shownPage) {
                 "quality" ->
                     SubPage("Video quality") {
                         for (value in listOf("best", "1080", "720", "480", "360")) Option(
@@ -2236,9 +2328,8 @@ internal fun PlayerPane(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    ValueRow("Playback speed", value = speedLabel(speed), glyph = Glyph.Speed) {
-                        page = "speed"
-                    }
+                    // The common speeds are one tap away; the full list stays a row below.
+                    SpeedChips(speed, ::speedLabel) { vm.command("speed", "value" to it) }
                     if (qualityAvailable)
                         ValueRow(
                             "Video quality",
@@ -2264,7 +2355,7 @@ internal fun PlayerPane(
                         ) {
                             page = "audio"
                         }
-                    ValueRow("Playback queue", glyph = Glyph.Queue) { onQueue() }
+                    ValueRow("Playback queue", glyph = Glyph.UpNext) { onQueue() }
                     val sleepLeft = rememberSleepLeft(player)
                     ValueRow(
                         "Sleep timer",
@@ -2330,6 +2421,8 @@ internal fun PlayerPane(
                     }
                 }
             }
+            }
+            }
         }
     }
 }
@@ -2337,9 +2430,17 @@ internal fun PlayerPane(
 /** Width/height of the music artwork area for a player style: square except the vinyl deck. */
 internal fun visualizerRatio(style: String): Float = if (style.startsWith("vinyl")) 1.35f else 1f
 
+/**
+ * The style Android shows. The "-fullscreen" variants stay valid in the shared settings (the
+ * desktop app uses them), but Android no longer offers or acts on them: each one shows as its
+ * normal counterpart.
+ */
+internal fun androidPlayerStyle(config: JSONObject): String =
+    config.optString("music_player_style", "classic").removeSuffix("-fullscreen")
+
 @Composable
 internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modifier = Modifier) {
-    val style = config.optString("music_player_style", "classic")
+    val style = androidPlayerStyle(config)
     val reduced = config.optBoolean("reduced_motion")
     val lifecycleState by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = lifecycleState.isAtLeast(Lifecycle.State.STARTED)
@@ -2349,6 +2450,18 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val levels = remember(style) { LiquidLevels() }
     var liquidTime by remember(style) { mutableFloatStateOf(0f) }
     LaunchedEffect(player.playing, reduced, style, visible) {
+        if (!player.playing && !reduced && visible && (style.startsWith("vu") || style.startsWith("orbit"))) {
+            // Paused: let the bars, beat thump and shake ease out instead of freezing mid-beat.
+            val silence = IntArray(SPECTRUM_BANDS)
+            var previous = 0L
+            val until = System.nanoTime() + 900_000_000L
+            while (System.nanoTime() < until) withInfiniteAnimationFrameNanos { now ->
+                val elapsed = if (previous == 0L) 0f else (now - previous) / 1_000_000_000f
+                previous = now
+                levels.step(silence, elapsed)
+                liquidTime += elapsed
+            }
+        }
         if (player.playing && !reduced && style != "classic" && visible) {
             var previous = 0L
             while (true) withInfiniteAnimationFrameNanos { now ->
@@ -2373,6 +2486,8 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onBackground
     val media = player.media?.let(::MediaCard) ?: return
+    // Bars and strings take the cover's own dominant colours.
+    val swatches = rememberArtworkSwatches(media, config.optBoolean("thumbnails", true))
     val cornerRadius = if (style == "classic") 20.dp else 4.dp
     BoxWithConstraints(
         modifier
@@ -2440,17 +2555,15 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else if (style.startsWith("vu")) {
             // The liquid fills the tank behind a large cover; spectrum bars rise inside it.
             Box(Modifier.fillMaxSize()) {
-                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+                LiquidTank(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches)
                 Artwork(
                     media,
-                    Modifier.fillMaxWidth(0.66f)
+                    Modifier.fillMaxWidth(0.6f)
                         .aspectRatio(1f)
                         .align(Alignment.Center)
-                        .offset(y = (-10).dp)
                         .beat(levels) { liquidTime }
                         .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
-                        .clip(RoundedCornerShape(16.dp))
-                        .sharedCover(media.key, LocalPlayerExpanded.current),
+                        .clip(RoundedCornerShape(16.dp)),
                     config.optBoolean("thumbnails", true),
                     shape = RoundedCornerShape(16.dp),
                 )
@@ -2458,7 +2571,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         } else {
             // A glow, a ring of spectrum bars and two liquid layers around a large round cover
             // that swells slightly on the beat.
-            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize())
+            LiquidOrb(levels, { liquidTime }, accent, ink, Modifier.fillMaxSize(), swatches)
             Artwork(
                 media,
                 Modifier.fillMaxWidth(0.56f)
@@ -2466,8 +2579,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                     .align(Alignment.Center)
                     .beat(levels) { liquidTime }
                     .shadow(16.dp, CircleShape, ambientColor = Color.Black, spotColor = Color.Black)
-                    .clip(CircleShape)
-                    .sharedCover(media.key, LocalPlayerExpanded.current),
+                    .clip(CircleShape),
                 config.optBoolean("thumbnails", true),
                 shape = CircleShape,
             )
@@ -2560,7 +2672,7 @@ private fun SettingsPanel(
                 }
             }
             Text(
-                "ytui ${BuildConfig.VERSION_NAME}",
+                "Vidcue ${BuildConfig.VERSION_NAME}",
                 Modifier.fillMaxWidth().padding(vertical = 20.dp),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2639,7 +2751,7 @@ private fun SettingsPanel(
                 ValueRow(
                     "Import a palette",
                     glyph = Glyph.Edit,
-                    subtitle = "Caelestia, Omarchy or ytui palette files",
+                    subtitle = "Caelestia, Omarchy or Vidcue palette files",
                     chevron = false,
                 ) {
                     vm.effect("pick", "kind" to "theme")
@@ -2660,16 +2772,9 @@ private fun SettingsPanel(
                 }
                 Choice(
                     "Music player",
-                    config.optString("music_player_style", "classic"),
-                    listOf(
-                        "classic",
-                        "vinyl",
-                        "vinyl-fullscreen",
-                        "vu",
-                        "vu-fullscreen",
-                        "orbit",
-                        "orbit-fullscreen",
-                    ),
+                    androidPlayerStyle(config),
+                    listOf("classic", "vinyl", "vu", "orbit"),
+                    label = { PLAYER_STYLE_LABELS[it] ?: choiceLabel(it) },
                 ) { value ->
                     vm.updateConfig(dark) { it.put("music_player_style", value) }
                 }
@@ -2696,6 +2801,7 @@ private fun SettingsPanel(
                 ) { value ->
                     vm.updateConfig(dark) { it.put("playback_sponsorblock", value) }
                 }
+                EqualizerSettings(vm, dark, config)
             }
         if (shown == "Privacy")
             SettingGroup("Privacy", showTitle = false) {
@@ -2726,7 +2832,7 @@ private fun SettingsPanel(
                             as android.content.ClipboardManager
                     clipboard.setPrimaryClip(
                         android.content.ClipData.newPlainText(
-                            "ytui startup timings",
+                            "Vidcue startup timings",
                             BuildConfig.VERSION_NAME +
                                 "\n" +
                                 BuildConfig.SOURCE_REVISION +
@@ -2858,6 +2964,20 @@ private fun SettingsPanel(
                     }
                 }
                 Choice(
+                    "Color grading",
+                    mobile.optString("color_grade", "off"),
+                    ColorGradeMath.PRESETS,
+                ) {
+                    vm.updateMobile("color_grade", it)
+                }
+                SettingToggle(
+                    "Auto color grade",
+                    mobile.optBoolean("auto_color_grade", false),
+                    "Analyses the playing video and adds a slight fitting grade",
+                ) {
+                    vm.updateMobile("auto_color_grade", it)
+                }
+                Choice(
                     "Seek interval",
                     mobile.optInt("seek_seconds", 10).toString(),
                     listOf("5", "10", "15", "30"),
@@ -2882,7 +3002,7 @@ private fun SettingsPanel(
                 SettingToggle(
                     "Audio-only saves",
                     config.optJSONObject("download")?.optBoolean("audio") == true,
-                    "Save music without the video",
+                    "Save YouTube Music without video. YouTube videos always keep video.",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
                 }
@@ -2897,6 +3017,13 @@ private fun SettingsPanel(
                     listOf("1", "2", "3", "4"),
                 ) {
                     vm.updateMobile("download_parallel", it.toInt())
+                }
+                SettingToggle(
+                    "Download on Wi-Fi only",
+                    mobile.optBoolean("download_unmetered", false),
+                    "Downloads wait for Wi-Fi or another unmetered network.",
+                ) {
+                    vm.updateMobile("download_unmetered", it)
                 }
                 SectionHeader("Folders")
                 SettingToggle(
@@ -2923,7 +3050,10 @@ private fun SettingsPanel(
                 }
             }
         if (shown == "What cards show")
-            SettingGroup("Visible information") {
+            SettingGroup(
+                "Visible information",
+                subtitle = "Shows details when available. Some items have no likes or description.",
+            ) {
                 for ((key, label) in
                     listOf(
                         "show_channel" to "Channel or artist",
@@ -3045,19 +3175,29 @@ private fun SettingToggle(
     }
 }
 
+/** Names for the music player styles; the stored ids stay as they are. */
+private val PLAYER_STYLE_LABELS =
+    mapOf("classic" to "Cover", "vinyl" to "Vinyl", "vu" to "Strings", "orbit" to "Pulse orbit")
+
 private fun choiceLabel(value: String) =
     value.replace("-fullscreen", " · Full screen").replace('-', ' ').replaceFirstChar(Char::titlecase)
 
 @Composable
-private fun Choice(title: String, value: String, values: List<String>, changed: (String) -> Unit) {
+private fun Choice(
+    title: String,
+    value: String,
+    values: List<String>,
+    label: (String) -> String = ::choiceLabel,
+    changed: (String) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     Box {
-        ValueRow(title, value = choiceLabel(value)) { open = true }
+        ValueRow(title, value = label(value)) { open = true }
         if (open)
             Panel(title, { open = false }) {
                 values.forEach { item ->
                     SheetAction(
-                        text = { Text(choiceLabel(item)) },
+                        text = { Text(label(item)) },
                         leadingIcon = { ChoiceMark(item == value) },
                         modifier = Modifier.semantics { selected = item == value },
                         onClick = {
@@ -3519,7 +3659,57 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
     val showEditor = editing
     // Between one-second snapshots the playhead is extrapolated per frame, so the sweep glides.
     val smooth = rememberSmoothPosition(player)
-    Panel("Lyrics", close, scroll = false) {
+    val source =
+        stored.optJSONObject("track")?.let { "Saved on this device" }
+            ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
+    val timed = lines.any { !it.isNull("at_ms") }
+    var menu by remember { mutableStateOf(false) }
+    Panel(
+        "Lyrics",
+        close,
+        scroll = false,
+        actions = {
+            // Settings live behind ⋮ so the panel shows only the song and its lyrics.
+            if (lines.isNotEmpty() || editing)
+                Box {
+                    MediaIconButton(Glyph.More, "Lyrics options", "lyrics-menu") { menu = true }
+                    MediaMenu(menu, { menu = false }) {
+                        if (lines.isNotEmpty() && source != null)
+                            Text(
+                                source,
+                                Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .testTag("lyrics-source"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        if (timed)
+                            MediaMenuItem(
+                                if (follow) "Stop auto-scroll" else "Auto-scroll with the song",
+                                if (follow) Glyph.Stop else Glyph.Down,
+                                Modifier.testTag("lyrics-follow"),
+                            ) {
+                                follow = !follow
+                                menu = false
+                            }
+                        MediaMenuItem(
+                            if (editing) "Hide editor" else "Edit or find lyrics",
+                            if (editing) Glyph.Up else Glyph.Edit,
+                            Modifier.testTag("lyrics-editor"),
+                        ) {
+                            editing = !editing
+                            menu = false
+                        }
+                        if (stored.optJSONObject("track") != null) {
+                            MenuRule()
+                            MediaMenuItem("Remove saved lyrics", Glyph.Close, destructive = true) {
+                                vm.lyricRemove(media)
+                                menu = false
+                            }
+                        }
+                    }
+                }
+        },
+    ) {
         if (media.length() > 0)
             Column(Modifier.padding(horizontal = 8.dp)) {
                 Text(
@@ -3538,18 +3728,6 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                 )
             }
         else Text("Play a song first", Modifier.padding(horizontal = 8.dp))
-        val source =
-            stored.optJSONObject("track")?.let { "Saved on this device" }
-                ?: versions.getOrNull(selected)?.optString("album")?.takeIf { it.isNotBlank() }
-        if (lines.isNotEmpty() && source != null)
-            Text(
-                source,
-                Modifier.padding(horizontal = 8.dp).testTag("lyrics-source"),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        if (lines.isNotEmpty() && lines.any { !it.isNull("at_ms") })
-            SettingToggle("Follow playing line", follow) { follow = it }
         if (lines.isEmpty() && searching && !editing)
             Box(
                 Modifier.fillMaxWidth().padding(32.dp).testTag("lyrics-loading"),
@@ -3579,12 +3757,12 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             item {
-                if (lines.isNotEmpty() || editing)
+                if (editing)
                     SheetAction(
-                        text = { Text(if (editing) "Hide editor" else "Edit or find lyrics") },
+                        text = { Text("Hide editor") },
                         leadingIcon = {
                             MediaIcon(
-                                if (editing) Glyph.Up else Glyph.Edit,
+                                Glyph.Up,
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         },
@@ -3636,14 +3814,7 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                                             "\n"
                                         ) { line ->
                                             if (line.isNull("at_ms")) line.optString("text")
-                                            else
-                                                "[%02d:%02d.%03d]%s"
-                                                    .format(
-                                                        line.optLong("at_ms") / 60000,
-                                                        line.optLong("at_ms") / 1000 % 60,
-                                                        line.optLong("at_ms") % 1000,
-                                                        line.optString("text"),
-                                                    )
+                                            else lrcLine(line)
                                         } ?: ""
                                 },
                             )
@@ -3689,32 +3860,25 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
             itemsIndexed(lines) { index, line ->
                 val current = index == active
                 val ink = MaterialTheme.colorScheme.onSurface
-                val faded = ink.copy(alpha = 0.38f)
-                // Karaoke sweep: the playing line fills with ink as its time passes.
+                val unsung = ink.copy(alpha = LYRIC_UNSUNG_ALPHA)
+                // Karaoke sweep: only lines with word timings fill as they are sung; others
+                // light up whole, as in YouTube Music.
                 val sweep =
                     if (!current || !matching) null
-                    else {
-                        val at = line.optLong("at_ms")
-                        val next =
-                            lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms")
-                                ?: (at + 4000)
-                        val nowMs = smooth * 1000 - (offset.toLongOrNull() ?: 0)
-                        ((nowMs - at) / (next - at).coerceAtLeast(1).toFloat()).coerceIn(0f, 1f)
-                    }
-                val lineStyle =
-                    if (sweep != null && LocalMotion.current.animate)
-                        MaterialTheme.typography.headlineSmall.copy(
-                            brush =
-                                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                    0f to ink,
-                                    sweep to ink,
-                                    (sweep + 0.06f).coerceAtMost(1f) to faded,
-                                    1f to faded,
-                                )
+                    else
+                        lyricSweep(
+                            smooth * 1000.0 - (offset.toLongOrNull() ?: 0),
+                            line.optJSONArray("words")?.objects()?.map {
+                                LyricWord(it.optLong("at_ms"), it.optString("text"))
+                            } ?: emptyList(),
+                            line.takeUnless { it.isNull("end_ms") }?.optLong("end_ms"),
+                            lines.getOrNull(index + 1)?.takeUnless { it.isNull("at_ms") }?.optLong("at_ms"),
                         )
-                    else MaterialTheme.typography.headlineSmall
+                val text = line.optString("text").ifBlank { "♪" }
                 Text(
-                    line.optString("text").ifBlank { "♪" },
+                    if (sweep != null && LocalMotion.current.animate)
+                        karaokeLine(text, sweep, ink, unsung)
+                    else AnnotatedString(text),
                     Modifier.fillMaxWidth()
                         .clip(MediaTokens.medium)
                         .clickable(enabled = matching && !line.isNull("at_ms")) {
@@ -3728,12 +3892,11 @@ private fun LyricsPanel(vm: YtuiViewModel, close: () -> Unit) {
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     color =
                         animateColorAsState(
-                            if (current || active < 0) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                            if (current || active < 0) ink else unsung,
                             LocalMotion.current.fade(320),
                             label = "lyric-line",
                         ).value,
-                    style = lineStyle,
+                    style = MaterialTheme.typography.headlineSmall,
                 )
             }
         }

@@ -14,7 +14,7 @@ python3 - "$apk" "$readelf" <<'PY'
 import pathlib,subprocess,sys,tempfile,zipfile
 with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as temp:
     for abi in ['arm64-v8a','x86_64']:
-        name=f'lib/{abi}/libytui_mobile.so'
+        name=f'lib/{abi}/libvidcue_mobile.so'
         data=archive.read(name)
         target=pathlib.Path(temp)/f'{abi}.so';target.write_bytes(data)
         headers=subprocess.check_output([sys.argv[2],'-lW',str(target)],text=True)
@@ -24,7 +24,7 @@ with zipfile.ZipFile(sys.argv[1]) as archive, tempfile.TemporaryDirectory() as t
         symbols=subprocess.check_output([sys.argv[2],'-Ws',str(target)],text=True)
         for symbol in ['Java_dev_ytui_android_NativeBridge_request','Java_dev_ytui_android_NativeBridge_thumbnail','Java_dev_ytui_android_NativeBridge_beginAccountChange','Java_dev_ytui_android_NativeBridge_accountIntent','Java_dev_ytui_android_NativeBridge_meter','Java_dev_ytui_android_NativeBridge_activateContext']:
             if symbol not in symbols: raise SystemExit(f'Missing {abi} symbol: {symbol}')
-    if 'assets/ytui-LICENSE' not in archive.namelist():raise SystemExit('Missing application license')
+    if 'assets/vidcue-LICENSE' not in archive.namelist():raise SystemExit('Missing application license')
     if 'assets/notices/inventory.json' not in archive.namelist():raise SystemExit('Missing Rust dependency notices')
 print('Verified signatures, ZIP alignment, both Rust ABIs, 16 KiB ELF segments and notices.')
 PY

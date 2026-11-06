@@ -21,16 +21,16 @@ requests were previously blocked, so fixtures cannot qualify live service speed.
 
 ## Primary-source research (2026-10-29)
 
-| Source | Observed design | ytui action |
+| Source | Observed design | vidcue action |
 | --- | --- | --- |
 | [NewPipe extractor](https://github.com/TeamNewPipe/NewPipeExtractor/blob/6faf40681eff7da6c7a45fb92e3eb633a60a062b/extractor/src/main/java/org/schabi/newpipe/extractor/services/youtube/extractors/YoutubeStreamExtractor.java) | Requests the VisionOS player response directly; other page information is separate | Try a mobile playback-only direct player route before the full watch-page/multi-client route; preserve fallback, account and format rules |
 | [NewPipe source manager](https://github.com/TeamNewPipe/NewPipe/blob/c32810362e0b7ca192c3ee9b77ca83e81ca8b02d/app/src/main/java/org/schabi/newpipe/player/playback/MediaSourceManager.java) and [info cache](https://github.com/TeamNewPipe/NewPipe/blob/c32810362e0b7ca192c3ee9b77ca83e81ca8b02d/app/src/main/java/org/schabi/newpipe/util/InfoCache.java) | Bounded expiring info cache, current/neighbor priority and debounced preparation | Warm a bounded settled viewport, prioritize actual taps, cancel stale requests and retain account/network/quality isolation |
-| [InnerTune playback](https://github.com/z-huang/InnerTune/blob/bfba5ecb16795cfc93ecce73d94ca583bcec917c/app/src/main/java/com/zionhuang/music/playback/MusicService.kt) | Checks media cache before resolution; uses stable media IDs, bounded chunks and defers metadata recovery | Reuse prepared leases/bytes and keep optional work off the first-frame path; retain ytui's stricter signed-URL expiry validation |
+| [InnerTune playback](https://github.com/z-huang/InnerTune/blob/bfba5ecb16795cfc93ecce73d94ca583bcec917c/app/src/main/java/com/zionhuang/music/playback/MusicService.kt) | Checks media cache before resolution; uses stable media IDs, bounded chunks and defers metadata recovery | Reuse prepared leases/bytes and keep optional work off the first-frame path; retain vidcue's stricter signed-URL expiry validation |
 | [LibreTube player service](https://github.com/libre-tube/LibreTube/blob/fb0fbfd77028edeab3b6cb743b6b3d91c5348560/app/src/main/java/com/github/libretube/services/OnlinePlayerService.kt) | Separates stream acquisition/player initialization; supports DASH/HLS/SABR sources | Avoid blocking startup on unrelated metadata; SABR is a separate larger compatibility project, not a quick latency switch |
 | [Media3 preloading](https://developer.android.com/media/media3/exoplayer/preloading-media/preloadmanager/concepts) | Prepared sources and sample buffers can be handed to a player sharing the builder/looper | Preserve correct source ownership; prioritize active playback and bounded preparation rather than reducing buffers indiscriminately |
 
 These are inspected implementation patterns, not measured claims that those
-projects meet a universal two-second bound. Implement original ytui code; do not
+projects meet a universal two-second bound. Implement original vidcue code; do not
 copy unrelated expiry, networking or session assumptions.
 
 ## Implementation and acceptance
@@ -78,7 +78,7 @@ copy unrelated expiry, networking or session assumptions.
   public YouTube test includes extraction in its same 2000 ms budget. Offline
   success does not satisfy the live Tab S9 gate.
 
-Reproduction: `cargo run -p ytui-mobile --example startup_probe -- PUBLIC_YOUTUBE_URL`
+Reproduction: `cargo run -p vidcue-mobile --example startup_probe -- PUBLIC_YOUTUBE_URL`
 performs an explicit anonymous cold/cached resolution probe using temporary app
 state. It prints sanitized timing/failure categories only. This is not a decoder
 or visible-frame benchmark and is not run by default tests.
@@ -96,7 +96,7 @@ physical sample at the top of this document passes the observed video target.
 ### Visitor context follow-up
 
 A closer review of [NewPipe's request helper](https://github.com/TeamNewPipe/NewPipeExtractor/blob/6faf40681eff7da6c7a45fb92e3eb633a60a062b/extractor/src/main/java/org/schabi/newpipe/extractor/services/youtube/YoutubeStreamHelper.java)
-shows valid visitor context is required. ytui reuses its already-loaded, fresh
+shows valid visitor context is required. vidcue reuses its already-loaded, fresh
 account/network-scoped browse visitor without waiting for feed locks. If missing,
 the mobile extractor performs a small visitor_id bootstrap and retains it only
 inside the pooled client for 30 minutes. Visitor data is included in both request

@@ -4,7 +4,7 @@ set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$root"
 evidence="$root/target/android-device-evidence"
-test_package=dev.ytui.android.preview
+test_package=dev.vidcue.android.preview
 mkdir -p "$evidence"
 # Google SDK Setup can raise its own first-boot ANR before instrumentation and
 # obscure a correctly rendered app. It is not an app dependency. Disable only
@@ -87,8 +87,8 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     runner="$(adb shell pm list instrumentation | tr -d '\r' | sed -n "s/^instrumentation:\([^ ]*\) (target=$test_package)\$/\1/p" | head -n 1)"
     [[ -n "$runner" ]] || { echo "No instrumentation installed for $test_package." >&2; exit 1; }
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
-    [[ "$subsecond" == enforce ]] && instrument+=(-e ytui_subsecond enforce)
-    [[ "$timing" == enforce ]] && instrument+=(-e ytui_timing enforce)
+    [[ "$subsecond" == enforce ]] && instrument+=(-e vidcue_subsecond enforce)
+    [[ "$timing" == enforce ]] && instrument+=(-e vidcue_timing enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         # adb joins arguments into one device shell command; single-quote the URL.
         [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
@@ -106,8 +106,8 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     fi
 else
     arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
-    [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.ytui_subsecond=enforce)
-    [[ "$timing" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.ytui_timing=enforce)
+    [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_subsecond=enforce)
+    [[ "$timing" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_timing=enforce)
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=$public_quality")

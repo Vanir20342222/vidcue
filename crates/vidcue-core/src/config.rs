@@ -1,0 +1,453 @@
+use anyhow::{Result, ensure};
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::PathBuf};
+
+pub const MUSIC_PLAYER_STYLES: &[&str] = &[
+    "classic",
+    "vinyl",
+    "vinyl-fullscreen",
+    "vu",
+    "vu-fullscreen",
+    "orbit",
+    "orbit-fullscreen",
+];
+
+/// Video colour grading looks for normal playback. "off" leaves the picture untouched.
+pub const COLOR_GRADES: &[&str] = &["off", "warm", "cool", "vivid", "cinematic"];
+
+/// Details shown on catalog rows. Defaults keep the established desktop rows
+/// (channel, duration and section); Android exposes the same choices.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct CardInfo {
+    pub channel: bool,
+    pub views: bool,
+    pub upload_date: bool,
+    pub duration: bool,
+    pub section: bool,
+    pub likes: bool,
+    /// Description in the selected item's details panel.
+    pub description: bool,
+}
+impl Default for CardInfo {
+    fn default() -> Self {
+        Self {
+            channel: true,
+            views: false,
+            upload_date: false,
+            duration: true,
+            section: true,
+            likes: false,
+            description: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub version: u32,
+    #[serde(skip)]
+    pub offline: bool,
+    /// Built-in name, "system", "custom" (Android import) or a palette file path.
+    /// Retired built-in names are migrated to their replacement while loading.
+    #[serde(deserialize_with = "crate::theme::deserialize_theme")]
+    pub theme: String,
+    pub language: String,
+    pub theme_provider: String,
+    pub image_protocol: String,
+    pub thumbnails: bool,
+    pub music_player_style: String,
+    pub reduced_motion: bool,
+    pub playback_history: bool,
+    /// Start normal playback of a partly watched video from its saved local position.
+    pub resume_on_play: bool,
+    /// When the queue runs out, continue with the finished video's related videos.
+    pub autoplay_related: bool,
+    /// Seconds moved by the seek-forward/back keys (Android: "seek_seconds").
+    pub seek_seconds: u32,
+    /// Play a completed download instead of streaming the same video or song.
+    pub prefer_offline: bool,
+    /// Resolve the next item's streams shortly before the current one ends.
+    pub preload_next: bool,
+    /// Colour grading look applied to video playback (one of [`COLOR_GRADES`]).
+    pub color_grade: String,
+    /// Analyse the playing video and add a slight fitting correction. Off by default.
+    pub auto_color_grade: bool,
+    /// Which details catalog rows show (Android: Settings → Video information).
+    pub card_info: CardInfo,
+    pub show_hints: bool,
+    pub playback_sponsorblock: String,
+    pub playback_sponsor_categories: Vec<String>,
+    /// Audio equalizer preset: "off", a built-in name or a key of `equalizer_custom`.
+    pub equalizer: String,
+    /// User-named equalizer curves: ten gains in dB (see `crate::equalizer::BANDS`).
+    pub equalizer_custom: BTreeMap<String, Vec<f64>>,
+    pub download: DownloadOptions,
+    pub concurrency: usize,
+    pub max_retries: u32,
+    pub retry_delay_seconds: u64,
+    pub proxy: Option<String>,
+    pub download_backend: String,
+    pub playback_backend: String,
+    pub native_js_runtime: Option<PathBuf>,
+    pub yt_dlp: String,
+    pub ffmpeg: String,
+    pub ffprobe: String,
+    pub mpv: String,
+    pub cliamp: String,
+    pub nmcli: String,
+    pub radio_pinned_countries: Vec<String>,
+    pub auth_store: String,
+    pub account_index: u32,
+    pub keybindings: BTreeMap<String, String>,
+    pub radio_servers: Vec<String>,
+    pub custom_stations: Vec<crate::Media>,
+    pub clipboard_watcher: bool,
+    pub notifications: bool,
+    pub notification_sound: bool,
+    /// Ask GitHub at startup whether a newer desktop release exists and offer to install it.
+    /// Only the public release list is read; nothing installs without "Update now".
+    pub update_check: bool,
+    /// A release version the user chose to skip; its popup is not shown again.
+    pub skipped_update: Option<String>,
+    pub schedule: crate::schedule::Schedule,
+    pub legacy_settings: Option<String>,
+    pub legacy_keybindings: BTreeMap<String, String>,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            offline: false,
+            theme: "system".into(),
+            language: "en".into(),
+            theme_provider: "auto".into(),
+            image_protocol: "auto".into(),
+            thumbnails: true,
+            music_player_style: "classic".into(),
+            reduced_motion: false,
+            playback_history: true,
+            resume_on_play: true,
+            autoplay_related: true,
+            seek_seconds: 5,
+            prefer_offline: true,
+            preload_next: true,
+            color_grade: "off".into(),
+            auto_color_grade: false,
+            card_info: CardInfo::default(),
+            show_hints: true,
+            playback_sponsorblock: "skip".into(),
+            playback_sponsor_categories: vec!["sponsor".into()],
+            equalizer: crate::equalizer::OFF.into(),
+            equalizer_custom: BTreeMap::new(),
+            download: DownloadOptions::default(),
+            concurrency: 3,
+            max_retries: 3,
+            retry_delay_seconds: 5,
+            proxy: None,
+            download_backend: "auto".into(),
+            playback_backend: "native".into(),
+            native_js_runtime: None,
+            yt_dlp: "yt-dlp".into(),
+            ffmpeg: "ffmpeg".into(),
+            ffprobe: "ffprobe".into(),
+            mpv: "mpv".into(),
+            cliamp: "cliamp".into(),
+            nmcli: "nmcli".into(),
+            radio_pinned_countries: Vec::new(),
+            auth_store: "keyring".into(),
+            account_index: 0,
+            keybindings: BTreeMap::new(),
+            radio_servers: Vec::new(),
+            custom_stations: Vec::new(),
+            clipboard_watcher: false,
+            notifications: true,
+            notification_sound: false,
+            update_check: true,
+            skipped_update: None,
+            schedule: Default::default(),
+            legacy_settings: None,
+            legacy_keybindings: BTreeMap::new(),
+        }
+    }
+}
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            MUSIC_PLAYER_STYLES.contains(&self.music_player_style.as_str()),
+            "Unknown music player style"
+        );
+        ensure!(
+            ["en", "de", "system"].contains(&self.language.as_str()),
+            "language must be en, de or system"
+        );
+        ensure!(
+            self.version == 1,
+            "Unsupported configuration version {}",
+            self.version
+        );
+        ensure!(
+            (1..=16).contains(&self.concurrency),
+            "concurrency must be between 1 and 16"
+        );
+        ensure!(self.max_retries <= 10, "max_retries must be at most 10");
+        ensure!(
+            (1..=600).contains(&self.seek_seconds),
+            "seek_seconds must be between 1 and 600"
+        );
+        ensure!(
+            self.retry_delay_seconds <= 300,
+            "retry_delay_seconds must be at most 300"
+        );
+        ensure!(
+            ["keyring", "file"].contains(&self.auth_store.as_str()),
+            "auth_store must be keyring or file"
+        );
+        for (key, action) in &self.keybindings {
+            ensure!(
+                key != "ctrl+c" || action == "quit",
+                "Ctrl+C is reserved for emergency quit"
+            );
+            ensure!(
+                crate::shortcuts::valid_key(key)
+                    && crate::shortcuts::Action::parse(action).is_some(),
+                "Invalid keybinding {key}: {action}"
+            );
+        }
+        ensure!(
+            ["auto", "native", "yt-dlp"].contains(&self.download_backend.as_str()),
+            "download_backend must be auto, native or yt-dlp"
+        );
+        ensure!(
+            ["auto", "native", "yt-dlp"].contains(&self.playback_backend.as_str()),
+            "playback_backend must be native, auto or yt-dlp"
+        );
+        ensure!(
+            ["auto", "caelestia", "omarchy", "portal", "gnome"]
+                .contains(&self.theme_provider.as_str()),
+            "Unknown theme provider"
+        );
+        ensure!(
+            ["auto", "kitty", "sixel", "iterm2", "halfblocks", "none"]
+                .contains(&self.image_protocol.as_str()),
+            "Unknown image protocol"
+        );
+        ensure!(
+            self.radio_pinned_countries
+                .iter()
+                .all(|c| c.len() == 2 && c.bytes().all(|b| b.is_ascii_alphabetic())),
+            "Pinned radio countries must use two-letter codes"
+        );
+        ensure!(
+            self.radio_servers.len() <= 8,
+            "At most eight radio directory servers are allowed"
+        );
+        for server in &self.radio_servers {
+            crate::http_url(server)?;
+        }
+        if let Some(proxy) = &self.proxy {
+            let proxy = url::Url::parse(proxy)
+                .map_err(|_| anyhow::anyhow!("Proxy must be a valid HTTP(S) or SOCKS URL"))?;
+            ensure!(
+                matches!(proxy.scheme(), "http" | "https" | "socks5" | "socks5h")
+                    && proxy.host_str().is_some()
+                    && proxy.port() != Some(0)
+                    && matches!(proxy.path(), "" | "/")
+                    && proxy.query().is_none()
+                    && proxy.fragment().is_none(),
+                "Proxy must use HTTP(S), socks5 or socks5h and include a host"
+            );
+        }
+        ensure!(
+            ["skip", "mark", "off"].contains(&self.playback_sponsorblock.as_str()),
+            "SponsorBlock playback must be skip, mark or off"
+        );
+        crate::equalizer::validate(&self.equalizer, &self.equalizer_custom)?;
+        ensure!(
+            COLOR_GRADES.contains(&self.color_grade.as_str()),
+            "Color grading must be one of {}",
+            COLOR_GRADES.join(", ")
+        );
+        let mut sponsor = self.download.clone();
+        sponsor.sponsorblock = self.playback_sponsor_categories.clone();
+        sponsor.validate()?;
+        self.schedule.validate()?;
+        self.download.validate()
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DownloadOptions {
+    /// Explicit extractor format selector; normally populated from actual formats.
+    pub format_selector: Option<String>,
+    pub backend: Option<String>,
+    pub audio: bool,
+    pub quality: String,
+    pub container: String,
+    pub audio_container: String,
+    pub audio_quality: String,
+    pub directory: PathBuf,
+    pub audio_directory: PathBuf,
+    pub filename_template: String,
+    pub subtitles: Vec<String>,
+    pub auto_subtitles: bool,
+    pub embed_subtitles: bool,
+    pub metadata: bool,
+    pub thumbnail: bool,
+    pub playlist: bool,
+    pub playlist_items: Option<String>,
+    pub bandwidth_kib: u64,
+    pub global_bandwidth_kib: u64,
+    pub sponsorblock: Vec<String>,
+    pub sponsorblock_api: String,
+    pub sponsorblock_remove: bool,
+    pub split_chapters: bool,
+    pub skip_duplicates: bool,
+    pub post_download_hook: Option<PathBuf>,
+}
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        Self {
+            format_selector: None,
+            backend: None,
+            audio: false,
+            quality: "1080".into(),
+            container: "mp4".into(),
+            audio_container: "mp3".into(),
+            audio_quality: "0".into(),
+            directory: PathBuf::new(),
+            audio_directory: PathBuf::new(),
+            filename_template: "%(title).180s [%(id)s].%(ext)s".into(),
+            subtitles: Vec::new(),
+            auto_subtitles: false,
+            embed_subtitles: true,
+            metadata: true,
+            thumbnail: false,
+            playlist: false,
+            playlist_items: None,
+            bandwidth_kib: 0,
+            global_bandwidth_kib: 0,
+            sponsorblock: Vec::new(),
+            sponsorblock_api: "https://sponsor.ajay.app".into(),
+            sponsorblock_remove: false,
+            split_chapters: false,
+            skip_duplicates: true,
+            post_download_hook: None,
+        }
+    }
+}
+impl DownloadOptions {
+    /// Compare the requested files, independently of extraction/retry/rate policy.
+    pub fn same_output(&self, other: &Self) -> bool {
+        self.format_selector == other.format_selector
+            && self.audio == other.audio
+            && (if self.audio {
+                self.audio_container == other.audio_container
+                    && self.audio_quality == other.audio_quality
+            } else {
+                self.container == other.container && self.quality == other.quality
+            })
+            && self.output_directory() == other.output_directory()
+            && self.filename_template == other.filename_template
+            && self.playlist == other.playlist
+            && self.playlist_items == other.playlist_items
+            && self.subtitles == other.subtitles
+            && self.auto_subtitles == other.auto_subtitles
+            && self.embed_subtitles == other.embed_subtitles
+            && self.metadata == other.metadata
+            && self.thumbnail == other.thumbnail
+            && self.split_chapters == other.split_chapters
+            && self.sponsorblock == other.sponsorblock
+            && self.sponsorblock_api == other.sponsorblock_api
+            && self.sponsorblock_remove == other.sponsorblock_remove
+    }
+    pub fn output_directory(&self) -> &std::path::Path {
+        if self.audio {
+            &self.audio_directory
+        } else {
+            &self.directory
+        }
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.backend
+                .as_deref()
+                .is_none_or(|b| b == "auto" || b == "native" || b == "yt-dlp"),
+            "Unknown download backend"
+        );
+        ensure!(
+            self.format_selector
+                .as_ref()
+                .is_none_or(|value| !value.is_empty()
+                    && value.len() <= 256
+                    && value
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"_-./+[]<>=,?*".contains(&b))),
+            "Invalid explicit format selector"
+        );
+        ensure!(
+            self.quality == "best"
+                || self
+                    .quality
+                    .parse::<u32>()
+                    .is_ok_and(|v| (144..=8640).contains(&v)),
+            "quality must be best or a resolution height"
+        );
+        ensure!(
+            ["mp4", "mkv", "webm"].contains(&self.container.as_str()),
+            "Unsupported video container"
+        );
+        ensure!(
+            ["mp3", "m4a", "flac", "opus", "vorbis", "wav", "aac"]
+                .contains(&self.audio_container.as_str()),
+            "Unsupported audio container"
+        );
+        ensure!(
+            !self.filename_template.contains('\0')
+                && !self.filename_template.starts_with('/')
+                && !self.filename_template.split('/').any(|p| p == ".."),
+            "filename_template must stay within the destination"
+        );
+        ensure!(
+            !self.filename_template.is_empty(),
+            "filename_template cannot be empty"
+        );
+        let quality = self
+            .audio_quality
+            .trim_end_matches(['k', 'K'])
+            .parse::<f64>()
+            .map_err(|_| {
+                anyhow::anyhow!("Audio quality must be 0..10 or a bitrate such as 320K")
+            })?;
+        ensure!(
+            quality.is_finite() && (0.0..=1_000_000.0).contains(&quality),
+            "Audio quality must be finite and between 0 and 1000000"
+        );
+        crate::http_url(&self.sponsorblock_api)?;
+        ensure!(
+            self.sponsorblock.iter().all(|s| [
+                "sponsor",
+                "intro",
+                "outro",
+                "selfpromo",
+                "interaction",
+                "preview",
+                "music_offtopic",
+                "filler"
+            ]
+            .contains(&s.as_str())),
+            "Unsupported SponsorBlock category"
+        );
+        if let Some(items) = &self.playlist_items {
+            ensure!(
+                !items.is_empty()
+                    && items
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || ",:-".contains(c)),
+                "Playlist selection must use indices/ranges, e.g. 1,3:7"
+            );
+        }
+        Ok(())
+    }
+}
