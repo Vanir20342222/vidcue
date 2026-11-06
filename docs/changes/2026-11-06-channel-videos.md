@@ -1,8 +1,8 @@
-# Open a channel to see all its videos (M9, M4)
+# Open a channel to see all its videos (M9, M3)
 
 - **Date:** 2026-11-06
 - **PR:** #<number>
-- **Milestone:** M9 (Android UI), M4 (shared provider browse)
+- **Milestone:** M9 (Android UI), M3 (shared YouTube browse provider)
 - **Platforms:** Android, shared engine (desktop gets the provider change too)
 - **Status:** fixture/unit verified
 
