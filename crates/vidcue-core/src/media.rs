@@ -35,6 +35,9 @@ pub struct Media {
     /// Creator avatar advertised by the provider; empty when it was not in the response.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub channel_thumbnail: String,
+    /// Browse ID (`UC…`) of the channel that published this item; empty when unknown.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub channel_id: String,
     pub section: String,
     pub duration: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,6 +59,14 @@ pub struct Media {
     pub live: bool,
     pub chapters: Vec<crate::Chapter>,
 }
+/// Whether `id` is a YouTube channel browse ID: `UC` followed by 22 URL-safe characters.
+pub fn is_channel_id(id: &str) -> bool {
+    id.len() == 24
+        && id.starts_with("UC")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
 impl Media {
     /// Conservative retained-data estimate for UI windows, including nested text.
     pub fn retained_bytes(&self) -> usize {
@@ -67,6 +78,7 @@ impl Media {
             + self.url.len()
             + self.thumbnail.len()
             + self.channel_thumbnail.len()
+            + self.channel_id.len()
             + self.section.len()
             + self.description.len()
             + self.views_text.len()

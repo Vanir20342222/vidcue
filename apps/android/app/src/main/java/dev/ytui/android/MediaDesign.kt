@@ -777,6 +777,7 @@ internal fun ChannelAvatar(
     size: androidx.compose.ui.unit.Dp,
     imageUrl: String = "",
     loadImage: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val name = creator.trim()
     val colors = MaterialTheme.colorScheme
@@ -790,7 +791,10 @@ internal fun ChannelAvatar(
                 if (dark) 0.42f else 0.28f,
                 if (dark) 0.42f else 0.86f,
             )
-    Box(Modifier.size(size).background(tone, CircleShape), contentAlignment = Alignment.Center) {
+    Box(
+        modifier.size(size).background(tone, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
         // Keep a complete code point for emoji-leading channel names.
         val initial =
             if (name.isEmpty()) "·" else name.substring(0, name.offsetByCodePoints(0, 1)).uppercase()
@@ -1090,3 +1094,18 @@ internal fun GlyphTile(glyph: Glyph, modifier: Modifier) {
         MediaIcon(glyph, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurface)
     }
 }
+
+/**
+ * Makes a channel picture or name open that channel's videos. Without a channel link it changes
+ * nothing, so taps keep reaching the card underneath.
+ */
+internal fun Modifier.opensChannel(
+    creator: String,
+    channelId: String,
+    open: (String) -> Unit,
+): Modifier =
+    if (channelId.isBlank()) this
+    else
+        clickable(onClickLabel = "Open channel", role = Role.Button) { open(channelId) }
+            .semantics { contentDescription = "Open channel $creator".trim() }
+            .testTag("channel-$channelId")

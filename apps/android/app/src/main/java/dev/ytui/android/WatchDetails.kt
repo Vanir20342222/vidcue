@@ -78,6 +78,7 @@ internal fun WatchDetails(
     thumbnails: Boolean,
     headerModifier: Modifier,
     error: String?,
+    openChannel: (String) -> Unit = {},
     actions: @Composable () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -133,7 +134,9 @@ internal fun WatchDetails(
                 }
         }
         if (showCreator) {
+            val channelId = media?.optString("channel_id")?.takeIf(::isChannelId).orEmpty()
             Row(
+                Modifier.opensChannel(creator, channelId, openChannel),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
