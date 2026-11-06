@@ -239,6 +239,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         keyboard?.hide()
         searchFocused = false
     }
+    // The player covers the page but leaves it composed, so a search field there
+    // (browse or the offline library filter) would keep input focus underneath and
+    // reopen the IME whenever the window regains focus. Opening the player moves
+    // focus to the non-text sink; fields inside the player's own sheets are unaffected.
+    LaunchedEffect(playerOpen) {
+        if (playerOpen) {
+            if (runCatching { focusSink.requestFocus() }.isFailure)
+                focusManager.clearFocus(force = true)
+            keyboard?.hide()
+        }
+    }
     val searchRequestState =
         remember(vm, tab) {
             val feed = vm.feeds[tab]
