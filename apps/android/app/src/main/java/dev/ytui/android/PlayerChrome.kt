@@ -65,6 +65,102 @@ internal object PlayerChrome {
         showSponsorMarks(view)
     }
 
+    private const val LIVE_TICK_MS = 500L
+    private val LIVE_RED = Color(0xffd7263d).toArgb() // ArtworkBadge's live colour.
+    private val LIVE_BEHIND = android.graphics.Color.argb(0x99, 0xff, 0xff, 0xff)
+
+    /**
+     * Live streams (M9): Media3 prints a live window as an ordinary time ("1:00:28 / 1:00:00").
+     * While the bound player's item is live, the time pill instead reads LIVE with a red dot at
+     * the edge, or "−0:45 LIVE" with a grey dot when behind, and tapping it returns to the edge.
+     * The timebar keeps scrubbing within the stream's DVR window. Attach once per view.
+     */
+    @JvmStatic
+    fun trackLive(view: PlayerView) {
+        if (view.getTag(R.id.ytui_live_tracker) != null) return
+        val tick =
+            object : Runnable {
+                override fun run() {
+                    showLive(view)
+                    view.removeCallbacks(this)
+                    if (view.isAttachedToWindow) view.postDelayed(this, LIVE_TICK_MS)
+                }
+            }
+        view.setTag(R.id.ytui_live_tracker, tick)
+        view.addOnAttachStateChangeListener(
+            object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {
+                    v.post(tick)
+                }
+
+                override fun onViewDetachedFromWindow(v: View) {
+                    v.removeCallbacks(tick)
+                }
+            }
+        )
+        if (view.isAttachedToWindow) view.post(tick)
+    }
+
+    /** Switch the time pill between clock and live presentation for the bound player. */
+    @JvmStatic
+    fun showLive(view: PlayerView) {
+        val pill = view.findViewById<View>(androidx.media3.ui.R.id.exo_time) ?: return
+        val label = view.findViewById<android.widget.TextView>(R.id.ytui_live) ?: return
+        val behindText = view.findViewById<android.widget.TextView>(R.id.ytui_live_behind) ?: return
+        val player = view.player
+        val live = LivePosition.live(player)
+        val clock = if (live) View.GONE else View.VISIBLE
+        for (id in
+            intArrayOf(
+                androidx.media3.ui.R.id.exo_position,
+                R.id.ytui_time_separator,
+                androidx.media3.ui.R.id.exo_duration,
+            )) {
+            view.findViewById<View>(id)?.let { if (it.visibility != clock) it.visibility = clock }
+        }
+        if (!live) {
+            label.visibility = View.GONE
+            behindText.visibility = View.GONE
+            if (pill.hasOnClickListeners()) {
+                pill.setOnClickListener(null)
+                pill.isClickable = false
+                pill.contentDescription = null
+            }
+            return
+        }
+        val behind = LivePosition.behindMs(player)
+        val atEdge = LivePosition.atEdge(behind)
+        val text = LivePosition.behindLabel(behind)
+        label.visibility = View.VISIBLE
+        behindText.visibility = if (atEdge) View.GONE else View.VISIBLE
+        if (behindText.text.toString() != text) behindText.text = text
+        val dotColor = if (atEdge) LIVE_RED else LIVE_BEHIND
+        if (label.getTag(R.id.ytui_live_tracker) != dotColor) {
+            label.setTag(R.id.ytui_live_tracker, dotColor)
+            val size = (8 * view.resources.displayMetrics.density).toInt()
+            label.setCompoundDrawablesRelative(
+                GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(dotColor)
+                    setSize(size, size)
+                    setBounds(0, 0, size, size)
+                },
+                null,
+                null,
+                null,
+            )
+        }
+        pill.contentDescription =
+            if (atEdge) view.resources.getString(R.string.ytui_player_live_at_edge)
+            else view.resources.getString(R.string.ytui_player_go_live, text.removePrefix("\u2212"))
+        if (!pill.hasOnClickListeners()) {
+            pill.setOnClickListener {
+                LivePosition.goLive(view.player)
+                showLive(view)
+            }
+        }
+    }
+
     /**
      * One captions button that switches captions on or off. Media3's own button opened a list of
      * every caption track, which on YouTube means well over a hundred machine translations; the
