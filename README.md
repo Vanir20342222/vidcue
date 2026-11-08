@@ -13,6 +13,30 @@ Download a signed APK from the [releases page](https://github.com/Vanir20342222/
 
 Details, release qualification records and the feature walkthrough live in [`docs/android/README.md`](docs/android/README.md).
 
+## Screens
+
+Actual emulator captures of the current beta (see [docs/screenshots/android/2026-11-08/](docs/screenshots/android/2026-11-08/README.md)):
+
+<p align="center">
+  <img src="docs/screenshots/android/2026-11-08/native-catalog.png" alt="Home feed, dark theme" width="26%">
+  &nbsp;
+  <img src="docs/screenshots/android/2026-11-08/native-music.png" alt="Music grid" width="26%">
+  &nbsp;
+  <img src="docs/screenshots/android/2026-11-08/native-player.png" alt="Focused player" width="26%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/android/2026-11-08/native-settings.png" alt="Appearance settings" width="26%">
+  &nbsp;
+  <img src="docs/screenshots/android/2026-11-08/restyle-fidelity-phone-queue-populated.png" alt="Playback queue" width="26%">
+  &nbsp;
+  <img src="docs/screenshots/android/2026-11-08/restyle-phone-light-vidcue-light-feed.png" alt="Light theme" width="26%">
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/android/2026-11-08/native-wide-catalog.png" alt="Tablet catalog with navigation rail" width="80%">
+</p>
+
 ## Build from source
 
 Requirements: Rust (see `rust-toolchain.toml`), the [Android SDK](https://developer.android.com/studio) with `ANDROID_HOME` set, and NDK `27.2.12479018` (or point `ANDROID_NDK_HOME` at an installed NDK).

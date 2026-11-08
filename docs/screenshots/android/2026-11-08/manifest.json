@@ -1,0 +1,14 @@
+{
+  "source": "Actual unedited API 35 emulator captures taken locally on 2026-11-08; original generated offline fixtures; source commit 53c2f98 (backend + Android workspace restructure). Headless emulator -avd repro, -gpu host (NVIDIA GeForce GTX 1050 Ti), KVM, 6 cores / 4096 MB, API 35 google_apis x86_64.",
+  "suite": "dev.ytui.android.NativeUiTest, CatalogUiTest, ContrastUiTest via adb am instrument. Result: 23 passed, 2 failed (IME text injection and a test touch-finder automation quirk; not visual). Video-surface captures are not part of this set.",
+  "captures": [
+    { "file": "native-catalog.png", "width": 1080, "height": 2400, "label": "Phone Home feed, dark theme" },
+    { "file": "native-music.png", "width": 1080, "height": 2400, "label": "Phone Music grid, dark theme" },
+    { "file": "native-player.png", "width": 1080, "height": 2400, "label": "Focused player (cover style)" },
+    { "file": "native-settings.png", "width": 1080, "height": 2400, "label": "Appearance settings" },
+    { "file": "restyle-mini-player.png", "width": 1080, "height": 2400, "label": "Mini player over Music" },
+    { "file": "restyle-fidelity-phone-queue-populated.png", "width": 1080, "height": 2400, "label": "Playback queue sheet" },
+    { "file": "restyle-phone-light-vidcue-light-feed.png", "width": 1080, "height": 2400, "label": "Vidcue light theme feed" },
+    { "file": "native-wide-catalog.png", "width": 2560, "height": 1600, "label": "Tablet catalog with navigation rail" }
+  ]
+}
