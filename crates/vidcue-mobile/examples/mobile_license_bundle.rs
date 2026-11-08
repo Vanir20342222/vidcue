@@ -1,1 +1,1 @@
-include!("../../../tools/license_bundle.rs");
+include!("license_bundle.rs");

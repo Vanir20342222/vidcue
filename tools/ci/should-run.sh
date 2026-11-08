@@ -12,10 +12,10 @@ event="${2:-${GITHUB_EVENT_NAME:-}}"
 case "$event" in pull_request|merge_group) ;; *) echo true; exit 0;; esac
 
 # Never need either area: documentation, templates and unrelated workflows.
-common='^docs/|^[^/]+\.md$|^LICENSE$|^\.github/pull_request_template\.md$|^\.gitleaksignore$|^\.github/workflows/(pr-hygiene|security|release-candidate|youtube-live|native-playback)\.yml$'
+common='^docs/|^[^/]+\.md$|^LICENSE$|^\.github/pull_request_template\.md$|^\.gitleaksignore$|^\.github/workflows/(pr-hygiene|security)\.yml$'
 case "$area" in
-    # Android builds vidcue-core, vidcue-providers, vidcue-mobile and vendor/. The desktop crates do not reach it.
-    android) skip="$common|^apps/desktop/|^crates/vidcue-services/|^examples/|^packaging/|^install(-rust)?\.sh$|^\.github/workflows/rust\.yml$|^tools/(test-|package-release|rollback-install|native-playback-urls|license_bundle)" ;;
+    # Android builds vidcue-core, vidcue-providers, vidcue-mobile and vendor/.
+    android) skip="$common|^crates/vidcue-services/|^\.github/workflows/rust\.yml$" ;;
     # The Rust workspace does not build the Kotlin app or the Android scripts.
     rust) skip="$common|^apps/android/|^tools/android/|^\.github/workflows/android[^/]*\.yml$" ;;
     *) echo "unknown area: $area" >&2; exit 2 ;;

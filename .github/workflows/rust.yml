@@ -97,12 +97,6 @@ jobs:
         env:
           NO_PROXY: 127.0.0.1,localhost
         run: cargo test -p vidcue-services --locked real_ffmpeg_ -- --ignored
-      - name: Verify actual audio downloads in MP3, M4A, Opus and FLAC
-        env:
-          NO_PROXY: 127.0.0.1,localhost
-        run: cargo test -p vidcue --test downloads --locked real_ffmpeg_native_audio_ -- --ignored
-      - name: Verify requested local conversion bitrate
-        run: cargo test -p vidcue --test audit_regressions --locked audit_b07_ -- --ignored
       - name: Verify MPRIS on an isolated D-Bus session
         run: dbus-run-session -- cargo test -p vidcue-services --locked live_desktop_mpris -- --ignored
       - name: Verify actual mpv external-extraction handoff
@@ -119,12 +113,6 @@ jobs:
         run: cargo test -p vidcue-services --locked real_mpv_stream_reconnect -- --ignored
       - name: Verify actual mpv HTTP proxy routing
         run: cargo test -p vidcue-services --locked real_mpv_http_proxy_ -- --ignored
-      - name: Verify headless playback diagnostic with real mpv
-        run: cargo test -p vidcue --test downloads --locked real_mpv_playback_check_ -- --ignored
-      - name: Verify sleep timer with actual mpv and local audio
-        run: cargo test -p vidcue --test saved_sleep_ui --locked real_mpv_sleep_timer -- --ignored
-      - name: Verify two real yt-dlp playlist entries with FFmpeg and ffprobe
-        run: cargo test -p vidcue --test downloads --locked real_ytdlp_playlist_ -- --ignored
   release-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04

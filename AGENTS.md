@@ -56,8 +56,12 @@ baseline defects, milestones, migration requirements, and acceptance checks.
   docs/PARITY.md. Do not equate implemented provider code with a successful live
   account, Ghostty, audio-device or stable-release acceptance result.
 
-- M9 adds the Android preview and monorepo. Desktop source is `apps/desktop`;
-  package/binary names and installed state paths must remain compatible.
+- M9 adds the Android preview and monorepo. On 2026-11-08 the terminal app
+  (`apps/desktop`, ratatui TUI) was removed at the owner's request; the repository
+  is now the Android app plus the shared backend crates (`vidcue-core`,
+  `vidcue-providers`, `vidcue-services`, `vidcue-mobile`). A future desktop GUI
+  will build on those crates. Package/binary names and installed state paths must
+  remain compatible.
   Shared network/provider code is `crates/vidcue-providers`; Android's engine
   remains Rust in `crates/vidcue-mobile`. On 2026-10-28 the user authorized a
   stack change after reporting unusable text input/themes/account navigation on
