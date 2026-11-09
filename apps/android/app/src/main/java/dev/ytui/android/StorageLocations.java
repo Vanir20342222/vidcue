@@ -66,20 +66,25 @@ final class StorageLocations {
     return records().optJSONObject(id);
   }
 
-  static synchronized void remember(String id, Uri document, JSONObject request) throws Exception {
+  static synchronized void remember(
+      String id, Uri document, Uri playlistFolder, String playlistTitle, JSONObject request)
+      throws Exception {
     if (prefs().getBoolean("removed:" + id, false))
       throw new InterruptedIOException("Offline copy removed");
     JSONObject files = records();
     JSONObject media = new JSONObject(request.getJSONObject("media").toString());
     media.put("offline_id", id);
-    files.put(
-        id,
+    String folder = label(request.optBoolean("audio"));
+    if (playlistFolder != null) folder = folder + " › " + playlistTitle;
+    JSONObject file =
         new JSONObject()
             .put("id", id)
             .put("uri", document.toString())
             .put("media", media)
             .put("audio", request.optBoolean("audio"))
-            .put("folder", label(request.optBoolean("audio"))));
+            .put("folder", folder);
+    if (playlistFolder != null) file.put("playlistFolder", playlistFolder.toString());
+    files.put(id, file);
     String encoded = files.toString();
     if (files.length() > 2000 || encoded.length() > 4 * 1024 * 1024)
       throw new IOException("Offline folder index is full");
@@ -112,6 +117,15 @@ final class StorageLocations {
           throw new IOException("Cannot remove the offline file; reconnect its folder");
       } catch (FileNotFoundException alreadyRemoved) {
         /* remove its stale index only */
+      }
+      // Best-effort cleanup of the playlist folder this file was packed into; it stays
+      // when it still holds other files or is the user's own folder.
+      try {
+        Uri playlistFolder = Uri.parse(file.optString("playlistFolder", ""));
+        if (!playlistFolder.toString().isEmpty())
+          DocumentsContract.deleteDocument(
+              MediaBridge.context.getContentResolver(), playlistFolder);
+      } catch (Exception nonEmptyOrStale) {
       }
       files.remove(id);
     }

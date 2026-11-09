@@ -63,4 +63,18 @@ public final class PlaybackPolicyTest {
     assertEquals(100, longName.substring(0, longName.length() - 5).codePointCount(0, 200));
     assertEquals("vidcue-media.m4a", PlaybackPolicy.exportName(" ", "m4a"));
   }
+
+  @Test
+  public void playlistFolderNamesFollowExportNameRules() {
+    assertEquals("a_b_c_", PlaybackPolicy.folderName("a/b\\c\n"));
+    assertEquals("Downloaded playlist", PlaybackPolicy.folderName(" "));
+    assertEquals(100, PlaybackPolicy.folderName("🎵".repeat(120)).codePointCount(0, 200));
+  }
+
+  @Test
+  public void playlistExportsKeepTheirOrderWithANumericPrefix() {
+    assertEquals("001 - Song.m4a", PlaybackPolicy.exportName("Song", "m4a", 0));
+    assertEquals("012 - Song.webm", PlaybackPolicy.exportName("Song", "webm", 11));
+    assertEquals("999 - Song.mp4", PlaybackPolicy.exportName("Song", "mp4", 998));
+  }
 }

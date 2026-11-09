@@ -3057,6 +3057,7 @@ private fun SettingsPanel(
                 SettingToggle(
                     "Save completed media to selected folders",
                     mobile.optBoolean("auto_save_folders", true),
+                    "Real files in your Music or Video folder; playlist downloads keep their own subfolder.",
                 ) {
                     vm.updateMobile("auto_save_folders", it)
                 }

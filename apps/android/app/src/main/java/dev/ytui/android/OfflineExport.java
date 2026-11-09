@@ -52,6 +52,39 @@ public final class OfflineExport extends Worker {
     return work.getId();
   }
 
+  /** A playlist download's folder: the offline playlist title and the item's order in it. */
+  static final class PlaylistSave {
+    final String title;
+    final int position;
+
+    PlaylistSave(String title, int position) {
+      this.title = title;
+      this.position = position;
+    }
+  }
+
+  /**
+   * The first offline playlist containing [id] and its order, so playlist downloads pack into a
+   * folder named after that playlist. Returns null when the download is not in a playlist.
+   */
+  static PlaylistSave playlist(String id) {
+    try {
+      JSONArray playlists =
+          new JSONArray(
+              NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));
+      for (int i = 0; i < playlists.length(); i++) {
+        JSONObject playlist = playlists.getJSONObject(i);
+        JSONArray items = playlist.optJSONArray("items");
+        for (int j = 0; j < (items == null ? 0 : items.length()); j++)
+          if (id.equals(items.getJSONObject(j).optString("offline_id")))
+            return new PlaylistSave(playlist.optString("title"), j);
+      }
+    } catch (Exception ignored) {
+      // A save without a playlist name still works as a plain file.
+    }
+    return null;
+  }
+
   static void enqueueAuto(String id) {
     if (!MobileSettings.enabled("auto_save_folders")) return;
     try {
@@ -88,6 +121,8 @@ public final class OfflineExport extends Worker {
     Uri destination = raw == null ? null : Uri.parse(raw);
     try {
       JSONObject request = null;
+      PlaylistSave playlist = null;
+      Uri playlistFolder = null;
       if (automatic) {
         if (!MobileSettings.enabled("auto_save_folders")
             || StorageLocations.prefs().getBoolean("removed:" + id, false)
@@ -98,13 +133,28 @@ public final class OfflineExport extends Worker {
         if (!StorageLocations.granted(tree))
           throw new IOException("Offline folder permission expired");
         Plan plan = inspect(id);
+        playlist = playlist(id);
+        Uri parent =
+            android.provider.DocumentsContract.buildDocumentUriUsingTree(
+                tree, android.provider.DocumentsContract.getTreeDocumentId(tree));
+        String name = PlaybackPolicy.exportName(plan.title, plan.extension);
+        if (playlist != null) {
+          // Playlist downloads pack into their own folder, so the folder can be copied
+          // to another device; the file prefix keeps the playlist order there.
+          Uri folder =
+              android.provider.DocumentsContract.createDocument(
+                  getApplicationContext().getContentResolver(),
+                  parent,
+                  android.provider.DocumentsContract.Document.MIME_TYPE_DIR,
+                  PlaybackPolicy.folderName(playlist.title));
+          if (folder == null) throw new IOException("Could not create the playlist folder");
+          parent = folder;
+          playlistFolder = folder;
+          name = PlaybackPolicy.exportName(plan.title, plan.extension, playlist.position);
+        }
         destination =
             android.provider.DocumentsContract.createDocument(
-                getApplicationContext().getContentResolver(),
-                android.provider.DocumentsContract.buildDocumentUriUsingTree(
-                    tree, android.provider.DocumentsContract.getTreeDocumentId(tree)),
-                plan.mime,
-                PlaybackPolicy.exportName(plan.title, plan.extension));
+                getApplicationContext().getContentResolver(), parent, plan.mime, name);
         if (destination == null) throw new IOException("Could not create offline media file");
       }
       setForegroundAsync(foreground()).get(15, TimeUnit.SECONDS);
@@ -115,7 +165,8 @@ public final class OfflineExport extends Worker {
           () ->
               isStopped()
                   || automatic && StorageLocations.prefs().getBoolean("removed:" + id, false));
-      if (automatic) StorageLocations.remember(id, destination, request);
+      if (automatic)
+        StorageLocations.remember(id, destination, playlistFolder, playlist.title, request);
       state(getApplicationContext(), getId().toString(), "Export complete");
       MediaBridge.event("storage_updated", "");
       return Result.success();

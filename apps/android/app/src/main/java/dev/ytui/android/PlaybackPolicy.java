@@ -28,16 +28,32 @@ final class PlaybackPolicy {
         .trim();
   }
 
-  static String exportName(String title, String extension) {
+  private static String clean(String title, String fallback) {
     String clean = title.replaceAll("[\\p{Cntrl}/\\\\:*?\"<>|]", "_").trim();
-    if (clean.isEmpty()) clean = "vidcue-media";
-    clean =
-        clean
-            .codePoints()
-            .limit(100)
-            .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
-            .toString();
-    return clean + "." + extension;
+    if (clean.isEmpty()) clean = fallback;
+    return clean
+        .codePoints()
+        .limit(100)
+        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)
+        .toString();
+  }
+
+  static String exportName(String title, String extension) {
+    return clean(title, "vidcue-media") + "." + extension;
+  }
+
+  /** Playlist folder name; same rules as export names, so it never becomes a path. */
+  static String folderName(String title) {
+    return clean(title, "Downloaded playlist");
+  }
+
+  /**
+   * Playlist exports carry a numeric prefix so the playlist order survives on any device or file
+   * browser.
+   */
+  static String exportName(String title, String extension, int position) {
+    return String.format(java.util.Locale.ROOT, "%03d - ", position + 1)
+        + exportName(title, extension);
   }
 
   private PlaybackPolicy() {}
