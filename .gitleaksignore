@@ -27,3 +27,8 @@
 36fd7b7da7ddfd7b585591b12443732fe67b0264:vendor/yt-dlp-rs/tests/fixtures/youtube/challenges/player-74edf1a3.js:gcp-api-key:5817
 36fd7b7da7ddfd7b585591b12443732fe67b0264:vendor/yt-dlp-rs/tests/fixtures/youtube/challenges/player-74edf1a3.js:gcp-api-key:6503
 36fd7b7da7ddfd7b585591b12443732fe67b0264:vendor/yt-dlp-rs/tests/fixtures/youtube/challenges/player-74edf1a3.js:generic-api-key:8572
+# Synthetic test fixture, not a credential: the Wyzie subtitle search test
+# asserts a caller-supplied key is forwarded URL-encoded. Introduced by the
+# Cinecat backend merge (#126); fingerprints cover those historical commits.
+0526896a6d9c9bed1f64e0df8cc5885b7d470614:crates/vidcue-providers/src/cinecat/tests.rs:generic-api-key:808
+afa4d004ce968d6121680284da0131210635adc0:crates/vidcue-providers/src/cinecat/tests.rs:generic-api-key:808
