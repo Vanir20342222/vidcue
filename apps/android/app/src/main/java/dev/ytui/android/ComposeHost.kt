@@ -2156,6 +2156,14 @@ internal fun PlayerPane(
                             )
                         }
                 }
+                if (player.video) player.media?.let(::playerInformation)?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        it,
+                        Modifier.testTag("player-information"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 player.value
                     .optString("error")
                     .takeUnless { it.isBlank() || it == "null" }
@@ -3072,7 +3080,7 @@ private fun SettingsPanel(
         if (shown == "What cards show")
             SettingGroup(
                 "Visible information",
-                subtitle = "Shows details when available. Some items have no likes or description.",
+                subtitle = "Choose details for Home, search and feed cards. The player always shows available video information.",
             ) {
                 for ((key, label) in
                     listOf(

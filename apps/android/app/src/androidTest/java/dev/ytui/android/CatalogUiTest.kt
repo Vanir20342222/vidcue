@@ -198,6 +198,69 @@ class CatalogUiTest {
     }
 
     @Test
+    fun videoInformationOnHomeAndAlwaysInPlayer() {
+        val cards = populate(1)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val review = MetadataReviewDriver(scenario)
+        fun visibleText(text: String) = review.visibleText(text)
+        fun capture(name: String) = review.capture(name)
+        run {
+            val keys = listOf("show_channel", "show_views", "show_upload_date", "show_duration", "show_likes", "show_description", "show_section")
+            lateinit var vm: YtuiViewModel
+            scenario.onActivity { vm = ViewModelProvider(it)[YtuiViewModel::class.java] }
+            val media = cards[0].value.copyJson()
+                .put("title", "A little further from ordinary").put("duration", 30)
+                .put("like_count", 2834).put("subscribers_text", "24K subscribers")
+                .put("description", "A quiet journey through light, colour and the places in between.\n\nAn original offline UI fixture for reviewing Vidcue.")
+            scenario.onActivity {
+                keys.forEach { vm.updateMobile(it, true) }
+                vm.feeds[1].value = vm.feeds[1].value.copy(cards = listOf(MediaCard(media)) + cards.drop(1))
+            }
+            MediaRuntimeTest.await("Card switches committed") { keys.all { vm.mobile.value.optBoolean(it) } }
+            visibleText("1.2K views · 2 days ago · 2.8K likes")
+            review.visibleText("A quiet journey through light, colour", exact = false)
+            visibleText("Picked for you")
+            visibleText("0:30")
+            capture("video-information-home.png")
+            val fixture = File(instrumentation.targetContext.cacheDir, "information-fixture.mp4")
+            instrumentation.context.assets.open("fixture.mp4").use { input -> fixture.outputStream().use { input.copyTo(it) } }
+            scenario.onActivity {
+                keys.forEach { vm.updateMobile(it, false) }
+                vm.feeds[1].value = vm.feeds[1].value.copy(cards = cards)
+            }
+            MediaRuntimeTest.await("Card switches disabled") { keys.none { vm.mobile.value.optBoolean(it) } }
+            MediaBridge.execute(json("op" to "play", "request" to json(
+                "media" to media, "audio" to false,
+                "stream" to json("url" to android.net.Uri.fromFile(fixture).toString()),
+            )).toString())
+            MediaBridge.event("show_player", "")
+            MediaRuntimeTest.await("Review captures require decoded fixture video") {
+                MediaRuntimeTest.status().optBoolean("playing") && MediaBridge.videoFrames.get() > 0
+            }
+            scenario.onActivity { PlaybackService.current!!.player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_ONE }
+            visibleText("1.2K views · 2 days ago · 2.8K likes · 0:30")
+            visibleText("24K subscribers")
+            visibleText("Picked for you")
+            scenario.onActivity {
+                val updated = vm.feeds[1].value.cards.first()
+                Assert.assertEquals(2834L, updated.value.optLong("like_count", -1))
+                Assert.assertEquals(cards.first().title, updated.title)
+            }
+            review.description()
+            capture("video-information-player.png")
+            review.description(click = true)
+            capture("video-information-description.png")
+            // A fresh Home response must regain known details with a static player snapshot.
+            MediaBridge.execute(json("op" to "pause").toString())
+            MediaRuntimeTest.await("Fixture paused") { !MediaRuntimeTest.status().optBoolean("playing") }
+            scenario.onActivity { vm.feeds[1].value = vm.feeds[1].value.copy(cards = cards) }
+            MediaRuntimeTest.await("Paused playback enriches refreshed Home cards") {
+                vm.feeds[1].value.cards.first().value.optLong("like_count", -1) == 2834L
+            }
+        }
+    }
+
+    @Test
     fun scrollingBackReusesReadyArtworkWithoutAnotherFetch() {
         val cards = populate(1)
         val firstRequests = covers.perCover.get(0)
