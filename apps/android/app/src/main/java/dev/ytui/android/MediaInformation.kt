@@ -29,6 +29,32 @@ internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
     return details.joinToString(" · ")
 }
 
+/** Reuse details learned during playback on matching Home/search cards. */
+internal fun withMediaInformation(card: JSONObject, details: JSONObject): JSONObject {
+    if (card.optString("url").isBlank() || card.optString("url") != details.optString("url")) return card
+    var merged: JSONObject? = null
+    for (key in listOf("view_count", "views_text", "upload_date", "published_text", "like_count", "duration", "description", "channel_follower_count", "subscribers_text")) {
+        val value = details.opt(key)
+        if (value == null || value == JSONObject.NULL || value.toString().isBlank() || value == "null") continue
+        if (value is Number && value.toDouble() < 0) continue
+        if (card.opt(key) == value) continue
+        if (merged == null) merged = card.copyJson()
+        merged.put(key, value)
+    }
+    return merged ?: card
+}
+
+/** Card preferences only control browsing. The watch page always exposes known details. */
+internal fun playerInformation(media: JSONObject): String =
+    mediaInformation(media, JSONObject().put("show_likes", true)).let { counts ->
+        listOf(counts, mediaLength(media)).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+
+private fun mediaLength(media: JSONObject): String =
+    if (media.optBoolean("live")) "Live"
+    else media.optDouble("duration", 0.0).takeIf { it.isFinite() && it > 0 }
+        ?.let { time(it.toFloat()) }.orEmpty()
+
 /** "283K", "1.2M": the short counts a watch page shows instead of every digit. */
 internal fun compactCount(count: Long): String {
     val digits = if (count in 1_000..9_999 || count in 1_000_000..9_999_999) 1 else 0

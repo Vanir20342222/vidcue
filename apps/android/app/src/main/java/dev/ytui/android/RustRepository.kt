@@ -365,6 +365,8 @@ internal class YtuiViewModel(
     private val settingsLock = Mutex()
     private val snapshotLock = Mutex()
     private var lastPlayer = ""
+    private var lastInformation = ""
+    private var lastInformationCards = emptyList<List<MediaCard>>()
     private var lastDownloads = ""
     val mobile = MutableStateFlow(JSONObject())
     val config = MutableStateFlow(JSONObject())
@@ -403,8 +405,31 @@ internal class YtuiViewModel(
                     runCatching { RustRpc.objectCall("watch_details", "media" to media) }.getOrNull()
                         ?: return@launch
                 watchDetails.value = url to found
+                withWatchDetails(player.value.media?.takeIf { it.optString("url") == url }, found)
+                    ?.let(::updateCardInformation)
             }
     }
+    private fun updateCardInformation(media: JSONObject) {
+        val raw = media.toString()
+        if (raw == lastInformation && feeds.indices.all {
+                feeds[it].value.cards === lastInformationCards.getOrNull(it)
+            }) return
+        lastInformation = raw
+        for (feed in feeds) {
+            val before = feed.value
+            var changed = false
+            val cards = before.cards.map { card ->
+                val enriched = withMediaInformation(card.value, media)
+                if (enriched === card.value) card else {
+                    changed = true
+                    MediaCard(enriched)
+                }
+            }
+            if (changed) feed.value = before.copy(cards = cards)
+        }
+        lastInformationCards = feeds.map { it.value.cards }
+    }
+
     private var shownRelated: Pair<String, List<MediaCard>>? = null
     val recent = MutableStateFlow<List<MediaCard>>(emptyList())
     val status = MutableStateFlow("Ready")
@@ -490,6 +515,13 @@ internal class YtuiViewModel(
                     if (raw != lastPlayer || accepted) {
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
+                    }
+                    // A refreshed feed can need the same details even while playback is paused.
+                    player.value.media?.let { media ->
+                        val details = watchDetails.value?.takeIf { found ->
+                            found.first == media.optString("url")
+                        }?.second
+                        updateCardInformation(withWatchDetails(media, details) ?: media)
                     }
                 }
                 value.optJSONArray("downloads")?.let {

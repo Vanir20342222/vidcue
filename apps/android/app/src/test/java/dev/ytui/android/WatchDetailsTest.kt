@@ -20,6 +20,31 @@ class WatchDetailsTest {
             .put("subscribers_text", "1.23M subscribers")
 
     @Test
+    fun playbackDetailsReturnToTheMatchingCardWithoutLosingItsIdentity() {
+        val card = JSONObject().put("url", "https://media.invalid/a").put("title", "Feed title")
+            .put("section", "For you").put("views_text", "12K views")
+        val details = JSONObject().put("url", "https://media.invalid/a").put("title", "Stream title")
+            .put("like_count", 12).put("description", "About this video").put("duration", JSONObject.NULL)
+        val updated = withMediaInformation(card, details)
+        assertEquals("Feed title", updated.optString("title"))
+        assertEquals("For you", updated.optString("section"))
+        assertEquals(12, updated.optInt("like_count"))
+        assertFalse(updated.has("duration"))
+        assertFalse(card.has("like_count"))
+        assertSame(card, withMediaInformation(card, details.put("url", "https://media.invalid/b")))
+    }
+
+    @Test
+    @org.robolectric.annotation.Config(sdk = [35])
+    fun playerAlwaysIncludesAvailableCountsAndLength() {
+        val media = JSONObject().put("views_text", "12K views")
+            .put("published_text", "3 days ago").put("like_count", 2).put("duration", 245)
+        assertEquals("12K views · 3 days ago · 2 likes · 4:05", playerInformation(media))
+        assertEquals("", playerInformation(JSONObject()))
+        assertEquals("Live", playerInformation(JSONObject().put("live", true)))
+    }
+
+    @Test
     fun detailsFillOnlyWhatTheStreamLacks() {
         val media = JSONObject().put("url", "https://media.invalid/v").put("view_count", 10)
         val merged = withWatchDetails(media, details)!!

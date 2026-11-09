@@ -1,14 +1,7 @@
 package dev.ytui.android
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -129,8 +122,6 @@ internal fun WatchDetails(
     title: String,
     media: JSONObject?,
     creator: String,
-    showCreator: Boolean,
-    mobile: JSONObject,
     thumbnails: Boolean,
     headerModifier: Modifier,
     error: String?,
@@ -141,7 +132,7 @@ internal fun WatchDetails(
     val colors = MaterialTheme.colorScheme
     val motion = LocalMotion.current
     val description = descriptionPreview(media?.optString("description").orEmpty().takeUnless { it == "null" }.orEmpty())
-    val information = media?.let { mediaInformation(it, mobile) }.orEmpty()
+    val information = media?.let { playerInformation(it) }.orEmpty()
     // A new video starts collapsed.
     var open by rememberSaveable(media?.optString("url")) { mutableStateOf(false) }
     val canOpen = description.isNotBlank()
@@ -177,8 +168,6 @@ internal fun WatchDetails(
                             Modifier.weight(1f, fill = false).testTag("video-information"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                         )
                     if (canOpen)
                         Text(
@@ -189,8 +178,16 @@ internal fun WatchDetails(
                             maxLines = 1,
                         )
                 }
+            media?.optString("section")?.takeUnless { it.isBlank() || it == "null" }?.let {
+                Text(
+                    it,
+                    Modifier.testTag("video-section"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.primary,
+                )
+            }
         }
-        if (showCreator) {
+        if (creator.isNotBlank()) {
             val channelId = media?.optString("channel_id")?.takeIf(::isChannelId).orEmpty()
             Row(
                 Modifier.opensChannel(creator, channelId, openChannel),
@@ -279,17 +276,6 @@ internal fun WatchDetails(
                     maxLines = if (open) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                AnimatedVisibility(
-                    open && media?.optLong("like_count", -1)?.let { it >= 0 } == true,
-                    enter = if (motion.animate) fadeIn(motion.fade(200)) + expandVertically(motion.spring()) else EnterTransition.None,
-                    exit = if (motion.animate) fadeOut(motion.fade(120)) + shrinkVertically(motion.exit(200)) else ExitTransition.None,
-                ) {
-                    Text(
-                        "${compactCount(media!!.optLong("like_count"))} likes",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant,
-                    )
-                }
             }
         }
     }

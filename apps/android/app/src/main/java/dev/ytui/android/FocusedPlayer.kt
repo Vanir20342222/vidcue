@@ -441,11 +441,6 @@ internal fun FocusedPlayer(
                                 )
                             },
                         creator = creator,
-                        showCreator =
-                            creator.isNotBlank() &&
-                                (mobile.optBoolean("show_channel", true) ||
-                                    player.media?.optBoolean("live") == true),
-                        mobile = mobile,
                         thumbnails = config.optBoolean("thumbnails", true),
                         openChannel = { vm.openChannel(it, musicSource(player.media)) },
                         // YouTube videos, playlists, channels and hashtags stay in the app; a
