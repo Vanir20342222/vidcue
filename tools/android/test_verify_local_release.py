@@ -19,19 +19,18 @@ spec.loader.exec_module(verify)
 
 
 class PublicationBoundary(unittest.TestCase):
-    def test_transfer_rejects_other_hosts_credentials_and_protocols(self):
+    def test_transfer_rejects_non_https_credentials_and_internal_hosts(self):
         for url in [
-            "http://a.oaiusercontent.com/a", "https://example.com/a",
-            "https://a.oaiusercontent.com.evil.test/a", "https://127.0.0.1/a",
-            "https://u:p@a.oaiusercontent.com/a", "https://a.oaiusercontent.com:8443/a",
-            "https://a.oaiusercontent.com/a#fragment",
+            "http://example.com/a", "https://127.0.0.1/a", "https://localhost/a",
+            "https://[::1]/a", "https://u:p@example.com/a", "https://example.com:8443/a",
+            "https://example.com/a#fragment",
         ]:
             with self.subTest(url=url), self.assertRaises(ValueError):
-                verify.transfer_url(url)
-        self.assertEqual(
-            verify.transfer_url("https://a.oaiusercontent.com/a?synthetic=token"),
-            "https://a.oaiusercontent.com/a?synthetic=token",
-        )
+                verify.release_channel.transfer_url(url)
+        for url in ["https://a.oaiusercontent.com/a?synthetic=token",
+                    "https://example.com/apk?synthetic=token"]:
+            with self.subTest(url=url):
+                self.assertEqual(verify.release_channel.transfer_url(url), url)
 
     def run_fixture(self, *, wrong_digest=False, wrong_source=False,
                     wrong_certificate=False, debuggable=False, published_code=3, handoff=False,

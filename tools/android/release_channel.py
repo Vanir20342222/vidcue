@@ -17,10 +17,12 @@ Usage:
   release_channel.py check-preview RELEASES.json [VERSION_NAME]
 """
 
+import ipaddress
 import json
 from pathlib import Path
 import re
 import sys
+import urllib.parse
 
 PACKAGE = "dev.vidcue.android.stable"
 CERT_SHA256 = "d3c9001eb3b22b31549f515f2d976000d3280ae8d5d0fc517bd03be946ddfd20"
@@ -29,6 +31,29 @@ MARKER = "vidcue-android-update"
 MARKER_RE = re.compile(r"<!--\s*" + MARKER + r"\s+(\{.*?\})\s*-->", re.S)
 # Owner-signed releases before the marker existed state their code in the notes.
 LEGACY_CODE_RE = re.compile(r"\bcode \*\*([1-9][0-9]{0,9})\*\*")
+
+
+def transfer_url(value):
+    """Validate the short-lived HTTPS URL an already signed APK travels over.
+
+    Transfer integrity comes from the pinned checksum, signing certificate and
+    source marker, so any HTTPS host may serve the APK. Non-HTTPS transfers,
+    credentials in the URL, non-default ports, fragments and internal or
+    IP-literal hosts are still refused.
+    """
+    url = urllib.parse.urlsplit(value)
+    host = url.hostname or ""
+    internal = host == "localhost" or host.endswith(".localhost")
+    if host and not internal:
+        try:
+            ipaddress.ip_address(host)
+            internal = True
+        except ValueError:
+            pass
+    if (url.scheme != "https" or not host or internal or
+        url.port not in (None, 443) or url.username or url.password or url.fragment):
+        raise ValueError("Use a temporary HTTPS APK transfer URL")
+    return value
 
 
 def load_releases(path):

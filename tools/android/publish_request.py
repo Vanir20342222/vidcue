@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Transfer a finished public-release APK using a temporary metadata-only branch.
 
-Only APK metadata and a short-lived file-service URL travel in its commit message. Signing
-keys/passwords never enter Git or Actions. The publisher masks the URL and deletes
-the handoff branch afterward; the permanent release tag points at source only.
+Only APK metadata and a short-lived HTTPS transfer URL travel in its commit message.
+Signing keys/passwords never enter Git or Actions. The publisher masks the URL and
+deletes the handoff branch afterward; the permanent release tag points at source only.
 """
 
 import json
@@ -13,7 +13,6 @@ import re
 import secrets
 import subprocess
 import sys
-from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_channel  # noqa: E402
@@ -35,11 +34,7 @@ def validate(data, source):
     address = data["apk_url"]
     if not isinstance(address, str) or any(c in address for c in "\r\n"):
         raise ValueError("Invalid transfer URL")
-    url = urlsplit(address)
-    if (url.scheme != "https" or not url.hostname or
-        not url.hostname.endswith(".oaiusercontent.com") or url.port not in (None, 443) or
-        url.username or url.password or url.fragment):
-        raise ValueError("Invalid transfer URL")
+    release_channel.transfer_url(address)
     return data
 
 

@@ -7,7 +7,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import urllib.parse
 import urllib.request
 import zipfile
 
@@ -18,19 +17,10 @@ STABLE_CERT = release_channel.CERT_SHA256
 LIMIT = 100 * 1024 * 1024
 
 
-def transfer_url(value):
-    url = urllib.parse.urlsplit(value)
-    if (url.scheme != "https" or not url.hostname or
-        not url.hostname.endswith(".oaiusercontent.com") or url.port not in (None, 443) or
-        url.username or url.password or url.fragment):
-        raise ValueError("Use a temporary HTTPS file-service APK URL")
-    return value
-
-
 class SecureRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, response, code, message, headers, newurl):
         return super().redirect_request(
-            request, response, code, message, headers, transfer_url(newurl)
+            request, response, code, message, headers, release_channel.transfer_url(newurl)
         )
 
 
@@ -48,7 +38,7 @@ def main():
     # Every published APK must install over every earlier one, the beta included.
     published = release_channel.load_releases(os.environ["YTUI_PUBLISHED_RELEASES"])
     release_channel.require_update(published, code)
-    url = transfer_url(os.environ["YTUI_APK_URL"])
+    url = release_channel.transfer_url(os.environ["YTUI_APK_URL"])
     output = Path("publish")
     output.mkdir(exist_ok=True)
     apk = output / f"vidcue-{version}.apk"

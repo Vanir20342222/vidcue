@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       apk_url:
-        description: 'Temporary HTTPS file-service URL of the already signed APK (never a key/archive)'
+        description: 'Temporary HTTPS URL of the already signed APK (never a key/archive)'
         required: true
         type: string
       sha256:
