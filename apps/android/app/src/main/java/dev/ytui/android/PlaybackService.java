@@ -1517,7 +1517,14 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   private void changeSelection(String quality, String language) throws JSONException {
-    if (!Arrays.asList("360", "480", "720", "1080", "best").contains(quality)) return;
+    if (!"best".equals(quality)) {
+      try {
+        if (!quality.matches("[0-9]+") || Integer.parseInt(quality) <= 0
+            || Integer.parseInt(quality) > 65535) return;
+      } catch (NumberFormatException invalid) {
+        return;
+      }
+    }
     if (currentRequest.optJSONObject("media") == null
         || currentRequest.optBoolean("offline")
         || currentRequest.optBoolean("local")
@@ -2163,6 +2170,8 @@ public final class PlaybackService extends MediaSessionService {
               .put(
                   "offline",
                   currentRequest.optBoolean("offline") || currentRequest.optBoolean("local"))
+              .put("video_qualities", currentRequest.optJSONObject("stream") == null
+                  ? new JSONArray() : currentRequest.getJSONObject("stream").optJSONArray("video_qualities"))
               .put("quality", currentRequest.optString("quality", "1080"))
               .put("audio_language", currentRequest.optString("audio_language", ""))
               .put("selected_audio_language", currentRequest.optJSONObject("stream") == null

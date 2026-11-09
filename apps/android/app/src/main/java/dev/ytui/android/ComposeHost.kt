@@ -2301,7 +2301,11 @@ internal fun PlayerPane(
             when (shownPage) {
                 "quality" ->
                     SubPage("Video quality") {
-                        for (value in listOf("best", "1080", "720", "480", "360")) Option(
+                        val available = player.value.optJSONArray("video_qualities")
+                        val qualities = (0 until (available?.length() ?: 0))
+                            .mapNotNull { available?.optInt(it)?.takeIf { height -> height > 0 } }
+                            .distinct().sortedDescending().map { it.toString() }
+                        for (value in listOf("best") + qualities) Option(
                             qualityLabel(value),
                             value == quality,
                         ) {
