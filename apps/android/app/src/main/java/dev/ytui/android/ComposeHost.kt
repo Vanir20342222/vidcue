@@ -168,6 +168,11 @@ object ComposeHost {
     }
 
     @JvmStatic
+    fun trimMemory() {
+        ArtworkCache.trimMemory()
+    }
+
+    @JvmStatic
     fun changed() {
         signals.update { it + 1 }
     }
@@ -2126,6 +2131,9 @@ internal fun PlayerPane(
                     VideoSurface(
                         Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(MediaTokens.medium),
                         onSettings = onSettings,
+                        onRecover =
+                            if (player.value.optBoolean("recovered") && player.preparing == null)
+                                ({ vm.command("pause") }) else null,
                     )
                 } else if (showSurface && tab in 2..3) Visualizer(player, config)
                 else if (showSurface)

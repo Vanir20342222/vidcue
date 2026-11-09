@@ -284,7 +284,16 @@ internal object ArtworkCache {
     }
 
     /** The latest cover decoded for each item, at any size or source. */
-    private val recentByItem = LruCache<String, Bitmap>(48)
+    private val recentByItem =
+        object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
+            override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
+        }
+
+    fun trimMemory() {
+        // Do not recycle: visible Compose images can still reference these bitmaps.
+        memory.evictAll()
+        recentByItem.evictAll()
+    }
 
     /**
      * Something to paint for [media] while its exact size or source loads: the last cover decoded
@@ -1051,8 +1060,11 @@ internal class YtuiViewModel(
         related: Boolean = false,
         continueContext: String? = null,
         playContext: JSONObject? = null,
+        recovery: JSONObject? = null,
     ) {
-        val quality = config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
+        val quality =
+            recovery?.optString("quality", "1080")
+                ?: config.value.optJSONObject("download")?.optString("quality", "1080") ?: "1080"
         val musicCollection = media.collection && (media.musicSource || tab.value == 2)
         val audio =
             if (download)
@@ -1061,7 +1073,7 @@ internal class YtuiViewModel(
                     media.musicSource || musicCollection,
                     config.value.optJSONObject("download")?.optBoolean("audio") == true,
                 )
-            else media.audio || musicCollection
+            else recovery?.let { !it.optBoolean("video") } ?: (media.audio || musicCollection)
         if (download && media.live) {
             status.value = "Live recording is not available"
             actionError.value = status.value
@@ -1093,7 +1105,7 @@ internal class YtuiViewModel(
         if (timing != 0L)
             StartupTimings.byteCache(timing, PlaybackCache.readyFor(media.value, audio, quality))
         val context =
-            if (!preview && !download && !queued && continueContext == null)
+            if (recovery == null && !preview && !download && !queued && continueContext == null)
                 playContext ?: context(media, related)
             else null
         // Desktop parity (`resume_on_play`): ordinary video plays continue from the
@@ -1119,7 +1131,19 @@ internal class YtuiViewModel(
                 status.value = if (download) "Preparing download…" else "Resolving playback…"
                 val offlineAt = android.os.SystemClock.elapsedRealtime()
                 val local =
-                    if (!download && !preview && mobile.value.optBoolean("prefer_offline", true))
+                    if (
+                        recovery
+                            ?.optJSONObject("media")
+                            ?.optString("offline_id")
+                            .orEmpty()
+                            .isNotEmpty()
+                    )
+                        withContext(Dispatchers.IO) {
+                            OfflineStore.offlineRequest(
+                                recovery!!.getJSONObject("media").getString("offline_id")
+                            )
+                        }
+                    else if (!download && !preview && mobile.value.optBoolean("prefer_offline", true))
                         withContext(Dispatchers.IO) {
                             OfflineStore.find(media.value, audio, quality)
                         }
@@ -1157,7 +1181,9 @@ internal class YtuiViewModel(
                     if (local != null) "offline"
                     else stream.optString("resolution_route", "direct-media"),
                 )
-                val item = media.value.copyJson()
+                val item =
+                    if (recovery != null && local != null) local.getJSONObject("media").copyJson()
+                    else media.value.copyJson()
                 PlaybackService.mergeMetadata(item, stream)
                 val request =
                     (local ?: JSONObject())
@@ -1169,6 +1195,11 @@ internal class YtuiViewModel(
                             put("quality", quality)
                             put("preview", preview)
                             put("resume", resume || autoResume)
+                            if (recovery != null)
+                                put(
+                                    "start_position_ms",
+                                    (recovery.optDouble("position") * 1000).toLong(),
+                                )
                             put("auto_resume", autoResume)
                             put("queued", queued)
                             put("context_id", continueContext ?: context?.optString("context_id"))
@@ -1231,6 +1262,29 @@ internal class YtuiViewModel(
         // Optimistic local state below must be reconciled by the next real snapshot,
         // even if the bridge reports the same state as before.
         lastPlayer = ""
+        if (op == "stop") {
+            playbackJob?.cancel()
+            latestPlaybackIntent = -1L
+            lastVideoPreparation = null
+            player.value = PlayerState()
+            playerOpen.value = false
+        }
+        val recovered = player.value.value.takeIf { it.optBoolean("recovered") }
+        if (recovered != null && op == "pause") {
+            if (playbackJob?.isActive == true) return
+            recovered.optJSONObject("media")?.let { play(MediaCard(it), recovery = recovered) }
+            return
+        }
+        if (recovered != null && op == "seek") {
+            val seconds =
+                (fields.firstOrNull { it.first == "seconds" }?.second as? Number)?.toDouble()
+                    ?: return
+            if (!seconds.isFinite()) return
+            PlaybackRecovery.seek(
+                (seconds.coerceIn(0.0, player.value.duration.toDouble()) * 1000).toLong()
+            )
+            return
+        }
         if (op == "seek") {
             val seconds =
                 (fields.firstOrNull { it.first == "seconds" }?.second as? Number)?.toFloat()
