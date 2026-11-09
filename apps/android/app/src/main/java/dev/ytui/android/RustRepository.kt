@@ -334,6 +334,9 @@ internal class YtuiViewModel(
         RustRpc.objectCall("browse", "tab" to index, "request" to request, "offset" to offset)
     },
     clock: () -> Long = android.os.SystemClock::elapsedRealtime,
+    private val readHistory: suspend () -> List<MediaCard> = {
+        RustRpc.arrayCall("history_list").objects().map(::MediaCard)
+    },
 ) : ViewModel() {
     val tab = MutableStateFlow(1)
     val feeds = Array(4) { MutableStateFlow(FeedState()) }
@@ -431,6 +434,7 @@ internal class YtuiViewModel(
                             (0 until values.length()).map { values.getString(it) }
                         }
                     account.value = RustRpc.objectCall("account")
+                    refreshWatchHistory()
                     account.value
                         .optString("notice")
                         .takeUnless { it.isBlank() || it == "null" }
@@ -672,13 +676,11 @@ internal class YtuiViewModel(
                         navigate(index, request, append, remember = false)
                         return@launch
                     }
-                    val incoming =
-                        page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
                     feeds[index].value =
                         pageState(page, loading, previous, categoryNavigation, append)
                             .copy(scrollIndex = feeds[index].value.scrollIndex)
                     if (autoPlay && tab.value == index)
-                        incoming.firstOrNull { !it.collection && !it.live }?.let { play(it) }
+                        feeds[index].value.cards.firstOrNull { !it.collection && !it.live }?.let { play(it) }
                     if (!append && index == tab.value) preloadCategories(index)
                 } catch (cancelled: CancellationException) {
                     // A speculative fetch can be cancelled by a settings change while
@@ -735,23 +737,26 @@ internal class YtuiViewModel(
         append: Boolean = false,
     ): FeedState {
         val incoming = page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
-        return state.copy(
-            request = if (append) previous.request else state.request,
-            title = page.optString("title", previous.title),
-            cards =
-                (if (append) previous.cards + incoming else incoming)
-                    .distinctBy { it.key }
-                    .takeLast(2000),
-            categories =
-                if (append) previous.categories
-                else
-                    (page.optJSONArray("categories")?.objects() ?: emptyList()).ifEmpty {
-                        if (categoryNavigation) previous.categories else emptyList()
-                    },
-            continuation =
-                page.optString("continuation").takeUnless { it.isBlank() || it == "null" },
-            notice = page.optString("notice").takeUnless { it.isBlank() || it == "null" },
-            loading = false,
+        return WatchedRecommendations.filter(
+            state.copy(
+                request = if (append) previous.request else state.request,
+                title = page.optString("title", previous.title),
+                cards =
+                    (if (append) previous.cards + incoming else incoming)
+                        .distinctBy { it.key }
+                        .takeLast(2000),
+                categories =
+                    if (append) previous.categories
+                    else
+                        (page.optJSONArray("categories")?.objects() ?: emptyList()).ifEmpty {
+                            if (categoryNavigation) previous.categories else emptyList()
+                        },
+                continuation =
+                    page.optString("continuation").takeUnless { it.isBlank() || it == "null" },
+                notice = page.optString("notice").takeUnless { it.isBlank() || it == "null" },
+                loading = false,
+            ),
+            recent.value,
         )
     }
 
@@ -838,9 +843,11 @@ internal class YtuiViewModel(
         feedJobs[index]?.cancel()
         categoryJob?.cancel()
         feeds[index].value =
-            history[index]
-                .removeLast()
-                .copy(generation = feeds[index].value.generation + 1, loading = false)
+            WatchedRecommendations.filter(
+                history[index].removeLast()
+                    .copy(generation = feeds[index].value.generation + 1, loading = false),
+                recent.value,
+            )
         if (index in 1..2) preloadCategories(index)
         return true
     }
@@ -1372,7 +1379,11 @@ internal class YtuiViewModel(
                         ?: return@launch
                 shownRelated = media.url to related
                 if (player.value.media?.optString("url") == media.url)
-                    upNext.value = UpNextState(related, related = true, autoplay = false)
+                    upNext.value = UpNextState(
+                        WatchedRecommendations.filter(related, recent.value),
+                        related = true,
+                        autoplay = false,
+                    )
             }
     }
 
@@ -1430,9 +1441,18 @@ internal class YtuiViewModel(
         effect("queue_changed")
     }
 
-    fun loadHistory() = task {
-        recent.value = RustRpc.arrayCall("history_list").objects().map(::MediaCard)
+    private suspend fun refreshWatchHistory() {
+        recent.value = readHistory()
+        // Filter at presentation time, including raw cache hits and restored navigation.
+        // Keep cached provider pages intact so clearing history can show them again.
+        for (feed in feeds) feed.value = WatchedRecommendations.filter(feed.value, recent.value)
+        if (upNext.value.related)
+            upNext.value = upNext.value.copy(
+                context = WatchedRecommendations.filter(upNext.value.context, recent.value)
+            )
     }
+
+    fun loadHistory() = task { refreshWatchHistory() }
 
     fun updateConfig(dark: Boolean, edit: (JSONObject) -> Unit) = task {
         settingsLock.withLock {
