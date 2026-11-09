@@ -8,9 +8,9 @@
 
 ## What it does
 
-Installed beta releases query the release list through the renamed repository
-(`Vanir20342222/vidcue`) and accept APK asset URLs under both the new and the
-legacy (`Vanir20342222/ytui`) `releases/download/` prefixes. Previously a
+Installed beta releases query the release list through the restored repository
+(`Vanir20342222/ytui`) and accept APK asset URLs under both the restored and the
+briefly renamed (`Vanir20342222/vidcue`) `releases/download/` prefix. Previously a
 renamed-repository response was parsed, but every release was then discarded
 because its `browser_download_url` no longer matched the pre-rename prefix, so
 About → Check for updates reported "up to date" while newer releases existed.
@@ -25,9 +25,10 @@ installer.
 The repository was renamed after beta.7 (2026-11-06) was published. beta.7's
 hard-coded legacy download prefix no longer matched GitHub's canonical asset
 URLs, so the first publication after the rename (beta.8) stayed invisible to
-the in-app updater. Existing beta.7 installations must sideload beta.8 once
-from the release page; from beta.8 on, the updater resolves the renamed
-repository directly.
+the in-app updater. The owner restored the `ytui` name on 2026-11-09 and this
+fix ships in beta.9 with the `vidcue` prefix kept as an accepted fallback.
+Existing beta.7 installations can update in place again once the name is
+restored, and beta.9 also covers devices that installed during the window.
 
 ## Evidence
 
