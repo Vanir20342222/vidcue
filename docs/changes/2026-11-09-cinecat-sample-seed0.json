@@ -1,0 +1,178 @@
+{
+  "observed_unix_ms": 1794214462365,
+  "backend_version": "0.2.0-alpha.12",
+  "seed": 0,
+  "count": 15,
+  "passed": 15,
+  "failed": 0,
+  "min_pass": 14,
+  "goal_met": true,
+  "scope": "auto failover resolve + verification + excerpt download",
+  "results": [
+    {
+      "label": "Fight Club",
+      "tmdb": 550,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 9558068,
+      "elapsed_ms": 8464
+    },
+    {
+      "label": "The Hotel New Hampshire",
+      "tmdb": 11308,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 3276276,
+      "elapsed_ms": 5379
+    },
+    {
+      "label": "Spider-Man No Way Home",
+      "tmdb": 634649,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 7225613,
+      "elapsed_ms": 7191
+    },
+    {
+      "label": "Parasite",
+      "tmdb": 496243,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 10131440,
+      "elapsed_ms": 8902
+    },
+    {
+      "label": "Hope",
+      "tmdb": 1058424,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 9211967,
+      "elapsed_ms": 7915
+    },
+    {
+      "label": "Everything Everywhere All At Once",
+      "tmdb": 545611,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 8722707,
+      "elapsed_ms": 7648
+    },
+    {
+      "label": "Nosferatu",
+      "tmdb": 1091,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 4755093,
+      "elapsed_ms": 5201
+    },
+    {
+      "label": "Dune",
+      "tmdb": 438631,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 399897,
+      "elapsed_ms": 3522
+    },
+    {
+      "label": "The Odyssey",
+      "tmdb": 1368337,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 10408908,
+      "elapsed_ms": 8545
+    },
+    {
+      "label": "Top Gun Maverick",
+      "tmdb": 361743,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 10230581,
+      "elapsed_ms": 8787
+    },
+    {
+      "label": "Spirited Away",
+      "tmdb": 129,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 6719218,
+      "elapsed_ms": 6631
+    },
+    {
+      "label": "Toy Story",
+      "tmdb": 862,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 10232562,
+      "elapsed_ms": 9089
+    },
+    {
+      "label": "Verity",
+      "tmdb": 1283515,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 2827144,
+      "elapsed_ms": 6013
+    },
+    {
+      "label": "The Matrix",
+      "tmdb": 603,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 8585377,
+      "elapsed_ms": 7664
+    },
+    {
+      "label": "Inception",
+      "tmdb": 27205,
+      "season": null,
+      "episode": null,
+      "ok": true,
+      "provider": "zcdn",
+      "error": null,
+      "excerpt_bytes": 8653747,
+      "elapsed_ms": 7491
+    }
+  ]
+}

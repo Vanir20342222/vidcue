@@ -1,0 +1,109 @@
+{
+  "all_providers_passed": false,
+  "backend_version": "0.2.0-alpha.12",
+  "decoder_verified": false,
+  "observed_unix_ms": 1794208242116,
+  "providers": [
+    {
+      "elapsed_ms": 16271,
+      "error": null,
+      "network": [
+        {
+          "bytes": 25036864,
+          "decoder_verified": false,
+          "delivery_headroom": 2.2732205815096065,
+          "elapsed_ms": 15926,
+          "estimated_stalls": 0,
+          "kind": "hls",
+          "media_seconds": 36.203,
+          "segments": [
+            {
+              "buffer_seconds": 15.784627522,
+              "bytes": 150720,
+              "media_seconds": 6.173,
+              "transfer_ms": 388
+            },
+            {
+              "buffer_seconds": 21.460320361,
+              "bytes": 247967,
+              "media_seconds": 6.006,
+              "transfer_ms": 330
+            },
+            {
+              "buffer_seconds": 22.181589181,
+              "bytes": 6778009,
+              "media_seconds": 6.006,
+              "transfer_ms": 5284
+            },
+            {
+              "buffer_seconds": 23.378803061,
+              "bytes": 5703121,
+              "media_seconds": 6.006,
+              "transfer_ms": 4808
+            },
+            {
+              "buffer_seconds": 26.321307777999998,
+              "bytes": 6419119,
+              "media_seconds": 6.006,
+              "transfer_ms": 3063
+            },
+            {
+              "buffer_seconds": 30.728079044999998,
+              "bytes": 5736718,
+              "media_seconds": 6.006,
+              "transfer_ms": 1599
+            }
+          ],
+          "selected_height": 1080,
+          "sustainable": true,
+          "throughput_mbps": 12.575811020221472
+        }
+      ],
+      "provider": "zcdn",
+      "resolved": true,
+      "stream_count": 1
+    },
+    {
+      "elapsed_ms": 506,
+      "error": "Provider returned a known network-block error video (error code 4)",
+      "network": [],
+      "provider": "aphrodite",
+      "resolved": true,
+      "stream_count": 1
+    },
+    {
+      "elapsed_ms": 99,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "abyssinia",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 189,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "calico",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 154,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "zanzibar",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 104,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "garfield",
+      "resolved": false,
+      "stream_count": 0
+    }
+  ],
+  "scope": "configured web providers and sources API",
+  "tmdb": 438631
+}

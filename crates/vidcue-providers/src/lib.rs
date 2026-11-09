@@ -2,6 +2,7 @@
 pub mod auth;
 pub mod browse;
 pub mod cache;
+pub mod cinecat;
 mod diagnostic;
 pub mod formats;
 pub mod http;

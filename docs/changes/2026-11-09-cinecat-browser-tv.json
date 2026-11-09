@@ -1,0 +1,91 @@
+{
+  "observed_unix_ms": 1794208580686,
+  "backend_version": "0.2.0-alpha.12",
+  "tmdb": 1396,
+  "all_providers_passed": false,
+  "scope": "configured web providers and sources API",
+  "decoder_verified": false,
+  "providers": [
+    {
+      "provider": "zcdn",
+      "resolved": true,
+      "elapsed_ms": 5600,
+      "stream_count": 1,
+      "error": null,
+      "network": [
+        {
+          "kind": "hls",
+          "selected_height": 1080,
+          "bytes": 14746013,
+          "elapsed_ms": 5193,
+          "media_seconds": 18.018,
+          "throughput_mbps": 22.714835079966985,
+          "delivery_headroom": 3.4696114492342165,
+          "estimated_stalls": 0,
+          "sustainable": true,
+          "decoder_verified": false,
+          "segments": [
+            {
+              "media_seconds": 6.006,
+              "transfer_ms": 1895,
+              "bytes": 5329222,
+              "buffer_seconds": 14.110220885
+            },
+            {
+              "media_seconds": 6.006,
+              "transfer_ms": 1245,
+              "bytes": 4306184,
+              "buffer_seconds": 18.870555903
+            },
+            {
+              "media_seconds": 6.006,
+              "transfer_ms": 1677,
+              "bytes": 5109397,
+              "buffer_seconds": 23.199362557
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "aphrodite",
+      "resolved": true,
+      "elapsed_ms": 679,
+      "stream_count": 1,
+      "error": "Provider returned a known network-block error video (error code 4)",
+      "network": []
+    },
+    {
+      "provider": "abyssinia",
+      "resolved": false,
+      "elapsed_ms": 97,
+      "stream_count": 0,
+      "error": "HTTP 502",
+      "network": []
+    },
+    {
+      "provider": "calico",
+      "resolved": false,
+      "elapsed_ms": 195,
+      "stream_count": 0,
+      "error": "HTTP 502",
+      "network": []
+    },
+    {
+      "provider": "zanzibar",
+      "resolved": false,
+      "elapsed_ms": 111,
+      "stream_count": 0,
+      "error": "HTTP 502",
+      "network": []
+    },
+    {
+      "provider": "garfield",
+      "resolved": false,
+      "elapsed_ms": 95,
+      "stream_count": 0,
+      "error": "HTTP 502",
+      "network": []
+    }
+  ]
+}
