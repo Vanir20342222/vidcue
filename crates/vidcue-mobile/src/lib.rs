@@ -109,6 +109,31 @@ impl Engine {
             lyrics: Mutex::new(read_json(&root.join("lyrics.json"))?.unwrap_or_default()),
         })
     }
+    /// Re-check at selection time: a context may have been prepared before history changed.
+    /// Explicit queues and finite playlists are intentional replays and stay untouched.
+    fn exclude_watched_related(&self) {
+        let watched = {
+            let state = self.state.lock().expect("state");
+            state
+                .recent
+                .iter()
+                .chain(&state.playback.items)
+                .filter_map(recommendation_identity)
+                .collect::<std::collections::HashSet<_>>()
+        };
+        if let Some(context) = self
+            .playback_context
+            .lock()
+            .expect("playback context")
+            .as_mut()
+            .filter(|context| context.related)
+        {
+            context.items.retain(|media| {
+                recommendation_identity(media).is_none_or(|key| !watched.contains(&key))
+            });
+        }
+    }
+
     pub fn activate_context(&self, id: Option<String>) {
         let mut active = self.playback_context.lock().expect("playback context");
         if id
@@ -412,6 +437,7 @@ impl Engine {
                 })
             }
             "queue_peek" => {
+                self.exclude_watched_related();
                 let state = self.state.lock().expect("state");
                 let index = if r["shuffle"].as_bool().unwrap_or(false) && !state.queue.is_empty() {
                     if let Some(index) = state
@@ -466,6 +492,7 @@ impl Engine {
                 Ok(json!({}))
             }
             "up_next" => {
+                self.exclude_watched_related();
                 // Read-only view of what Next/autoplay will choose: the explicit queue,
                 // then the active playback context (playlist tail or related videos).
                 let queue = self.state.lock().expect("state").queue.clone();
@@ -1216,6 +1243,41 @@ impl Engine {
         Ok(value)
     }
 }
+/// YouTube video identity survives watch/music/short URLs and query parameters.
+fn recommendation_identity(media: &Media) -> Option<String> {
+    if !matches!(media.kind, MediaKind::Video | MediaKind::Song) || media.live {
+        return None;
+    }
+    let valid = |id: &str| {
+        id.len() == 11
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    };
+    if valid(&media.id) {
+        return Some(media.id.clone());
+    }
+    let url = url::Url::parse(&media.url).ok()?;
+    if !vidcue_core::youtube_host(url.host_str()?) {
+        return None;
+    }
+    let id = if url.host_str() == Some("youtu.be") {
+        url.path_segments()?.next()?.to_owned()
+    } else if url.path() == "/watch" {
+        url.query_pairs()
+            .find(|(key, _)| key == "v")?
+            .1
+            .into_owned()
+    } else {
+        let mut parts = url.path_segments()?;
+        if !matches!(parts.next()?, "shorts" | "embed" | "live") {
+            return None;
+        }
+        parts.next()?.to_owned()
+    };
+    valid(&id).then_some(id)
+}
+
 fn background_extractor_slots() -> Arc<tokio::sync::Semaphore> {
     static BACKGROUND: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     BACKGROUND
@@ -1247,6 +1309,79 @@ fn mobile_format(audio: bool, quality: &str) -> Result<String> {
 #[cfg(test)]
 mod format_tests {
     use super::*;
+    #[tokio::test]
+    async fn watched_videos_are_not_related_recommendations_but_explicit_playlists_remain() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(&dir.path().join("files"), &dir.path().join("cache")).unwrap();
+        let watched = Media {
+            url: "https://youtu.be/abcdefghijk?t=30".into(),
+            ..Default::default()
+        };
+        engine
+            .request(json!({"op":"history_record", "media":watched}))
+            .await
+            .unwrap();
+        let engine = Engine::new(&dir.path().join("files"), &dir.path().join("cache")).unwrap();
+        let repeated = Media {
+            id: "abcdefghijk".into(),
+            url: "https://www.youtube.com/watch?v=abcdefghijk".into(),
+            ..Default::default()
+        };
+        let unseen = Media {
+            id: "lmnopqrstuv".into(),
+            url: "https://www.youtube.com/watch?v=lmnopqrstuv".into(),
+            ..Default::default()
+        };
+        for related in [true, false] {
+            engine.activate_context(Some("test".into()));
+            *engine.playback_context.lock().unwrap() = Some(PlaybackContext {
+                id: "test".into(),
+                items: [repeated.clone(), unseen.clone()].into(),
+                prepared: true,
+                related,
+                consumed: Default::default(),
+            });
+            let next = engine
+                .request(json!({"op":"queue_peek","context_id":"test"}))
+                .await
+                .unwrap();
+            assert_eq!(
+                next["url"].as_str(),
+                Some(if related {
+                    unseen.url.as_str()
+                } else {
+                    repeated.url.as_str()
+                })
+            );
+            let view = engine.request(json!({"op":"up_next"})).await.unwrap();
+            assert_eq!(
+                view["context"]["items"].as_array().unwrap().len(),
+                if related { 1 } else { 2 }
+            );
+            let next = engine
+                .request(json!({"op":"queue_peek","context_id":"test"}))
+                .await
+                .unwrap();
+            assert_eq!(
+                next["url"].as_str(),
+                Some(if related {
+                    unseen.url.as_str()
+                } else {
+                    repeated.url.as_str()
+                })
+            );
+        }
+        engine
+            .request(json!({"op":"enqueue", "media":repeated}))
+            .await
+            .unwrap();
+        let next = engine
+            .request(json!({"op":"queue_peek","context_id":"test"}))
+            .await
+            .unwrap();
+        assert_eq!(next["url"], repeated.url);
+    }
+
     #[tokio::test]
     async fn cancelled_and_dropped_resolve_requests_release_ids_without_starting_network() {
         let dir = tempfile::tempdir().unwrap();
