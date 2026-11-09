@@ -25,7 +25,7 @@ certificate, updating the beta in place. About → Check for updates offers them
    push workflows all pass. Recover the beta identity using [SIGNING.md](SIGNING.md).
 2. Set `YTUI_ANDROID_VERSION_NAME=0.3.0-beta.1` and `YTUI_ANDROID_VERSION_CODE=30001`.
    Run `python3 tools/android/sign-local.py /private/path/to/beta-identity`.
-3. Transfer only the finished APK through a short-lived HTTPS file-service URL.
+3. Transfer only the finished APK through a short-lived HTTPS URL.
    Keep the signing key and passwords out of Git and Actions.
 4. Run **Publish locally signed Android APK** on that revision with the APK URL,
    checksum, version and code. Alternatively, write a local JSON handoff containing

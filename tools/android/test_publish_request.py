@@ -19,18 +19,19 @@ spec.loader.exec_module(request)
 
 def manifest(source="1" * 40):
     return dict(version_name="0.3.0-beta.1", version_code=30001, sha256="a" * 64,
-                apk_url="https://test.oaiusercontent.com/apk?synthetic=token", source=source)
+                apk_url="https://transfer.example.test/apk?synthetic=token", source=source)
 
 
 class PublishRequest(unittest.TestCase):
-    def test_requires_exact_source_version_code_checksum_and_file_service(self):
+    def test_requires_exact_source_version_code_checksum_and_transfer_url(self):
         good = manifest()
         self.assertEqual(request.validate(good, "1" * 40), good)
         for changes in [dict(source="2" * 40), dict(version_code=15), dict(sha256="z" * 64),
-                        dict(apk_url="https://example.test/app.apk"),
+                        dict(apk_url="http://example.test/app.apk"),
+                        dict(apk_url="https://127.0.0.1/app.apk"),
+                        dict(apk_url="https://example.test:8443/app.apk"),
                         dict(apk_url=good["apk_url"] + "\nINJECT=value"),
-                        dict(apk_url="https://test.oaiusercontent.com.evil.test/a"),
-                        dict(apk_url="https://u:p@test.oaiusercontent.com/a")]:
+                        dict(apk_url="https://u:p@example.test/a")]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 request.validate(good | changes, "1" * 40)
 
