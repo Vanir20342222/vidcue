@@ -91,14 +91,21 @@ class AppUpdatesTest {
         val list =
             JSONArray()
                 .put(release("android-0.3.0-beta.2", 300200))
+                .put(
+                    release(
+                        "android-0.3.0-beta.5",
+                        300500,
+                        url = AppUpdates.legacyDownloadPrefix + "android-0.3.0-beta.5/vidcue-300500.apk",
+                    )
+                )
                 .put(release("android-preview-0.3.0-beta.9", 300900))
                 .put(release("android-0.3.0-beta.8", 300800, draft = true))
                 .put(release("android-0.2.0-alpha.12-mobile.10", 10, marker = false))
                 .put(release("android-0.3.0-beta.7", 300700, url = "https://example.invalid/x.apk"))
                 .put(release("android-0.3.0-beta.6", 300600, sha = "nothex"))
         val parsed = AppUpdates.parse(list.toString())
-        assertEquals(listOf(300200L), parsed.map { it.versionCode })
-        val only = parsed.single()
+        assertEquals(listOf(300200L, 300500L), parsed.map { it.versionCode })
+        val only = parsed.first()
         assertEquals("0.3.0-beta.2", only.versionName)
         assertEquals(cert, only.certSha256)
         assertEquals(4L, only.apkSize)

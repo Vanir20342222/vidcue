@@ -80,7 +80,10 @@ internal data class InstalledApp(
  * signing key or a lower version code; the checks here only explain problems up front.
  */
 internal object AppUpdates {
-    const val REPOSITORY = "Vanir20342222/ytui"
+    /** Canonical repository. GitHub renamed it from ytui; the API redirects the old address. */
+    const val REPOSITORY = "Vanir20342222/vidcue"
+    /** Installed betas may still know the pre-rename asset address, so both stay acceptable. */
+    const val LEGACY_REPOSITORY = "Vanir20342222/ytui"
     private const val MARKER = "vidcue-android-update"
     private const val PREFS = "vidcue-updates"
     private const val AUTO_INTERVAL_MS = 6L * 60 * 60 * 1000
@@ -93,6 +96,9 @@ internal object AppUpdates {
     /** Overridable for loopback tests only. */
     internal var releasesUrl = "https://api.github.com/repos/$REPOSITORY/releases?per_page=30"
     internal var downloadPrefix = "https://github.com/$REPOSITORY/releases/download/"
+    internal var legacyDownloadPrefix = "https://github.com/$LEGACY_REPOSITORY/releases/download/"
+    internal fun isDownloadUrl(url: String) =
+        url.startsWith(downloadPrefix) || url.startsWith(legacyDownloadPrefix)
 
     private val mutable = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = mutable.asStateFlow()
@@ -124,7 +130,7 @@ internal object AppUpdates {
             val sha256 = data.optString("sha256").lowercase()
             val cert = data.optString("certSha256").lowercase()
             val code = data.optLong("versionCode")
-            if (!url.startsWith(downloadPrefix) || !hex64.matches(sha256) ||
+            if (!isDownloadUrl(url) || !hex64.matches(sha256) ||
                 !hex64.matches(cert) || code <= 0)
                 continue
             releases +=
@@ -287,7 +293,7 @@ internal object AppUpdates {
 
     internal suspend fun download(context: Context, release: AppRelease, progress: (Float) -> Unit): File {
         val coroutine = currentCoroutineContext()
-        require(release.apkUrl.startsWith(downloadPrefix)) { "Unexpected download address." }
+        require(isDownloadUrl(release.apkUrl)) { "Unexpected download address." }
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val file = File(dir, "vidcue-${release.versionCode}.apk")
         file.delete()
