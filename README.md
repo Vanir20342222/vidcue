@@ -66,6 +66,22 @@ The script builds the Rust engine for each ABI, then packages the Gradle app. It
 
 This is an early beta: real-network latency, audio output on more devices, physical-device in-place updates and the remaining [parity gates](docs/android/PARITY.md) are still open. Current validation evidence is recorded in [`docs/android/VALIDATION.md`](docs/android/VALIDATION.md) and [`docs/changes/`](docs/changes/).
 
+## Legal notice and disclaimer
+
+Vidcue is an independent, open-source media client. It is **not affiliated with, endorsed by, sponsored by, or connected to YouTube, Google LLC, YouTube Music, or any other streaming platform or rights holder**. "YouTube" and "YouTube Music" are trademarks of their respective owners; they are used here only to describe interoperability, not to imply endorsement.
+
+By using Vidcue you acknowledge and agree that:
+
+- **You are responsible for how you use the app.** Vidcue is a general-purpose tool. You must use it in compliance with the terms of service of any platform you access, applicable copyright law, and the laws of your jurisdiction. Accessing or downloading content that you are not authorized to access, or redistributing content you do not own the rights to, may be unlawful. The app's developers do not monitor, control, or endorse any particular use.
+- **Downloads are for personal, lawful use.** Offline download features are intended for content you own, content that is licensed for download, or other use permitted by law. You may not use Vidcue to pirate, redistribute, or commercially exploit content.
+- **Accounts are yours alone.** The explicit account sign-in uses your own credentials directly with the platform. Vidcue's developers never see, collect, or store your credentials or session data on any server; authentication data stays on your device.
+- **No warranty.** Vidcue is provided under the MIT license, without warranty of any kind. Platform changes, terms-of-service enforcement, or regional restrictions may cause features to stop working at any time.
+- **Limitation of liability.** To the maximum extent permitted by law, the authors and contributors are not liable for any claims, damages, or other liability arising from the use or misuse of the app, including any violation of third-party terms of service or law by a user.
+
+If you believe content made available through a feed or playlist served by this project infringes your rights, contact the repository owner via the issue tracker for takedown requests.
+
+This notice supplements, and does not replace, the [MIT License](LICENSE) below.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Third-party notices are generated at build time (`crates/vidcue-mobile/examples/mobile_license_bundle.rs`) and bundled in the app.
