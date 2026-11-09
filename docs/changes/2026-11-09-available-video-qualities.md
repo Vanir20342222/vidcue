@@ -1,7 +1,7 @@
 # Available video qualities (M9)
 
 - **Date:** 2026-11-09
-- **PR:** #pending
+- **PR:** #123
 - **Milestone:** M9
 - **Platforms:** Android / shared engine
 - **Status:** fixture/unit verified
