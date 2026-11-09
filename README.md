@@ -5,11 +5,13 @@
 This repository is the Android app plus the shared Rust backend crates it builds on. A future desktop application will reuse the same backend; the old terminal UI has been removed.
 
 > [!NOTE]
-> **ytui is now Vidcue.** Older documentation and release notes may still say ytui.
+> **ytui is now Vidcue.** Older documentation and release notes may still say ytui. The
+> canonical repository is `Vanir20342222/vidcue`; the [Vanir20342222/ytui](https://github.com/Vanir20342222/ytui)
+> repository only mirrors its releases so older installs and links keep working.
 
 ## Install
 
-Download a signed APK from the [releases page](https://github.com/Vanir20342222/ytui/releases), open it in Android Files and allow installation from that source. The current beta channel installs the permanent package `dev.vidcue.android.stable` (Android 8 / API 26+, ARM64 and x86-64); later betas and final releases update that installation in place. Debug CI artifacts are the separate **Vidcue Preview** app.
+Download a signed APK from the [releases page](https://github.com/Vanir20342222/vidcue/releases), open it in Android Files and allow installation from that source. The current beta channel installs the permanent package `dev.vidcue.android.stable` (Android 8 / API 26+, ARM64 and x86-64); later betas and final releases update that installation in place. Debug CI artifacts are the separate **Vidcue Preview** app.
 
 Details, release qualification records and the feature walkthrough live in [`docs/android/README.md`](docs/android/README.md).
 

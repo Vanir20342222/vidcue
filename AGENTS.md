@@ -4,8 +4,9 @@ The app was renamed from ytui to **Vidcue** on 2026-11-04 at the user's request.
 dated records, change notes and evidence documents still say ytui and stay as written.
 Keep these old names for compatibility: the `ytui`/`ytui-rs` launcher aliases, migration
 from `ytui` config/state/cache folders, the `ytui-rust` keyring entry, `YTUI_*` environment
-variables and secrets, the GitHub repository URL until the owner renames it, and the Android
-Java/JNI namespace `dev.ytui.android`. The owner clarified on 2026-11-04 that beta.1
+variables and secrets, the Android Java/JNI namespace `dev.ytui.android`. On 2026-11-09 the
+owner renamed the GitHub repository to `Vanir20342222/vidcue`; the `Vanir20342222/ytui`
+repository now only mirrors its releases so older installs and links keep working. The owner clarified on 2026-11-04 that beta.1
 starts a new permanent installation channel: package `dev.vidcue.android.stable` and
 the beta certificate pinned in `tools/android/release_channel.py`. Every subsequent
 beta, RC and final release must update that channel; compatibility with old alphas

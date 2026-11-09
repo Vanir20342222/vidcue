@@ -710,14 +710,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 vm.effect(
                                     "open",
                                     "url" to
-                                        "https://github.com/Vanir20342222/ytui/blob/main/docs/android/RADIO_ARTWORK.md",
+                                        "https://github.com/Vanir20342222/vidcue/blob/main/docs/android/RADIO_ARTWORK.md",
                                 )
                             }
                             ValueRow("Mobile documentation", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
                                     "url" to
-                                        "https://github.com/Vanir20342222/ytui/tree/main/docs/android",
+                                        "https://github.com/Vanir20342222/vidcue/tree/main/docs/android",
                                 )
                             }
                         }

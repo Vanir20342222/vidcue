@@ -105,8 +105,8 @@ def main():
         "Real YouTube latency, audible output, Galaxy Tab S9 / Nothing Phone (3a), "
         "OEM background behavior and physical in-place update acceptance remain "
         "separate from offline emulator qualification.\n\n"
-        f"[Validation](https://github.com/Vanir20342222/ytui/blob/{revision}/docs/android/VALIDATION.md)"
-        f" · [Changes](https://github.com/Vanir20342222/ytui/blob/{revision}/docs/android/PLAYER_LIBRARY_PLAN.md)\n\n"
+        f"[Validation](https://github.com/Vanir20342222/vidcue/blob/{revision}/docs/android/VALIDATION.md)"
+        f" · [Changes](https://github.com/Vanir20342222/vidcue/blob/{revision}/docs/android/PLAYER_LIBRARY_PLAN.md)\n\n"
         f"{update_marker}\n"
     )
 

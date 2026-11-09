@@ -87,7 +87,7 @@ internal object AuthUi {
     /** False after process death restores the sign-in activity without the app UI. */
     @JvmStatic fun motionKnown(): Boolean = motionKnown
 
-    const val HELP_URL = "https://github.com/Vanir20342222/ytui/tree/main/docs/android"
+    const val HELP_URL = "https://github.com/Vanir20342222/vidcue/tree/main/docs/android"
     const val PRIVACY_URL = "https://policies.google.com/privacy"
     const val TERMS_URL = "https://www.youtube.com/t/terms"
 
