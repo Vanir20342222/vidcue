@@ -17,11 +17,12 @@ The Android playback quality menu now lists the distinct video heights returned 
 | Rust tests | `cargo test --workspace --locked` | 284 passed, 15 ignored | unit |
 | Rust lint | `cargo clippy --workspace --all-targets --locked -- -D warnings` | Passed | unit |
 | Rust formatting | `cargo fmt --all -- --check` | Passed | unit |
+| Android PR gate | GitHub Actions PR #123, Android gate | App and instrumentation sources compiled; JVM tests and lint passed | unit |
 | Diff whitespace | `git diff --check` | Passed | unit |
 
 ## Not verified and limits
 
-Android compilation, emulator and physical-device behavior, and live-service playback were not verified. The Gradle wrapper could not download Gradle 8.14.3 because the connection to services.gradle.org failed. The available-resolution list depends on heights exposed by the extractor; device codec support can still constrain playback.
+The local Gradle wrapper could not download Gradle 8.14.3 because the connection to services.gradle.org failed; the hosted Android PR gate passed compilation, JVM tests and lint. Emulator and physical-device behavior, and live-service playback were not verified. The available-resolution list depends on heights exposed by the extractor; device codec support can still constrain playback.
 
 ## For the plan and parity tables
 
