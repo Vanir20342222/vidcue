@@ -5,6 +5,19 @@ import android.util.Log;
 
 public final class YtuiApplication extends Application {
   @Override
+  public void onTrimMemory(int level) {
+    super.onTrimMemory(level);
+    if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW)
+      ComposeHost.trimMemory();
+  }
+
+  @Override
+  public void onLowMemory() {
+    super.onLowMemory();
+    ComposeHost.trimMemory();
+  }
+
+  @Override
   public void onCreate() {
     super.onCreate();
     String failure =

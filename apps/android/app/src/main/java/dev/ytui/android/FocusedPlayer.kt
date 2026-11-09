@@ -57,7 +57,27 @@ internal fun VideoSurface(
     onSettings: (() -> Unit)? = null,
     onPanelDrag: ((Float) -> Unit)? = null,
     onPanelEnd: ((Float, Float) -> Unit)? = null,
+    onRecover: (() -> Unit)? = null,
 ) {
+    if (onRecover != null) {
+        Box(
+            modifier.background(Color.Black).testTag("recovered-video"),
+            contentAlignment = Alignment.Center,
+        ) {
+            CompositionLocalProvider(LocalContentColor provides MediaTokens.videoInk) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Resume playback", style = MaterialTheme.typography.titleMedium)
+                    PlayDisc(false, Modifier.testTag("player-recover"), action = onRecover)
+                }
+                if (onCollapse != null)
+                    Box(Modifier.align(Alignment.TopStart).padding(4.dp)) {
+                        MediaIconButton(Glyph.Down, "Minimize player", "panel-close", onCollapse)
+                    }
+            }
+        }
+        return
+    }
+
     val collapse by rememberUpdatedState(onCollapse)
     val panelDrag by rememberUpdatedState(onPanelDrag)
     val panelEnd by rememberUpdatedState(onPanelEnd)
@@ -602,6 +622,9 @@ internal fun FocusedPlayer(
                             Modifier.fillMaxSize(),
                             onCollapse = animatedMinimize,
                             onSettings = onMore,
+                            onRecover =
+                                if (player.value.optBoolean("recovered") && player.preparing == null)
+                                    ({ vm.command("pause") }) else null,
                             onPanelDrag = videoDrag,
                             onPanelEnd = videoEnd,
                             playbackPlayer = PlaybackService.current?.controlsPlayer,

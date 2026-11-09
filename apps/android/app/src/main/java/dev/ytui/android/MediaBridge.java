@@ -105,6 +105,10 @@ public final class MediaBridge {
           (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK)
               == Configuration.UI_MODE_NIGHT_YES);
       JSONObject player = new JSONObject(playerSnapshot);
+      if (player.optJSONObject("media") == null && !offlineUi) {
+        JSONObject recovered = PlaybackRecovery.snapshot();
+        if (recovered != null) player = recovered;
+      }
       if (AudioTap.enabled) {
         long packed = AudioTap.levels;
         player
@@ -174,6 +178,21 @@ public final class MediaBridge {
               case "play":
                 {
                   JSONObject playRequest = request.getJSONObject("request");
+                  // A delayed resolution must not create a foreground-service promise
+                  // for a request which policy will immediately leave paused.
+                  if (!PlaybackPolicy.mayAutoPlay(
+                      uiVisible,
+                      MobileSettings.enabled("background_playback"),
+                      playRequest.optBoolean("preview"))) {
+                    long timing = playRequest.optLong("startup_token");
+                    StartupTimings.ended(timing, "cancelled", SystemClock.elapsedRealtime());
+                    event(
+                        "playback_start_failed",
+                        "Return to the app and tap Play to continue.",
+                        Long.toString(timing),
+                        0);
+                    break;
+                  }
                   Intent intent =
                       new Intent(context, PlaybackService.class)
                           .setAction("play")
@@ -217,12 +236,9 @@ public final class MediaBridge {
                           item.put("context", request.getJSONObject("context"));
                         if (request.has("context_id"))
                           item.put("context_id", request.getString("context_id"));
-                        main.post(
-                            () ->
-                                context.startForegroundService(
-                                    new Intent(context, PlaybackService.class)
-                                        .setAction("play")
-                                        .putExtra("request", item.toString())));
+                        // Use the same guarded handoff as online playback: the file
+                        // lookup may finish after the activity has gone to the background.
+                        execute(new JSONObject().put("op", "play").put("request", item).toString());
                       } catch (Exception error) {
                         event(
                             "error",
@@ -252,6 +268,8 @@ public final class MediaBridge {
                   RustActivity.current().exportDownload(request.getString("id"));
                 break;
               case "history_clear":
+                PlaybackRecovery.clear();
+                notifyUi();
                 playbackStore.execute(
                     () -> {
                       try {
@@ -286,12 +304,20 @@ public final class MediaBridge {
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 break;
               case "disconnect":
+                PlaybackRecovery.clear();
                 android.webkit.CookieManager.getInstance().removeAllCookies(null);
                 if (PlaybackService.current != null) PlaybackService.current.stopAndClear();
                 break;
               case "settings":
+                if (!request.getJSONObject("config").optBoolean("playback_history", true))
+                  PlaybackRecovery.clear();
                 NetworkSettings.apply(request.getJSONObject("config"));
                 if (PlaybackService.current != null) PlaybackService.current.command(request);
+                break;
+              case "stop":
+                PlaybackRecovery.clear();
+                if (PlaybackService.current != null) PlaybackService.current.stopAndClear();
+                notifyUi();
                 break;
               default:
                 if (PlaybackService.current != null) PlaybackService.current.command(request);

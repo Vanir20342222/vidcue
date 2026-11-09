@@ -2,6 +2,11 @@ package dev.ytui.android;
 
 /** The Rust MediaKind JSON contract uses lowercase names. */
 final class PlaybackPolicy {
+  /** Every automatic start must re-check visibility, including delayed handoffs. */
+  static boolean mayAutoPlay(boolean uiVisible, boolean backgroundPlayback, boolean preview) {
+    return uiVisible || (backgroundPlayback && !preview);
+  }
+
   static boolean refreshableStatus(int status) {
     return status == 403 || status == 410;
   }

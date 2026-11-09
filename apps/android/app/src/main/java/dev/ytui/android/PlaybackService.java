@@ -90,6 +90,7 @@ public final class PlaybackService extends MediaSessionService {
     publish();
   }
 
+  long lastRecoverySave;
   long streamMetadataUpdates;
   String sponsorMode = "skip";
   String error = "", streamTitle = "", captionText = "", pendingQueueUrl = "", errorTrace = "";
@@ -401,6 +402,7 @@ public final class PlaybackService extends MediaSessionService {
               pausedByUser = true;
               player.pause();
             }
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) checkpoint(true);
             publish();
           }
 
@@ -481,6 +483,7 @@ public final class PlaybackService extends MediaSessionService {
               } else if (player.getCurrentPosition() > 0
                   && (player.getDuration() <= 0
                       || player.getCurrentPosition() >= player.getDuration() - 2000)) {
+                PlaybackRecovery.clear();
                 if (historyEnabled) {
                   JSONObject media = currentRequest.optJSONObject("media");
                   if (media != null)
@@ -519,6 +522,7 @@ public final class PlaybackService extends MediaSessionService {
               recordStarted();
             }
             scheduleTicker();
+            if (!playing) checkpoint(true);
             publish();
           }
 
@@ -769,6 +773,10 @@ public final class PlaybackService extends MediaSessionService {
       playbackRecorded = false;
       pausedByUser = false;
     }
+    if (!PlaybackPolicy.mayAutoPlay(
+        MediaBridge.uiVisible,
+        MobileSettings.enabled("background_playback"),
+        request.optBoolean("preview"))) pausedByUser = true;
     String nextContext = request.isNull("context_id") ? "" : request.optString("context_id");
     boolean sameContext = nextContext.equals(activeContext);
     if (!sameContext && !request.optBoolean("preview")) {
@@ -790,7 +798,7 @@ public final class PlaybackService extends MediaSessionService {
     startupToken = request.optLong("startup_token");
     StartupTimings.handoff(startupToken, startupAt);
     pendingStart = !request.optBoolean("preview");
-    resumePending = request.optBoolean("resume");
+    resumePending = request.optBoolean("resume") && !request.has("start_position_ms");
     navigationPending = false;
     playbackQuality = request.optString("quality", playbackQuality);
     error = "";
@@ -947,6 +955,8 @@ public final class PlaybackService extends MediaSessionService {
           true);
     }
     player.setMediaSource(source);
+    if (request.has("start_position_ms") && !isLive())
+      player.seekTo(Math.max(0, request.optLong("start_position_ms")));
     // Next must remain usable even if this item never reaches READY/playing.
     if (!request.optBoolean("preview")) prepareContext(request.optJSONObject("context"));
     player.prepare();
@@ -966,7 +976,7 @@ public final class PlaybackService extends MediaSessionService {
     worker.execute(
         () -> {
           try {
-            if (request.optBoolean("resume")) {
+            if (request.optBoolean("resume") && !request.has("start_position_ms")) {
               long ms = -1;
               try {
                 ms =
@@ -1003,6 +1013,7 @@ public final class PlaybackService extends MediaSessionService {
     if (!pendingStart || !player.isPlaying() || currentRequest.optBoolean("preview")) return;
     pendingStart = false;
     playbackRecorded = true;
+    checkpoint(true);
     startMs = SystemClock.elapsedRealtime() - startupAt;
     StartupTimings.started(startupToken, SystemClock.elapsedRealtime());
     if (currentRequest.optBoolean("audio"))
@@ -1209,7 +1220,10 @@ public final class PlaybackService extends MediaSessionService {
       if (restore != null) {
         // Continue the interrupted item as it was: paused stays silent, its start is not
         // recorded again, and no saved-position lookup moves it away from this position.
-        pausedByUser = !wasPlaying;
+        pausedByUser =
+            !wasPlaying
+                || !PlaybackPolicy.mayAutoPlay(
+                    MediaBridge.uiVisible, MobileSettings.enabled("background_playback"), false);
         play(PlaybackLifecycle.previewRestoreRequest(restore));
         pendingStart = restorePending;
         playbackRecorded = restoreRecorded;
@@ -1431,6 +1445,7 @@ public final class PlaybackService extends MediaSessionService {
                   });
           }
           historyEnabled = config.optBoolean("playback_history", true);
+          if (!historyEnabled) PlaybackRecovery.clear();
         }
         break;
       case "track":
@@ -1990,11 +2005,26 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   void pauseForBackground() {
-    if (!MobileSettings.enabled("background_playback") && player.getPlayWhenReady()) {
+    if ((!MobileSettings.enabled("background_playback") || currentRequest.optBoolean("preview"))
+        && player.getPlayWhenReady()) {
       pausedByUser = true;
       player.pause();
       publish();
     }
+    checkpoint(true);
+  }
+
+  /** Ordered SharedPreferences writes run off-thread; no stream URLs/headers are saved. */
+  void checkpoint(boolean force) {
+    if (!historyEnabled
+        || !playbackRecorded
+        || resumePending
+        || currentRequest.optBoolean("preview")
+        || player.getPlaybackState() == Player.STATE_ENDED) return;
+    long now = SystemClock.elapsedRealtime();
+    if (!force && (!player.isPlaying() || now - lastRecoverySave < 5000)) return;
+    lastRecoverySave = now;
+    PlaybackRecovery.save(currentRequest, player.getCurrentPosition(), player.getDuration());
   }
 
   void stopAndClear() {
@@ -2002,6 +2032,8 @@ public final class PlaybackService extends MediaSessionService {
     handler.removeCallbacks(ticker);
     tickerDueAt = 0;
     resumePending = false;
+    playbackRecorded = false;
+    PlaybackRecovery.clear();
     generation++;
     streamRefreshing = false;
     NativeBridge.activateContext("");
@@ -2114,6 +2146,7 @@ public final class PlaybackService extends MediaSessionService {
           if (player.isPlaying()
               && SystemClock.elapsedRealtime() - lastPositionSave
                   > PlaybackLifecycle.POSITION_SAVE_MS) savePosition();
+          checkpoint(false);
           publish();
           scheduleTicker();
         }
@@ -2245,6 +2278,7 @@ public final class PlaybackService extends MediaSessionService {
   public void onDestroy() {
     savePosition();
     positions.shutdown();
+    checkpoint(true);
     initialized = false;
     NativeBridge.activateContext("");
     cancelContextJobs();

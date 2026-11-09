@@ -6,6 +6,17 @@ import org.junit.Test;
 
 public final class PlaybackPolicyTest {
   @Test
+  public void delayedStartsAndPreviewRestorationRespectBackgroundPolicy() {
+    for (boolean background : new boolean[] {false, true}) {
+      for (boolean preview : new boolean[] {false, true}) {
+        assertTrue(PlaybackPolicy.mayAutoPlay(true, background, preview));
+        assertEquals(
+            background && !preview, PlaybackPolicy.mayAutoPlay(false, background, preview));
+      }
+    }
+  }
+
+  @Test
   public void onlyRejectedOrExpiredUrlsTriggerAutomaticRefresh() {
     assertTrue(PlaybackPolicy.refreshableStatus(403));
     assertTrue(PlaybackPolicy.refreshableStatus(410));
