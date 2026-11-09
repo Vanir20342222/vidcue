@@ -1290,6 +1290,28 @@ fn extractor_slots() -> Arc<tokio::sync::Semaphore> {
         .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2)))
         .clone()
 }
+// The extractor already fetched the complete format list during resolution.
+// Publish only usable video heights; codec/container duplicates share one row.
+fn video_qualities(data: &Value) -> Vec<u16> {
+    let mut heights = std::collections::BTreeSet::new();
+    for row in data["formats"].as_array().into_iter().flatten() {
+        if row["has_drm"].as_bool() == Some(true)
+            || !row["vcodec"].as_str().is_some_and(|codec| codec != "none")
+            || !row["url"].as_str().is_some_and(|url| !url.is_empty())
+        {
+            continue;
+        }
+        if let Some(height) = row["height"]
+            .as_u64()
+            .and_then(|h| u16::try_from(h).ok())
+            .filter(|h| *h > 0)
+        {
+            heights.insert(height);
+        }
+    }
+    heights.into_iter().rev().collect()
+}
+
 fn mobile_format(audio: bool, quality: &str) -> Result<String> {
     if audio {
         return Ok("bestaudio/best".into());
@@ -1298,7 +1320,8 @@ fn mobile_format(audio: bool, quality: &str) -> Result<String> {
         return Ok("bestvideo+bestaudio/best".into());
     }
     ensure!(
-        ["360", "480", "720", "1080"].contains(&quality),
+        quality.bytes().all(|b| b.is_ascii_digit())
+            && quality.parse::<u16>().is_ok_and(|height| height > 0),
         "Invalid quality"
     );
     // H.264/AAC decodes and exports on API 26. Keep bounded codec fallbacks.
@@ -1309,6 +1332,28 @@ fn mobile_format(audio: bool, quality: &str) -> Result<String> {
 #[cfg(test)]
 mod format_tests {
     use super::*;
+
+    #[test]
+    fn quality_menu_uses_unique_available_video_heights() {
+        let data = json!({"formats":[
+            {"height":144,"vcodec":"avc1","url":"https://media.test/low"},
+            {"height":2160,"vcodec":"vp9","url":"https://media.test/high"},
+            {"height":2160,"vcodec":"av01","url":"https://media.test/duplicate"},
+            {"height":240,"vcodec":"avc1","url":"https://media.test/drm","has_drm":true},
+            {"height":720,"vcodec":"none","url":"https://media.test/audio"},
+            {"height":480,"vcodec":"avc1"},
+            {"height":0,"vcodec":"avc1","url":"https://media.test/unknown"}
+        ]});
+        assert_eq!(video_qualities(&data), vec![2160, 144]);
+        assert!(video_qualities(&json!({})).is_empty());
+        for quality in ["144", "240", "1440", "2160", "4320"] {
+            assert!(mobile_format(false, quality).is_ok());
+        }
+        for quality in ["0", "-1", "65536", "720]+best", ""] {
+            assert!(mobile_format(false, quality).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn watched_videos_are_not_related_recommendations_but_explicit_playlists_remain() {
         let dir = tempfile::tempdir().unwrap();
@@ -1889,6 +1934,7 @@ fn stream(data: &Value, audio: bool) -> Result<Value> {
     let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":data["vidcue_playback_route"],"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
     let duration = data["duration"].as_f64();
     let secondary = formats.and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"));
+    result["video_qualities"] = json!(video_qualities(data));
     result["audio_tracks"] = json!(audio_tracks::choices(data));
     result["audio_language"] = secondary.unwrap_or(primary)["language"].clone();
     let tracks = if !audio && let Some(second) = secondary {
