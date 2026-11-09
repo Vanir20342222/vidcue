@@ -1,0 +1,40 @@
+{
+  "all_api_providers_passed": false,
+  "decoder_verified": false,
+  "providers": [
+    {
+      "elapsed_ms": 96,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "abyssinia",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 191,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "calico",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 96,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "zanzibar",
+      "resolved": false,
+      "stream_count": 0
+    },
+    {
+      "elapsed_ms": 95,
+      "error": "HTTP 502",
+      "network": [],
+      "provider": "garfield",
+      "resolved": false,
+      "stream_count": 0
+    }
+  ],
+  "scope": "sources API only; browser-only scrapers excluded",
+  "tmdb": 45745
+}
