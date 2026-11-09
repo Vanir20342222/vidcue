@@ -80,10 +80,10 @@ internal data class InstalledApp(
  * signing key or a lower version code; the checks here only explain problems up front.
  */
 internal object AppUpdates {
-    /** Canonical repository. GitHub renamed it from ytui; the API redirects the old address. */
-    const val REPOSITORY = "Vanir20342222/vidcue"
-    /** Installed betas may still know the pre-rename asset address, so both stay acceptable. */
-    const val LEGACY_REPOSITORY = "Vanir20342222/ytui"
+    /** Canonical repository. It was briefly renamed to vidcue and restored on 2026-11-09. */
+    const val REPOSITORY = "Vanir20342222/ytui"
+    /** Releases published during the rename window carry vidcue asset URLs; accept both. */
+    const val LEGACY_REPOSITORY = "Vanir20342222/vidcue"
     private const val MARKER = "vidcue-android-update"
     private const val PREFS = "vidcue-updates"
     private const val AUTO_INTERVAL_MS = 6L * 60 * 60 * 1000
