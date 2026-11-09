@@ -1,7 +1,7 @@
 # Playlist downloads pack into folders (M9)
 
 - **Date:** 2026-11-09
-- **PR:** #<number> <!-- add once the PR exists -->
+- **PR:** #128
 - **Milestone:** M9
 - **Platforms:** Android
 - **Status:** implemented · fixture/unit verified
