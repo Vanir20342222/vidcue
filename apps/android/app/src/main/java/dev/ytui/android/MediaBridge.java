@@ -293,6 +293,10 @@ public final class MediaBridge {
                 if (RustActivity.current() != null)
                   RustActivity.current().exportDownload(request.getString("id"));
                 break;
+              case "playlist_export":
+                if (RustActivity.current() != null)
+                  RustActivity.current().exportPlaylist(request.getString("id"));
+                break;
               case "history_clear":
                 PlaybackRecovery.clear();
                 notifyUi();

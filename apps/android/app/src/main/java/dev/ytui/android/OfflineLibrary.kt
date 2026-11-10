@@ -600,6 +600,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     ) {
                         vm.updateOfflinePlaylist(opened, title = name)
                     }
+                    SecondaryAction("Export as zip", enabled = items.isNotEmpty()) {
+                        vm.effect("playlist_export", "id" to opened)
+                    }
                     QuietAction("Delete playlist", destructive = true) { deleting = playlist }
                 }
                 if (items.isEmpty())
