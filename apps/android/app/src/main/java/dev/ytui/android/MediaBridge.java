@@ -246,6 +246,32 @@ public final class MediaBridge {
                       }
                     });
                 break;
+              case "playlist_folder":
+                // The lookup reads the offline index, so it runs off the UI thread like "offline".
+                OfflineStore.IO.execute(
+                    () -> {
+                      try {
+                        android.net.Uri folder =
+                            StorageLocations.playlistFolder(request.getString("id"));
+                        if (folder == null) {
+                          event("error", "Save a playlist download to find its folder here");
+                          return;
+                        }
+                        context.startActivity(
+                            new Intent(Intent.ACTION_VIEW)
+                                .setDataAndType(
+                                    folder,
+                                    android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
+                                .addFlags(
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        | Intent.FLAG_ACTIVITY_NEW_TASK));
+                      } catch (ActivityNotFoundException noFileManager) {
+                        event("error", "No file manager can open this folder");
+                      } catch (Exception unavailable) {
+                        event("error", "Playlist folder is unavailable; reconnect its folder");
+                      }
+                    });
+                break;
               case "folder_pick":
                 if (RustActivity.current() != null)
                   RustActivity.current().pickFolder(request.optBoolean("audio"));

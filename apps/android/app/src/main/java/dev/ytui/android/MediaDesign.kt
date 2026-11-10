@@ -172,6 +172,7 @@ internal enum class Glyph {
     Refresh,
     Drag,
     Clipboard,
+    Folder,
 }
 
 @Composable
@@ -491,6 +492,8 @@ internal fun MediaIcon(
                     line(8.5f, 11f, 15.5f, 11f)
                     line(8.5f, 15f, 13f, 15f)
                 }
+                Glyph.Folder ->
+                    outline(3f to 6f, 9f to 6f, 11f to 8f, 21f to 8f, 21f to 19f, 3f to 19f, closed = true)
                 Glyph.History,
                 Glyph.Info -> {
                     drawCircle(tint, 9f, Offset(12f, 12f), style = Stroke(1.8f))

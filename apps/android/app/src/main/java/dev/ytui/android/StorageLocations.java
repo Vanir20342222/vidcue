@@ -153,6 +153,27 @@ final class StorageLocations {
     return rows;
   }
 
+  /**
+   * The folder that the first downloaded member of an offline playlist was packed into, or null
+   * when none of its downloads has one yet.
+   */
+  static Uri playlistFolder(String playlistId) throws Exception {
+    JSONArray playlists =
+        new JSONArray(
+            NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));
+    for (int i = 0; i < playlists.length(); i++) {
+      JSONObject playlist = playlists.getJSONObject(i);
+      if (!playlistId.equals(playlist.optString("id"))) continue;
+      JSONArray items = playlist.optJSONArray("items");
+      for (int j = 0; items != null && j < items.length(); j++) {
+        JSONObject file = record(items.getJSONObject(j).optString("offline_id"));
+        String folder = file == null ? "" : file.optString("playlistFolder", "");
+        if (!folder.isEmpty()) return Uri.parse(folder);
+      }
+    }
+    return null;
+  }
+
   static void failed(String id) {
     prefs()
         .edit()
