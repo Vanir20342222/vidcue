@@ -517,6 +517,15 @@ async fn run_hook(
     Ok(())
 }
 
+/// File extension for a container or codec name chosen for local conversion.
+fn output_extension(container: &str) -> &str {
+    match container {
+        "vorbis" => "ogg",
+        "alac" => "m4a",
+        other => other,
+    }
+}
+
 async fn convert_local(
     job: &Job,
     config: &Config,
@@ -540,11 +549,7 @@ async fn convert_local(
     } else {
         job.options.container.as_str()
     };
-    let extension = if extension == "vorbis" {
-        "ogg"
-    } else {
-        extension
-    };
+    let extension = output_extension(extension);
     let filename = if job.options.filename_template == DownloadOptions::default().filename_template
     {
         std::path::PathBuf::from(format!("{stem}_converted.{extension}"))
@@ -659,6 +664,84 @@ mod tests {
         assert!(!transient(
             "Native postprocessing failed: connection closed"
         ));
+    }
+    #[test]
+    fn conversion_extensions_name_the_container_ffmpeg_writes() {
+        assert_eq!(output_extension("vorbis"), "ogg");
+        assert_eq!(output_extension("alac"), "m4a");
+        assert_eq!(output_extension("mov"), "mov");
+        assert_eq!(output_extension("mp3"), "mp3");
+    }
+    #[tokio::test]
+    #[ignore = "requires FFmpeg and ffprobe; synthetic local media only"]
+    async fn local_conversion_writes_mov_and_alac_outputs() {
+        fn probe(path: &Path, entries: &str) -> String {
+            let output = std::process::Command::new("ffprobe")
+                .args(["-v", "error", "-show_entries", entries])
+                .args(["-of", "default=nw=1:nk=1"])
+                .arg(path)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "ffprobe rejected {}",
+                path.display()
+            );
+            String::from_utf8(output.stdout).unwrap()
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-nostdin", "-hide_banner", "-loglevel", "error", "-y"])
+            .args(["-f", "lavfi", "-i", "testsrc=size=160x120:rate=10"])
+            .args(["-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+            .args(["-t", "1", "-c:v", "libx264", "-c:a", "aac"])
+            .arg(&source)
+            .status()
+            .unwrap();
+        assert!(
+            made.success(),
+            "FFmpeg could not create the synthetic input"
+        );
+        let output = temp.path().join("out");
+        std::fs::create_dir(&output).unwrap();
+        let input = || Media {
+            url: source.to_string_lossy().into(),
+            ..Default::default()
+        };
+        let (tx, _rx) = mpsc::channel(32);
+        let video = Job::new(
+            input(),
+            DownloadOptions {
+                container: "mov".into(),
+                directory: output.clone(),
+                ..Default::default()
+            },
+        );
+        convert_local(&video, &Config::default(), CancellationToken::new(), &tx)
+            .await
+            .unwrap();
+        let mov = output.join("source_converted.mov");
+        assert!(probe(&mov, "format=format_name").contains("mov"));
+        let streams = probe(&mov, "stream=codec_name");
+        assert!(
+            streams.contains("h264") && streams.contains("aac"),
+            "{streams}"
+        );
+        let audio = Job::new(
+            input(),
+            DownloadOptions {
+                audio: true,
+                audio_container: "alac".into(),
+                audio_directory: output.clone(),
+                ..Default::default()
+            },
+        );
+        convert_local(&audio, &Config::default(), CancellationToken::new(), &tx)
+            .await
+            .unwrap();
+        let m4a = output.join("source_converted.m4a");
+        assert_eq!(probe(&m4a, "stream=codec_name").trim(), "alac");
     }
 }
 

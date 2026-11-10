@@ -395,11 +395,11 @@ impl DownloadOptions {
             "quality must be best or a resolution height"
         );
         ensure!(
-            ["mp4", "mkv", "webm"].contains(&self.container.as_str()),
+            ["mp4", "mkv", "webm", "mov"].contains(&self.container.as_str()),
             "Unsupported video container"
         );
         ensure!(
-            ["mp3", "m4a", "flac", "opus", "vorbis", "wav", "aac"]
+            ["mp3", "m4a", "flac", "opus", "vorbis", "wav", "aac", "alac"]
                 .contains(&self.audio_container.as_str()),
             "Unsupported audio container"
         );
@@ -449,5 +449,31 @@ impl DownloadOptions {
             );
         }
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn download_containers_match_what_the_engine_can_write() {
+        let mut options = DownloadOptions::default();
+        assert!(options.validate().is_ok());
+        for container in ["mp4", "mkv", "webm", "mov"] {
+            options.container = container.into();
+            assert!(options.validate().is_ok(), "{container} should validate");
+        }
+        options.container = "mp4".into();
+        for audio in ["alac", "m4a", "flac"] {
+            options.audio_container = audio.into();
+            assert!(options.validate().is_ok(), "{audio} should validate");
+        }
+        for (container, audio) in [("avi", "mp3"), ("mp4", "aiff")] {
+            options.container = container.into();
+            options.audio_container = audio.into();
+            assert!(
+                options.validate().is_err(),
+                "{container}/{audio} must be rejected"
+            );
+        }
     }
 }
