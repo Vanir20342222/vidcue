@@ -1532,7 +1532,7 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   private void changeSelection(String quality, String language) throws JSONException {
-    if (!"best".equals(quality)) {
+    if (!"best".equals(quality) && !"auto".equals(quality)) {
       try {
         if (!quality.matches("[0-9]+") || Integer.parseInt(quality) <= 0
             || Integer.parseInt(quality) > 65535) return;
