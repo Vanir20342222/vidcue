@@ -400,6 +400,16 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                         menu = false
                                         vm.effect("playlist_folder", "id" to playlist.optString("id"))
                                     }
+                                    MediaMenuItem(
+                                        "Convert playlist to MP3",
+                                        Glyph.Music,
+                                        Modifier.testTag(
+                                            "offline-playlist-mp3-${playlist.optString("id")}"
+                                        ),
+                                    ) {
+                                        menu = false
+                                        vm.effect("playlist_mp3", "id" to playlist.optString("id"))
+                                    }
                                 }
                             }
                         }

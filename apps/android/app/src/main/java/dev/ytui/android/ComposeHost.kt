@@ -3075,6 +3075,13 @@ private fun SettingsPanel(
                 ) {
                     vm.updateMobile("auto_save_folders", it)
                 }
+                SettingToggle(
+                    "Convert audio downloads to MP3",
+                    mobile.optBoolean("auto_mp3", false),
+                    "Saves finished audio as MP3 in your Music folder, and converts audio you already downloaded. Needs a Music folder.",
+                ) {
+                    vm.updateMobile("auto_mp3", it)
+                }
                 for ((label, audio, key) in
                     listOf(
                         Triple("Music folder", true, "music_folder"),

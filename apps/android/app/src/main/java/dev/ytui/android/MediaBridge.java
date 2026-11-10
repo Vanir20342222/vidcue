@@ -293,6 +293,9 @@ public final class MediaBridge {
                 if (RustActivity.current() != null)
                   RustActivity.current().exportDownload(request.getString("id"));
                 break;
+              case "playlist_mp3":
+                Mp3Convert.enqueuePlaylist(request.getString("id"));
+                break;
               case "playlist_export":
                 if (RustActivity.current() != null)
                   RustActivity.current().exportPlaylist(request.getString("id"));

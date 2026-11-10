@@ -91,6 +91,11 @@ public final class OfflineExport extends Worker {
   }
 
   static void enqueueAuto(String id) {
+    // With automatic MP3 conversion on, an audio download is saved once, as an MP3.
+    if (Mp3Convert.takesOver(id)) {
+      Mp3Convert.enqueueAuto(id);
+      return;
+    }
     if (!MobileSettings.enabled("auto_save_folders")) return;
     try {
       if (StorageLocations.record(id) != null) return;
