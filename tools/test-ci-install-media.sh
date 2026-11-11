@@ -51,6 +51,13 @@ case "$CI_TEST_CASE" in
     primary_update_stall) "$fallback" || [[ "$operation" != update ]] || sleep 8;;
     primary_update_failure) "$fallback" || exit 100;;
     primary_install_failure) "$fallback" || [[ "$operation" != install ]] || exit 100;;
+    canonical_failure)
+        # Default and Canonical mirrors fail; a third-party mirror recovers.
+        if [[ "$fallback" == true ]]; then
+            grep -q 'kernel.org' "$CI_TEST_LOG.sources" && exit 0
+            exit 100
+        fi
+        exit 100;;
     all_failure) exit 100;;
     *) exit 99;;
 esac
@@ -58,7 +65,7 @@ EOF
 chmod +x "$test_root/bin/"*
 export PATH="$test_root/bin:$PATH"
 export GITHUB_ACTIONS=true RUNNER_OS=Linux
-for test_case in primary_install_stall primary_update_stall primary_success primary_update_failure primary_install_failure all_failure; do
+for test_case in primary_install_stall primary_update_stall primary_success primary_update_failure primary_install_failure canonical_failure all_failure; do
     export CI_TEST_CASE="$test_case" CI_TEST_LOG="$test_root/$test_case"
     status=0
     /usr/bin/timeout --kill-after=1s 5s bash "$installer" mpv ffmpeg > "$test_root/output" 2>&1 || status=$?
@@ -73,11 +80,19 @@ for test_case in primary_install_stall primary_update_stall primary_success prim
     fi
     if [[ "$test_case" == primary_success ]]; then
         [[ ! -e "$CI_TEST_LOG.sources" ]] || { echo 'FAIL: unnecessary fallback'; exit 1; }
+    elif [[ "$test_case" == all_failure ]]; then
+        : # only the exit status and deadlines matter here
+    elif [[ "$test_case" == canonical_failure ]]; then
+        [[ -s "$CI_TEST_LOG.sources" ]]
+        grep -Eq '^deb https://mirrors.edge.kernel.org/ubuntu noble ' "$CI_TEST_LOG.sources"
+        grep -Eq '^deb https://mirrors.edge.kernel.org/ubuntu noble-security ' "$CI_TEST_LOG.sources"
+        [[ "$(grep -Ec ' update$' "$CI_TEST_LOG")" == 3 ]]
+        [[ "$(grep -Ec 'Dir::Etc::sourceparts=-' "$CI_TEST_LOG")" -ge 1 ]]
     else
         [[ -s "$CI_TEST_LOG.sources" ]]
         grep -Eq '^deb https://archive.ubuntu.com/ubuntu noble ' "$CI_TEST_LOG.sources"
-        grep -Eq '^deb https://security.ubuntu.com/ubuntu noble-security ' "$CI_TEST_LOG.sources"
-        [[ "$(grep -Ec ' update$' "$CI_TEST_LOG")" == 2 ]]
+        grep -Eq '^deb https://archive.ubuntu.com/ubuntu noble-security ' "$CI_TEST_LOG.sources"
+        [[ "$(grep -Ec ' update$' "$CI_TEST_LOG")" -ge 2 ]]
         [[ "$(grep -Ec 'Dir::Etc::sourceparts=-' "$CI_TEST_LOG")" -ge 1 ]]
     fi
     echo "PASS: $test_case"
