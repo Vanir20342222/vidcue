@@ -1,10 +1,10 @@
 [workspace]
-members = ["crates/vidcue-core", "crates/vidcue-services", "crates/vidcue-providers", "crates/vidcue-mobile", "tools/cinecat"]
+members = ["apps/desktop", "crates/vidcue-core", "crates/vidcue-services", "crates/vidcue-providers", "crates/vidcue-mobile", "tools/cinecat"]
 resolver = "2"
 exclude = ["vendor/yt-dlp-rs"]
 
 [workspace.package]
-version = "0.2.0-alpha.12"
+version = "0.2.0-alpha.16"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"

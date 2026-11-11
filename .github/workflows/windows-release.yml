@@ -1,0 +1,181 @@
+# Builds the Windows desktop release when a `desktop-*` tag is pushed and attaches the
+# installer and a portable zip to that GitHub release.
+#
+# Pushes to main that touch the desktop build also compile it, without publishing. They catch
+# Windows-only breakage before a tag, and they save the Rust cache: a tag run can restore caches
+# from main but not from other tags, so without this every release compiled from scratch.
+#
+# The x86_64-pc-windows-gnu target links the bundled libmpv: the workflow downloads the
+# current mpv-dev package (zhongfly/mpv-winbuild), points MPV_LIB_DIR at its import
+# library (`-lmpv-2`, see apps/desktop/build.rs) and ships `libmpv-2.dll` beside the exe.
+name: windows-release
+
+on:
+  push:
+    tags: ["desktop-*"]
+    branches: [main]
+    # GitHub never applies path filters to tag pushes, so every desktop tag still builds.
+    paths:
+      - apps/desktop/**
+      - crates/**
+      - vendor/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - tools/windows/**
+      - .github/workflows/windows-release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  # A newer main commit supersedes a cache-warming build; a release tag always finishes.
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  windows:
+    # Pinned image: Inno Setup 6 and MSYS2 are preinstalled on windows-2025.
+    runs-on: windows-2025
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the tagged tree
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up the pinned Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-gnu
+          # The action defaults to `-D warnings`. Unix-only helpers in the shared crates leave
+          # unused-variable warnings on Windows; lint gating happens in the Rust workflow.
+          rustflags: ""
+          # Only main saves: tag-scoped caches are invisible to the next tag.
+          cache-shared-key: windows-gnu-release
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install the mingw-w64 C toolchain
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          # Use the image's MSYS2 instead of downloading a fresh base installation.
+          release: false
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Put the mingw compiler on PATH
+        shell: pwsh
+        run: |
+          $bin = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "mingw64\bin"
+          if (-not (Test-Path "$bin\gcc.exe")) { throw "mingw gcc missing in $bin" }
+          Add-Content $env:GITHUB_PATH $bin
+          Add-Content $env:GITHUB_ENV "CC_x86_64_pc_windows_gnu=$bin\gcc.exe"
+          Add-Content $env:GITHUB_ENV "AR_x86_64_pc_windows_gnu=$bin\ar.exe"
+          # apps/desktop/build.rs compiles the exe icon with it.
+          Add-Content $env:GITHUB_ENV "WINDRES=$bin\windres.exe"
+          # libesedb-sys (rookie's Edge cookie reader) enables its WinAPI configuration only
+          # for MSVC or when HAVE_WINDOWS_H is set; without it MinGW leaves memory_* undefined.
+          Add-Content $env:GITHUB_ENV "CFLAGS_x86_64_pc_windows_gnu=-DHAVE_WINDOWS_H"
+
+      - name: Download and unpack the mpv dev package
+        id: mpv
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Pinned baseline x86_64 build (not the -v3 or -lgpl variants), checked by SHA-256, so a
+          # release ships a known libmpv. Bump the tag, file and hash together.
+          $tag = "2026-11-10-bcde6b93cc"
+          $file = "mpv-dev-x86_64-20261110-git-bcde6b93cc.7z"
+          $sha256 = "7975dfc7d495930243f552631ac043315929f4aad4d9fbf216ee906ed39bd118"
+          gh release download $tag --repo zhongfly/mpv-winbuild --pattern $file -O mpv-dev.7z
+          if ($LASTEXITCODE -ne 0) { throw "cannot download $file from mpv-winbuild $tag" }
+          $actual = (Get-FileHash mpv-dev.7z -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $sha256) { throw "mpv-dev.7z SHA-256 mismatch: $actual" }
+          7z x -y mpv-dev.7z -ompv-dev | Out-Null
+          $dll = Get-ChildItem -Recurse mpv-dev -Filter libmpv-2.dll | Select-Object -First 1
+          if (-not $dll) { throw "libmpv-2.dll missing from the mpv-dev package" }
+          $libdir = "mpv\lib"
+          New-Item -ItemType Directory -Force $libdir | Out-Null
+          Copy-Item $dll.FullName "$libdir\libmpv-2.dll"
+          $import = Get-ChildItem -Recurse mpv-dev -Include *.dll.a,*.a -ErrorAction SilentlyContinue |
+            Where-Object Name -like "libmpv*" | Select-Object -First 1
+          if ($import) { Copy-Item $import.FullName "$libdir\libmpv-2.dll.a" }
+          Add-Content $env:GITHUB_ENV "MPV_LIB_DIR=$((Resolve-Path $libdir).Path)"
+
+      - name: Build the release binary
+        shell: pwsh
+        run: cargo build --release --locked --target x86_64-pc-windows-gnu -p vidcue-desktop
+
+      - name: Assemble the distribution folder
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          $dist = "dist"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item target\x86_64-pc-windows-gnu\release\vidcue-desktop.exe "$dist\vidcue.exe"
+          Copy-Item mpv\lib\libmpv-2.dll $dist
+          # wry links the WebView2 loader dynamically on windows-gnu; the sign-in window and
+          # the exe itself need it beside vidcue.exe.
+          $loader = Get-ChildItem -Recurse target\x86_64-pc-windows-gnu\release\build -Filter WebView2Loader.dll |
+            Where-Object { $_.FullName -match '\\out\\x64\\' } | Select-Object -First 1
+          if (-not $loader) { throw "WebView2Loader.dll missing from the webview2-com-sys build" }
+          Copy-Item $loader.FullName $dist
+          # The updater never ships third-party tools; users who want yt-dlp or FFmpeg
+          # downloads put them (or their paths) in Vidcue's settings themselves.
+          "Vidcue $env:VERSION for Windows (64-bit).`n`nRun vidcue.exe. libmpv-2.dll and WebView2Loader.dll must sit beside it (included).`nOptional yt-dlp and FFmpeg are not bundled; install them yourself and point Vidcue at them in Settings.`n" |
+            Set-Content "$dist\README.txt"
+          Add-Content $env:GITHUB_ENV "DIST=$dist"
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          # Preinstalled on windows-2025; install only if a future image drops it.
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = $env:VERSION -replace '^desktop-v?',''
+          } else {
+            # main and manual runs: Inno Setup needs a numeric file version, not a branch name.
+            $line = Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1
+            if (-not $line) { throw "workspace version missing from Cargo.toml" }
+            $version = $line.Matches[0].Groups[1].Value + "-dev"
+          }
+          $numeric = ($version -split '[-+]')[0]
+          & $iscc "/DAppVersion=$version" "/DFileVersion=$numeric" tools\windows\vidcue.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Zip the portable build
+        shell: pwsh
+        run: Compress-Archive -Path dist\* -DestinationPath Vidcue-portable.zip
+
+      - name: Keep a manual build's outputs for testing
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vidcue-windows-${{ github.sha }}
+          path: |
+            installer/VidcueSetup-*.exe
+            Vidcue-portable.zip
+          retention-days: 7
+
+      - name: Attach the artifacts to the release
+        if: startsWith(github.ref, 'refs/tags/desktop-')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            installer/VidcueSetup-*.exe Vidcue-portable.zip --clobber --repo "$GITHUB_REPOSITORY"

@@ -23,6 +23,7 @@ pub fn local_minute() -> u16 {
 }
 /// Explicit user action only. The desktop owns the launched application; it is
 /// not a child process that vidcue's process-group cleanup could terminate.
+#[cfg(unix)]
 pub async fn open_file(path: &std::path::Path) -> Result<()> {
     let file = std::fs::File::open(path)?;
     ensure!(
@@ -47,6 +48,22 @@ pub async fn open_file(path: &std::path::Path) -> Result<()> {
     })
     .await
     .context("Desktop open request timed out")??;
+    Ok(())
+}
+
+/// Windows has no session portal: the shell's file-type association opens the file.
+#[cfg(windows)]
+pub async fn open_file(path: &std::path::Path) -> Result<()> {
+    ensure!(
+        std::fs::metadata(path)?.is_file(),
+        "Select a completed regular file"
+    );
+    // Detached on purpose: explorer.exe hands the file to its associated app and
+    // returns a non-zero status even on success, so its exit code is not checked.
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .context("Cannot ask Windows to open the file")?;
     Ok(())
 }
 

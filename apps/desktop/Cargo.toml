@@ -1,0 +1,36 @@
+[package]
+name = "vidcue-desktop"
+description = "Vidcue desktop app: a GPU-rendered Rune interface over the shared Vidcue engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "vidcue-desktop"
+path = "src/main.rs"
+
+[dependencies]
+vidcue-core = { path = "../../crates/vidcue-core" }
+vidcue-providers = { path = "../../crates/vidcue-providers" }
+vidcue-mobile = { path = "../../crates/vidcue-mobile" }
+vidcue-services = { path = "../../crates/vidcue-services" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+uuid.workspace = true
+url.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true
+rune = { git = "https://github.com/anomalyco/rune", rev = "7ed827a2b969ec737323c3e80d2bfc1b8032b609", features = ["native-file-dialog"] }
+rune-kit = { git = "https://github.com/anomalyco/rune", rev = "7ed827a2b969ec737323c3e80d2bfc1b8032b609" }
+rune-fx = { git = "https://github.com/anomalyco/rune", rev = "7ed827a2b969ec737323c3e80d2bfc1b8032b609" }
+wgpu = { version = "~30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "wgsl"] }
+wry = "0.57.2"
+tao = "0.37.2"
+png = "0.18"
+
+[dev-dependencies]
+tempfile.workspace = true

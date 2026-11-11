@@ -32,7 +32,7 @@ impl Paths {
                 .state_dir()
                 .unwrap_or(dirs.data_local_dir())
                 .join("vidcue/rust"),
-            cache: dirs.cache_dir().join("vidcue/rust"),
+            cache: cache_root(dirs.cache_dir(), state_root).join("rust"),
             // Python-era data (queue.db) is only read for migration and keeps its old path.
             legacy_data: dirs.data_local_dir().join(LEGACY_NAME),
             home: dirs.home_dir().into(),
@@ -62,17 +62,44 @@ impl Paths {
     }
     pub fn fill_directories(&self, c: &mut Config) {
         if c.download.directory.as_os_str().is_empty() {
-            c.download.directory = default_media_dir(&self.home.join("Videos"));
+            c.download.directory = default_media_dir(&self.media_folder("Videos"));
         }
         if c.download.audio_directory.as_os_str().is_empty() {
-            c.download.audio_directory = default_media_dir(&self.home.join("Music"));
+            c.download.audio_directory = default_media_dir(&self.media_folder("Music"));
         }
+    }
+    /// `~/Videos` or `~/Music`. On Windows the real known folder is used instead, since
+    /// OneDrive backup or the user may have moved it away from the profile folder.
+    fn media_folder(&self, name: &str) -> PathBuf {
+        #[cfg(windows)]
+        if let Some(user) = directories::UserDirs::new().filter(|u| u.home_dir() == self.home)
+            && let Some(dir) = if name == "Videos" {
+                user.video_dir()
+            } else {
+                user.audio_dir()
+            }
+        {
+            return dir.to_path_buf();
+        }
+        self.home.join(name)
     }
     pub fn save_config(&self, c: &Config) -> Result<()> {
         c.validate()?;
         atomic_write(&self.config_file(), toml::to_string_pretty(c)?.as_bytes())
     }
 }
+/// The app's cache folder. Windows maps both the cache and the state folder to
+/// `%LOCALAPPDATA%`, so the cache gets its own `cache` subfolder there and never shares a
+/// directory with settings, the queue or history.
+fn cache_root(cache_dir: &Path, state_root: &Path) -> PathBuf {
+    let app = cache_dir.join(APP_NAME);
+    if cache_dir == state_root {
+        app.join("cache")
+    } else {
+        app
+    }
+}
+
 /// Current folder and binary name.
 pub const APP_NAME: &str = "vidcue";
 /// Name used by releases before the rename; still read for migration.
@@ -136,7 +163,17 @@ fn write_atomic(path: &Path, data: &[u8], replace: bool) -> Result<()> {
     } else {
         temp.persist_noclobber(path).map_err(|e| e.error)?;
     }
-    fs::File::open(parent)?.sync_all()?;
+    sync_dir(parent)?;
+    Ok(())
+}
+/// Flush a directory entry change (a rename or removal) to disk. Unix only: Windows refuses
+/// to open a directory as a file ("Access is denied", os error 5), and NTFS journals the
+/// rename itself, so there is nothing to flush there.
+pub fn sync_dir(dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
     Ok(())
 }
 pub fn private_dir(path: &Path) -> Result<()> {
@@ -151,15 +188,85 @@ pub fn private_dir(path: &Path) -> Result<()> {
 
 /// Resolve tools for upstream libraries that require an explicit executable path.
 pub fn executable(program: &str) -> Option<PathBuf> {
+    let names = program_names(program);
     let path = PathBuf::from(program);
     if path.components().count() > 1 {
-        return path.is_file().then_some(path);
+        let dir = path.parent().unwrap_or_else(|| Path::new(""));
+        return names.iter().map(|n| dir.join(n)).find(|p| p.is_file());
     }
     std::env::var_os("PATH").and_then(|paths| {
         std::env::split_paths(&paths)
-            .map(|dir| dir.join(program))
+            .flat_map(|dir| names.iter().map(move |n| dir.join(n)))
             .find(|p| p.is_file())
     })
+}
+
+/// File names `program` may have on disk. Windows tools are `node.exe`, `yt-dlp.exe` or a
+/// `.cmd` shim, so a bare name is tried with each `PATHEXT` suffix; elsewhere it is used as is.
+pub fn program_names(program: &str) -> Vec<String> {
+    let pathext = std::env::var("PATHEXT").ok();
+    names_for(program, cfg!(windows), pathext.as_deref())
+}
+
+fn names_for(program: &str, windows: bool, pathext: Option<&str>) -> Vec<String> {
+    let file = Path::new(program)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| program.to_owned());
+    if !windows || Path::new(&file).extension().is_some() {
+        return vec![file];
+    }
+    let mut names: Vec<String> = pathext
+        .unwrap_or(".COM;.EXE;.BAT;.CMD")
+        .split(';')
+        .map(str::trim)
+        .filter(|e| e.starts_with('.') && e.len() > 1)
+        .map(|e| format!("{file}{}", e.to_ascii_lowercase()))
+        .collect();
+    names.push(file);
+    names
+}
+
+#[cfg(test)]
+mod program_name_tests {
+    use super::{cache_root, names_for};
+    use std::path::Path;
+
+    #[test]
+    fn cache_gets_its_own_folder_when_it_shares_the_state_root() {
+        let local = Path::new("C:/Users/a/AppData/Local");
+        assert_eq!(cache_root(local, local), local.join("vidcue").join("cache"));
+        let (cache, state) = (
+            Path::new("/home/a/.cache"),
+            Path::new("/home/a/.local/state"),
+        );
+        assert_eq!(cache_root(cache, state), cache.join("vidcue"));
+    }
+
+    #[test]
+    fn windows_tries_pathext_suffixes_before_the_bare_name() {
+        assert_eq!(
+            names_for("node", true, Some(".COM;.EXE;.BAT;.CMD")),
+            ["node.com", "node.exe", "node.bat", "node.cmd", "node"]
+        );
+        assert_eq!(
+            names_for("yt-dlp", true, None),
+            [
+                "yt-dlp.com",
+                "yt-dlp.exe",
+                "yt-dlp.bat",
+                "yt-dlp.cmd",
+                "yt-dlp"
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_extensions_and_other_platforms_use_the_name_as_is() {
+        assert_eq!(names_for("ffmpeg.exe", true, Some(".EXE")), ["ffmpeg.exe"]);
+        assert_eq!(names_for("C:/tools/node", false, None), ["node"]);
+        assert_eq!(names_for("node", false, Some(".EXE")), ["node"]);
+    }
 }
 
 #[cfg(test)]
