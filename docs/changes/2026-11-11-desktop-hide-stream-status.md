@@ -8,8 +8,12 @@ YouTube, YouTube Music and Radio playback on the desktop app.
 still shows but the text is omitted. "Buffering…" is unchanged. The Movies
 "Finding a working stream" text is out of scope and left as is.
 
-**Evidence:** `cargo check -p vidcue-desktop --offline` finished with exit 0 on the
-pre-rebase branch. Rustfmt check on the two edited files passed.
+**Evidence:** headless UI test
+`ui_tests::resolving_a_stream_shows_only_the_spinner` puts the `watch` (video) and
+`song` (music/radio) scenes into the resolving state. It fails on the old code for each
+player separately and passes with this change. `cargo fmt`, workspace clippy and
+workspace tests were run locally; the results are in the PR.
 
-**Not verified:** no runtime or screenshot check of the desktop player; no
-`cargo clippy` or `cargo test` run for this change yet.
+**Not verified:** no screenshot of a live desktop window. The buffering label cannot be
+held in a headless test, because the mpv snapshot is refreshed on every poll; that code
+path is unchanged.
