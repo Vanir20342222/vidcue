@@ -17,6 +17,7 @@ mod lyrics;
 mod movies;
 mod player;
 mod scenes;
+mod signin;
 mod theme;
 mod themes;
 mod ui;
@@ -39,6 +40,13 @@ fn main() {
             std::process::exit(1);
         }
         return;
+    }
+    // "Sign in with Google" runs its web view window in a child process of this binary.
+    if args.get(1).is_some_and(|a| a == signin::ARG) {
+        let Some(dir) = args.get(2) else {
+            std::process::exit(2);
+        };
+        std::process::exit(signin::run(std::path::Path::new(dir)));
     }
     // Windows draws the title-bar, taskbar and Alt+Tab icon from the window, not the exe;
     // without this it shows the generic application icon. Linux uses the desktop entry's.

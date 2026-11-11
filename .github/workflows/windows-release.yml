@@ -125,9 +125,15 @@ jobs:
           New-Item -ItemType Directory -Force $dist | Out-Null
           Copy-Item target\x86_64-pc-windows-gnu\release\vidcue-desktop.exe "$dist\vidcue.exe"
           Copy-Item mpv\lib\libmpv-2.dll $dist
+          # wry links the WebView2 loader dynamically on windows-gnu; the sign-in window and
+          # the exe itself need it beside vidcue.exe.
+          $loader = Get-ChildItem -Recurse target\x86_64-pc-windows-gnu\release\build -Filter WebView2Loader.dll |
+            Where-Object { $_.FullName -match '\\out\\x64\\' } | Select-Object -First 1
+          if (-not $loader) { throw "WebView2Loader.dll missing from the webview2-com-sys build" }
+          Copy-Item $loader.FullName $dist
           # The updater never ships third-party tools; users who want yt-dlp or FFmpeg
           # downloads put them (or their paths) in Vidcue's settings themselves.
-          "Vidcue $env:VERSION for Windows (64-bit).`n`nRun vidcue.exe. libmpv-2.dll must sit beside it (included).`nOptional yt-dlp and FFmpeg are not bundled; install them yourself and point Vidcue at them in Settings.`n" |
+          "Vidcue $env:VERSION for Windows (64-bit).`n`nRun vidcue.exe. libmpv-2.dll and WebView2Loader.dll must sit beside it (included).`nOptional yt-dlp and FFmpeg are not bundled; install them yourself and point Vidcue at them in Settings.`n" |
             Set-Content "$dist\README.txt"
           Add-Content $env:GITHUB_ENV "DIST=$dist"
 
