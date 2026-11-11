@@ -85,3 +85,13 @@ built-in pool or desktop's keyless Wikipedia search. Full season/episode metadat
 is fixture/unit verified on both platforms; public Cyberpunk metadata discovery
 is live verified. Playback, device UI, native APK packaging and installed-release
 acceptance remain separate open gates.
+
+### Integration after PR #157 merged
+
+PR #157 merged as `a20b8ad` while this PR was being filed. Merged main once to
+resolve the resulting MoviesPage conflict. Retained its filter/grid/detail
+presentation and this PR's search/loading/error state. Moved the title-loading
+status before the search-versus-browsing branch so it remains visible in either
+mode. No catalog or playback behavior was replaced by the conflict resolution.
+
+Post-merge Android app/instrumentation-source compile and all 12 catalog tests pass.
