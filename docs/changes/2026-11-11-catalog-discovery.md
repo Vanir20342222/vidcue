@@ -61,3 +61,27 @@ is available in the user's region. No all-titles or all-episodes playback claim
 is made. Device/emulator UI acceptance and release installation are separate.
 
 Metadata protocol reference: [Stremio meta object](https://stremio.github.io/stremio-addon-sdk/api/responses/meta.html).
+
+## PR delivery verification
+
+Repository-required delivery checks pass: `cargo fmt --all -- --check`,
+`cargo clippy --workspace --all-targets --locked -- -D warnings`, and
+`cargo test --workspace --locked`. Android app and instrumentation source compile
+also pass with the existing local JDK 17 and SDK:
+`:app:compileDebugKotlin :app:compileDebugAndroidTestKotlin`.
+The strict lint check exposed the superseded Wikipedia search helper as unused
+in production. It and its search-only dependency are now test-only, preserving
+the existing opt-in live test without suppressing warnings or changing tests.
+
+PR #157 independently changes Movies browsing/detail presentation in
+`MoviesPage.kt`. Preserve that presentation alongside this change's top-level
+search, asynchronous detail loading, retry and saved-metadata wiring when
+integrating either merge order. Neither PR depends on the other.
+
+## For the plan and parity tables
+
+M9 movie/series discovery now uses shared public metadata rather than Android's
+built-in pool or desktop's keyless Wikipedia search. Full season/episode metadata
+is fixture/unit verified on both platforms; public Cyberpunk metadata discovery
+is live verified. Playback, device UI, native APK packaging and installed-release
+acceptance remain separate open gates.
