@@ -84,3 +84,20 @@ M9 desktop: colour presets use YUV lookup tables and chroma correction rather
 than a per-frame RGB colour-balance conversion. Offline 8-/10-bit pixel tests
 and local headless 1080p60 throughput checks pass. Final full-window playback,
 live-service and release acceptance remain pending.
+
+## CI prerequisite correction
+
+The first PR test run failed before pixel processing because the default Rust
+test runner installed libmpv development libraries but no `ffmpeg` executable
+(`ENOENT` at process spawn). The Rust gate failed downstream. The test job now
+requests `ffmpeg` through the existing bounded package installer; all regression
+assertions, ignores, timing budgets and playback code remain unchanged. The
+separate media job already installed FFmpeg. This workflow correction requires
+the repository owner's `ci-change` label.
+
+CI-fix validation: hiding FFmpeg from the test process's PATH reproduces the
+same `ENOENT` failure locally; restoring the existing installed FFmpeg makes
+the unchanged focused regression pass. `bash tools/test-ci-install-media.sh`
+passes all mirror/deadline/guard scenarios. YAML parsing confirms the test job
+requests FFmpeg and still runs `cargo test --workspace --locked` unchanged.
+No host packages were installed and no test was skipped or weakened.
