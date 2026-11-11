@@ -1,7 +1,7 @@
 # Movies use the YouTube video player chrome (M9)
 
 - **Date:** 2026-11-11
-- **PR:** pending <!-- add once the PR exists -->
+- **PR:** #152
 - **Milestone:** M9
 - **Platforms:** Android
 - **Status:** implemented
