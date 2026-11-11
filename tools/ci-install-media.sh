@@ -6,9 +6,10 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_OS:-}" != Linux ]] ||
     echo 'This installer is only for Ubuntu 24.04 x64 GitHub Actions runners.' >&2
     exit 2
 fi
-(( $# > 0 )) || { echo 'Specify mpv, ffmpeg and/or lua5.4.' >&2; exit 2; }
+(( $# > 0 )) || { echo 'Specify mpv, ffmpeg, lua5.4, libmpv-dev and/or libxkbcommon-dev.' >&2; exit 2; }
 for package; do
-    case "$package" in mpv|ffmpeg|lua5.4) ;; *) echo 'Unsupported CI media package.' >&2; exit 2;; esac
+    # The -dev packages let the desktop app (embedded libmpv, xkbcommon keyboard) link.
+    case "$package" in mpv|ffmpeg|lua5.4|libmpv-dev|libxkbcommon-dev) ;; *) echo 'Unsupported CI media package.' >&2; exit 2;; esac
 done
 apt_options=(
     -o Acquire::Retries=1
