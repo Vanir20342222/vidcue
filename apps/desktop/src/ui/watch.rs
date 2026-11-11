@@ -453,8 +453,8 @@ fn up_next(app: &App, w: f32) -> El {
     if !p.queue.is_empty() {
         c = c.child(
             text(format!("Your queue · {}", p.queue.len()))
-                .font(ty::CAPTION)
-                .color(t.faint)
+                .font(ty::LABEL)
+                .color(t.muted)
                 .py(6.0),
         );
         for (i, m) in p.queue.iter().enumerate().take(30) {
@@ -468,12 +468,7 @@ fn up_next(app: &App, w: f32) -> El {
         } else {
             "From this list"
         };
-        c = c.child(
-            text(label.to_uppercase())
-                .font(ty::CAPTION)
-                .color(t.faint)
-                .py(6.0),
-        );
+        c = c.child(text(label).font(ty::LABEL).color(t.muted).py(6.0));
         for (i, m) in ctx.iter().enumerate().take(40) {
             c = c.child(next_row(app, m, &format!("ctx-{i}"), false));
         }

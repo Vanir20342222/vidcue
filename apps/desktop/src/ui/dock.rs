@@ -1,6 +1,6 @@
 //! The now-playing dock: frosted, over the bottom of every page except Watch.
 
-use rune::{Color, Cx, El, SurfaceFit, TextStyle, Transition, col, el, icon, row, spacer, text};
+use rune::{Color, Cx, El, SurfaceFit, Transition, col, el, icon, row, spacer, text};
 
 use crate::app::{App, LibraryTab, Route};
 use crate::icons as ic;
@@ -24,8 +24,8 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .label("Open the player")
         .w(aw)
         .h(ah)
-        .radius(10.0)
-        .clip_rounded(10.0)
+        .radius(sz::R_SM)
+        .clip_rounded(sz::R_SM)
         .fill(t.raised)
         .matched(format!("art-{}", now.media.url))
         .cursor(rune::Cursor::Pointer)
@@ -119,11 +119,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
             .gap(8.0)
             .center_y()
             .child(el().size(8.0, 8.0).radius(4.0).fill(t.error))
-            .child(
-                text("LIVE")
-                    .font(TextStyle::new(11.0, 760.0).tracking(0.8))
-                    .color(t.error),
-            )
+            .child(text("Live").font(ty::BADGE).color(t.error))
     } else {
         row()
             .gap(10.0)

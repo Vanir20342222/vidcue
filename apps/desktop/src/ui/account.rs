@@ -8,8 +8,7 @@ use std::path::PathBuf;
 
 use rune::tok::motion;
 use rune::{
-    Color, Cx, El, ScrollSpec, Stagger, TextEdit, TextStyle, Transition, Tx, col, el, icon, row,
-    text,
+    Color, Cx, El, ScrollSpec, Stagger, TextEdit, Transition, Tx, col, el, icon, row, text,
 };
 use serde_json::{Value, json};
 use vidcue_services::auth::BrowserProfile;
@@ -554,7 +553,7 @@ fn browser_card(app: &App, busy: bool) -> El {
                 .px(14.0)
                 .gap(12.0)
                 .center_y()
-                .radius(12.0)
+                .radius(sz::R_MD)
                 .fill(t.raised)
                 .child(icon(&ic::GLOBE, 18.0).color(t.muted))
                 .child(
@@ -623,7 +622,7 @@ fn header_card(app: &App, busy: bool) -> El {
         .py(10.0)
         .px(14.0)
         .grow(1.0)
-        .radius(10.0)
+        .radius(sz::R_MD)
         .fill(t.raised)
         .border(1.0, t.border);
     method(t, "m-header", &ic::KEY, "Paste a Cookie header", "Copy the Cookie request header of a signed-in youtube.com request from your browser's developer tools. The field hides its content and is cleared once used.").child(
@@ -663,7 +662,7 @@ fn session_card(app: &App, busy: bool) -> El {
         ))
         .child(
             text(idx.to_string())
-                .font(TextStyle::new(16.0, 650.0).features("'tnum' 1"))
+                .font(ty::H3.features("'tnum' 1"))
                 .color(t.text)
                 .w(24.0)
                 .align(rune::Align::Center),
@@ -726,7 +725,7 @@ fn session_card(app: &App, busy: bool) -> El {
         )
         .child(actions)
         .child(
-            col().gap(4.0).padding(14.0).radius(12.0).fill(t.raised)
+            col().gap(4.0).padding(14.0).radius(sz::R_MD).fill(t.raised)
                 .child(text("Where your session is kept").font(ty::SMALL_STRONG).color(t.text))
                 .child(text(format!("The session is saved in a private file, account.json, inside {root} (a folder only your user can open). It is not put in the system keyring, and the signed-in cookies are only ever sent to YouTube.")).font(ty::SMALL).color(t.muted).wrap()),
         )

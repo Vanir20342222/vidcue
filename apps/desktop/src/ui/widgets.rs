@@ -4,8 +4,8 @@
 
 use rune::tok::motion;
 use rune::{
-    Align, Color, Cycle, Drag, El, Icon, Phase, Side, TextStyle, Transition, Tx, col, el, icon,
-    row, spacer, text,
+    Align, Color, Cycle, Drag, El, Icon, Phase, Side, Transition, Tx, col, el, icon, row, spacer,
+    text,
 };
 use vidcue_core::{Media, MediaKind};
 
@@ -119,11 +119,13 @@ pub fn chip(t: &Theme, label: &str, selected: bool) -> El {
 }
 
 pub fn badge(text_: &str, bg: Color, fg: Color) -> El {
-    row().h(20.0).px(7.0).center_y().radius(5.0).fill(bg).child(
-        text(text_)
-            .font(TextStyle::new(11.0, 650.0).features("'tnum' 1"))
-            .color(fg),
-    )
+    row()
+        .h(20.0)
+        .px(7.0)
+        .center_y()
+        .radius(sz::R_XS)
+        .fill(bg)
+        .child(text(text_).font(ty::BADGE).color(fg))
 }
 
 /// A switch with a knob that springs across.
@@ -397,7 +399,7 @@ pub fn count(n: u64) -> String {
 
 pub fn duration_text(m: &Media) -> Option<String> {
     if m.live {
-        return Some("LIVE".into());
+        return Some("Live".into());
     }
     m.duration.map(|d| crate::player::mpv::clock(d as f64))
 }
@@ -722,8 +724,8 @@ pub fn media_row(app: &App, m: &Media, key: &str, trailing: Option<El>) -> El {
     let mut art = el()
         .w(w)
         .h(h)
-        .radius(8.0)
-        .clip_rounded(8.0)
+        .radius(sz::R_SM)
+        .clip_rounded(sz::R_SM)
         .fill(t.raised)
         .center();
     if let Some(img) = app
@@ -764,7 +766,7 @@ pub fn media_row(app: &App, m: &Media, key: &str, trailing: Option<El>) -> El {
         .py(8.0)
         .gap(14.0)
         .center_y()
-        .radius(12.0)
+        .radius(sz::R_MD)
         .hover(t.hover)
         .hover_group()
         .fill(if playing {
@@ -803,7 +805,7 @@ pub fn menu_layer(app: &App) -> Option<El> {
         .w(260.0)
         .padding(6.0)
         .gap(1.0)
-        .radius(14.0)
+        .radius(sz::R_CARD)
         .fill(t.overlay.alpha(0.92))
         .backdrop_blur(24.0)
         .border(1.0, t.border)
@@ -818,7 +820,7 @@ pub fn menu_layer(app: &App) -> Option<El> {
             .px(10.0)
             .gap(12.0)
             .center_y()
-            .radius(8.0)
+            .radius(sz::R_SM)
             .hover(t.hover)
             .focus_highlight(t.hover)
             .role("menuitem")
@@ -931,7 +933,7 @@ pub fn field(
         .color(t.text)
         .py(10.0)
         .px(14.0)
-        .radius(10.0)
+        .radius(sz::R_SM)
         .fill(t.raised)
         .border(1.0, t.border)
 }
@@ -947,7 +949,7 @@ pub fn value_row(_t: &Theme, glyph: &'static Icon, label: &str, value: &str) -> 
         .px(12.0)
         .gap(12.0)
         .center_y()
-        .radius(10.0)
+        .radius(sz::R_SM)
         .hover(Color::WHITE.alpha(0.08))
         .cursor(rune::Cursor::Pointer)
         .child(icon(glyph, 17.0).color(Color::WHITE.alpha(0.85)))

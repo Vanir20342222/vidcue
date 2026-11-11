@@ -161,17 +161,34 @@ pub mod ty {
     pub const BODY_STRONG: TextStyle = TextStyle::new(14.0, 560.0).lh(20.0);
     pub const SMALL: TextStyle = TextStyle::new(12.5, 450.0).lh(17.0);
     pub const SMALL_STRONG: TextStyle = TextStyle::new(12.5, 600.0).lh(17.0);
-    pub const CAPTION: TextStyle = TextStyle::new(11.0, 600.0).lh(14.0).tracking(0.5);
+    /// Section and group labels: sentence case, never tracked-out capitals.
+    pub const LABEL: TextStyle = TextStyle::new(13.0, 620.0).lh(17.0);
+    /// Short tags (Live, Alpha, New, Video): one size everywhere, tabular for counts.
+    pub const BADGE: TextStyle = TextStyle::new(11.0, 660.0).lh(14.0).features("'tnum' 1");
+    /// The wordmark beside the logo.
+    pub const BRAND: TextStyle = TextStyle::new(19.0, 760.0).lh(24.0).tracking(-0.4);
     pub const NUM: TextStyle = TextStyle::new(12.5, 520.0).lh(16.0).features("'tnum' 1");
     pub const NUM_BIG: TextStyle = TextStyle::new(30.0, 700.0).lh(34.0).features("'tnum' 1");
     pub const BUTTON: TextStyle = TextStyle::new(13.5, 600.0).lh(18.0);
 }
 
 /// Corner radii and spacing used across screens.
+///
+/// Radii follow the size of the thing they round, so nesting reads correctly: a 4 px tag sits
+/// in an 8 px menu item inside a 14 px popover; rows round at 12, panels at 18. Hairline
+/// tracks (progress, seek) and round controls use half their height and are off the scale.
 pub mod sz {
+    /// Tags, badges, keycaps.
+    pub const R_XS: f32 = 4.0;
+    /// Small artwork, text fields, items inside menus and popovers, icon tiles.
+    pub const R_SM: f32 = 8.0;
+    /// List rows, navigation rows and other full-width hover targets.
+    pub const R_MD: f32 = 12.0;
+    /// Cards, card artwork, and popover menus.
     pub const R_CARD: f32 = 14.0;
-    pub const R_PILL: f32 = 999.0;
+    /// Panels, dialogs, heroes and the player.
     pub const R_PANEL: f32 = 18.0;
+    pub const R_PILL: f32 = 999.0;
     pub const SIDEBAR: f32 = 232.0;
     pub const SIDEBAR_COMPACT: f32 = 76.0;
     pub const TOPBAR: f32 = 64.0;
@@ -203,5 +220,29 @@ mod tests {
         assert!(lightness(t.raised) > lightness(t.bg));
         let l = Theme::from_palette(&vidcue_core::theme::builtin("flexoki-light").unwrap());
         assert!(lightness(l.raised) < lightness(l.surface) + 0.001);
+    }
+
+    /// Screens take type from `ty` and never set their own size, weight or tracking, and
+    /// they don't capitalise labels in code. Live-sized captions over video are the only
+    /// exception, because their size follows the picture.
+    #[test]
+    fn screens_use_the_type_scale() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ui");
+        let mut offenders = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            for (i, line) in src.lines().enumerate() {
+                let adhoc = line.contains("TextStyle::new(") && !line.contains("h / 26.0");
+                let tracked = line.contains(".tracking(");
+                let shouted =
+                    line.contains("label.to_uppercase()") || line.contains("title.to_uppercase()");
+                if adhoc || tracked || shouted {
+                    offenders.push(format!("{name}:{}: {}", i + 1, line.trim()));
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "{offenders:#?}");
     }
 }

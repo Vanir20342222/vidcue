@@ -2,9 +2,7 @@
 //! "play as audio". Four styles (classic, vinyl, VU, orbit, each with a full-bleed variant)
 //! over a blurred-artwork backdrop, with the same transport under all of them.
 
-use rune::{
-    Color, Cx, Drag, El, Phase, SurfaceFit, TextStyle, Tx, col, el, icon, row, spacer, text,
-};
+use rune::{Color, Cx, Drag, El, Phase, SurfaceFit, Tx, col, el, icon, row, spacer, text};
 
 use crate::app::App;
 use crate::icons as ic;
@@ -229,11 +227,7 @@ fn info_block(app: &App, now: &Now, w: f32, full: bool) -> El {
                             .radius(4.0),
                     ),
                 )
-                .child(
-                    text("LIVE")
-                        .font(TextStyle::new(12.0, 760.0).tracking(0.8))
-                        .color(white),
-                ),
+                .child(text("Live").font(ty::BADGE).color(white)),
         );
     }
     c = c.child(head);

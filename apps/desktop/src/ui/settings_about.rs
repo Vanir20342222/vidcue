@@ -1,6 +1,6 @@
 //! Settings → Alpha and About.
 
-use rune::{Color, El, TextStyle, Transition, col, el, icon, row, text};
+use rune::{Color, El, Transition, col, el, icon, row, text};
 
 use super::{field_row, group, stacked};
 use crate::app::{App, ToastKind};
@@ -165,11 +165,7 @@ pub(super) fn view(app: &App) -> El {
                 .child(
                     col()
                         .gap(2.0)
-                        .child(
-                            text("Vidcue")
-                                .font(TextStyle::new(30.0, 760.0).tracking(-0.5))
-                                .color(Color::WHITE),
-                        )
+                        .child(text("Vidcue").font(ty::NUM_BIG).color(Color::WHITE))
                         .child(
                             text(format!("Version {VERSION}"))
                                 .font(ty::BODY)

@@ -2,7 +2,7 @@
 //! flies between rows (shared-element motion) and the bar collapses to icons on a spring.
 
 use rune::tok::motion;
-use rune::{Color, Cx, El, Icon, TextStyle, col, el, icon, row, text};
+use rune::{Color, Cx, El, Icon, col, el, icon, row, text};
 
 use crate::app::{App, FeedRoute, LibraryTab, Route, SettingsSection, Tab};
 use crate::icons as ic;
@@ -113,7 +113,7 @@ fn nav_row(app: &App, item: &Item, selected: bool, compact: bool, badge: Option<
         .px(if compact { 0.0 } else { 14.0 })
         .gap(14.0)
         .center_y()
-        .radius(12.0)
+        .radius(sz::R_MD)
         .fill(if selected {
             t.accent_soft
         } else {
@@ -141,11 +141,7 @@ fn nav_row(app: &App, item: &Item, selected: bool, compact: bool, badge: Option<
                     .center()
                     .radius(10.0)
                     .fill(t.accent)
-                    .child(
-                        text(b)
-                            .font(TextStyle::new(11.0, 700.0).features("'tnum' 1"))
-                            .color(t.on_accent),
-                    ),
+                    .child(text(b).font(ty::BADGE).color(t.on_accent)),
             );
         }
         if item.id == "movies" {
@@ -155,20 +151,9 @@ fn nav_row(app: &App, item: &Item, selected: bool, compact: bool, badge: Option<
     r
 }
 
-/// A small "ALPHA" tag: an outlined pill in the warning colour.
+/// A small "Alpha" tag in the warning colour.
 pub fn alpha_badge_for(t: &crate::theme::Theme) -> El {
-    row()
-        .h(18.0)
-        .px(6.0)
-        .center()
-        .radius(5.0)
-        .fill(t.warning.alpha(0.14))
-        .border(1.0, t.warning.alpha(0.45))
-        .child(
-            text("ALPHA")
-                .font(TextStyle::new(9.5, 760.0).tracking(0.9))
-                .color(t.warning),
-        )
+    crate::ui::widgets::badge("Alpha", t.warning.alpha(0.16), t.warning)
 }
 
 /// The app mark, as on Android: an amber-to-pink arc around a play triangle.
@@ -199,11 +184,7 @@ pub fn view(app: &App, _cx: &mut Cx<App>, window_w: f32) -> El {
     if compact {
         logo = logo.justify_center();
     } else {
-        logo = logo.child(
-            text("vidcue")
-                .font(TextStyle::new(19.0, 760.0).tracking(-0.4))
-                .color(t.text),
-        );
+        logo = logo.child(text("vidcue").font(ty::BRAND).color(t.text));
     }
 
     let mut nav = col().gap(2.0).px(10.0).role("tablist").focus_group();
@@ -214,9 +195,9 @@ pub fn view(app: &App, _cx: &mut Cx<App>, window_w: f32) -> El {
     let mut lib = col().gap(2.0).px(10.0).pt(18.0);
     if !compact {
         lib = lib.child(
-            text("LIBRARY")
-                .font(ty::CAPTION)
-                .color(t.faint)
+            text("Library")
+                .font(ty::LABEL)
+                .color(t.muted)
                 .px(14.0)
                 .pb(6.0),
         );

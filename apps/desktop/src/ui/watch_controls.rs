@@ -10,7 +10,7 @@ use crate::icons as ic;
 use crate::images::{Size, thumb_url};
 use crate::player::mpv::{BAR_H, BAR_WATCH};
 use crate::player::session::{self, PlayerMenu, Sleep};
-use crate::theme::ty;
+use crate::theme::{sz, ty};
 use crate::ui::widgets::overlay_button;
 
 pub const STAGE_RADIUS: f32 = 18.0;
@@ -310,11 +310,7 @@ fn controls(app: &App, cx: &mut Cx<App>, w: f32, h: f32) -> El {
                         .radius(4.0),
                 ),
             )
-            .child(
-                text("LIVE")
-                    .font(TextStyle::new(12.0, 760.0).tracking(0.8))
-                    .color(Color::WHITE),
-            )
+            .child(text("Live").font(ty::BADGE).color(Color::WHITE))
     } else {
         row().child(
             text("00:00:00 / 00:00:00")
@@ -589,7 +585,7 @@ fn settings_panel(app: &App, _cx: &mut Cx<App>, menu: PlayerMenu, h: f32) -> El 
         .max_h((h - 90.0).max(160.0))
         .padding(6.0)
         .gap(1.0)
-        .radius(16.0)
+        .radius(sz::R_CARD)
         .fill(Color::from_oklab([0.16, 0.0, 0.0, 0.72]))
         .backdrop_blur(28.0)
         .border(1.0, Color::WHITE.alpha(0.12))
@@ -606,7 +602,7 @@ fn settings_panel(app: &App, _cx: &mut Cx<App>, menu: PlayerMenu, h: f32) -> El 
             .px(12.0)
             .gap(10.0)
             .center_y()
-            .radius(10.0)
+            .radius(sz::R_SM)
             .hover(Color::WHITE.alpha(0.1))
             .role("menuitemradio")
             .checked(checked)
@@ -680,14 +676,14 @@ fn settings_panel(app: &App, _cx: &mut Cx<App>, menu: PlayerMenu, h: f32) -> El 
                 .child(row_(
                     &ic::SLIDERS,
                     "Equalizer",
-                    app.config.equalizer.clone(),
+                    nice(&app.config.equalizer),
                     PlayerMenu::Equalizer,
                 ));
             if now.is_some_and(|n| !n.audio) {
                 list = list.child(row_(
                     &ic::PALETTE,
                     "Colour grade",
-                    app.config.color_grade.clone(),
+                    nice(&app.config.color_grade),
                     PlayerMenu::Grade,
                 ));
             }

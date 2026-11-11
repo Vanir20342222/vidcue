@@ -465,8 +465,8 @@ fn transfer_row(app: &App, j: &Job) -> El {
     let mut art = el()
         .w(if j.options.audio { 56.0 } else { 100.0 })
         .h(56.0)
-        .radius(10.0)
-        .clip_rounded(10.0)
+        .radius(sz::R_MD)
+        .clip_rounded(sz::R_MD)
         .fill(t.raised)
         .center();
     if let Some(img) = app.images.get(&thumb_url(&j.media, size), size) {
@@ -513,7 +513,7 @@ fn transfer_row(app: &App, j: &Job) -> El {
                         .shrink(),
                 )
                 .child(widgets::badge(
-                    if j.options.audio { "AUDIO" } else { "VIDEO" },
+                    if j.options.audio { "Audio" } else { "Video" },
                     t.raised,
                     t.muted,
                 )),
@@ -560,7 +560,7 @@ fn transfer_row(app: &App, j: &Job) -> El {
         .padding(12.0)
         .gap(14.0)
         .center_y()
-        .radius(16.0)
+        .radius(sz::R_CARD)
         .fill(t.surface)
         .border(
             1.0,
@@ -571,7 +571,8 @@ fn transfer_row(app: &App, j: &Job) -> El {
             },
         )
         .transition(Transition::offset(0.0, 10.0).combined(Transition::opacity()))
-        .child(art)
+        // Square audio covers sit in the same slot as video thumbnails so titles line up.
+        .child(row().w(100.0).h(56.0).center_y().child(art))
         .child(words)
         .child(actions)
 }
@@ -626,11 +627,11 @@ fn library(app: &App, cx: &mut Cx<App>) -> El {
             el().pin(None, None, Some(8.0), Some(8.0))
                 .child(widgets::badge(
                     if missing {
-                        "MISSING"
+                        "Missing"
                     } else if audio {
-                        "AUDIO"
+                        "Audio"
                     } else {
-                        "OFFLINE"
+                        "Offline"
                     },
                     if missing {
                         t.error

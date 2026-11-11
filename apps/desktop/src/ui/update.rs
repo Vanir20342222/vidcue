@@ -144,7 +144,7 @@ pub fn status(app: &App) -> El {
                     row()
                         .gap(10.0)
                         .center_y()
-                        .child(badge("NEW", t.accent, t.on_accent))
+                        .child(badge("New", t.accent, t.on_accent))
                         .child(
                             text(format!("{} is available", release.tag))
                                 .font(ty::BODY_STRONG)
@@ -203,7 +203,7 @@ pub fn prompt(app: &App) -> El {
             row()
                 .gap(10.0)
                 .center_y()
-                .child(badge("NEW", t.accent, t.on_accent))
+                .child(badge("New", t.accent, t.on_accent))
                 .child(text("Update available").font(ty::H3).color(t.text)),
         )
         .child(
