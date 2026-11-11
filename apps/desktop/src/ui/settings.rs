@@ -34,21 +34,6 @@ pub enum Probe {
     Failed(String),
 }
 
-/// Result of "Check for updates".
-#[derive(Clone, Debug, PartialEq, Default)]
-pub enum UpdateState {
-    #[default]
-    Idle,
-    Checking,
-    UpToDate,
-    Available {
-        tag: String,
-        url: String,
-        notes: Vec<String>,
-    },
-    Failed(String),
-}
-
 #[derive(Default)]
 pub struct SettingsUi {
     pub import: TextEdit,
@@ -66,7 +51,6 @@ pub struct SettingsUi {
     /// An equalizer curve being edited; `None` shows the selected preset as it is.
     pub eq_draft: Option<[f64; 10]>,
     pub probe: Probe,
-    pub update: UpdateState,
 }
 
 pub fn enter(app: &mut App) {

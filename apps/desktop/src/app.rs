@@ -151,6 +151,8 @@ pub struct Prefs {
     pub grid_dense: bool,
     /// Desktop cards show views and upload dates; applied once so the user can turn them off.
     pub card_details_applied: bool,
+    /// A release tag the user chose to skip: the startup offer stays quiet for it.
+    pub skipped_update: Option<String>,
 }
 
 impl Default for Prefs {
@@ -172,6 +174,7 @@ impl Default for Prefs {
             show_lyrics: false,
             grid_dense: false,
             card_details_applied: false,
+            skipped_update: None,
         }
     }
 }
@@ -290,6 +293,7 @@ pub struct App {
     pub toast_seq: u64,
     pub menu: Option<MenuState>,
     pub onboarding: Option<usize>,
+    pub update: crate::updater::Updater,
     pub clock: f64,
     pub waker: Option<Waker>,
     pub saved_urls: std::collections::HashSet<String>,
@@ -340,6 +344,7 @@ impl App {
             toast_seq: 0,
             menu: None,
             onboarding,
+            update: crate::updater::Updater::new(headless),
             clock: 0.0,
             waker: None,
             saved_urls: Default::default(),
@@ -751,6 +756,7 @@ fn start(app: &mut App) {
                     });
                 }
                 crate::downloads::resume(app);
+                crate::updater::startup(app);
             }
             Err(e) => app.toast(ToastKind::Error, format!("Settings could not be read: {e}")),
         }
@@ -779,6 +785,7 @@ pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     changed |= crate::player::session::tick(app, tx);
     changed |= crate::downloads::tick(app);
     changed |= crate::player::preview::tick(app);
+    changed |= crate::updater::tick(app, tx);
     app.bursts.retain(|_, t0| clock - *t0 < 2.0);
     let before = app.toasts.len();
     app.toasts.retain(|t| t.until > clock);

@@ -78,6 +78,30 @@ pub const SCENES: &[Scene] = &[
         a.prefs.alpha_notice_accepted = true;
         a.route = Route::Movies;
     }),
+    ("update-offer", |a| {
+        home(a);
+        a.update.method = crate::updater::Method::WindowsInstaller;
+        a.update.state = crate::updater::State::Available(sample_release());
+        a.update.prompt = true;
+    }),
+    ("update-downloading", |a| {
+        home(a);
+        a.update.method = crate::updater::Method::WindowsInstaller;
+        a.update.state = crate::updater::State::Installing(sample_release());
+        a.update
+            .progress
+            .bytes
+            .store(23_400_000, std::sync::atomic::Ordering::Relaxed);
+        a.update.prompt = true;
+    }),
+    ("settings-update-building", |a| {
+        a.update.method = crate::updater::Method::Source {
+            launcher: "/home/user/.local/bin/vidcue".into(),
+        };
+        a.update.state = crate::updater::State::Installing(sample_release());
+        *a.update.progress.line.lock().unwrap() = "Compiling vidcue-desktop v0.2.1".into();
+        a.route = Route::Settings(SettingsSection::About);
+    }),
     ("onboarding", |a| a.onboarding = Some(0)),
     ("onboarding-theme", |a| a.onboarding = Some(1)),
     ("toast", |a| {
@@ -88,6 +112,25 @@ pub const SCENES: &[Scene] = &[
         );
     }),
 ];
+
+fn sample_release() -> vidcue_services::update::Release {
+    vidcue_services::update::Release {
+        tag: "desktop-0.2.1".into(),
+        version: "0.2.1".into(),
+        name: "Vidcue 0.2.1".into(),
+        url: "https://example.invalid/releases/desktop-0.2.1".into(),
+        notes: vec![
+            "Update from inside the app on Windows and Linux".into(),
+            "Faster search".into(),
+        ],
+        assets: vec![vidcue_services::update::Asset {
+            name: "VidcueSetup-0.2.1.exe".into(),
+            url: "https://example.invalid/VidcueSetup-0.2.1.exe".into(),
+            size: 60_611_529,
+            sha256: None,
+        }],
+    }
+}
 
 fn theme(a: &mut App, name: &str) {
     a.config.theme = name.into();

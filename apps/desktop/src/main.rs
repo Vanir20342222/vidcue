@@ -23,6 +23,7 @@ mod themes;
 mod ui;
 #[cfg(test)]
 mod ui_tests;
+mod updater;
 
 use rune::AppSpec;
 

@@ -11,6 +11,7 @@ pub mod onboarding;
 pub mod settings;
 pub mod sidebar;
 pub mod topbar;
+pub mod update;
 pub mod watch;
 pub mod watch_controls;
 pub mod widgets;
@@ -85,6 +86,8 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     }
     if let Some(step) = app.onboarding {
         root = root.child(onboarding::view(app, cx, step));
+    } else if app.update.prompt {
+        root = root.child(update::prompt(app));
     }
     root
 }

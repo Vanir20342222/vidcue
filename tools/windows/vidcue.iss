@@ -46,5 +46,14 @@ Name: "{autodesktop}\Vidcue"; Filename: "{app}\vidcue.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\vidcue.exe"; Description: "{cm:LaunchProgram,Vidcue}"; Flags: nowait postinstall skipifsilent
+; The in-app updater runs this installer with /SILENT /RELAUNCH=1 after closing Vidcue
+; (vidcue_services::update::WINDOWS_INSTALLER_ARGS): open the new version afterwards.
+Filename: "{app}\vidcue.exe"; Flags: nowait; Check: RelaunchAfterUpdate
 
 ; Settings, queues, history and downloads stay on uninstall.
+
+[Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:relaunch|0}') = '1');
+end;
