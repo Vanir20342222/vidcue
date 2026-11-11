@@ -61,6 +61,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - name: Install the desktop app's link libraries
+        timeout-minutes: 10
+        run: bash tools/ci-install-media.sh libmpv-dev libxkbcommon-dev
       - run: cargo test --workspace --locked
       - name: Verify mobile direct-player request budgets and fallback offline
         env:
@@ -124,6 +127,9 @@ jobs:
         with:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install the desktop app's link libraries
+        timeout-minutes: 10
+        run: bash tools/ci-install-media.sh libmpv-dev libxkbcommon-dev
       - run: cargo build --release --locked
 
   # The single required check for branch rulesets and the merge queue (see android.yml).
