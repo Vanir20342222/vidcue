@@ -1,7 +1,7 @@
 # CI media setup survives a single failing Ubuntu mirror (M9)
 
 - **Date:** 2026-11-11
-- **PR:** #<number> <!-- add once the PR exists -->
+- **PR:** #149
 - **Milestone:** M9
 - **Platforms:** CI only (GitHub-hosted Ubuntu runners)
 - **Status:** offline regression suite passes; live CI proof on this PR
