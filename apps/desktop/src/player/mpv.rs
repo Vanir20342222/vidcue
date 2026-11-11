@@ -984,6 +984,52 @@ fn render_loop(inner: &Arc<Inner>) {
 mod tests {
     use super::*;
 
+    /// Opt-in throughput regression: real libmpv -> software renderer -> Rune surface.
+    /// Supply a local 8s 1080p60 clip; no GUI, network, accounts or real audio output.
+    /// VIDCUE_BENCH_VF can replay an old filter to confirm the assertion catches the lag.
+    #[test]
+    #[ignore = "requires VIDCUE_BENCH_CLIP (8s 1080p60) and a performance-capable host"]
+    fn graded_1080p60_keeps_up() {
+        let clip = std::env::var("VIDCUE_BENCH_CLIP").expect("local 8s 1080p60 clip");
+        let grade = std::env::var("VIDCUE_BENCH_GRADE").unwrap_or("cinematic".into());
+        let filter = std::env::var("VIDCUE_BENCH_VF")
+            .ok()
+            .or_else(|| super::super::session::grade_filter(&grade));
+        let surface = NativeSurface::new();
+        let mpv = Mpv::new(surface).expect("libmpv starts");
+        assert!(mpv.set("ao", "null"));
+        mpv.set_target(1920.0, 1080.0);
+        assert!(
+            mpv.set("vf", filter.as_deref().unwrap_or("")),
+            "filter accepted"
+        );
+        mpv.load(&Load {
+            url: clip,
+            ..Default::default()
+        });
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(15) && !mpv.snapshot().eof {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let elapsed = start.elapsed().as_secs_f64();
+        let snap = mpv.snapshot();
+        let frames = mpv.frames();
+        eprintln!(
+            "grade={grade} frames={frames}/480 wall={elapsed:.2}s hwdec={:?}",
+            snap.hwdec
+        );
+        assert!(snap.error.is_none(), "{snap:?}");
+        assert!(snap.eof, "playback reached EOF");
+        assert!(
+            snap.duration.is_some_and(|d| (d - 8.0).abs() < 0.1),
+            "8s fixture required"
+        );
+        assert!(
+            elapsed < 10.0 && frames >= 432,
+            "1080p60 must deliver >=90% of frames in real time: {frames} in {elapsed:.2}s"
+        );
+    }
+
     #[test]
     fn render_size_keeps_aspect_never_upscales_and_aligns_rows() {
         assert_eq!(render_size(1920, 1080, 4000, 4000), (1920, 1080));

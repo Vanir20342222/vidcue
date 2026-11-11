@@ -426,22 +426,53 @@ impl Default for Player {
     }
 }
 
-/// An mpv video filter for a colour-grade preset (the sw renderer applies no VO equalizer).
+/// An mpv video filter for a colour-grade preset.
+///
+/// The sw renderer applies no VO equalizer, so the grade runs on the CPU for every decoded
+/// frame and must stay cheap. It never leaves YUV: luma goes through one lookup table with the
+/// `eq` filter's brightness, contrast and gamma curve, and chroma through a lookup table for
+/// saturation or, with warmth, `colorcorrect`. An RGB filter such as `colorbalance` makes
+/// FFmpeg convert every frame to RGB and back; that held 1080p60 to about 9 frames a second
+/// on a 4-core laptop.
 pub fn grade_filter(name: &str) -> Option<String> {
     let g = vidcue_services::color_grade::preset(name);
     if g == vidcue_services::color_grade::Grade::default() {
         return None;
     }
-    let mut chain = vec![format!(
-        "eq=brightness={:.3}:contrast={:.3}:saturation={:.3}:gamma={:.3}",
-        g.brightness / 100.0 * 0.25,
-        1.0 + g.contrast / 100.0,
-        1.0 + g.saturation / 100.0,
-        1.0 + g.gamma / 100.0
-    )];
+    let brightness = g.brightness / 100.0 * 0.25;
+    let contrast = 1.0 + g.contrast / 100.0;
+    let gamma = 1.0 + g.gamma / 100.0;
+    let saturation = 1.0 + g.saturation / 100.0;
+    // `eq`'s luma curve: contrast about mid-grey, brightness, then gamma.
+    // FFmpeg LUT maxval is the nominal limited-range ceiling (235 for Y, 240 for
+    // chroma), scaled by bit depth. Recover the full code range for the curve.
+    let luma = (brightness != 0.0 || contrast != 1.0 || gamma != 1.0).then(|| {
+        format!(
+            "y=clip((maxval/235*256)*pow(clip({contrast:.3}*(val/(maxval/235*255)-0.5)+0.5+{brightness:.3}\\,0\\,1)\\,1/{gamma:.3})\\,0\\,maxval/235*255)"
+        )
+    });
+    let mut chain = Vec::new();
     if g.temperature != 0.0 {
-        let t = (g.temperature / 100.0).clamp(-0.3, 0.3);
-        chain.push(format!("colorbalance=rm={:.3}:bm={:.3}", t, -t));
+        chain.extend(luma.map(|y| format!("lutyuv={y}")));
+        // Warmth as the Android player applies it: red gain 1 + k, blue gain 1 - k. On a grey
+        // pixel of luma Y that moves Cr by 0.48·k·Y and Cb by -0.54·k·Y (BT.709, limited
+        // range), which is `colorcorrect`'s highlight shift.
+        let k = 0.004 * g.temperature.clamp(-30.0, 30.0);
+        chain.push(format!(
+            "colorcorrect=rh={:.4}:bh={:.4}:saturation={saturation:.3}",
+            0.48 * k,
+            -0.54 * k
+        ));
+    } else {
+        let mut planes: Vec<String> = luma.into_iter().collect();
+        if saturation != 1.0 {
+            for plane in ["u", "v"] {
+                planes.push(format!(
+                    "{plane}=clip((val-maxval/240*128)*{saturation:.3}+maxval/240*128\\,0\\,maxval/240*255)"
+                ));
+            }
+        }
+        chain.push(format!("lutyuv={}", planes.join(":")));
     }
     Some(format!("@vidcue-grade:lavfi=[{}]", chain.join(",")))
 }
@@ -1225,8 +1256,80 @@ mod tests {
     fn grade_presets_become_labelled_filters_and_off_sends_none() {
         assert!(grade_filter("off").is_none());
         let warm = grade_filter("warm").unwrap();
-        assert!(warm.starts_with("@vidcue-grade:lavfi=[eq="), "{warm}");
-        assert!(warm.contains("colorbalance"), "{warm}");
+        assert!(
+            warm.starts_with("@vidcue-grade:lavfi=[colorcorrect="),
+            "{warm}"
+        );
+        assert!(warm.contains("rh=0.0192:bh=-0.0216"), "{warm}");
+        let cool = grade_filter("cool").unwrap();
+        assert!(cool.contains("rh=-0.0192:bh=0.0216"), "{cool}");
+        for name in ["warm", "cool", "vivid", "cinematic"] {
+            let filter = grade_filter(name).unwrap();
+            assert!(!filter.contains("colorbalance"), "{filter}");
+            assert!(!filter.contains("eq="), "{filter}");
+        }
+        assert!(grade_filter("unknown").is_none());
+    }
+
+    #[test]
+    fn grade_filters_process_yuv_at_8_and_10_bits() {
+        use std::process::Command;
+        for (format, depth) in [("yuv420p", 8), ("yuv420p10le", 10)] {
+            for name in ["warm", "cool", "vivid", "cinematic"] {
+                let filter = grade_filter(name).unwrap();
+                let graph = filter
+                    .strip_prefix("@vidcue-grade:lavfi=[")
+                    .unwrap()
+                    .strip_suffix(']')
+                    .unwrap();
+                let output = Command::new("ffmpeg")
+                    .args([
+                        "-v",
+                        "error",
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        &format!("nullsrc=size=64x64:rate=1:duration=1,format={format},geq=lum=126*{0}:cb=128*{0}:cr=128*{0}", 1 << (depth - 8)),
+                        "-vf",
+                        graph,
+                        "-frames:v",
+                        "1",
+                        "-pix_fmt",
+                        format,
+                        "-f",
+                        "rawvideo",
+                        "pipe:1",
+                    ])
+                    .output()
+                    .expect("ffmpeg required for offline media checks");
+                assert!(
+                    output.status.success(),
+                    "{name}/{format}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                let scale = 1 << (depth - 8);
+                let sample = |index: usize| -> u16 {
+                    if depth == 8 {
+                        output.stdout[index] as u16
+                    } else {
+                        u16::from_le_bytes([output.stdout[index * 2], output.stdout[index * 2 + 1]])
+                    }
+                };
+                let (y, u, v) = (sample(0), sample(4096), sample(5120));
+                assert!(
+                    (90 * scale..160 * scale).contains(&y),
+                    "{name}/{format}: y={y}"
+                );
+                let neutral = 128 * scale;
+                if name == "warm" || name == "cinematic" {
+                    assert!(u < neutral && v >= neutral, "{name}/{format}: u={u} v={v}");
+                } else if name == "cool" {
+                    assert!(u > neutral && v < neutral, "{name}/{format}: u={u} v={v}");
+                } else {
+                    assert_eq!((u, v), (neutral, neutral), "{name}/{format}");
+                }
+            }
+        }
     }
 
     #[test]
