@@ -6681,7 +6681,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vidcue-cinecat"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "clap",
@@ -6695,7 +6695,7 @@ dependencies = [
 
 [[package]]
 name = "vidcue-core"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "serde",
@@ -6707,7 +6707,7 @@ dependencies = [
 
 [[package]]
 name = "vidcue-desktop"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "png 0.18.1",
@@ -6733,7 +6733,7 @@ dependencies = [
 
 [[package]]
 name = "vidcue-mobile"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "image",
@@ -6753,7 +6753,7 @@ dependencies = [
 
 [[package]]
 name = "vidcue-providers"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "directories",
@@ -6778,7 +6778,7 @@ dependencies = [
 
 [[package]]
 name = "vidcue-services"
-version = "0.2.0-alpha.16"
+version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
  "fs2",
