@@ -157,8 +157,8 @@ impl Engine {
         width: u32,
         height: u32,
     ) -> Result<image::DynamicImage> {
-        let width = width.clamp(32, 768);
-        let height = height.clamp(32, 768);
+        let width = width.clamp(32, MAX_THUMBNAIL_PIXELS);
+        let height = height.clamp(32, MAX_THUMBNAIL_PIXELS);
         let cache = self.images.lock().expect("images").clone();
         let url = vidcue_providers::images::thumbnail_url(media, width, height);
         cache.load_sized(&url, width, height).await
@@ -1333,6 +1333,9 @@ fn video_qualities(data: &Value) -> Vec<u16> {
     heights.into_iter().rev().collect()
 }
 
+/// Largest square decode box for artwork. Feed covers ask for at most 768 px; the Movies
+/// hero asks for more so a full-width poster or backdrop is not upscaled from a small decode.
+pub const MAX_THUMBNAIL_PIXELS: u32 = 1280;
 /// Highest rendition the "auto" quality may adapt between.
 const AUTO_MAX_HEIGHT: u64 = 1080;
 
@@ -2328,7 +2331,7 @@ mod android {
                 let raw: String = env.get_string(&media)?.into();
                 ensure!(raw.len() <= 256 * 1024, "Thumbnail request exceeds limit");
                 let media: Media = serde_json::from_str(&raw)?;
-                let width = pixels.clamp(32, 768) as u32;
+                let width = pixels.clamp(32, MAX_THUMBNAIL_PIXELS as i32) as u32;
                 let image = runtime()
                     .block_on(
                         ENGINE

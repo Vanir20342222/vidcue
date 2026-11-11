@@ -71,8 +71,10 @@ internal data class MovieTitle(
     /** Who made it, as the licence asks to credit them. */
     val credit: String,
     val license: String,
-    /** Poster image; blank draws generated art. */
+    /** Portrait (2:3) poster image; blank draws generated art. */
     val poster: String = "",
+    /** Landscape (16:9) still for wide frames such as a tablet hero; blank falls back to [poster]. */
+    val backdrop: String = "",
     val sources: List<MovieSource> = emptyList(),
     val seasons: List<MovieSeason> = emptyList(),
     /** What this title exercises in the player, shown as chips. */
@@ -111,12 +113,22 @@ internal object MovieCatalog {
     private fun archive(item: String, file: String, label: String = "Internet Archive") =
         MovieSource(label, "file", "https://archive.org/download/$item/$file")
 
-    private fun archivePoster(item: String) = "https://archive.org/services/img/$item"
+    /** TMDB's public image CDN. Paths are stable; [TmdbArt.sized] picks the size per frame. */
+    private fun poster(path: String) = TmdbArt.poster(path)
+
+    private fun backdrop(path: String) = TmdbArt.backdrop(path)
 
     private const val BLENDER = "Blender Foundation"
 
     /** The TMDB titles the Cinecat sources API resolves: same pool the standalone CLI ships. */
-    private fun cinecat(label: String, tmdb: Long, season: Int = 0, episode: Int = 0): MovieTitle {
+    private fun cinecat(
+        label: String,
+        tmdb: Long,
+        posterPath: String,
+        backdropPath: String,
+        season: Int = 0,
+        episode: Int = 0,
+    ): MovieTitle {
         val series = season > 0 && episode > 0
         val seasons =
             if (series)
@@ -142,6 +154,8 @@ internal object MovieCatalog {
             credit = "Cinecat sources API",
             license = "",
             features = listOf("Cinecat", "Failover"),
+            poster = poster(posterPath),
+            backdrop = backdrop(backdropPath),
             tmdb = tmdb,
             seasons = seasons,
         )
@@ -150,45 +164,45 @@ internal object MovieCatalog {
     /** Cinecat titles mirror the standalone CLI's curated, live-verified TMDB pool. */
     private val cinecatTitles: List<MovieTitle> =
         listOf(
-            cinecat("Fight Club", 550L),
-            cinecat("Inception", 27205L),
-            cinecat("The Matrix", 603L),
-            cinecat("Interstellar", 157336L),
-            cinecat("Parasite", 496243L),
-            cinecat("Avengers Endgame", 299534L),
-            cinecat("Dune", 438631L),
-            cinecat("Dune Part Two", 693134L),
-            cinecat("Oppenheimer", 872585L),
-            cinecat("Barbie", 346698L),
-            cinecat("Spider-Man No Way Home", 634649L),
-            cinecat("The Godfather", 238L),
-            cinecat("Spirited Away", 129L),
-            cinecat("Mad Max Fury Road", 76341L),
-            cinecat("Everything Everywhere All At Once", 545611L),
-            cinecat("Top Gun Maverick", 361743L),
-            cinecat("Metropolis", 19L),
-            cinecat("Nosferatu", 1091L),
-            cinecat("The Terminator", 218L),
-            cinecat("Jurassic Park", 329L),
-            cinecat("Toy Story", 862L),
-            cinecat("Home Alone", 771L),
-            cinecat("Project Hail Mary", 687163L),
-            cinecat("The Dark Knight", 155L),
-            cinecat("Resident Evil", 1423191L),
-            cinecat("Apocalypse Z", 1507696L),
-            cinecat("Hope", 1058424L),
-            cinecat("Spider-Man Brand New Day", 969681L),
-            cinecat("The Odyssey", 1368337L),
-            cinecat("Heart of the Beast", 1263337L),
-            cinecat("A Story of Derry", 1813355L),
-            cinecat("The Hotel New Hampshire", 11308L),
-            cinecat("Coco", 354912L),
-            cinecat("The Mongoose", 1294189L),
-            cinecat("Verity", 1283515L),
-            cinecat("Fall 2 Deadpoint", 1101412L),
-            cinecat("La Bola Negra", 1422041L),
-            cinecat("Breaking Bad", 1396L, 1, 1),
-            cinecat("Friends", 1668L, 1, 1),
+            cinecat("Fight Club", 550L, "jSziioSwPVrOy9Yow3XhWIBDjq1.jpg", "c6OLXfKAk5BKeR6broC8pYiCquX.jpg"),
+            cinecat("Inception", 27205L, "xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg", "8ZTVqvKDQ8emSGUEMjsS4yHAwrp.jpg"),
+            cinecat("The Matrix", 603L, "dXNAPwY7VrqMAo51EKhhCJfaGb5.jpg", "tlm8UkiQsitc8rSuIAscQDCnP8d.jpg"),
+            cinecat("Interstellar", 157336L, "yQvGrMoipbRoddT0ZR8tPoR7NfX.jpg", "8sNiAPPYU14PUepFNeSNGUTiHW.jpg"),
+            cinecat("Parasite", 496243L, "7IiTTgloJzvGI1TAYymCfbfl3vT.jpg", "TU9NIjwzjoKPwQHoHshkFcQUCG.jpg"),
+            cinecat("Avengers Endgame", 299534L, "jtDv3lCnST0fZRvdYFwR5CVwK2x.jpg", "7RyHsO4yDXtBv1zUU3mTpHeQ0d5.jpg"),
+            cinecat("Dune", 438631L, "v1tRXZ4JtD2Iv6fjkPvT4GiwslV.jpg", "qVgZu5BTx6pu4owCvVOm4zjTfOi.jpg"),
+            cinecat("Dune Part Two", 693134L, "6izwz7rsy95ARzTR3poZ8H6c5pp.jpg", "eZ239CUp1d6OryZEBPnO2n87gMG.jpg"),
+            cinecat("Oppenheimer", 872585L, "8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg", "neeNHeXjMF5fXoCJRsOmkNGC7q.jpg"),
+            cinecat("Barbie", 346698L, "iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg", "1esAE8sLJRWWFsLLeh5r3g2WanI.jpg"),
+            cinecat("Spider-Man No Way Home", 634649L, "1g0dhYtq4irTY1GPXvft6k4YLjm.jpg", "iQFcwSGbZXMkeyKrxbPnwnRo5fl.jpg"),
+            cinecat("The Godfather", 238L, "3bhkrj58Vtu7enYsRolD1fZdja1.jpg", "tSPT36ZKlP2WVHJLM4cQPLSzv3b.jpg"),
+            cinecat("Spirited Away", 129L, "39wmItIWsg5sZMyRUHLkWBcuVCM.jpg", "m4TUa2ciEWSlk37rOsjiSIvZDXE.jpg"),
+            cinecat("Mad Max Fury Road", 76341L, "ulcAi4dKpAjHwYGS08vNyx9H6I9.jpg", "gqrnQA6Xppdl8vIb2eJc58VC1tW.jpg"),
+            cinecat("Everything Everywhere All At Once", 545611L, "u68AjlvlutfEIcpmbYpKcdi09ut.jpg", "fIwiFha3WPu5nHkBeMQ4GzEk0Hv.jpg"),
+            cinecat("Top Gun Maverick", 361743L, "n0YuM4f5lvGAP6MAW2kBIzugXnc.jpg", "AaV1YIdWKnjAIAOe8UUKBFm327v.jpg"),
+            cinecat("Metropolis", 19L, "kr9wXRN23zLuWJIelahas1mtnYj.jpg", "eeMoFKxjjiCi6iep2GEZtSAMYIr.jpg"),
+            cinecat("The Thing", 1091L, "tzGY49kseSE9QAKk47uuDGwnSCu.jpg", "r9leYNa8nTRCceZrZhP1DXkgKVb.jpg"),
+            cinecat("The Terminator", 218L, "qvktm0BHcnmDpul4Hz01GIazWPr.jpg", "ffdqHMWkh1h9MABwIfbfRJhgFW6.jpg"),
+            cinecat("Jurassic Park", 329L, "d9mtMGQDLANKieb9PbD3yK7xxzo.jpg", "f082quUW2kAtZXFZVGEfhwacZoG.jpg"),
+            cinecat("Toy Story", 862L, "uXDfjJbdP4ijW5hWSBrPrlKpxab.jpg", "8AqWECiUHnz1Crj69uB9vhiK9Le.jpg"),
+            cinecat("Home Alone", 771L, "onTSipZ8R3bliBdKfPtsDuHTdlL.jpg", "ih2xVgeMS8R5WUetYE8Mr9hVTlB.jpg"),
+            cinecat("Project Hail Mary", 687163L, "iOb2fjXLbpJgyQXe46n1WtGCnaa.jpg", "8Tfys3mDZVp4tNoH2ktm06a0Tau.jpg"),
+            cinecat("The Dark Knight", 155L, "qJ2tW6WMUDux911r6m7haRef0WH.jpg", "cfT29Im5VDvjE0RpyKOSdCKZal7.jpg"),
+            cinecat("Resident Evil", 1423191L, "gAgWJhUSQWCgtKR8170nMkYlBda.jpg", "3icyRAqgakNcQn6aDVz9libFmBA.jpg"),
+            cinecat("Apocalypse Z", 1507696L, "wXln4DUrwcyjcFPwgQxFPYTlG1Z.jpg", "o3XwuDUj0n8qnK91p6q8LKfr6rj.jpg"),
+            cinecat("Hope", 1058424L, "6VY1ZKgpsc8CfGsQcCGiYEgHdH0.jpg", "j96rurZqmBjyY37Fncl3IB0qJNe.jpg"),
+            cinecat("Spider-Man Brand New Day", 969681L, "bjiS5ipwxb9JFy3XRRN4OAilSeX.jpg", "subj7knTn4DeS6KS7qI66EQKe9i.jpg"),
+            cinecat("The Odyssey", 1368337L, "5rhTDKUhPYvpdQIijFIs5VoWsON.jpg", "twiVn9oFXOVR0uoYgawyEBlnFu8.jpg"),
+            cinecat("Heart of the Beast", 1263337L, "6sYemVUn79UPKz1ZsSG6kPU4RVy.jpg", "6uVRPFflyJpo8Cx872olmlGTWla.jpg"),
+            cinecat("A Story of Derry", 1813355L, "4PtzGcegF5Po1NmDAW9IklyvAUh.jpg", "z26LxXDMmAIzKr06FPDudCJyvsM.jpg"),
+            cinecat("The Hotel New Hampshire", 11308L, "9XGGGniMtBqhox7JAV5JujlUqFz.jpg", "6ja3HVez4A4XPNSMHhuOiu2UTXm.jpg"),
+            cinecat("Coco", 354912L, "6Ryitt95xrO8KXuqRGm1fUuNwqF.jpg", "g7CHF8gTLGooTbP4GznIGwaqAGL.jpg"),
+            cinecat("The Mongoose", 1294189L, "eSS5mvSG84UUuvtbHel5Yu3Wik4.jpg", "aezAUwTATFwXVvN1HUTglE8NGwu.jpg"),
+            cinecat("Verity", 1283515L, "rmaNMA1seHqpjtnYKzyynFAr1g8.jpg", "cKetrF2dAnQ0AMV5i4BMOs41I5P.jpg"),
+            cinecat("Fall 2 Deadpoint", 1101412L, "fgSm5ylwiXbIHn8UbUXDjk9RRu4.jpg", "nGau0KBOaRILSK5MqFcuTfv7GMl.jpg"),
+            cinecat("La Bola Negra", 1422041L, "7HwFQTMghL6HOvzEnXYUvyuZXeh.jpg", "bDsmYvrzto7xrEwqDpLC3SPhn9A.jpg"),
+            cinecat("Breaking Bad", 1396L, "anFx9aTOOYqgS3v7x3R84Kz67ly.jpg", "tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg", 1, 1),
+            cinecat("Friends", 1668L, "2koX1xLkpTQM4IZebYvKysFW1Nh.jpg", "l0qVZIpXtIo7km9u5Yqh0nKPOr5.jpg", 1, 1),
         )
 
     val titles: List<MovieTitle> = listOf(
@@ -203,7 +217,8 @@ internal object MovieCatalog {
                         "from destructive robots by revisiting the painful breakup that started it all.",
                 credit = "$BLENDER · mango.blender.org",
                 license = "CC BY 3.0",
-                poster = archivePoster("Tears-of-Steel"),
+                poster = poster("8qy3jRmaHR7f8VZh3iXCqCWfFsH.jpg"),
+                backdrop = backdrop("fOy6SL5Zs2PFcNXwqEPIDPrLB1q.jpg"),
                 sources =
                     listOf(
                         MovieSource("Mux (HLS, subtitles)", "hls", "https://test-streams.mux.dev/tos_ismc/main.m3u8"),
@@ -227,7 +242,8 @@ internal object MovieCatalog {
                         "smaller creatures of his forest.",
                 credit = "$BLENDER · peach.blender.org",
                 license = "CC BY 3.0",
-                poster = archivePoster("BigBuckBunny_124"),
+                poster = poster("i9jJzvoXET4D9pOkoEwncSdNNER.jpg"),
+                backdrop = backdrop("xtdybjRRZ15mCrPOvEld305myys.jpg"),
                 sources =
                     listOf(
                         MovieSource("Mux (HLS, 240p–1080p)", "hls", "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"),
@@ -246,7 +262,8 @@ internal object MovieCatalog {
                         "and raised.",
                 credit = "$BLENDER · durian.blender.org",
                 license = "CC BY 3.0",
-                poster = archivePoster("Sintel"),
+                poster = poster("l98Zns4oQe1BSvbF4hJ8oL6VSf0.jpg"),
+                backdrop = backdrop("msqeiEyIRpPAtrCeRGFNZQ9tkJL.jpg"),
                 sources = listOf(archive("Sintel", "sintel-2048-surround.mp4", "Internet Archive (MP4)")),
                 features = listOf("Progressive MP4"),
             ),
@@ -261,7 +278,8 @@ internal object MovieCatalog {
                         "them sees very differently.",
                 credit = "Orange Open Movie Project · $BLENDER",
                 license = "CC BY 2.5",
-                poster = archivePoster("ElephantsDream"),
+                poster = poster("9zROtU9TkpZQrOuEaMAp68FOWLK.jpg"),
+                backdrop = backdrop("9bJDwuhza19HQcYA99FeslLYmUm.jpg"),
                 sources =
                     listOf(
                         archive("ElephantsDream", "ed_hd.mp4", "Internet Archive (HD)"),
@@ -280,7 +298,8 @@ internal object MovieCatalog {
                         "salesman who offers him the gift of a lifetime.",
                 credit = "$BLENDER · gooseberry.blender.org",
                 license = "CC BY 4.0",
-                poster = archivePoster("CosmosLaundromatFirstCycle"),
+                poster = poster("5ZXi0oitpEgAdoJglFTc5SZF9nt.jpg"),
+                backdrop = backdrop("f2wABsgj2lIR2dkDEfBZX8p4Iyk.jpg"),
                 sources =
                     listOf(
                         archive(
@@ -536,4 +555,50 @@ internal data class CinecatReport(
 internal fun movieFailoverOrder(sources: List<MovieSource>, chosen: Int?): List<MovieSource> {
     if (chosen == null || chosen !in sources.indices) return sources
     return listOf(sources[chosen]) + sources.filterIndexed { i, _ -> i != chosen }
+}
+
+/** Sizes for TMDB's public image CDN (`image.tmdb.org`), which needs no key. */
+internal object TmdbArt {
+    private const val BASE = "https://image.tmdb.org/t/p/"
+    private val posterWidths = intArrayOf(154, 185, 342, 500, 780)
+    private val backdropWidths = intArrayOf(300, 780, 1280)
+
+    fun poster(path: String) = "${BASE}w500/$path"
+
+    fun backdrop(path: String) = "${BASE}w1280/$path"
+
+    /**
+     * The same TMDB image at the smallest size at least [widthPx] wide (the largest when none
+     * is), so a small card does not fetch a hero-sized file and the hero is not upscaled from a
+     * card-sized one. Other URLs pass through unchanged.
+     */
+    fun sized(url: String, widthPx: Int, backdrop: Boolean): String {
+        if (!url.startsWith(BASE)) return url
+        val rest = url.removePrefix(BASE)
+        val slash = rest.indexOf('/')
+        if (slash < 0) return url
+        val widths = if (backdrop) backdropWidths else posterWidths
+        val width = widths.firstOrNull { it >= widthPx } ?: widths.last()
+        return "${BASE}w$width/${rest.substring(slash + 1)}"
+    }
+}
+
+/** What one poster frame fetches: the image URL and the square decode box that covers it. */
+internal data class MovieArt(val url: String, val decodePixels: Int, val backdrop: Boolean)
+
+/**
+ * Picks the art for a [widthPx]×[heightPx] frame: the landscape backdrop for wide frames (tablet
+ * hero, Continue watching), otherwise the portrait poster. The engine fits art into a square
+ * box, so the box is sized from the image's longer side once cropped to cover the frame. Sizing
+ * it from the frame width alone decoded a 2:3 poster at two thirds of the width it is shown at.
+ */
+internal fun movieArt(title: MovieTitle, widthPx: Int, heightPx: Int): MovieArt? {
+    if (title.poster.isBlank() && title.backdrop.isBlank()) return null
+    val wide = heightPx > 0 && widthPx >= heightPx * 1.2f
+    val backdrop = title.backdrop.isNotBlank() && (wide || title.poster.isBlank())
+    val aspect = if (backdrop) 16f / 9f else 2f / 3f
+    val shownWidth = maxOf(widthPx.toFloat(), heightPx * aspect)
+    val shownHeight = shownWidth / aspect
+    val url = TmdbArt.sized(if (backdrop) title.backdrop else title.poster, shownWidth.toInt(), backdrop)
+    return MovieArt(url, kotlin.math.ceil(maxOf(shownWidth, shownHeight)).toInt(), backdrop)
 }
