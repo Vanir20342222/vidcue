@@ -1,7 +1,7 @@
 # Desktop design consistency pass (M9)
 
 - **Date:** 2026-11-11
-- **PR:** #<number>
+- **PR:** #160
 - **Milestone:** M9
 - **Platforms:** desktop
 - **Status:** fixture/unit verified (headless renders of all 28 synthetic scenes)
