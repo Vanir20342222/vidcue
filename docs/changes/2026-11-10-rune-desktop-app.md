@@ -56,7 +56,8 @@ engine settings are seeded from the terminal app's `rust.toml`; that file is nev
 | Headless renders | `vidcue-desktop --snap … --scene <home/watch/song-*/downloads/settings/movies/…>` and scripted `--script` flows | reviewed visually; idle pages at rest after transitions | fixture |
 | Windowed start | isolated `XDG_*` dirs, 25 s run | no panic; first frame 3.0 s (debug); engine `settings/saved/account/up_next` and live `browse` ok | live (startup only) |
 | Windows cross-compile | `cargo check --target x86_64-pc-windows-gnu -p vidcue-desktop --locked` with a local mingw header set (`DOCS_RS=1` skips libesedb-sys's host-OS C build) | compiles clean after gating the Unix-only `player`/`mpris` modules and adding a Windows `open_file` (linking and the bundled-DLL playback happen in the `windows-release` workflow) | unit |
-| Windows packaging | `.github/workflows/windows-release.yml` on `desktop-*` tags; `tools/windows/vidcue.iss` | installer + portable zip attached to the release; not yet run on a Windows machine | CI |
+| Windows packaging | `.github/workflows/windows-release.yml` on `desktop-*` tags; `tools/windows/vidcue.iss` | run green on `desktop-0.2.0-alpha.13`; `VidcueSetup-0.2.0-alpha.13.exe` and `Vidcue-portable.zip` attached; the exe imports only Windows system DLLs plus the bundled `libmpv-2.dll` and uses the GUI subsystem | CI |
+| Windows exe under Wine | release `vidcue.exe --snap home.png --scene home` in a throwaway Wine 11.20 prefix with native `d3dcompiler_47` (Rune's DX12/FXC path; Wine's built-in FXC lacks SM 5.1 resource arrays) | home scene rendered correctly | emulated (Wine, headless) |
 | System install | `~/.local/bin/vidcue` + hicolor icon + `dev.vidcue.desktop.desktop` entry (same layout `install.sh` writes); app running from the installed path | installed and launched on the target PC | live (target PC) |
 | Update-check release | GitHub release `desktop-0.2.0-alpha.13` from this tag; `vidcue-services::update::newest` tags rules (`v*`/`desktop-*`, semver, pre-release gating) | the installed 0.2.0-alpha.12 build can find it via Settings → About → Check for updates | unit rules + live list |
 
@@ -77,9 +78,11 @@ engine settings are seeded from the terminal app's `rust.toml`; that file is nev
   installed on the target PC is verified instead.
 - **Windows packaging:** the workspace compiles for `x86_64-pc-windows-gnu` (see evidence), and
   `.github/workflows/windows-release.yml` builds an Inno Setup installer plus a portable zip on
-  `desktop-*` tags, bundling the current `libmpv-2.dll` from zhongfly/mpv-winbuild. That
-  workflow, the installer and the bundled-DLL playback have not run on a real Windows machine
-  yet; no Windows acceptance claim is made. Optional yt-dlp and FFmpeg are not bundled. The
+  `desktop-*` tags, bundling the current `libmpv-2.dll` from zhongfly/mpv-winbuild. The
+  workflow ran green and a headless render works under Wine, but the installer, windowed use
+  and bundled-DLL playback have not run on a real Windows machine; no Windows acceptance claim
+  is made. MinGW builds set `-DHAVE_WINDOWS_H` so libesedb-sys (rookie's Edge cookie reader)
+  uses its WinAPI configuration. Optional yt-dlp and FFmpeg are not bundled. The
   in-app updater on Windows offers the release page only; the built-and-install updater flow
   is Linux.
 - **No reliability claim:** no 99 % watching claim is made; the live checks cover one video and one
