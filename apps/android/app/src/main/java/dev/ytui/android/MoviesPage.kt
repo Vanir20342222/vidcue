@@ -31,6 +31,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -85,6 +86,10 @@ internal fun MoviesPage(vm: YtuiViewModel) {
     val featured = continuing.firstOrNull()?.first?.title ?: MovieCatalog.titles.first()
     val results = remember(query) { MovieCatalog.search(query) }
     val bottom = LocalBottomOverlay.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    // The hero already features the latest unfinished title; the shelf lists the rest.
+    val heroResume = continuing.firstOrNull { it.first.title.id == featured.id }
+    val shelf = if (query.isBlank() && heroResume != null) continuing - heroResume else continuing
 
     LazyColumn(
         Modifier.fillMaxSize().testTag("movies-page"),
@@ -93,12 +98,15 @@ internal fun MoviesPage(vm: YtuiViewModel) {
     ) {
         // Search leads the page so it is reachable without scrolling past the hero artwork.
         item("search") {
-            MediaTextField(
+            // The same field as the other tabs' search, so Movies reads as part of the app.
+            SearchField(
                 query,
                 { query = it },
-                "Search films, test streams and Cinecat",
-                Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset).padding(top = 12.dp).testTag("movies-search"),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                "Search films and streams",
+                Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset).padding(top = 4.dp).testTag("movies-search"),
+                searching = query.isNotEmpty(),
+                onClear = { query = "" },
+                onSubmit = { keyboard?.hide() },
             )
         }
         if (!noticeSeen) item("notice") { AlphaNotice(MovieLibrary::acceptNotice) }
@@ -107,8 +115,8 @@ internal fun MoviesPage(vm: YtuiViewModel) {
             item("hero") {
                 Hero(
                     featured,
-                    resumeOf = continuing.firstOrNull { it.first.title.id == featured.id },
-                    onPlay = { open(continuing.firstOrNull { it.first.title.id == featured.id }?.first ?: MoviePick(featured)) },
+                    resumeOf = heroResume,
+                    onPlay = { open(heroResume?.first ?: MoviePick(featured)) },
                     onDetails = { open(MoviePick(featured)) },
                 )
             }
@@ -122,10 +130,10 @@ internal fun MoviesPage(vm: YtuiViewModel) {
                     )
                 else PosterRow("Results", results, resume) { open(MoviePick(it)) }
             }
-        if (continuing.isNotEmpty())
+        if (shelf.isNotEmpty())
             item("continue") {
                 Shelf("Continue watching") {
-                    items(continuing, key = { it.first.key }) { (pick, r) ->
+                    items(shelf, key = { it.first.key }) { (pick, r) ->
                         ContinueCard(pick, r) { open(pick) }
                     }
                 }
@@ -201,9 +209,16 @@ private fun AlphaNotice(accept: () -> Unit) {
 /** Full-width featured title: artwork with a deep scrim, title, meta and two actions. */
 @Composable
 private fun Hero(title: MovieTitle, resumeOf: Pair<MoviePick, MovieResume>?, onPlay: () -> Unit, onDetails: () -> Unit) {
-    val height = (LocalConfiguration.current.screenHeightDp * 0.48f).dp.coerceIn(280.dp, 460.dp)
+    val height = (LocalConfiguration.current.screenHeightDp * 0.34f).dp.coerceIn(220.dp, 340.dp)
     val background = MaterialTheme.colorScheme.background
-    Box(Modifier.fillMaxWidth().height(height).testTag("movies-hero")) {
+    // Inset and rounded like the artwork on the other tabs rather than a full-bleed banner.
+    Box(
+        Modifier.padding(horizontal = MediaTokens.textInset)
+            .fillMaxWidth()
+            .height(height)
+            .clip(MediaTokens.medium)
+            .testTag("movies-hero")
+    ) {
         MoviePoster(title, Modifier.fillMaxSize(), shape = null)
         Box(
             Modifier.fillMaxSize()
@@ -216,17 +231,29 @@ private fun Hero(title: MovieTitle, resumeOf: Pair<MoviePick, MovieResume>?, onP
                 )
         )
         Column(
-            Modifier.align(Alignment.BottomStart).padding(horizontal = MediaTokens.textInset).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            Modifier.align(Alignment.BottomStart).padding(16.dp).fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 if (resumeOf != null) "Continue watching" else "Featured",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Text(title.title, style = MaterialTheme.typography.displaySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(movieMeta(title), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(title.synopsis, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // Reading type, like a playing title elsewhere; the display face is kept for page names.
+            Text(
+                title.title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOf(movieMeta(title), title.synopsis).filter { it.isNotBlank() }.joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
                 Pill(
                     if (resumeOf != null) "Resume" else if (title.series) "Episodes" else "Play",
@@ -285,7 +312,7 @@ private fun PosterCard(title: MovieTitle, progress: Float?, onClick: () -> Unit)
                     track = Color.White.copy(alpha = 0.3f),
                 )
         }
-        Text(title.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(title.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text(
             listOfNotNull(title.year.toString(), title.genres.firstOrNull()).joinToString(" · "),
             style = MaterialTheme.typography.bodySmall,
@@ -308,11 +335,10 @@ private fun ContinueCard(pick: MoviePick, resume: MovieResume, onClick: () -> Un
                     .clip(MediaTokens.medium)
                     .background(Brush.verticalGradient(0.5f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.7f)))
             )
-            Text(
-                "${time(resume.positionMs / 1000f)} of ${time(resume.durationMs / 1000f)}",
-                Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = 14.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
+            ArtworkBadge(
+                false,
+                "${time((resume.durationMs - resume.positionMs).coerceAtLeast(0) / 1000f)} left",
+                Modifier.align(Alignment.TopEnd),
             )
             MediaProgressBar(
                 resume.fraction,
@@ -321,7 +347,7 @@ private fun ContinueCard(pick: MoviePick, resume: MovieResume, onClick: () -> Un
                 track = Color.White.copy(alpha = 0.3f),
             )
         }
-        Text(pick.displayTitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(pick.displayTitle, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -638,7 +664,12 @@ private fun MovieSheet(
             MoviePoster(title, Modifier.width(112.dp).aspectRatio(2f / 3f))
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.Top) {
-                    Text(title.title, Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall)
+                    Text(
+                        title.title,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
                     SheetClose(onDismiss)
                 }
                 Text(movieMeta(title), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
