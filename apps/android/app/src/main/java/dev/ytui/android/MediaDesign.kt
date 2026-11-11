@@ -173,6 +173,7 @@ internal enum class Glyph {
     Drag,
     Clipboard,
     Folder,
+    Film,
 }
 
 @Composable
@@ -491,6 +492,20 @@ internal fun MediaIcon(
                     )
                     line(8.5f, 11f, 15.5f, 11f)
                     line(8.5f, 15f, 13f, 15f)
+                }
+                Glyph.Film -> {
+                    // Clapperboard: a slate with a hinged, striped clapper on top.
+                    drawRoundRect(
+                        tint,
+                        Offset(3f, 10f),
+                        Size(18f, 11f),
+                        CornerRadius(2.5f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                    outline(3.5f to 9f, 19.5f to 4.5f, 20.5f to 7.5f, 4.5f to 12f, closed = true)
+                    val stripe = if (filled) cutout else tint
+                    drawLine(stripe, Offset(8.5f, 7.6f), Offset(10.5f, 10.6f), 1.6f, StrokeCap.Round)
+                    drawLine(stripe, Offset(13.5f, 6.2f), Offset(15.5f, 9.2f), 1.6f, StrokeCap.Round)
                 }
                 Glyph.Folder ->
                     outline(3f to 6f, 9f to 6f, 11f to 8f, 21f to 8f, 21f to 19f, 3f to 19f, closed = true)

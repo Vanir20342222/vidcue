@@ -348,9 +348,11 @@ internal class YtuiViewModel(
     },
 ) : ViewModel() {
     val tab = MutableStateFlow(1)
-    val feeds = Array(4) { MutableStateFlow(FeedState()) }
-    private val history = Array(4) { ArrayDeque<FeedState>() }
-    private val feedJobs = arrayOfNulls<Job>(4)
+    // Tab 4 (Movies) has its own page and never loads a feed; its slot keeps tab-indexed state
+    // (back history, search, scroll) in bounds.
+    val feeds = Array(5) { MutableStateFlow(FeedState()) }
+    private val history = Array(5) { ArrayDeque<FeedState>() }
+    private val feedJobs = arrayOfNulls<Job>(5)
 
     private data class FeedKey(val tab: Int, val request: String, val network: Long)
 
