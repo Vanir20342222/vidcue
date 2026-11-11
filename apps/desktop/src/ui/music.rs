@@ -275,21 +275,18 @@ fn info_block(app: &App, now: &Now, w: f32, full: bool) -> El {
     }
     let busy = now.resolving || (!p.snap.loaded && p.unavailable.is_none()) || p.snap.buffering;
     if busy {
-        c = c.child(
-            row()
-                .gap(12.0)
-                .center_y()
-                .child(super::watch_controls::spinner(t.accent))
-                .child(
-                    text(if now.resolving {
-                        "Finding the best stream…"
-                    } else {
-                        "Buffering…"
-                    })
+        let mut status = row()
+            .gap(12.0)
+            .center_y()
+            .child(super::watch_controls::spinner(t.accent));
+        if !now.resolving {
+            status = status.child(
+                text("Buffering…")
                     .font(ty::SMALL_STRONG)
                     .color(white.alpha(0.85)),
-                ),
-        );
+            );
+        }
+        c = c.child(status);
     } else if let Some(u) = p.unavailable.as_ref().filter(|_| !app.offline()) {
         c = c.child(text(u).font(ty::SMALL).color(white.alpha(0.75)).wrap());
     }

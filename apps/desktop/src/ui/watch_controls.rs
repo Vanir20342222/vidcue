@@ -65,23 +65,20 @@ pub fn stage(app: &App, cx: &mut Cx<App>, w: f32, h: f32) -> El {
         video = video.child(error_card(app, err));
     } else if now.resolving || (!p.snap.loaded && p.unavailable.is_none()) || p.snap.buffering {
         // (Headless renders have no player; they show the resting state.)
-        video = video.child(
-            col()
-                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-                .center()
-                .gap(14.0)
-                .inert()
-                .child(spinner(t.accent))
-                .child(
-                    text(if now.resolving {
-                        "Finding the best stream…"
-                    } else {
-                        "Buffering…"
-                    })
+        let mut status = col()
+            .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .center()
+            .gap(14.0)
+            .inert()
+            .child(spinner(t.accent));
+        if !now.resolving {
+            status = status.child(
+                text("Buffering…")
                     .font(ty::SMALL_STRONG)
                     .color(Color::WHITE.alpha(0.85)),
-                ),
-        );
+            );
+        }
+        video = video.child(status);
     } else if let Some(u) = p.unavailable.as_ref().filter(|_| !app.offline()) {
         video = video.child(error_card(app, u));
     }
