@@ -59,3 +59,9 @@ the usual LGPL obligations (licence notice, ability to relink with a modified ja
   setting's default (off) and persistence.
 - Not run: `Mp3Decoder` (MediaCodec) and `Mp3Convert` (document provider writes, WorkManager) need a
   device or emulator.
+
+## For the plan and parity tables
+- Downloads: MP3 conversion of offline audio is supported (playlist menu and automatic, Android,
+  JVM-verified with FFmpeg round trips; not run on a device). FLAC transcoding stays unsupported.
+  The sentence in `docs/android/PARITY.md` that listed MP3 transcoding as unsupported is outdated.
+
