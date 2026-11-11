@@ -231,7 +231,7 @@ fn welcome(t: &Theme) -> El {
         .child(staged(
             2,
             3,
-            text("Videos, music and radio — beautifully")
+            text("Videos, music and radio in one place")
                 .font(ty::H3)
                 .color(Color::WHITE.alpha(0.88))
                 .align(rune::Align::Center),

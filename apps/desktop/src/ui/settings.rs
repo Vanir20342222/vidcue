@@ -176,7 +176,7 @@ fn nav_row(t: &Theme, sec: SettingsSection, label: &'static str, selected: bool)
         .px(14.0)
         .gap(12.0)
         .center_y()
-        .radius(12.0)
+        .radius(sz::R_MD)
         .fill(if selected {
             t.accent_soft
         } else {
@@ -216,12 +216,7 @@ pub(super) fn group(t: &Theme, title: &str, rows: Vec<El>) -> El {
     col()
         .w_full()
         .gap(10.0)
-        .child(
-            text(title.to_uppercase())
-                .font(ty::CAPTION)
-                .color(t.faint)
-                .px(6.0),
-        )
+        .child(text(title).font(ty::LABEL).color(t.muted).px(6.0))
         .child(
             widgets::panel(t)
                 .w_full()
@@ -514,7 +509,7 @@ fn appearance(app: &App) -> El {
             col()
                 .w_full()
                 .gap(10.0)
-                .child(text("THEME").font(ty::CAPTION).color(t.faint).px(6.0))
+                .child(text("Theme").font(ty::LABEL).color(t.muted).px(6.0))
                 .child(grid),
         )
         .child(group(
@@ -696,8 +691,8 @@ fn theme_card(app: &App, name: &'static str, palette: Option<&vidcue_core::theme
     let mock = row()
         .w(172.0)
         .h(108.0)
-        .radius(12.0)
-        .clip_rounded(12.0)
+        .radius(sz::R_MD)
+        .clip_rounded(sz::R_MD)
         .fill(m.bg)
         .border(if selected { 2.0 } else { 1.0 }, ring)
         .shadow(

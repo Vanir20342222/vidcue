@@ -143,7 +143,7 @@ fn skeleton_row(app: &App, layout: Layout, i: usize, square: bool) -> El {
             .px(sz::PAGE_PAD)
             .py(8.0)
             .gap(14.0)
-            .child(el().size(52.0, 52.0).radius(8.0).fill(t.raised))
+            .child(el().size(52.0, 52.0).radius(sz::R_SM).fill(t.raised))
             .child(
                 col()
                     .gap(8.0)
@@ -316,7 +316,7 @@ fn header(app: &App, route: &FeedRoute, state: &FeedState, width: f32) -> El {
                 .py(12.0)
                 .gap(12.0)
                 .center_y()
-                .radius(12.0)
+                .radius(sz::R_MD)
                 .fill(t.accent_soft)
                 .child(icon(&ic::INFO, 16.0).color(t.accent))
                 .child(text(n).font(ty::BODY).color(t.text).shrink().wrap()),
@@ -459,10 +459,11 @@ fn radio_countries(app: &App) -> Vec<(String, String)> {
 /// The screen's one primary action.
 pub fn play_button(app: &App) -> El {
     let t = &app.theme;
+    // Same height as `widgets::button`, so it lines up with the buttons beside it.
     row()
-        .h(44.0)
-        .px(22.0)
-        .gap(10.0)
+        .h(38.0)
+        .px(18.0)
+        .gap(8.0)
         .center_y()
         .radius(sz::R_PILL)
         .fill(Color::WHITE)
@@ -473,7 +474,7 @@ pub fn play_button(app: &App) -> El {
         .focusable(true)
         .cursor(rune::Cursor::Pointer)
         .shadow(6.0, 18.0, Color::BLACK.alpha(0.3))
-        .child(icon(&ic::PLAY, 16.0).color(Color::BLACK))
+        .child(icon(&ic::PLAY, 17.0).color(Color::BLACK))
         .child(text("Play").font(ty::BUTTON).color(Color::BLACK))
 }
 
@@ -487,8 +488,8 @@ fn collection_header(app: &App, route: &FeedRoute, state: &FeedState, width: f32
     let mut art = el()
         .w(art_w)
         .h(art_h)
-        .radius(18.0)
-        .clip_rounded(18.0)
+        .radius(sz::R_PANEL)
+        .clip_rounded(sz::R_PANEL)
         .fill(t.raised)
         .shadow(20.0, 50.0, t.shadow)
         .center();
@@ -525,17 +526,16 @@ fn collection_header(app: &App, route: &FeedRoute, state: &FeedState, width: f32
         .shrink()
         .gap(10.0)
         .justify_end()
-        .child(
-            text(if square { "COLLECTION" } else { "PLAYLIST" })
-                .font(ty::CAPTION)
-                .color(t.muted),
-        )
         .child(text(&title).font(ty::DISPLAY).color(t.text).max_lines(2))
         .child(
-            text(if creator.is_empty() {
-                meta.clone()
-            } else {
-                format!("{creator} · {meta}")
+            text({
+                // The kind leads the meta line instead of sitting above the title as a label.
+                let kind = if square { "Collection" } else { "Playlist" };
+                if creator.is_empty() {
+                    format!("{kind} · {meta}")
+                } else {
+                    format!("{kind} by {creator} · {meta}")
+                }
             })
             .font(ty::BODY)
             .color(t.muted),

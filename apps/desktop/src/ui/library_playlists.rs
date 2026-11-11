@@ -435,12 +435,14 @@ fn header(app: &App, p: &OfflinePlaylist) -> El {
         .shrink()
         .gap(10.0)
         .justify_end()
-        .child(text("OFFLINE PLAYLIST").font(ty::CAPTION).color(t.muted))
         .child(title_row)
         .child(
-            text(plural(p.items.len(), "item"))
-                .font(ty::BODY)
-                .color(t.muted),
+            text(format!(
+                "Offline playlist · {}",
+                plural(p.items.len(), "item")
+            ))
+            .font(ty::BODY)
+            .color(t.muted),
         )
         .child(actions);
     // A blurred wash of the first artwork behind the header, fading into the page.

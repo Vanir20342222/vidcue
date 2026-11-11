@@ -311,7 +311,7 @@ pub fn vu(app: &App, _now: &Now, s: f32, dots: bool) -> El {
             .max(0.0);
             r = r.child(
                 el().absolute(x, 0.0)
-                    .child(text(label).font(ty::CAPTION).color(t.faint)),
+                    .child(text(label).font(ty::BADGE).color(t.faint)),
             );
         }
         r
@@ -330,8 +330,8 @@ pub fn vu(app: &App, _now: &Now, s: f32, dots: bool) -> El {
                 .w_full()
                 .center_y()
                 .child(
-                    text(if dots { "SIGNAL" } else { "STEREO LEVEL" })
-                        .font(ty::CAPTION)
+                    text(if dots { "Signal" } else { "Stereo level" })
+                        .font(ty::LABEL)
                         .color(t.faint),
                 )
                 .child(rune::spacer())

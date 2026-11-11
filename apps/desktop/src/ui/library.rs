@@ -304,7 +304,7 @@ fn banner(t: &crate::theme::Theme, message: &str, action: Option<El>) -> El {
         .py(12.0)
         .gap(12.0)
         .center_y()
-        .radius(12.0)
+        .radius(sz::R_MD)
         .fill(t.accent_soft)
         .child(icon(&ic::INFO, 16.0).color(t.accent))
         .child(

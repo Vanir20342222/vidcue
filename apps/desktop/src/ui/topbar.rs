@@ -210,7 +210,7 @@ fn recents(app: &App) -> Option<El> {
         .w(560.0)
         .padding(6.0)
         .gap(1.0)
-        .radius(16.0)
+        .radius(sz::R_CARD)
         .fill(t.overlay.alpha(0.94))
         .backdrop_blur(24.0)
         .border(1.0, t.border)
@@ -218,8 +218,8 @@ fn recents(app: &App) -> Option<El> {
         .role("listbox")
         .child(
             text("Recent searches")
-                .font(ty::CAPTION)
-                .color(t.faint)
+                .font(ty::LABEL)
+                .color(t.muted)
                 .px(10.0)
                 .py(6.0),
         );
@@ -232,7 +232,7 @@ fn recents(app: &App) -> Option<El> {
                 .px(10.0)
                 .gap(12.0)
                 .center_y()
-                .radius(10.0)
+                .radius(sz::R_SM)
                 .hover(t.hover)
                 .role("option")
                 .cursor(rune::Cursor::Pointer)

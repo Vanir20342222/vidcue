@@ -360,8 +360,8 @@ fn hero(app: &App, width: f32) -> El {
         .key("movies-hero")
         .w(w)
         .h(h)
-        .radius(24.0)
-        .clip_rounded(24.0)
+        .radius(sz::R_PANEL)
+        .clip_rounded(sz::R_PANEL)
         .fill(t.surface);
     stage = match &back {
         Some(i) => stage.child(
@@ -411,8 +411,8 @@ fn hero(app: &App, width: f32) -> El {
                 .pin(None, Some(((h - 270.0) / 2.0).max(16.0)), Some(48.0), None)
                 .w(180.0)
                 .h(270.0)
-                .radius(14.0)
-                .clip_rounded(14.0)
+                .radius(sz::R_CARD)
+                .clip_rounded(sz::R_CARD)
                 .shadow(24.0, 60.0, Color::BLACK.alpha(0.5))
                 .border(1.0, Color::WHITE.alpha(0.12))
                 .child(
@@ -428,11 +428,6 @@ fn hero(app: &App, width: f32) -> El {
         .pin(Some(40.0), None, None, Some(36.0))
         .max_w((w * 0.5).max(360.0))
         .gap(12.0)
-        .child(
-            text("FEATURED")
-                .font(ty::CAPTION)
-                .color(Color::WHITE.alpha(0.75)),
-        )
         .child(
             text(&f.title)
                 .font(ty::DISPLAY)
@@ -472,7 +467,7 @@ fn hero(app: &App, width: f32) -> El {
                     }),
             )
             .child(
-                icon_button(t, &ic::REFRESH, "Another pick", 38.0)
+                crate::ui::widgets::overlay_button(&ic::REFRESH, "Another pick", 38.0)
                     .key("movies-hero-next")
                     .on_press(|s: &mut App| movies::next_featured(s)),
             ),
@@ -619,8 +614,8 @@ fn sheet(app: &App, sel: &Title) -> El {
         .key("movies-sheet-art")
         .w(110.0)
         .h(165.0)
-        .radius(12.0)
-        .clip_rounded(12.0)
+        .radius(sz::R_MD)
+        .clip_rounded(sz::R_MD)
         .fill(t.raised)
         .shadow(14.0, 30.0, t.shadow);
     if !m.row.is_empty() {
@@ -784,7 +779,7 @@ fn episode_picker(app: &App) -> El {
                 .px(12.0)
                 .gap(12.0)
                 .center_y()
-                .radius(10.0)
+                .radius(sz::R_MD)
                 .fill(if on {
                     t.accent_soft
                 } else {
@@ -944,7 +939,7 @@ trait Card {
 impl Card for El {
     fn p_card(self, t: &Theme) -> Self {
         self.padding(14.0)
-            .radius(12.0)
+            .radius(sz::R_MD)
             .fill(t.surface)
             .border(1.0, t.hairline)
     }
