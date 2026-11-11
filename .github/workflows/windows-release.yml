@@ -28,17 +28,26 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: x86_64-pc-windows-gnu
+          # The action defaults to `-D warnings`. Unix-only helpers in the shared crates leave
+          # unused-variable warnings on Windows; lint gating happens in the Rust workflow.
+          rustflags: ""
 
-      - name: Locate a mingw linker
+      - name: Install the mingw-w64 C toolchain
+        id: msys2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc
+
+      - name: Put the mingw compiler on PATH
         shell: pwsh
         run: |
-          $gcc = Get-ChildItem "C:\msys64\mingw64\bin\x86_64-w64-mingw32-gcc.exe" -ErrorAction SilentlyContinue
-          if (-not $gcc) { $gcc = (Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue) }
-          if (-not $gcc) { $gcc = (Get-Command gcc.exe -ErrorAction SilentlyContinue) }
-          if (-not $gcc) { throw "no mingw gcc found for the windows-gnu linker" }
-          Add-Content $env:GITHUB_ENV "CC_X86_64_PC_WINDOWS_GNU=$($gcc.FullName)"
-          $dir = Split-Path $gcc.FullName
-          Add-Content $env:GITHUB_ENV "PATH=$dir;$env:PATH"
+          $bin = Join-Path "${{ steps.msys2.outputs.msys2-location }}" "mingw64\bin"
+          if (-not (Test-Path "$bin\gcc.exe")) { throw "mingw gcc missing in $bin" }
+          Add-Content $env:GITHUB_PATH $bin
+          Add-Content $env:GITHUB_ENV "CC_x86_64_pc_windows_gnu=$bin\gcc.exe"
+          Add-Content $env:GITHUB_ENV "AR_x86_64_pc_windows_gnu=$bin\ar.exe"
 
       - name: Download and unpack the mpv dev package
         id: mpv
@@ -46,12 +55,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $latest = gh api "repos/zhongfly/mpv-winbuild/releases/latest" | ConvertFrom-Json
-          $asset = $latest.assets |
-            Where-Object { $_.name -match "^mpv-dev-x86_64-[0-9]" } |
-            Sort-Object created_at | Select-Object -Last 1
-          if (-not $asset) { throw "no mpv-dev-x86_64 asset found" }
-          gh api -Le "repos/zhongfly/mpv-winbuild/releases/assets/$($asset.id)" > mpv-dev.7z
+          # Baseline x86_64 build (not the -v3 or -lgpl variants) of the latest release.
+          gh release download --repo zhongfly/mpv-winbuild --pattern "mpv-dev-x86_64-[0-9]*" -O mpv-dev.7z
+          if ($LASTEXITCODE -ne 0) { throw "cannot download the mpv-dev-x86_64 package" }
           7z x -y mpv-dev.7z -ompv-dev | Out-Null
           $dll = Get-ChildItem -Recurse ompv-dev -Filter libmpv-2.dll | Select-Object -First 1
           if (-not $dll) { throw "libmpv-2.dll missing from the mpv-dev package" }
@@ -89,7 +95,9 @@ jobs:
         run: |
           choco install innosetup -y --no-progress
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-          & $iscc /DAppVersion="$($env:VERSION -replace '^desktop-','')" tools\windows\vidcue.iss
+          $version = $env:VERSION -replace '^desktop-v?',''
+          $numeric = ($version -split '[-+]')[0]
+          & $iscc "/DAppVersion=$version" "/DFileVersion=$numeric" tools\windows\vidcue.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
       - name: Zip the portable build
@@ -103,4 +111,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "$GITHUB_REF_NAME" \
-            dist/VidcueSetup-*.exe Vidcue-portable.zip --clobber --repo "$GITHUB_REPOSITORY"
+            installer/VidcueSetup-*.exe Vidcue-portable.zip --clobber --repo "$GITHUB_REPOSITORY"

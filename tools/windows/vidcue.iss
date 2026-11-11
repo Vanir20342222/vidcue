@@ -1,24 +1,30 @@
 ; The Vidcue Windows installer: a per-user setup (no administrator rights needed) that
 ; installs vidcue.exe with its bundled libmpv-2.dll, a Start-menu icon and an optional
 ; desktop shortcut. The release workflow calls it as:
-;   ISCC.exe tools\windows\vidcue.iss /DAppVersion=0.2.0-alpha.13
-; from the repository root with dist\vidcue.exe and dist\libmpv-2.dll in place.
+;   ISCC.exe /DAppVersion=0.2.0-alpha.13 /DFileVersion=0.2.0 tools\windows\vidcue.iss
+; with dist\vidcue.exe and dist\libmpv-2.dll in place. Paths are relative to the
+; repository root (SourceDir); the installer is written to installer\.
 
 #ifndef AppVersion
 #define AppVersion "0.0.0"
 #endif
+#ifndef FileVersion
+#define FileVersion "0.0.0"
+#endif
 
 [Setup]
+SourceDir=..\..
 AppId={{7C1E3B9A-52D4-4A6E-9B8F-0A6D3E2C4D51}
 AppName=Vidcue
 AppVersion={#AppVersion}
+VersionInfoVersion={#FileVersion}
 AppPublisher=Vidcue
 AppPublisherURL=https://github.com/Vanir20342222/vidcue
 DefaultDirName={localappdata}\Programs\Vidcue
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesInstallIn64BitMode=x64compatible
-OutputDir=dist
+OutputDir=installer
 OutputBaseFilename=VidcueSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
