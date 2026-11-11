@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build the shared Rust engine and package the native Android UI; installs nothing.
+# YTUI_ANDROID_RUST_ONLY=1 stops before notices and Gradle; YTUI_ANDROID_SKIP_GRADLE=1 stops after notices.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 variant="${YTUI_ANDROID_VARIANT:-debug}"
@@ -56,5 +57,7 @@ cargo run -p vidcue-mobile --example mobile_license_bundle --locked -- "$root/ta
 mkdir -p "$root/target/android-assets/notices"
 cp -R -- "$notices_stage/notices/." "$root/target/android-assets/notices/"
 cp -- "$root/LICENSE" "$root/target/android-assets/vidcue-LICENSE"
+# The signed-release workflow runs its own release Gradle build; a debug pass first is wasted.
+[[ "${YTUI_ANDROID_SKIP_GRADLE:-0}" != 1 ]] || exit 0
 
 "$root/apps/android/gradlew" -p "$root/apps/android" --no-daemon ":app:assemble$gradle_variant" ":app:test${gradle_variant}UnitTest" ":app:lint$gradle_variant"

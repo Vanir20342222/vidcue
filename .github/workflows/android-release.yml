@@ -23,7 +23,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
+      # Same CARGO_* values as android.yml so the shared Rust cache key matches.
       CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      # Hosted runners have 4 vCPUs; build.sh defaults to 2 for small PCs.
+      YTUI_BUILD_JOBS: '4'
       YTUI_ANDROID_VERSION_CODE: ${{ inputs.version_code }}
       YTUI_ANDROID_VERSION_NAME: ${{ inputs.version_name }}
     steps:
@@ -49,14 +53,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,x86_64-linux-android
+      # Restore the release-profile Android cache that android.yml saves on every main push;
+      # the release builds the same crates for the same targets. Never save from here.
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: android-release-profile
+          cache-workspace-crates: true
+          save-if: false
       - uses: android-actions/setup-android@v3
         with:
           packages: platform-tools
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+      - name: Use all runner cores for Gradle (CI only; project defaults stay low)
+        run: |
+          mkdir -p "$HOME/.gradle"
+          cat >> "$HOME/.gradle/gradle.properties" <<'PROPS'
+          org.gradle.workers.max=4
+          org.gradle.caching=true
+          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          PROPS
       - name: Install pinned build tools
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0' 'ndk;27.2.12479018'
+      # Rust and notices only: the debug assemble, tests and lint already passed on this exact
+      # main revision (required above), and the next step tests and lints the release variant.
       - name: Build Rust libraries and notices before loading signing credentials
+        env:
+          YTUI_ANDROID_SKIP_GRADLE: '1'
         run: tools/android/build.sh
       - name: Build with the private release identity
         env:
@@ -90,7 +114,7 @@ jobs:
           tools/android/inspect-apk.sh "$apk" > apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt
           "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk" >> apps/android/app/build/outputs/apk/release/SHA256-and-checks.txt
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$apk" > "$RUNNER_TEMP/vidcue-release-badging.txt"
-          if rg -q '^application-debuggable' "$RUNNER_TEMP/vidcue-release-badging.txt"; then
+          if grep -q '^application-debuggable' "$RUNNER_TEMP/vidcue-release-badging.txt"; then
             echo 'Release APK must not be debuggable.' >&2
             exit 1
           fi

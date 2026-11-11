@@ -114,7 +114,8 @@ jobs:
         with:
           cache-on-failure: true
           cache-workspace-crates: true
-          key: android-workspace-v1
+          # android-release.yml restores this release-profile cache; keep the key in step.
+          shared-key: android-release-profile
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: android-actions/setup-android@v3
         with:
