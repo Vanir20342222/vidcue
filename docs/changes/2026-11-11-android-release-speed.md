@@ -1,7 +1,7 @@
 # Faster signed Android release build (M9)
 
 - **Date:** 2026-11-11
-- **PR:** <!-- add once the PR exists -->
+- **PR:** #147
 - **Milestone:** M9
 - **Platforms:** CI-release
 - **Status:** fixture/unit verified
