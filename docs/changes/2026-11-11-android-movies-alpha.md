@@ -1,7 +1,7 @@
 # Android Movies (alpha) page over the shared HLS engine (M9)
 
 - **Date:** 2026-11-11
-- **PR:** #<number> <!-- add once the PR exists -->
+- **PR:** #148
 - **Milestone:** M9
 - **Platforms:** Android, shared mobile engine
 - **Status:** fixture/unit verified; engine live-checked on this host; not run on a device or emulator
