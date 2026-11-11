@@ -59,12 +59,12 @@ jobs:
           gh release download --repo zhongfly/mpv-winbuild --pattern "mpv-dev-x86_64-[0-9]*" -O mpv-dev.7z
           if ($LASTEXITCODE -ne 0) { throw "cannot download the mpv-dev-x86_64 package" }
           7z x -y mpv-dev.7z -ompv-dev | Out-Null
-          $dll = Get-ChildItem -Recurse ompv-dev -Filter libmpv-2.dll | Select-Object -First 1
+          $dll = Get-ChildItem -Recurse mpv-dev -Filter libmpv-2.dll | Select-Object -First 1
           if (-not $dll) { throw "libmpv-2.dll missing from the mpv-dev package" }
           $libdir = "mpv\lib"
           New-Item -ItemType Directory -Force $libdir | Out-Null
           Copy-Item $dll.FullName "$libdir\libmpv-2.dll"
-          $import = Get-ChildItem -Recurse ompv-dev -Include *.dll.a,*.a -ErrorAction SilentlyContinue |
+          $import = Get-ChildItem -Recurse mpv-dev -Include *.dll.a,*.a -ErrorAction SilentlyContinue |
             Where-Object Name -like "libmpv*" | Select-Object -First 1
           if ($import) { Copy-Item $import.FullName "$libdir\libmpv-2.dll.a" }
           Add-Content $env:GITHUB_ENV "MPV_LIB_DIR=$((Resolve-Path $libdir).Path)"
