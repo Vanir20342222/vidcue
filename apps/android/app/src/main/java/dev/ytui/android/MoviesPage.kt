@@ -51,8 +51,8 @@ import org.json.JSONObject
 /**
  * Movies (alpha): a cinematic page over the shared HLS engine. A featured hero, poster rows,
  * search, continue watching, downloads, a "Play a stream URL" panel, and a detail sheet with the
- * season/episode picker and each source's check result. Mirrors the desktop Movies page, but its
- * catalog is openly licensed films and public test streams: no third-party source lookup.
+ * season/episode picker and each source's check result. Searches public Cinemeta metadata;
+ * stream availability is determined separately by the existing playback providers.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -68,10 +68,39 @@ internal fun MoviesPage(vm: YtuiViewModel) {
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var openSeason by rememberSaveable { mutableStateOf<Int?>(null) }
     var openEpisode by rememberSaveable { mutableStateOf<Int?>(null) }
+    var candidate by remember { mutableStateOf<MovieTitle?>(null) }
+    var detailLoading by remember { mutableStateOf(false) }
+    var detailError by remember { mutableStateOf("") }
+    var detailRetry by remember { mutableStateOf(0) }
     fun open(pick: MoviePick) {
-        openId = pick.title.id
+        candidate = pick.title
+        detailRetry++
+        openId = null
         openSeason = pick.season
         openEpisode = pick.episode
+    }
+    LaunchedEffect(candidate, detailRetry) {
+        val title = candidate ?: return@LaunchedEffect
+        detailError = ""
+        detailLoading = true
+        try {
+            val full = if (title.catalogImdb.isNotBlank()) {
+                val meta = RustRpc.call(JSONObject().put("op", "movie_catalog_details")
+                    .put("kind", title.catalogKind).put("imdb", title.catalogImdb)) as? JSONObject
+                    ?: error("No title metadata returned")
+                val parsed = movieTitleFromMetadata(meta)
+                check(parsed.tmdb > 0) { "This title has no playback provider ID yet." }
+                check(!parsed.series || parsed.seasons.isNotEmpty()) { "Episode listings are not available yet. Try again later." }
+                MovieLibrary.rememberTitle(meta)
+            } else title
+            openId = full.id
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            val cached = MovieCatalog.cached(title.id)
+            if (cached != null) openId = cached.id
+            else detailError = e.message ?: "Could not load title. Try again."
+        }
+        finally { detailLoading = false }
     }
     val films = remember { MovieCatalog.titles.filter { !it.series && !it.cinecat } }
     val series = remember { MovieCatalog.titles.filter { it.series && !it.cinecat } }
@@ -84,7 +113,24 @@ internal fun MoviesPage(vm: YtuiViewModel) {
                 .filter { MovieLibrary.shouldResume(it.second) }
         }
     val featured = continuing.firstOrNull()?.first?.title ?: MovieCatalog.titles.first()
-    val results = remember(query) { MovieCatalog.search(query) }
+    var remoteResults by remember(query) { mutableStateOf<List<MovieTitle>>(emptyList()) }
+    var searching by remember(query) { mutableStateOf(query.isNotBlank()) }
+    var searchError by remember(query) { mutableStateOf("") }
+    var searchRetry by remember { mutableStateOf(0) }
+    LaunchedEffect(query, searchRetry) {
+        if (query.isBlank()) { searching = false; return@LaunchedEffect }
+        searching = true
+        searchError = ""
+        try {
+            kotlinx.coroutines.delay(350)
+            val result = searchMovieCatalog(query)
+            remoteResults = result.titles
+            searchError = result.warning
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { searchError = e.message ?: "Online search failed" }
+        finally { searching = false }
+    }
+    val results = (MovieCatalog.search(query) + remoteResults).distinctBy { it.catalogImdb.ifBlank { it.id } }
     val bottom = LocalBottomOverlay.current
     val keyboard = LocalSoftwareKeyboardController.current
     // The hero already features the latest unfinished title; the shelf lists the rest.
@@ -102,7 +148,7 @@ internal fun MoviesPage(vm: YtuiViewModel) {
             SearchField(
                 query,
                 { query = it },
-                "Search films and streams",
+                "Search movies and series",
                 Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset).padding(top = 4.dp).testTag("movies-search"),
                 searching = query.isNotEmpty(),
                 onClear = { query = "" },
@@ -122,7 +168,12 @@ internal fun MoviesPage(vm: YtuiViewModel) {
             }
         if (query.isNotBlank())
             item("results") {
-                if (results.isEmpty())
+                if (searching) Text("Searching movies and series…", Modifier.padding(horizontal = MediaTokens.textInset))
+                if (searchError.isNotBlank()) {
+                    Text(searchError, Modifier.padding(horizontal = MediaTokens.textInset))
+                    Pill("Retry search", onClick = { searchRetry++ })
+                }
+                if (results.isEmpty() && !searching && searchError.isBlank())
                     Text(
                         "Nothing matches “${query.trim()}”.",
                         Modifier.padding(horizontal = MediaTokens.textInset),
@@ -130,6 +181,12 @@ internal fun MoviesPage(vm: YtuiViewModel) {
                     )
                 else PosterRow("Results", results, resume) { open(MoviePick(it)) }
             }
+        if (detailLoading || detailError.isNotBlank()) item("title-status") {
+            Column(Modifier.padding(horizontal = MediaTokens.textInset)) {
+                Text(if (detailLoading) "Loading seasons and title details…" else detailError)
+                if (!detailLoading) Pill("Retry title", onClick = { detailRetry++ })
+            }
+        }
         if (shelf.isNotEmpty())
             item("continue") {
                 Shelf("Continue watching") {

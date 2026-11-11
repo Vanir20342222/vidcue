@@ -1084,6 +1084,19 @@ impl Engine {
                 ))
             }
             // A cancelled request drops this future, which also drops any download staging.
+            "movie_catalog_search" => {
+                vidcue_providers::movie_catalog::MovieCatalog::new()?
+                    .search(r["query"].as_str().context("Missing search query")?)
+                    .await
+            }
+            "movie_catalog_details" => {
+                vidcue_providers::movie_catalog::MovieCatalog::new()?
+                    .details(
+                        r["kind"].as_str().context("Missing catalog media type")?,
+                        r["imdb"].as_str().context("Missing catalog title ID")?,
+                    )
+                    .await
+            }
             "movie_check" => movies::check(r, &CancellationToken::new()).await,
             "movie_download" => movies::download(r, &CancellationToken::new()).await,
             "movie_cinecat_resolve" => movies::cinecat_resolve(r, &CancellationToken::new()).await,

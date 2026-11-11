@@ -18,6 +18,8 @@ use vidcue_providers::cinecat::{self, Backend, Stream, StreamKind, Subtitle, Web
 use crate::app::{App, ToastKind};
 use crate::player::mpv::Load;
 
+#[path = "movies_catalog.rs"]
+mod catalog;
 #[path = "movies_tmdb.rs"]
 pub mod tmdb;
 #[path = "movies_wiki.rs"]
@@ -91,6 +93,7 @@ pub struct Movies {
     pub selected: Option<Title>,
     pub seasons: Vec<Season>,
     pub episodes: Vec<Episode>,
+    catalog_episodes: std::collections::HashMap<u32, Vec<Episode>>,
     pub season: u32,
     pub episode: u32,
     pub featured: usize,
@@ -121,6 +124,7 @@ impl Default for Movies {
             selected: None,
             seasons: Vec::new(),
             episodes: Vec::new(),
+            catalog_episodes: Default::default(),
             season: 1,
             episode: 1,
             featured: 0,
@@ -386,13 +390,10 @@ pub fn search(app: &mut App) {
     app.movies.search_error = None;
     let asked = q.clone();
     if app.prefs.tmdb_key.trim().is_empty() {
-        // Without a TMDB key, Wikipedia finds titles and Wikidata supplies their TMDB ids.
-        let Ok(client) = vidcue_providers::http_client(app.config.proxy.as_deref()) else {
-            return;
-        };
         let query = q.clone();
+        let proxy = app.config.proxy.clone();
         app.be.task(
-            async move { wiki::search(&client, &query).await },
+            async move { catalog::search(&query, proxy.as_deref()).await },
             move |app, r, _| {
                 let m = &mut app.movies;
                 if m.search.text.trim() != asked {
@@ -400,9 +401,12 @@ pub fn search(app: &mut App) {
                 }
                 m.searching = false;
                 match r {
-                    Ok(list) => {
+                    Ok((list, warning)) => {
                         m.results = list;
                         m.searched = Some(asked);
+                        if let Some(warning) = warning {
+                            app.toast(ToastKind::Info, warning);
+                        }
                     }
                     Err(e) => {
                         m.search_error = Some(vidcue_providers::diagnostic(&format!("{e:#}")))
@@ -437,11 +441,71 @@ pub fn open_title(app: &mut App, title: Title) {
     m.episode = title.episode.unwrap_or(1);
     m.seasons.clear();
     m.episodes.clear();
+    m.catalog_episodes.clear();
+    let imdb = if title.imdb.is_empty() {
+        match (tmdb_id, tv) {
+            (1396, true) => "tt0903747".to_owned(),
+            (1668, true) => "tt0108778".to_owned(),
+            _ => String::new(),
+        }
+    } else {
+        title.imdb.clone()
+    };
     m.selected = Some(title);
     if !matches!(m.phase, Phase::Checking) {
         m.phase = Phase::Idle;
     }
     if app.prefs.tmdb_key.trim().is_empty() {
+        if imdb.is_empty() {
+            return;
+        }
+        let proxy = app.config.proxy.clone();
+        app.be.task(
+            async move { catalog::details(tv, &imdb, proxy.as_deref()).await },
+            move |app, result, _| {
+                let m = &mut app.movies;
+                if !m
+                    .selected
+                    .as_ref()
+                    .is_some_and(|t| t.tmdb == tmdb_id && t.tv == tv)
+                {
+                    return;
+                }
+                match result {
+                    Ok((full, episodes)) => {
+                        m.selected = Some(full);
+                        m.seasons = episodes
+                            .iter()
+                            .map(|(&number, entries)| Season {
+                                number,
+                                name: if number == 0 {
+                                    "Specials".into()
+                                } else {
+                                    format!("Season {number}")
+                                },
+                                episodes: entries.len() as u32,
+                            })
+                            .collect();
+                        m.seasons.sort_by_key(|s| (s.number == 0, s.number));
+                        m.catalog_episodes = episodes;
+                        if !m.catalog_episodes.contains_key(&m.season) {
+                            m.season = m.seasons.first().map_or(1, |s| s.number);
+                        }
+                        m.episodes = m
+                            .catalog_episodes
+                            .get(&m.season)
+                            .cloned()
+                            .unwrap_or_default();
+                        if !m.episodes.iter().any(|e| e.number == m.episode) {
+                            m.episode = m.episodes.first().map_or(1, |e| e.number);
+                        }
+                    }
+                    Err(e) => {
+                        app.toast(ToastKind::Error, format!("Title details unavailable: {e}"));
+                    }
+                }
+            },
+        );
         return;
     }
     tmdb_call(app, Query::Details { tv, id: tmdb_id }, move |app, r| {
@@ -495,7 +559,15 @@ pub fn pick_season(app: &mut App, season: u32) {
     };
     app.movies.season = season;
     app.movies.episode = 1;
-    app.movies.episodes.clear();
+    app.movies.episodes = app
+        .movies
+        .catalog_episodes
+        .get(&season)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(first) = app.movies.episodes.first() {
+        app.movies.episode = first.number;
+    }
     if !app.prefs.tmdb_key.trim().is_empty() {
         load_episodes(app, id, season);
     }
