@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -65,6 +67,7 @@ internal fun MoviesPage(vm: YtuiViewModel) {
     val downloads by MovieLibrary.downloads.collectAsState()
     val transfers by MovieLibrary.transfers.collectAsState()
     var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(MovieFilter.All) }
     var openId by rememberSaveable { mutableStateOf<String?>(null) }
     var openSeason by rememberSaveable { mutableStateOf<Int?>(null) }
     var openEpisode by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -90,6 +93,10 @@ internal fun MoviesPage(vm: YtuiViewModel) {
     // The hero already features the latest unfinished title; the shelf lists the rest.
     val heroResume = continuing.firstOrNull { it.first.title.id == featured.id }
     val shelf = if (query.isBlank() && heroResume != null) continuing - heroResume else continuing
+    val hasDownloads = transfers.isNotEmpty() || downloads.isNotEmpty()
+    // A Downloads filter left over from a removed last download falls back to everything.
+    val active = if (filter == MovieFilter.Downloads && !hasDownloads) MovieFilter.All else filter
+    val browsing = query.isBlank()
 
     LazyColumn(
         Modifier.fillMaxSize().testTag("movies-page"),
@@ -109,18 +116,24 @@ internal fun MoviesPage(vm: YtuiViewModel) {
                 onSubmit = { keyboard?.hide() },
             )
         }
-        if (!noticeSeen) item("notice") { AlphaNotice(MovieLibrary::acceptNotice) }
-        // While searching, results sit directly under the field instead of below the tall hero.
-        if (query.isBlank())
-            item("hero") {
-                Hero(
-                    featured,
-                    resumeOf = heroResume,
-                    onPlay = { open(heroResume?.first ?: MoviePick(featured)) },
-                    onDetails = { open(MoviePick(featured)) },
-                )
+        if (browsing)
+            item("filters") {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = MediaTokens.textInset)
+                        .testTag("movies-filters"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (f in MovieFilter.entries) {
+                        if (f == MovieFilter.Downloads && !hasDownloads) continue
+                        MediaChip(f.label, f == active, Modifier.testTag("movies-filter-${f.name.lowercase()}")) { filter = f }
+                    }
+                }
             }
-        if (query.isNotBlank())
+        if (!noticeSeen) item("notice") { AlphaNotice(MovieLibrary::acceptNotice) }
+        if (!browsing) {
+            // While searching, results fill a poster grid directly under the field.
             item("results") {
                 if (results.isEmpty())
                     Text(
@@ -128,33 +141,63 @@ internal fun MoviesPage(vm: YtuiViewModel) {
                         Modifier.padding(horizontal = MediaTokens.textInset),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                else PosterRow("Results", results, resume) { open(MoviePick(it)) }
+                else
+                    PosterGrid(if (results.size == 1) "1 result" else "${results.size} results", results, resume) {
+                        open(MoviePick(it))
+                    }
             }
-        if (shelf.isNotEmpty())
-            item("continue") {
-                Shelf("Continue watching") {
-                    items(shelf, key = { it.first.key }) { (pick, r) ->
-                        ContinueCard(pick, r) { open(pick) }
+        } else
+            when (active) {
+                MovieFilter.All -> {
+                    item("hero") {
+                        Hero(
+                            featured,
+                            resumeOf = heroResume,
+                            onPlay = { open(heroResume?.first ?: MoviePick(featured)) },
+                            onDetails = { open(MoviePick(featured)) },
+                        )
+                    }
+                    if (shelf.isNotEmpty())
+                        item("continue") {
+                            Shelf("Continue watching") {
+                                items(shelf, key = { it.first.key }) { (pick, r) ->
+                                    ContinueCard(pick, r) { open(pick) }
+                                }
+                            }
+                        }
+                    if (hasDownloads)
+                        item("downloads") {
+                            DownloadsSection(transfers, downloads, onOpen = { key -> MovieCatalog.pick(key)?.let(::open) })
+                        }
+                    item("films") { PosterRow("Open films", films, resume) { open(MoviePick(it)) } }
+                    item("series") { PosterRow("Test streams", series, resume) { open(MoviePick(it)) } }
+                    if (cinecat.isNotEmpty()) item("cinecat") { PosterRow("Cinecat", cinecat, resume) { open(MoviePick(it)) } }
+                    item("url") { StreamUrlPanel(vm) }
+                    item("credits") {
+                        Text(
+                            "Films are shared by their creators under Creative Commons licences and credited " +
+                                "on each title. Stream Lab episodes are public player-test streams. Cinecat " +
+                                "titles resolve through the Cinecat sources API, whose providers decide what " +
+                                "serves; availability depends on the providers and your network.",
+                            Modifier.padding(horizontal = MediaTokens.textInset),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
+                MovieFilter.Films ->
+                    item("films-grid") {
+                        PosterGrid("Films", MovieCatalog.titles.filter { !it.series }, resume) { open(MoviePick(it)) }
+                    }
+                MovieFilter.Series ->
+                    item("series-grid") {
+                        PosterGrid("Series", MovieCatalog.titles.filter { it.series }, resume) { open(MoviePick(it)) }
+                    }
+                MovieFilter.Downloads ->
+                    item("downloads") {
+                        DownloadsSection(transfers, downloads, onOpen = { key -> MovieCatalog.pick(key)?.let(::open) })
+                    }
             }
-        if (transfers.isNotEmpty() || downloads.isNotEmpty())
-            item("downloads") { DownloadsSection(transfers, downloads, onOpen = { key -> MovieCatalog.pick(key)?.let(::open) }) }
-        item("films") { PosterRow("Open films", films, resume) { open(MoviePick(it)) } }
-        item("series") { PosterRow("Test streams", series, resume) { open(MoviePick(it)) } }
-        if (cinecat.isNotEmpty()) item("cinecat") { PosterRow("Cinecat", cinecat, resume) { open(MoviePick(it)) } }
-        item("url") { StreamUrlPanel(vm) }
-        item("credits") {
-            Text(
-                "Films are shared by their creators under Creative Commons licences and credited " +
-                    "on each title. Stream Lab episodes are public player-test streams. Cinecat " +
-                    "titles resolve through the Cinecat sources API, whose providers decide what " +
-                    "serves; availability depends on the providers and your network.",
-                Modifier.padding(horizontal = MediaTokens.textInset),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 
     val selected = openId?.let(MovieCatalog::find)
@@ -282,20 +325,54 @@ private fun Shelf(title: String, content: androidx.compose.foundation.lazy.LazyL
     }
 }
 
+/** What the chips under the search field narrow the page to. */
+private enum class MovieFilter(val label: String) {
+    All("All"),
+    Films("Films"),
+    Series("Series"),
+    Downloads("Downloads"),
+}
+
+/** Poster width for shelves: larger on tablets so a row does not read as a strip of stamps. */
+@Composable
+private fun posterWidth(): Dp = if (LocalConfiguration.current.screenWidthDp >= 600) 156.dp else 128.dp
+
+/** Titles as a wrapping poster grid; columns follow the screen width (three on a phone). */
+@Composable
+private fun PosterGrid(heading: String, titles: List<MovieTitle>, resume: Map<String, MovieResume>, open: (MovieTitle) -> Unit) {
+    val width = LocalConfiguration.current.screenWidthDp
+    val minCell = if (width >= 600) 150 else 100
+    val columns = ((width - 2 * 16 + 12) / (minCell + 12)).coerceIn(3, 8)
+    Column(
+        Modifier.padding(horizontal = MediaTokens.textInset).testTag("movies-grid"),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(heading, style = MaterialTheme.typography.titleLarge)
+        for (row in titles.chunked(columns))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                for (t in row) {
+                    val progress = resume[t.id]?.takeIf(MovieLibrary::shouldResume)?.fraction
+                    PosterCard(t, progress, Modifier.weight(1f)) { open(t) }
+                }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+    }
+}
+
 @Composable
 private fun PosterRow(title: String, titles: List<MovieTitle>, resume: Map<String, MovieResume>, open: (MovieTitle) -> Unit) {
     Shelf(title) {
         items(titles, key = { it.id }) { t ->
             val progress = resume[t.id]?.takeIf(MovieLibrary::shouldResume)?.fraction
-            PosterCard(t, progress) { open(t) }
+            PosterCard(t, progress, Modifier.width(posterWidth())) { open(t) }
         }
     }
 }
 
 @Composable
-private fun PosterCard(title: MovieTitle, progress: Float?, onClick: () -> Unit) {
+private fun PosterCard(title: MovieTitle, progress: Float?, modifier: Modifier, onClick: () -> Unit) {
     Column(
-        Modifier.width(132.dp)
+        modifier
             .clip(MediaTokens.medium)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { contentDescription = "${title.title}, ${movieMeta(title)}" }
@@ -303,7 +380,7 @@ private fun PosterCard(title: MovieTitle, progress: Float?, onClick: () -> Unit)
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box {
-            MoviePoster(title, Modifier.width(132.dp).aspectRatio(2f / 3f))
+            MoviePoster(title, Modifier.fillMaxWidth().aspectRatio(2f / 3f))
             if (progress != null)
                 MediaProgressBar(
                     progress,
@@ -663,65 +740,49 @@ private fun MovieSheet(
             .testTag("movie-sheet"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            MoviePoster(title, Modifier.width(112.dp).aspectRatio(2f / 3f))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(
-                        title.title,
-                        Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    SheetClose(onDismiss)
-                }
-                Text(movieMeta(title), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (feature in title.features.take(3)) Tag(feature)
-                }
+        SheetBanner(title, onDismiss)
+        Text(movieMeta(title), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (title.features.isNotEmpty())
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (feature in title.features) Tag(feature)
             }
-        }
-        Text(title.synopsis, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            "${title.credit} · ${title.license}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (title.series) EpisodePicker(title, season, episode, resume) { s, e ->
-            resolveJob?.cancel()
-            season = s
-            episode = e
-        }
-        // Actions: play (offline copy first), download state, and a full source check.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (download != null)
-                Pill("Play download", Modifier.testTag("movie-play-offline"), PillStyle.Primary, glyph = Glyph.Play) {
+        // Streams the pick: Cinecat titles resolve first; catalog titles check sources in order.
+        val stream: () -> Unit = {
+            if (title.cinecat)
+                resolve { sources ->
                     pauseAppPlayback(vm)
-                    MoviePlayerActivity.offline(context, download)
+                    MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, sources)
                 }
             else
-                Pill(
-                    when {
-                        checking -> if (title.cinecat) "Finding sources…" else "Checking sources…"
-                        saved != null -> "Resume from ${time(saved.positionMs / 1000f)}"
-                        else -> "Play"
-                    },
-                    Modifier.testTag("movie-play"),
-                    PillStyle.Primary,
-                    enabled = !checking,
-                    glyph = Glyph.Play,
-                ) {
-                    if (title.cinecat)
-                        resolve { sources ->
-                            pauseAppPlayback(vm)
-                            MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, sources)
-                        }
-                    else
-                        check(all = false) { chosen ->
-                            pauseAppPlayback(vm)
-                            MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, movieFailoverOrder(pick.sources, chosen))
-                        }
+                check(all = false) { chosen ->
+                    pauseAppPlayback(vm)
+                    MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, movieFailoverOrder(pick.sources, chosen))
                 }
+        }
+        // One full-width primary action (offline copy first), then the secondary actions.
+        if (download != null)
+            Pill("Play download", Modifier.testTag("movie-play-offline"), PillStyle.Primary, glyph = Glyph.Play, fill = true) {
+                pauseAppPlayback(vm)
+                MoviePlayerActivity.offline(context, download)
+            }
+        else
+            Pill(
+                when {
+                    checking -> if (title.cinecat) "Finding sources…" else "Checking sources…"
+                    saved != null -> "Resume from ${time(saved.positionMs / 1000f)}"
+                    title.series && episode != null -> "Play episode $episode"
+                    else -> "Play"
+                },
+                Modifier.testTag("movie-play"),
+                PillStyle.Primary,
+                enabled = !checking,
+                glyph = Glyph.Play,
+                fill = true,
+                onClick = stream,
+            )
+        if (saved != null && download == null)
+            MediaProgressBar(saved.fraction, Modifier.fillMaxWidth(), thickness = 3.dp)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             when {
                 download != null ->
                     Pill("Remove", style = PillStyle.Destructive) { MovieLibrary.delete(pick.key) }
@@ -737,20 +798,8 @@ private fun MovieSheet(
                         }
                     }
             }
+            if (download != null) Pill("Stream instead", style = PillStyle.Quiet, enabled = !checking, onClick = stream)
         }
-        if (download != null)
-            Pill("Stream instead", style = PillStyle.Quiet, enabled = !checking) {
-                if (title.cinecat)
-                    resolve { sources ->
-                        pauseAppPlayback(vm)
-                        MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, sources)
-                    }
-                else
-                    check(all = false) { chosen ->
-                        pauseAppPlayback(vm)
-                        MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, movieFailoverOrder(pick.sources, chosen))
-                    }
-            }
         if (transfer != null) TransferRow(transfer)
         if (download != null)
             Text(
@@ -758,9 +807,65 @@ private fun MovieSheet(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        // Failures show beside the action that caused them, not below a long episode list.
+        if (checkError.isNotEmpty())
+            Text(
+                checkError,
+                Modifier.testTag("movie-error"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+            )
+        Text(title.synopsis, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "${title.credit} · ${title.license}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (title.series) EpisodePicker(title, season, episode, resume) { s, e ->
+            resolveJob?.cancel()
+            season = s
+            episode = e
+        }
         if (title.cinecat)
-            CinecatProviders(cinecatReports, checking, checkError) { checkCinecatAll() }
-        else SourceList(pick.sources, attempts, checking, checkError) { check(all = true) }
+            CinecatProviders(cinecatReports, checking) { checkCinecatAll() }
+        else SourceList(pick.sources, attempts, checking) { check(all = true) }
+    }
+}
+
+/**
+ * Sheet header: the title's wide artwork under a dark scrim, with its poster and name over the
+ * bottom edge and the close control in the corner. Text is white because it sits on the scrim.
+ */
+@Composable
+private fun SheetBanner(title: MovieTitle, onDismiss: () -> Unit) {
+    BoxWithConstraints(Modifier.fillMaxWidth().testTag("movie-sheet-banner")) {
+        val height = (maxWidth * 9f / 16f).coerceAtMost(300.dp)
+        Box(Modifier.fillMaxWidth().height(height).clip(MediaTokens.card)) {
+            MoviePoster(title, Modifier.fillMaxSize(), shape = null)
+            Box(
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(0.3f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.82f))
+                    )
+            )
+            Row(
+                Modifier.align(Alignment.BottomStart).padding(14.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                MoviePoster(title, Modifier.width(if (height >= 240.dp) 84.dp else 64.dp).aspectRatio(2f / 3f), MediaTokens.small)
+                Text(
+                    title.title,
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Box(Modifier.align(Alignment.TopEnd).padding(4.dp)) { SheetClose(onDismiss) }
+        }
     }
 }
 
@@ -786,7 +891,8 @@ private fun EpisodePicker(
     choose: (Int, Int) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Long-running series have more seasons than fit across a phone: the chips scroll.
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             for (s in title.seasons)
                 MediaChip("Season ${s.number}", s.number == season, Modifier.testTag("movie-season-${s.number}")) {
                     choose(s.number, s.episodes.first().number)
@@ -840,7 +946,6 @@ private fun SourceList(
     sources: List<MovieSource>,
     attempts: List<SourceAttempt>,
     checking: Boolean,
-    error: String,
     checkAll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("movie-sources")) {
@@ -885,8 +990,6 @@ private fun SourceList(
                 }
             }
         }
-        if (error.isNotEmpty())
-            Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
 }
 
@@ -898,7 +1001,6 @@ private fun SourceList(
 private fun CinecatProviders(
     reports: List<CinecatReport>,
     checking: Boolean,
-    error: String,
     checkAll: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.testTag("movie-sources")) {
@@ -950,8 +1052,6 @@ private fun CinecatProviders(
                     )
                 }
             }
-        if (error.isNotEmpty())
-            Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
     }
 }
 
