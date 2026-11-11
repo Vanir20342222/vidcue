@@ -6,8 +6,8 @@
 use anyhow::{Context, Result, ensure};
 use std::cmp::Ordering;
 
-/// Repository that publishes releases. GitHub redirects the API after a rename.
-pub const REPOSITORY: &str = "Vanir20342222/ytui";
+/// Canonical repository. Releases also mirror to Vanir20342222/ytui for older installs.
+pub const REPOSITORY: &str = "Vanir20342222/vidcue";
 pub const API_BASE: &str = "https://api.github.com";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,7 +265,7 @@ mod tests {
     #[tokio::test]
     async fn check_reads_the_release_list_from_the_api() {
         let (base, server) = crate::test_http::serve(|target| {
-            assert_eq!(target, "/repos/Vanir20342222/ytui/releases?per_page=30");
+            assert_eq!(target, "/repos/Vanir20342222/vidcue/releases?per_page=30");
             (
                 200,
                 "Content-Type: application/json\r\n".into(),
@@ -345,7 +345,9 @@ mod tests {
         assert!(status.success());
         let log = std::fs::read_to_string(&log).unwrap();
         assert!(
-            log.contains("--depth 1 --branch v0.2.1 -- https://github.com/Vanir20342222/ytui.git"),
+            log.contains(
+                "--depth 1 --branch v0.2.1 -- https://github.com/Vanir20342222/vidcue.git"
+            ),
             "{log}"
         );
         assert!(log.ends_with("installer ran\n"), "{log}");

@@ -16,7 +16,7 @@ On CachyOS/Arch:
 ```sh
 sudo pacman -S --needed base-devel rustup openssl mpv ffmpeg nodejs
 rustup default stable
-git clone https://github.com/Vanir20342222/ytui.git
+git clone https://github.com/Vanir20342222/vidcue.git
 cd vidcue
 ./install.sh
 hash -r

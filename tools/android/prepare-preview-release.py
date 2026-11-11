@@ -36,7 +36,7 @@ def changes_markdown(text):
 
 
 def notes(version, revision, runs, base, changes):
-    owner = "https://github.com/Vanir20342222/ytui"
+    owner = "https://github.com/Vanir20342222/vidcue"
     links = ", ".join(f"[{name}]({owner}/actions/runs/{runs[name]})" for name in CHECKS)
     return (
         f"Android **development Preview** `{version}`, built by GitHub Actions from `main` at "

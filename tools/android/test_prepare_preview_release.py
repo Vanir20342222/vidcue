@@ -105,7 +105,7 @@ class PreviewPublicationTest(unittest.TestCase):
         self.assertIn("dev.vidcue.android.preview", notes)
         self.assertIn("It was not rebuilt or re-signed", notes)
         for name, run in RUNS.items():
-            self.assertIn(f"[{name}](https://github.com/Vanir20342222/ytui/actions/runs/{run})", notes)
+            self.assertIn(f"[{name}](https://github.com/Vanir20342222/vidcue/actions/runs/{run})", notes)
         self.assertIn("- Merge PR #36: watch-page recommendations in Up next (Android)", notes)
         self.assertIn("under-1000 ms startup is not claimed", notes)
         self.assertIn(f"`{self.revision}`", notes)

@@ -2,7 +2,7 @@
 
 The app combines the shared Rust engine with a native Jetpack Compose phone/tablet UI. Media3 handles video, background playback, media controls and offline transfers. The explicit account sign-in page is its only WebView. No Python or mpv executable runs on Android.
 
-[Android downloads and checksums](https://github.com/Vanir20342222/ytui/releases) · [Beta.1 channel and publication](BETA1_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
+[Android downloads and checksums](https://github.com/Vanir20342222/vidcue/releases) · [Beta.1 channel and publication](BETA1_RELEASE.md) · [Actual gallery](../screenshots/android/README.md)
 
 ## Documents
 

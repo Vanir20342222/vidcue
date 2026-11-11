@@ -70,7 +70,7 @@ class AppUpdatesTest {
         return JSONObject()
             .put("tag_name", tag)
             .put("draft", draft)
-            .put("html_url", "https://github.com/Vanir20342222/ytui/releases/tag/$tag")
+            .put("html_url", "https://github.com/Vanir20342222/vidcue/releases/tag/$tag")
             .put("body", body)
             .put(
                 "assets",
