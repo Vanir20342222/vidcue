@@ -27,3 +27,7 @@ libc = "0.2"
 zbus = { version = "4", default-features = false, features = ["tokio"] }
 futures-util = "0.3"
 yt-dlp-rs = { git = "https://github.com/aagedal/yt-dlp-rs", rev = "f67d96bdf98c5b821d0c9bf6175d328a0fa8ceab" }
+
+[target.'cfg(windows)'.dependencies]
+# Job objects own each operation's process tree (see src/win_job.rs).
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

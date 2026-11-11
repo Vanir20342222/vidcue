@@ -38,6 +38,8 @@ pub mod theme;
 mod throttle;
 pub mod update;
 pub mod vpn;
+#[cfg(windows)]
+mod win_job;
 pub use vidcue_providers::watch;
 mod worker_process;
 

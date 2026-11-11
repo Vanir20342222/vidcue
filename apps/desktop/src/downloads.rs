@@ -400,7 +400,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .child(
             button(t, "Open folder", Some(&ic::FOLDER), Kind::Ghost).on_press_tx(
                 move |_: &mut App, tx: &mut Tx| {
-                    let _ = tx.open_url(&format!("file://{}", open_dir.display()));
+                    open_folder(tx, &open_dir);
                 },
             ),
         )
@@ -682,7 +682,7 @@ fn library(app: &App, cx: &mut Cx<App>) -> El {
                         widgets::icon_button(t, &ic::FOLDER, "Show in folder", 30.0).on_press_tx(
                             move |_: &mut App, tx: &mut Tx| {
                                 if let Some(dir) = open.as_deref().and_then(Path::parent) {
-                                    let _ = tx.open_url(&format!("file://{}", dir.display()));
+                                    open_folder(tx, dir);
                                 }
                             },
                         ),
@@ -709,6 +709,14 @@ fn play_local(app: &mut App, media: Media, audio: bool) {
             ..Default::default()
         },
     );
+}
+
+/// Opens `dir` in the file manager. `Url::from_directory_path` writes a valid `file:///` URL
+/// on every platform: `file:///C:/Users/…` on Windows, with spaces and `#` percent-encoded.
+fn open_folder(tx: &mut Tx, dir: &Path) {
+    if let Ok(url) = url::Url::from_directory_path(dir) {
+        let _ = tx.open_url(url.as_str());
+    }
 }
 
 #[cfg(test)]

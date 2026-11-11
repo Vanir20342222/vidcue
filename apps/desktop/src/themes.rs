@@ -20,6 +20,40 @@ fn set(app: &mut App, p: &Palette) {
     }
 }
 
+/// `vidcue_services::theme::resolve` marks the palette it falls back to when the desktop
+/// offers none (always on Windows) with a source starting with this.
+const FALLBACK: &str = "Fallback";
+
+/// Applies a palette resolved for "Follow desktop". Without a desktop palette, the system's
+/// light/dark setting picks Vidcue Light or Vidcue Dark.
+fn follow(app: &mut App, p: &Palette) {
+    if p.source.starts_with(FALLBACK)
+        && app.system_dark.get() == Some(false)
+        && let Ok(mut light) = vidcue_core::theme::builtin("vidcue-light")
+    {
+        light.source = p.source.clone();
+        return set(app, &light);
+    }
+    set(app, p);
+}
+
+/// Called by the view, the only place Rune reports the system appearance. A change re-applies
+/// a fallback "Follow desktop" palette on the next poll; desktop palettes are left alone.
+pub fn observe_system_dark(app: &App, dark: bool) {
+    if app.system_dark.replace(Some(dark)) == Some(dark) {
+        return;
+    }
+    app.be.land(Box::new(|app, _| {
+        if app.config.theme == "system" && app.theme.palette.source.starts_with(FALLBACK) {
+            let source = app.theme.palette.source.clone();
+            if let Ok(mut dark) = vidcue_core::theme::builtin("vidcue-dark") {
+                dark.source = source;
+                follow(app, &dark);
+            }
+        }
+    }));
+}
+
 pub fn reload(app: &mut App) {
     if let Some(c) = WATCH.lock().unwrap().take() {
         c.cancel();
@@ -34,12 +68,12 @@ pub fn reload(app: &mut App) {
             let be = app.be.clone();
             app.be.rt.spawn(async move {
                 if let Ok(p) = vidcue_services::theme::resolve(&config, &paths).await {
-                    be.land(Box::new(move |app, _| set(app, &p)));
+                    be.land(Box::new(move |app, _| follow(app, &p)));
                 }
                 let mut rx = vidcue_services::theme::watch(config, paths, cancel.clone());
                 while !cancel.is_cancelled() && rx.changed().await.is_ok() {
                     let p = rx.borrow().clone();
-                    be.land(Box::new(move |app, _| set(app, &p)));
+                    be.land(Box::new(move |app, _| follow(app, &p)));
                 }
             });
         }
@@ -100,5 +134,40 @@ pub fn label(name: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join(" "),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fallback() -> Palette {
+        let mut p = vidcue_core::theme::builtin("vidcue-dark").unwrap();
+        p.source = "Fallback · no desktop palette available".into();
+        p
+    }
+
+    #[test]
+    fn follow_desktop_without_a_palette_matches_the_system_light_or_dark_setting() {
+        let mut app = App::offline_for_tests();
+        app.system_dark.set(Some(false));
+        follow(&mut app, &fallback());
+        let light = vidcue_core::theme::builtin("vidcue-light").unwrap();
+        assert_eq!(app.theme.palette.name, light.name);
+        assert!(app.theme.palette.source.starts_with(FALLBACK));
+
+        app.system_dark.set(Some(true));
+        follow(&mut app, &fallback());
+        assert_eq!(app.theme.palette.name, fallback().name);
+    }
+
+    #[test]
+    fn a_real_desktop_palette_is_never_replaced() {
+        let mut app = App::offline_for_tests();
+        app.system_dark.set(Some(false));
+        let mut omarchy = vidcue_core::theme::builtin("gruvbox").unwrap();
+        omarchy.source = "omarchy".into();
+        follow(&mut app, &omarchy);
+        assert_eq!(app.theme.palette, omarchy);
     }
 }
