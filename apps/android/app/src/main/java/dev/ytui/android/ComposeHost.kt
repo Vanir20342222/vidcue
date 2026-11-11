@@ -461,6 +461,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         0 -> "Downloads"
                                         2 -> "Music"
                                         3 -> "Radio"
+                                        4 -> "Movies"
                                         else -> "Home"
                                     },
                                     Modifier.padding(start = 8.dp).weight(1f),
@@ -476,7 +477,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     MediaMenu(menu, { menu = false }) {
                                         // Feed actions first, then player panels, then About;
                                         // every row has its own glyph so none read alike.
-                                        if (tab > 0) {
+                                        if (tab in 1..3) {
                                             MediaMenuItem(
                                                 "Browse",
                                                 if (tab == 3) Glyph.Radio else Glyph.Browse,
@@ -542,6 +543,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         }
                                 ) {
                                     if (tab == 0) OfflineLibrary(vm)
+                                    else if (tab == 4) MoviesPage(vm)
                                     else
                                         key(tab) {
                                             BrowsePane(
@@ -1004,7 +1006,7 @@ private var pendingTabEntry = 0
 
 /**
  * Sideways swipes anywhere on the page move between the bottom destinations in their display
- * order (Home, Music, Radio, Downloads). The page follows the finger; rows that scroll sideways
+ * order (Home, Music, Radio, Movies, Downloads). The page follows the finger; rows that scroll sideways
  * themselves (filter chips, shelves) keep their own drags.
  */
 @Composable

@@ -17,6 +17,7 @@ mod audio_tracks;
 pub mod equalizer;
 mod indexed_playback;
 mod lyrics;
+mod movies;
 mod resolution;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -1081,6 +1082,16 @@ impl Engine {
                 Ok(json!(
                     vidcue_providers::sponsorblock::fetch(&config, &media).await?
                 ))
+            }
+            // A cancelled request drops this future, which also drops any download staging.
+            "movie_check" => movies::check(r, &CancellationToken::new()).await,
+            "movie_download" => movies::download(r, &CancellationToken::new()).await,
+            "movie_cinecat_resolve" => movies::cinecat_resolve(r, &CancellationToken::new()).await,
+            "movie_cinecat_check_all" => {
+                movies::cinecat_check_all(r, &CancellationToken::new()).await
+            }
+            "movie_cinecat_providers" => {
+                movies::cinecat_providers(r, &CancellationToken::new()).await
             }
             _ => anyhow::bail!("Unknown mobile operation"),
         }
