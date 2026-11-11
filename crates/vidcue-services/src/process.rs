@@ -82,6 +82,31 @@ fn signal_group(pid: u32, signal: i32) {
         libc::kill(-(pid as i32), signal);
     }
 }
+
+/// Every process one operation started: its Unix process group, or on Windows a job object
+/// holding the child and anything it spawns (yt-dlp.exe's real worker, FFmpeg).
+struct Tree {
+    #[cfg(unix)]
+    pid: u32,
+    #[cfg(windows)]
+    job: Option<crate::win_job::Job>,
+}
+impl Tree {
+    /// Ask politely first where the platform can (SIGTERM); Windows has no equivalent.
+    fn terminate(&self) {
+        #[cfg(unix)]
+        signal_group(self.pid, libc::SIGTERM);
+    }
+    /// Kill every remaining member so none keeps the output pipes open.
+    fn kill(&self) {
+        #[cfg(unix)]
+        signal_group(self.pid, libc::SIGKILL);
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.terminate();
+        }
+    }
+}
 pub async fn run(
     spec: ProcessSpec,
     cancel: CancellationToken,
@@ -97,6 +122,9 @@ pub async fn run(
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
+    // A GUI app's console children would each flash a console window.
+    #[cfg(windows)]
+    command.creation_flags(crate::win_job::CREATE_NO_WINDOW);
     let mut child = command.spawn().with_context(|| {
         format!(
             "Cannot start {}; install it or set its executable path",
@@ -104,6 +132,16 @@ pub async fn run(
         )
     })?;
     let pid = child.id().context("Process has no PID")?;
+    let tree = Tree {
+        #[cfg(unix)]
+        pid,
+        #[cfg(windows)]
+        job: child
+            .raw_handle()
+            .and_then(|handle| crate::win_job::Job::assign(handle)),
+    };
+    #[cfg(not(unix))]
+    let _ = pid;
     let (tx, mut rx) = mpsc::channel(64);
     let stdout = tokio::spawn(drain(
         child.stdout.take().context("Missing stdout")?,
@@ -137,7 +175,7 @@ pub async fn run(
             status=child.wait(), if exit_status.is_none()=>{
                 exit_status=Some(status?);
                 // Descendants must not keep inherited pipes open after their owner exits.
-                #[cfg(unix)] signal_group(pid,libc::SIGKILL);
+                tree.kill();
             }
             event=rx.recv()=>match event {
                 Some(PipeEvent::Line(is_err,line))=> {
@@ -170,14 +208,12 @@ pub async fn run(
         }
     }
     if cancelled || timed_out || overflow {
-        #[cfg(unix)]
-        signal_group(pid, libc::SIGTERM);
+        tree.terminate();
         #[cfg(not(unix))]
         let _ = child.start_kill();
         // Let readers drain while the group exits; escalation also kills descendants.
         let _ = tokio::time::timeout(Duration::from_millis(300), child.wait()).await;
-        #[cfg(unix)]
-        signal_group(pid, libc::SIGKILL);
+        tree.kill();
         let _ = child.start_kill();
         let _ = child.wait().await;
         stdout.abort();
@@ -198,11 +234,11 @@ pub async fn run(
         tokio::select! {
             status=child.wait()=>status?,
             _=cancel.cancelled()=>{
-                #[cfg(unix)] signal_group(pid,libc::SIGKILL);
+                tree.kill();
                 let _=child.start_kill(); let _=child.wait().await; bail!("Operation cancelled");
             }
             _=&mut deadline=>{
-                #[cfg(unix)] signal_group(pid,libc::SIGKILL);
+                tree.kill();
                 let _=child.start_kill(); let _=child.wait().await; bail!("Operation timed out");
             }
         }
@@ -210,8 +246,7 @@ pub async fn run(
     let _ = stdout.await;
     let _ = stderr.await;
     // Terminate any remaining descendants after their owning child exits.
-    #[cfg(unix)]
-    signal_group(pid, libc::SIGKILL);
+    tree.kill();
     if let Some(error) = last_error {
         errors.retain(|line| line != &error);
         errors.push_front(error);

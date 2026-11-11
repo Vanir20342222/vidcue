@@ -552,7 +552,7 @@ async fn convert_local(
         let info: yt_dlp_rs::VideoInfo = serde_json::from_value(
             serde_json::json!({"id":job.id.to_string(),"title":stem,"ext":extension,"url":url::Url::from_file_path(input).map_err(|_| anyhow::anyhow!("Invalid local input path"))?,"webpage_url":job.media.url,"extractor":"local","extractor_key":"Local"}),
         )?;
-        yt_dlp_rs::output::render_template(&job.options.filename_template, &info)?
+        crate::download::render_filename(&job.options.filename_template, &info)?
     };
     ensure!(
         !filename.is_absolute()
@@ -615,6 +615,22 @@ async fn convert_local(
     send(tx, job, JobUpdate::Output(target.clone())).await;
     run_hook(job, &job.media, &target, cancel).await?;
     Ok(())
+}
+
+/// Render a download filename template. Like upstream yt-dlp on Windows, Windows builds also
+/// sanitize the whole relative path (`--windows-filenames`), so a folder from metadata can't
+/// end in a dot or space, which Windows silently strips.
+pub(crate) fn render_filename(
+    template: &str,
+    info: &yt_dlp_rs::VideoInfo,
+) -> Result<std::path::PathBuf> {
+    let options = yt_dlp_rs::output::TemplateOptions {
+        windows_filenames: cfg!(windows),
+        ..Default::default()
+    };
+    Ok(yt_dlp_rs::output::render_template_with_options(
+        template, info, &options,
+    )?)
 }
 
 #[cfg(test)]

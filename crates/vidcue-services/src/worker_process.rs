@@ -26,7 +26,14 @@ fn drain(mut pipe: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> 
     Ok((kept, overflow))
 }
 pub fn run(program: &str, args: &[String]) -> Result<Output> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    // A GUI app's console children would each flash a console window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(crate::win_job::CREATE_NO_WINDOW);
+    }
+    let mut child = command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

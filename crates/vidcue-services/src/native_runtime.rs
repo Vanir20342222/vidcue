@@ -71,10 +71,14 @@ fn runtime_candidates(path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
     let directories = std::env::split_paths(path).take(128).collect::<Vec<_>>();
     let mut candidates = Vec::new();
     for name in ["node", "deno"] {
+        // `node.exe` / `deno.exe` on Windows.
+        let names = crate::paths::program_names(name);
         for directory in &directories {
-            let candidate = directory.join(name);
-            if candidate.is_file() && !candidates.contains(&candidate) {
-                candidates.push(candidate);
+            for file in &names {
+                let candidate = directory.join(file);
+                if candidate.is_file() && !candidates.contains(&candidate) {
+                    candidates.push(candidate);
+                }
             }
         }
     }

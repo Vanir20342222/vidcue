@@ -271,6 +271,8 @@ pub struct App {
     pub theme: Theme,
     pub config: Config,
     pub config_loaded: bool,
+    /// The system's dark-mode setting as the view last saw it (`themes::observe_system_dark`).
+    pub system_dark: std::cell::Cell<Option<bool>>,
     pub prefs: Prefs,
     pub route: Route,
     pub back: Vec<Route>,
@@ -321,6 +323,7 @@ impl App {
             theme: Theme::fallback(),
             config: Config::default(),
             config_loaded: false,
+            system_dark: std::cell::Cell::new(None),
             route: Route::Feed(FeedRoute::root(Tab::Home)),
             back: Vec::new(),
             forward: Vec::new(),

@@ -22,6 +22,7 @@ use crate::theme::sz;
 
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     cx.reduced_motion(app.config.reduced_motion || cx.system_reduced_motion());
+    crate::themes::observe_system_dark(app, cx.system_dark());
     let t = &app.theme;
     let width = cx.layout_size("window").map(|s| s[0]).unwrap_or(1440.0);
     let fullscreen_watch = app.route == Route::Watch && app.player.fullscreen;

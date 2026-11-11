@@ -194,7 +194,7 @@ pub fn worker(path: &Path) -> Result<()> {
             "YTUI_META:{}",
             json!({"id":info.id,"title":info.title,"webpage_url":info.webpage_url,"uploader":request.job.media.creator,"thumbnail":request.job.media.thumbnail})
         );
-        let filename = yt_dlp_rs::output::render_template(&o.filename_template, &info)?;
+        let filename = crate::download::render_filename(&o.filename_template, &info)?;
         ensure!(
             !filename.is_absolute()
                 && !filename
