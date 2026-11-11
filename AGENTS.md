@@ -27,8 +27,8 @@ baseline defects, milestones, migration requirements, and acceptance checks.
   model/service contracts before independent feature work.
 - Agents that push PRs follow [docs/AGENT_PR_RULES.md](docs/AGENT_PR_RULES.md): one topic
   per PR, branch from latest `main`, fill `.github/pull_request_template.md`, never edit
-  workflows, versions or shared evidence docs unless the task is about them, never weaken
-  a test, and stop after two failed CI fixes on the same job. Merge flow and settings:
+  workflows, versions or shared evidence docs unless the task is about them, and never
+  weaken a test. Merge flow and settings:
   [docs/MERGE_PROCESS.md](docs/MERGE_PROCESS.md).
 - The user explicitly authorized removing the Python app on 2026-10-21 after
   documenting gaps. Rust is now the repository application. Keep migration and
