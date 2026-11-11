@@ -2,6 +2,16 @@
 //! No network discovery, format changes, or signed URL persistence here.
 use serde_json::Value;
 
+/// A field the pinned yt-dlp-rs engine adds to its output. The engine writes the
+/// historical `ytui_` names (kept for compatibility, see AGENTS.md); `vidcue_` is
+/// accepted too so fixtures and future engine updates keep working.
+pub(crate) fn engine_field<'a>(value: &'a Value, name: &str) -> &'a Value {
+    match &value[format!("vidcue_{name}")] {
+        Value::Null => &value[format!("ytui_{name}")],
+        found => found,
+    }
+}
+
 fn number(value: &Value) -> Option<u64> {
     value.as_u64().or_else(|| value.as_str()?.parse().ok())
 }
@@ -59,8 +69,8 @@ fn representation(
     }
     vidcue_core::http_url(url).ok()?;
     let size = number(&track["filesize"])?;
-    let init = range(&track["vidcue_init_range"], size)?;
-    let segments = range(&track["vidcue_index_range"], size)?;
+    let init = range(engine_field(track, "init_range"), size)?;
+    let segments = range(engine_field(track, "index_range"), size)?;
     if init.1 >= segments.0 {
         return None;
     }
@@ -77,7 +87,7 @@ fn representation(
         "webm" => "webm",
         _ => return None,
     };
-    let millis = number(&track["vidcue_duration_ms"]).or_else(|| {
+    let millis = number(engine_field(track, "duration_ms")).or_else(|| {
         let seconds = fallback_seconds?;
         (seconds.is_finite() && seconds > 0.0 && seconds <= 604800.0)
             .then_some((seconds * 1000.0).ceil() as u64)
@@ -242,6 +252,33 @@ mod tests {
         assert!(m.contains("indexRange=\"701-999\""));
         assert!(m.contains("PT12.345S"));
         assert_eq!(m.matches("<AdaptationSet ").count(), 2);
+    }
+    #[test]
+    fn engine_ytui_index_fields_build_the_same_presentation() {
+        // The vendored yt-dlp-rs engine writes ytui_* names (streams.rs); the
+        // Vidcue rename once left this reader looking only for vidcue_*.
+        let renamed = |mut track: Value| {
+            let map = track.as_object_mut().unwrap();
+            for name in ["init_range", "index_range", "duration_ms"] {
+                let value = map.remove(&format!("vidcue_{name}")).unwrap();
+                map.insert(format!("ytui_{name}"), value);
+            }
+            track
+        };
+        let (v, mut a) = (video(), video());
+        a["vcodec"] = "none".into();
+        a["acodec"] = "opus".into();
+        a["ext"] = "webm".into();
+        let expected = manifest(&[&v, &a], None).unwrap();
+        let (v, a) = (renamed(v), renamed(a));
+        assert_eq!(
+            manifest(&[&v, &a], None).as_deref(),
+            Some(expected.as_str())
+        );
+        let route = json!({"ytui_playback_route": "direct"});
+        assert_eq!(engine_field(&route, "playback_route"), "direct");
+        let both = json!({"vidcue_playback_route": "full", "ytui_playback_route": "direct"});
+        assert_eq!(engine_field(&both, "playback_route"), "full");
     }
     #[test]
     fn incomplete_or_unsafe_indexes_leave_the_original_source_available() {
