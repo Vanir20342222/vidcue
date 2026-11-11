@@ -56,5 +56,7 @@ cargo run -p vidcue-mobile --example mobile_license_bundle --locked -- "$root/ta
 mkdir -p "$root/target/android-assets/notices"
 cp -R -- "$notices_stage/notices/." "$root/target/android-assets/notices/"
 cp -- "$root/LICENSE" "$root/target/android-assets/vidcue-LICENSE"
+# The signed-release workflow runs its own release Gradle build; a debug pass first is wasted.
+[[ "${YTUI_ANDROID_SKIP_GRADLE:-0}" != 1 ]] || exit 0
 
 "$root/apps/android/gradlew" -p "$root/apps/android" --no-daemon ":app:assemble$gradle_variant" ":app:test${gradle_variant}UnitTest" ":app:lint$gradle_variant"
