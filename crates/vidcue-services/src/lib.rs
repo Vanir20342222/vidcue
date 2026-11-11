@@ -12,6 +12,8 @@ pub use vidcue_providers::images;
 pub mod library;
 pub use vidcue_providers::lyrics;
 pub mod migration;
+// MPRIS is the freedesktop media-session protocol; Android and Windows don't expose it.
+#[cfg(unix)]
 pub mod mpris;
 pub mod native;
 mod native_playback;
@@ -20,6 +22,9 @@ pub mod native_runtime;
 pub use vidcue_providers::paths;
 mod playback_cache;
 mod playback_extract;
+// The external-mpv control socket and the MPRIS publisher are Unix integrations
+// (Linux and Android); Windows uses the embedded player instead.
+#[cfg(unix)]
 pub mod player;
 pub mod process;
 pub mod profiles;

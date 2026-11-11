@@ -1,0 +1,106 @@
+# Builds the Windows desktop release when a `desktop-*` tag is pushed and attaches the
+# installer and a portable zip to that GitHub release.
+#
+# The x86_64-pc-windows-gnu target links the bundled libmpv: the workflow downloads the
+# current mpv-dev package (zhongfly/mpv-winbuild), points MPV_LIB_DIR at its import
+# library (`-lmpv-2`, see apps/desktop/build.rs) and ships `libmpv-2.dll` beside the exe.
+name: windows-release
+
+on:
+  push:
+    tags: ["desktop-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the tagged tree
+        uses: actions/checkout@v4
+
+      - name: Set up the pinned Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: x86_64-pc-windows-gnu
+
+      - name: Locate a mingw linker
+        shell: pwsh
+        run: |
+          $gcc = Get-ChildItem "C:\msys64\mingw64\bin\x86_64-w64-mingw32-gcc.exe" -ErrorAction SilentlyContinue
+          if (-not $gcc) { $gcc = (Get-Command x86_64-w64-mingw32-gcc.exe -ErrorAction SilentlyContinue) }
+          if (-not $gcc) { $gcc = (Get-Command gcc.exe -ErrorAction SilentlyContinue) }
+          if (-not $gcc) { throw "no mingw gcc found for the windows-gnu linker" }
+          Add-Content $env:GITHUB_ENV "CC_X86_64_PC_WINDOWS_GNU=$($gcc.FullName)"
+          $dir = Split-Path $gcc.FullName
+          Add-Content $env:GITHUB_ENV "PATH=$dir;$env:PATH"
+
+      - name: Download and unpack the mpv dev package
+        id: mpv
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $latest = gh api "repos/zhongfly/mpv-winbuild/releases/latest" | ConvertFrom-Json
+          $asset = $latest.assets |
+            Where-Object { $_.name -match "^mpv-dev-x86_64-[0-9]" } |
+            Sort-Object created_at | Select-Object -Last 1
+          if (-not $asset) { throw "no mpv-dev-x86_64 asset found" }
+          gh api -Le "repos/zhongfly/mpv-winbuild/releases/assets/$($asset.id)" > mpv-dev.7z
+          7z x -y mpv-dev.7z -ompv-dev | Out-Null
+          $dll = Get-ChildItem -Recurse ompv-dev -Filter libmpv-2.dll | Select-Object -First 1
+          if (-not $dll) { throw "libmpv-2.dll missing from the mpv-dev package" }
+          $libdir = "mpv\lib"
+          New-Item -ItemType Directory -Force $libdir | Out-Null
+          Copy-Item $dll.FullName "$libdir\libmpv-2.dll"
+          $import = Get-ChildItem -Recurse ompv-dev -Include *.dll.a,*.a -ErrorAction SilentlyContinue |
+            Where-Object Name -like "libmpv*" | Select-Object -First 1
+          if ($import) { Copy-Item $import.FullName "$libdir\libmpv-2.dll.a" }
+          Add-Content $env:GITHUB_ENV "MPV_LIB_DIR=$((Resolve-Path $libdir).Path)"
+
+      - name: Build the release binary
+        shell: pwsh
+        run: cargo build --release --locked --target x86_64-pc-windows-gnu -p vidcue-desktop
+
+      - name: Assemble the distribution folder
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          $dist = "dist"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item target\x86_64-pc-windows-gnu\release\vidcue-desktop.exe "$dist\vidcue.exe"
+          Copy-Item mpv\lib\libmpv-2.dll $dist
+          # The updater never ships third-party tools; users who want yt-dlp or FFmpeg
+          # downloads put them (or their paths) in Vidcue's settings themselves.
+          "Vidcue $env:VERSION for Windows (64-bit).`n`nRun vidcue.exe. libmpv-2.dll must sit beside it (included).`nOptional yt-dlp and FFmpeg are not bundled; install them yourself and point Vidcue at them in Settings.`n" |
+            Set-Content "$dist\README.txt"
+          Add-Content $env:GITHUB_ENV "DIST=$dist"
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          & $iscc /DAppVersion="$($env:VERSION -replace '^desktop-','')" tools\windows\vidcue.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Zip the portable build
+        shell: pwsh
+        run: Compress-Archive -Path dist\* -DestinationPath Vidcue-portable.zip
+
+      - name: Attach the artifacts to the release
+        if: startsWith(github.ref, 'refs/tags/desktop-')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/VidcueSetup-*.exe Vidcue-portable.zip --clobber --repo "$GITHUB_REPOSITORY"
