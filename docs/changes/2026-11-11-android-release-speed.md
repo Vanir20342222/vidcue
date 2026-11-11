@@ -31,3 +31,4 @@ revision that the release requires.
 
 ## For the plan and parity tables
 - Signed Android release: one release Gradle pass, 4 Rust jobs and a Rust cache shared with main CI.
+- docs/android/README.md, after the `YTUI_ANDROID_RUST_ONLY=1` sentence: "`YTUI_ANDROID_SKIP_GRADLE=1` also writes the license notices, then stops before Gradle."
