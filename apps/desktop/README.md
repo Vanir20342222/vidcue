@@ -7,7 +7,9 @@ items, offline playlists, lyrics, account and settings behave the same way on bo
 
 ## Run
 
-Linux needs `libmpv` (mpv 0.38 or newer, API 2.x), `libxkbcommon` and `wayland` at build time.
+Linux needs `libmpv` (mpv 0.38 or newer, API 2.x), `libxkbcommon`, `wayland` and WebKitGTK 4.1
+(`webkit2gtk-4.1`, for the "Sign in with Google" window) at build time. On Windows the sign-in
+window uses the Microsoft Edge WebView2 runtime that ships with Windows 10 and 11.
 Node.js 22+ or Deno 2.9.7 must be installed for YouTube's JavaScript challenges; the app
 detects them and never installs anything.
 

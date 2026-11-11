@@ -45,10 +45,29 @@ pub fn import_browser(browser: &str, profile: Option<&Path>) -> Result<Session> 
                 );
                 rookie::chromium_based(rookie::config::get_browser_config(name), file, domains)
             }
-            #[cfg(not(unix))]
+            #[cfg(windows)]
+            {
+                ensure!(
+                    ["brave", "chrome", "chromium", "edge", "vivaldi", "opera"].contains(&browser),
+                    "Unsupported browser"
+                );
+                // Windows keeps the cookie key in `User Data\Local State`, next to the
+                // profile folders (Opera keeps it in the profile folder itself).
+                let key = [
+                    Some(profile.to_path_buf()),
+                    profile.parent().map(Path::to_path_buf),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|dir| dir.join("Local State"))
+                .find(|key| key.is_file())
+                .context("This browser profile has no Local State file next to it")?;
+                rookie::chromium_based(key, file, domains)
+            }
+            #[cfg(not(any(unix, windows)))]
             {
                 bail!(
-                    "Custom Chromium profile import currently requires Linux or macOS; use a Netscape cookie file"
+                    "Browser profile import is not available on this system; use a Netscape cookie file"
                 );
             }
         }
@@ -69,7 +88,7 @@ pub fn import_browser(browser: &str, profile: Option<&Path>) -> Result<Session> 
             ),
         }
     };
-    let cookies=result.map_err(|_|anyhow::anyhow!("Cannot read/decrypt the selected browser profile. Unlock the desktop keyring or select another profile / Netscape cookie file. Root is not required."))?;
+    let cookies = result.map_err(|e| read_error(browser, &e.to_string()))?;
     Session::new(
         cookies
             .into_iter()
@@ -84,6 +103,27 @@ pub fn import_browser(browser: &str, profile: Option<&Path>) -> Result<Session> 
             })
             .collect(),
     )
+}
+/// Why a browser's cookies could not be read, in terms of what the user can do about it.
+fn read_error(browser: &str, detail: &str) -> anyhow::Error {
+    #[cfg(windows)]
+    {
+        if detail.contains("appbound") || detail.contains("admin") {
+            return anyhow::anyhow!(
+                "Chrome encrypts its cookies so that only Chrome or an administrator can read them. Use Edge or Firefox, or sign in with Google in Vidcue instead"
+            );
+        }
+        anyhow::anyhow!(
+            "Cannot read {browser}'s cookies. Close {browser} completely (also its icon in the system tray) and try again, or sign in with Google in Vidcue instead"
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (browser, detail);
+        anyhow::anyhow!(
+            "Cannot read/decrypt the selected browser profile. Unlock the desktop keyring or select another profile / Netscape cookie file. Root is not required."
+        )
+    }
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct BrowserProfile {
@@ -165,11 +205,37 @@ pub fn profiles(paths: &Paths) -> Vec<BrowserProfile> {
             }
         }
     }
+    let config_root = paths.config.parent().unwrap_or(&paths.home);
+    let more = [
+        ("edge", config_root.join("microsoft-edge")),
+        ("edge", config_root.join("microsoft-edge-beta")),
+        ("edge", config_root.join("microsoft-edge-dev")),
+        ("vivaldi", config_root.join("vivaldi")),
+    ];
     let mut out = Vec::new();
-    for (b, p) in roots {
+    for (b, p) in roots.into_iter().chain(more).chain(windows_roots(paths)) {
         walk(b, &p, 4, &mut out);
     }
     out
+}
+
+/// Where Windows browsers keep their profiles: `%LOCALAPPDATA%` for Chromium browsers and
+/// `%APPDATA%` for Firefox and Opera.
+fn windows_roots(paths: &Paths) -> Vec<(&'static str, PathBuf)> {
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let local = &paths.xdg_state;
+    let roaming = paths.config.parent().unwrap_or(&paths.home);
+    vec![
+        ("edge", local.join("Microsoft/Edge/User Data")),
+        ("chrome", local.join("Google/Chrome/User Data")),
+        ("brave", local.join("BraveSoftware/Brave-Browser/User Data")),
+        ("chromium", local.join("Chromium/User Data")),
+        ("vivaldi", local.join("Vivaldi/User Data")),
+        ("opera", roaming.join("Opera Software/Opera Stable")),
+        ("firefox", roaming.join("Mozilla/Firefox/Profiles")),
+    ]
 }
 
 #[derive(Clone)]

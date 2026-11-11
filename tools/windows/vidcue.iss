@@ -38,6 +38,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "dist\vidcue.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\WebView2Loader.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Vidcue"; Filename: "{app}\vidcue.exe"

@@ -136,6 +136,28 @@ fn import_browser(app: &mut App, profile: BrowserProfile) {
     );
 }
 
+/// Opens Google's sign-in page in Vidcue's own web view window and imports the YouTube session
+/// once the user has signed in there.
+fn sign_in_with_google(app: &mut App) {
+    if app.account.busy.is_some() {
+        return;
+    }
+    app.account.busy = Some("Sign in in the Google window".into());
+    app.be.blocking(crate::signin::sign_in, |app, r, _| {
+        app.account.busy = None;
+        match r {
+            Ok(header) => send(
+                app,
+                "import_cookies",
+                json!({ "header": header }),
+                "Saving the session",
+                "Signed in with Google",
+            ),
+            Err(e) => app.toast(ToastKind::Error, e),
+        }
+    });
+}
+
 fn pick_cookie_file(tx: &mut Tx) {
     let options = rune::FileDialogOptions {
         title: "Choose a Netscape cookies.txt".into(),
@@ -307,13 +329,16 @@ pub fn view(app: &App, _cx: &mut Cx<App>) -> El {
     let a = &app.account;
     let busy = a.busy.is_some();
 
-    let cards: Vec<El> = vec![
+    // Without an importable browser, signing in on Google's page is the obvious way in.
+    let no_browser = a.profiles_loaded && a.profiles.is_empty();
+    let mut cards: Vec<El> = vec![
         browser_card(app, busy),
         file_card(t, busy),
         header_card(app, busy),
         terminal_card(t, busy),
         session_card(app, busy),
     ];
+    cards.insert(usize::from(!no_browser), google_card(t, busy, no_browser));
     let n = cards.len();
     let stagger = Stagger::new(0.05);
     let cards = cards.into_iter().enumerate().map(|(i, c)| {
@@ -505,7 +530,7 @@ fn browser_card(app: &App, busy: bool) -> El {
     );
     if app.account.profiles.is_empty() {
         let msg = if app.account.profiles_loaded {
-            "No supported browser profiles were found on this computer."
+            "No supported browser profiles were found on this computer. Use Sign in with Google above instead."
         } else {
             "Looking for browser profiles…"
         };
@@ -543,6 +568,29 @@ fn browser_card(app: &App, busy: bool) -> El {
         );
     }
     c
+}
+
+fn google_card(t: &Theme, busy: bool, primary: bool) -> El {
+    method(
+        t,
+        "m-google",
+        &ic::USER,
+        "Sign in with Google",
+        "Opens Google's sign-in page in a separate Vidcue window. Sign in as usual; the window closes by itself and Vidcue keeps only the YouTube session.",
+    )
+    .child(
+        row().child(dim(
+            button(
+                t,
+                "Sign in with Google…",
+                Some(&ic::USER),
+                if primary { Kind::Primary } else { Kind::Secondary },
+            )
+            .key("sign-in-google")
+            .on_press(sign_in_with_google),
+            busy,
+        )),
+    )
 }
 
 fn file_card(t: &Theme, busy: bool) -> El {
