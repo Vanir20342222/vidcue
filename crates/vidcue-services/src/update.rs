@@ -1,14 +1,36 @@
 //! Opt-out check for a newer desktop release on GitHub, and the user-started updater.
 //!
 //! The check only reads the public releases list. Nothing is downloaded or installed
-//! until the user presses "Update now" (or runs `vidcue update`), which rebuilds the
-//! release tag from source with the same `install.sh` the user installed with.
-use anyhow::{Context, Result, ensure};
+//! until the user presses "Update now". On Linux that rebuilds the release tag from
+//! source with the same `install.sh` the user installed with; on Windows it downloads
+//! the release's `VidcueSetup-*.exe`, checks it against GitHub's SHA-256 digest and
+//! runs it silently over the existing installation.
+use anyhow::{Context, Result, bail, ensure};
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 /// Canonical repository. Releases also mirror to Vanir20342222/ytui for older installs.
 pub const REPOSITORY: &str = "Vanir20342222/vidcue";
 pub const API_BASE: &str = "https://api.github.com";
+/// Release assets are only fetched from these repositories' download URLs.
+const ASSET_PREFIXES: [&str; 2] = [
+    "https://github.com/Vanir20342222/vidcue/releases/download/",
+    "https://github.com/Vanir20342222/ytui/releases/download/",
+];
+/// An installer is a few tens of MB; refuse anything absurd rather than fill the disk.
+const MAX_ASSET_BYTES: u64 = 1 << 30;
+
+/// A file attached to a release.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Asset {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    /// Lower-case hex SHA-256 from GitHub's `digest` field, when GitHub reports one.
+    pub sha256: Option<String>,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Release {
@@ -18,6 +40,38 @@ pub struct Release {
     pub url: String,
     /// First few non-empty lines of the release notes.
     pub notes: Vec<String>,
+    pub assets: Vec<Asset>,
+}
+
+impl Release {
+    /// The Windows installer attached to this release (`VidcueSetup-<version>.exe`).
+    pub fn windows_installer(&self) -> Option<&Asset> {
+        self.assets
+            .iter()
+            .find(|a| a.name.starts_with("VidcueSetup-") && a.name.ends_with(".exe"))
+    }
+}
+
+fn assets(release: &serde_json::Value) -> Vec<Asset> {
+    release["assets"]
+        .as_array()
+        .map(|list| {
+            list.iter()
+                .filter_map(|a| {
+                    Some(Asset {
+                        name: a["name"].as_str()?.into(),
+                        url: a["browser_download_url"].as_str()?.into(),
+                        size: a["size"].as_u64().unwrap_or(0),
+                        sha256: a["digest"]
+                            .as_str()
+                            .and_then(|d| d.strip_prefix("sha256:"))
+                            .filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                            .map(str::to_ascii_lowercase),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Desktop release tags are `v1.2.3`, `desktop-v1.2.3` or `desktop-1.2.3` (with an
@@ -60,6 +114,7 @@ pub fn newest(releases: &serde_json::Value, current: &str) -> Option<Release> {
                     .take(4)
                     .map(|l| l.chars().take(90).collect())
                     .collect(),
+                assets: assets(r),
             })
         })
         .max_by(|a, b| compare(&a.version, &b.version).unwrap_or(Ordering::Equal))
@@ -67,19 +122,7 @@ pub fn newest(releases: &serde_json::Value, current: &str) -> Option<Release> {
 
 /// Fetch the release list and return the newest desktop release above `current`.
 pub async fn check(api_base: &str, proxy: Option<&str>, current: &str) -> Result<Option<Release>> {
-    let mut builder = reqwest::Client::builder()
-        .user_agent(concat!(
-            "vidcue/",
-            env!("CARGO_PKG_VERSION"),
-            " (update check)"
-        ))
-        .timeout(std::time::Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::limited(3));
-    if let Some(proxy) = proxy.filter(|p| !p.is_empty()) {
-        builder = builder.proxy(reqwest::Proxy::all(proxy).context("Invalid proxy URL")?);
-    }
-    let response = builder
-        .build()?
+    let response = client(proxy, "update check", 15)?
         .get(format!(
             "{api_base}/repos/{REPOSITORY}/releases?per_page=30"
         ))
@@ -95,6 +138,129 @@ pub async fn check(api_base: &str, proxy: Option<&str>, current: &str) -> Result
     let releases: serde_json::Value = response.json().await?;
     Ok(newest(&releases, current))
 }
+
+fn client(proxy: Option<&str>, purpose: &str, timeout: u64) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(format!("vidcue/{} ({purpose})", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(timeout))
+        // Release downloads redirect from github.com to GitHub's object storage.
+        .redirect(reqwest::redirect::Policy::limited(5));
+    if let Some(proxy) = proxy.filter(|p| !p.is_empty()) {
+        builder = builder.proxy(reqwest::Proxy::all(proxy).context("Invalid proxy URL")?);
+    }
+    Ok(builder.build()?)
+}
+
+/// Downloads `asset` into `dir` and checks its SHA-256 against GitHub's digest. Only
+/// assets of this project's releases with a reported digest are accepted. `progress`
+/// counts the bytes received so far. Returns the downloaded file.
+pub async fn download(
+    asset: &Asset,
+    dir: &Path,
+    proxy: Option<&str>,
+    progress: &AtomicU64,
+) -> Result<PathBuf> {
+    ensure!(
+        ASSET_PREFIXES.iter().any(|p| asset.url.starts_with(p)),
+        "Refusing a download from outside Vidcue's releases: {}",
+        asset.url
+    );
+    download_from(asset, &asset.url, dir, proxy, progress).await
+}
+
+async fn download_from(
+    asset: &Asset,
+    url: &str,
+    dir: &Path,
+    proxy: Option<&str>,
+    progress: &AtomicU64,
+) -> Result<PathBuf> {
+    ensure!(
+        !asset.name.is_empty()
+            && !asset.name.starts_with('.')
+            && asset
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')),
+        "Refusing an unusual file name: {}",
+        asset.name
+    );
+    let Some(expected) = asset.sha256.as_deref() else {
+        bail!(
+            "GitHub reports no checksum for {}, so it cannot be verified",
+            asset.name
+        );
+    };
+    ensure!(
+        asset.size <= MAX_ASSET_BYTES,
+        "{} is unexpectedly large",
+        asset.name
+    );
+    progress.store(0, AtomicOrdering::Relaxed);
+    let mut response = client(proxy, "update download", 30 * 60)?
+        .get(url)
+        .send()
+        .await
+        .context("Cannot reach GitHub to download the update")?;
+    ensure!(
+        response.status().is_success(),
+        "GitHub answered {} to the download",
+        response.status()
+    );
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join(&asset.name);
+    let partial = dir.join(format!("{}.part", asset.name));
+    let mut file = std::fs::File::create(&partial)
+        .with_context(|| format!("Cannot write {}", partial.display()))?;
+    let mut hasher = Sha256::new();
+    let mut received = 0u64;
+    let result: Result<()> = async {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .context("The download was interrupted")?
+        {
+            received += chunk.len() as u64;
+            ensure!(
+                received <= MAX_ASSET_BYTES,
+                "{} is unexpectedly large",
+                asset.name
+            );
+            hasher.update(&chunk);
+            std::io::Write::write_all(&mut file, &chunk)?;
+            progress.store(received, AtomicOrdering::Relaxed);
+        }
+        file.sync_all()?;
+        let actual = hex::encode(hasher.finalize());
+        ensure!(
+            actual == expected,
+            "The downloaded {} does not match its published checksum",
+            asset.name
+        );
+        Ok(())
+    }
+    .await;
+    drop(file);
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&partial);
+        return Err(e);
+    }
+    std::fs::rename(&partial, &path)?;
+    Ok(path)
+}
+
+/// Arguments for running a downloaded Inno Setup installer over the current installation:
+/// no wizard pages, Vidcue closed if still running, and the new version started afterwards
+/// (`/RELAUNCH=1`, read by `tools/windows/vidcue.iss`).
+pub const WINDOWS_INSTALLER_ARGS: [&str; 6] = [
+    "/SILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/CLOSEAPPLICATIONS",
+    "/NORESTARTAPPLICATIONS",
+    "/RELAUNCH=1",
+];
 
 /// Shell program run by "Update now": clone the release tag and run its installer, which
 /// builds with cargo and atomically replaces the vidcue launchers (keeping
@@ -231,7 +397,17 @@ mod tests {
             {"tag_name": "v0.3.0-beta.1", "prerelease": true, "draft": false, "name": "Beta"},
             {"tag_name": "v0.2.1", "prerelease": false, "draft": false, "name": "Vidcue 0.2.1",
              "html_url": "https://example.invalid/r/0.2.1",
-             "body": "## What's new\n\n- Colourful themes\n- Update popup\n\n* Faster search\n- Four\n- Five"},
+             "body": "## What's new\n\n- Colourful themes\n- Update popup\n\n* Faster search\n- Four\n- Five",
+             "assets": [
+                {"name": "Vidcue-portable.zip", "size": 3,
+                 "browser_download_url": "https://github.com/Vanir20342222/vidcue/releases/download/v0.2.1/Vidcue-portable.zip",
+                 "digest": "sha256:BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD"},
+                {"name": "VidcueSetup-0.2.1.exe", "size": 3,
+                 "browser_download_url": "https://github.com/Vanir20342222/vidcue/releases/download/v0.2.1/VidcueSetup-0.2.1.exe",
+                 "digest": "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+                {"name": "no-digest.bin", "size": 1, "browser_download_url": "https://x.invalid/a", "digest": "md5:abc"},
+                {"size": 1}
+             ]},
             {"tag_name": "v0.2.0-alpha.11", "prerelease": true, "draft": false}
         ])
     }
@@ -258,6 +434,20 @@ mod tests {
                 "Faster search"
             ]
         );
+        assert_eq!(
+            found.assets.len(),
+            3,
+            "an asset without name or URL is skipped"
+        );
+        assert_eq!(found.assets[2].sha256, None, "only sha256 digests count");
+        let setup = found.windows_installer().unwrap();
+        assert_eq!(setup.name, "VidcueSetup-0.2.1.exe");
+        assert_eq!(setup.sha256.as_deref(), Some(ABC_SHA256));
+        assert_eq!(
+            found.assets[0].sha256.as_deref(),
+            Some(ABC_SHA256),
+            "lower-cased"
+        );
         assert_eq!(newest(&releases(), "0.2.1"), None);
         assert_eq!(newest(&json!({"message": "rate limited"}), "0.2.0"), None);
     }
@@ -280,6 +470,103 @@ mod tests {
             crate::test_http::serve(|_| (403, String::new(), b"{}".to_vec())).await;
         assert!(check(&base, None, "0.2.0").await.is_err());
         server.abort();
+    }
+
+    /// SHA-256 of "abc".
+    const ABC_SHA256: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+    fn setup_asset() -> Asset {
+        newest(&releases(), "0.2.0")
+            .unwrap()
+            .windows_installer()
+            .unwrap()
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn download_keeps_a_file_only_when_its_checksum_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        let asset = setup_asset();
+        let progress = AtomicU64::new(0);
+        let (base, server) =
+            crate::test_http::serve(|_| (200, String::new(), b"abc".to_vec())).await;
+        let path = download_from(
+            &asset,
+            &format!("{base}/setup"),
+            dir.path(),
+            None,
+            &progress,
+        )
+        .await
+        .unwrap();
+        assert_eq!(path, dir.path().join("VidcueSetup-0.2.1.exe"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"abc");
+        assert_eq!(progress.load(AtomicOrdering::Relaxed), 3);
+        server.abort();
+
+        std::fs::remove_file(&path).unwrap();
+        let (base, server) =
+            crate::test_http::serve(|_| (200, String::new(), b"abd".to_vec())).await;
+        let error = download_from(
+            &asset,
+            &format!("{base}/setup"),
+            dir.path(),
+            None,
+            &progress,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("checksum"), "{error}");
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "a tampered download is removed"
+        );
+        server.abort();
+
+        let (base, server) = crate::test_http::serve(|_| (404, String::new(), Vec::new())).await;
+        assert!(
+            download_from(
+                &asset,
+                &format!("{base}/setup"),
+                dir.path(),
+                None,
+                &progress
+            )
+            .await
+            .is_err()
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn download_refuses_foreign_urls_odd_names_and_missing_checksums() {
+        let dir = tempfile::tempdir().unwrap();
+        let progress = AtomicU64::new(0);
+        let mut asset = setup_asset();
+        asset.url = "https://example.invalid/VidcueSetup.exe".into();
+        let error = download(&asset, dir.path(), None, &progress)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("outside"), "{error}");
+        asset.url = "https://github.com/someone/vidcue/releases/download/x/VidcueSetup.exe".into();
+        assert!(download(&asset, dir.path(), None, &progress).await.is_err());
+
+        for bad in ["../VidcueSetup.exe", "a/b.exe", ".hidden", "", "a b.exe"] {
+            let mut asset = setup_asset();
+            asset.name = bad.into();
+            let error = download_from(&asset, "http://127.0.0.1:9/", dir.path(), None, &progress)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("file name"), "{bad}: {error}");
+        }
+        let mut asset = setup_asset();
+        asset.sha256 = None;
+        let error = download_from(&asset, "http://127.0.0.1:9/", dir.path(), None, &progress)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("no checksum"), "{error}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]

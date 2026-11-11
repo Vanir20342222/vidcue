@@ -368,3 +368,64 @@ fn resolving_a_stream_shows_only_the_spinner() {
         );
     }
 }
+
+fn offered_release() -> vidcue_services::update::Release {
+    vidcue_services::update::Release {
+        tag: "desktop-9.0.0".into(),
+        version: "9.0.0".into(),
+        name: "Vidcue 9.0.0".into(),
+        url: "https://example.invalid/r".into(),
+        notes: vec!["Faster search".into()],
+        assets: Vec::new(),
+    }
+}
+
+#[test]
+fn the_startup_offer_skips_closes_and_shows_install_progress() {
+    use crate::updater::{Method, State};
+    let mut rt = runtime(Some("home"));
+    rt.update(|a, _| {
+        a.update.state = State::Available(offered_release());
+        a.update.prompt = true;
+    });
+    settle(&mut rt);
+    assert!(text_present(&rt, "Update available"));
+    // This test build cannot replace itself, so the dialog offers the release page.
+    assert!(rt.find("update-now").is_none());
+    assert!(text_present(&rt, "Open release page"));
+    click(&mut rt, "update-skip");
+    assert!(!rt.state.update.prompt);
+    assert!(rt.find("update-card").is_none());
+    assert_eq!(
+        rt.state.prefs.skipped_update.as_deref(),
+        Some("desktop-9.0.0")
+    );
+
+    // An installable copy offers "Update now"; "Later" closes without skipping.
+    rt.update(|a, _| {
+        a.update.method = Method::WindowsInstaller;
+        a.update.prompt = true;
+    });
+    settle(&mut rt);
+    assert!(rt.find("update-now").is_some());
+    click(&mut rt, "update-later");
+    assert!(!rt.state.update.prompt);
+
+    // Progress and the finished state render in the dialog and in Settings → About.
+    rt.update(|a, _| {
+        a.update.method = Method::Source {
+            launcher: "/nonexistent/vidcue".into(),
+        };
+        a.update.state = State::Installing(offered_release());
+        a.update.prompt = true;
+    });
+    settle(&mut rt);
+    assert!(rt.find("update-hide").is_some());
+    rt.update(|a, _| {
+        a.update.state = State::Installed(offered_release());
+        a.update.prompt = false;
+        a.go_root(Route::Settings(SettingsSection::About));
+    });
+    settle(&mut rt);
+    assert!(rt.find("update-restart").is_some());
+}

@@ -1,14 +1,14 @@
 //! Settings → Alpha and About.
 
-use rune::{Color, El, TextStyle, Transition, Tx, col, el, icon, row, text};
+use rune::{Color, El, TextStyle, Transition, col, el, icon, row, text};
 
-use super::{UpdateState, field_row, group, note, stacked};
+use super::{field_row, group, stacked};
 use crate::app::{App, ToastKind};
 use crate::icons as ic;
 use crate::theme::{sz, ty};
 use crate::ui::widgets::{self, Kind};
 
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub use crate::updater::VERSION;
 
 // ---- Alpha ----
 
@@ -136,38 +136,6 @@ const CREDITS: &[(&str, &str)] = &[
     ),
 ];
 
-fn check_update(app: &mut App) {
-    if app.offline() {
-        app.settings.update =
-            UpdateState::Failed("Update checks are off in headless renders".into());
-        return;
-    }
-    app.settings.update = UpdateState::Checking;
-    let proxy = app.config.proxy.clone();
-    app.be.task(
-        async move {
-            vidcue_services::update::check(
-                vidcue_services::update::API_BASE,
-                proxy.as_deref(),
-                VERSION,
-            )
-            .await
-            .map_err(|e| e.to_string())
-        },
-        |app, out, _| {
-            app.settings.update = match out {
-                Ok(Some(r)) => UpdateState::Available {
-                    tag: r.tag,
-                    url: r.url,
-                    notes: r.notes,
-                },
-                Ok(None) => UpdateState::UpToDate,
-                Err(e) => UpdateState::Failed(e),
-            }
-        },
-    );
-}
-
 pub(super) fn view(app: &App) -> El {
     let t = &app.theme;
     let header = el()
@@ -210,46 +178,8 @@ pub(super) fn view(app: &App) -> El {
                 ),
         );
 
-    let status: El = match &app.settings.update {
-        UpdateState::Idle => text("").font(ty::SMALL),
-        UpdateState::Checking => text("Checking for updates…").font(ty::SMALL).color(t.muted),
-        UpdateState::UpToDate => note(
-            t,
-            true,
-            &format!("You are on the latest version ({VERSION})."),
-        ),
-        UpdateState::Failed(e) => note(t, false, &format!("The check failed: {e}")),
-        UpdateState::Available { tag, url, notes } => {
-            let url = url.clone();
-            let mut c = col()
-                .w_full()
-                .gap(8.0)
-                .transition(Transition::opacity())
-                .child(
-                    row()
-                        .gap(10.0)
-                        .center_y()
-                        .child(widgets::badge("NEW", t.accent, t.on_accent))
-                        .child(
-                            text(format!("{tag} is available"))
-                                .font(ty::BODY_STRONG)
-                                .color(t.text),
-                        ),
-                );
-            for n in notes {
-                c = c.child(text(n).font(ty::SMALL).color(t.muted).wrap());
-            }
-            c.child(
-                row().child(
-                    widgets::button(t, "Open release page", Some(&ic::EXTERNAL), Kind::Secondary)
-                        .on_press_tx(move |_: &mut App, tx: &mut Tx| {
-                            let _ = tx.open_url(&url);
-                        }),
-                ),
-            )
-        }
-    };
-    let checking = app.settings.update == UpdateState::Checking;
+    let status = crate::ui::update::status(app);
+    let checking = app.update.state == crate::updater::State::Checking;
     let mut shortcuts = col().w_full();
     for (i, (keys, what)) in SHORTCUTS.iter().enumerate() {
         shortcuts = shortcuts.child(
@@ -301,20 +231,21 @@ pub(super) fn view(app: &App) -> El {
                 widgets::setting_row(
                     t,
                     "Check for updates",
-                    "Reads the public release list. Nothing is installed without you.",
+                    "Reads the public release list. Nothing is installed until you press Update now.",
                     widgets::button(
                         t,
                         if checking { "Checking…" } else { "Check now" },
                         Some(&ic::REFRESH),
                         Kind::Primary,
                     )
-                    .on_press(check_update),
+                    .key("update-check")
+                    .on_press(|s: &mut App| crate::updater::check(s, false)),
                 ),
                 super::toggle(
                     t,
                     "st-updatecheck",
                     "Check at startup",
-                    "Offer new releases when Vidcue opens.",
+                    "When Vidcue opens, offer to install a newer release.",
                     app.config.update_check,
                     |s| s.edit_config(|c| c.update_check = !c.update_check),
                 ),
