@@ -461,6 +461,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         0 -> "Downloads"
                                         2 -> "Music"
                                         3 -> "Radio"
+                                        4 -> "Movies"
                                         else -> "Home"
                                     },
                                     Modifier.padding(start = 8.dp).weight(1f),
@@ -476,7 +477,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     MediaMenu(menu, { menu = false }) {
                                         // Feed actions first, then player panels, then About;
                                         // every row has its own glyph so none read alike.
-                                        if (tab > 0) {
+                                        if (tab in 1..3) {
                                             MediaMenuItem(
                                                 "Browse",
                                                 if (tab == 3) Glyph.Radio else Glyph.Browse,
@@ -542,6 +543,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         }
                                 ) {
                                     if (tab == 0) OfflineLibrary(vm)
+                                    else if (tab == 4) MoviesPage(vm)
                                     else
                                         key(tab) {
                                             BrowsePane(
@@ -1004,7 +1006,7 @@ private var pendingTabEntry = 0
 
 /**
  * Sideways swipes anywhere on the page move between the bottom destinations in their display
- * order (Home, Music, Radio, Downloads). The page follows the finger; rows that scroll sideways
+ * order (Home, Music, Radio, Movies, Downloads). The page follows the finger; rows that scroll sideways
  * themselves (filter chips, shelves) keep their own drags.
  */
 @Composable
@@ -2291,7 +2293,12 @@ internal fun PlayerPane(
                 if (value == 1.0) "Normal"
                 else "${if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()}×"
             val quality = player.value.optString("quality", "1080")
-            fun qualityLabel(value: String) = if (value == "best") "Best" else "${value}p"
+            fun qualityLabel(value: String) =
+                when (value) {
+                    "auto" -> "Auto"
+                    "best" -> "Best"
+                    else -> "${value}p"
+                }
             val qualityAvailable =
                 player.video &&
                     !player.value.optBoolean("offline") &&
@@ -2321,7 +2328,8 @@ internal fun PlayerPane(
                         val qualities = (0 until (available?.length() ?: 0))
                             .mapNotNull { available?.optInt(it)?.takeIf { height -> height > 0 } }
                             .distinct().sortedDescending().map { it.toString() }
-                        for (value in listOf("best") + qualities) Option(
+                        // Auto is opt-in, never the default.
+                        for (value in listOf("auto", "best") + qualities) Option(
                             qualityLabel(value),
                             value == quality,
                         ) {
@@ -3068,6 +3076,13 @@ private fun SettingsPanel(
                     "Real files in your Music or Video folder; playlist downloads keep their own subfolder.",
                 ) {
                     vm.updateMobile("auto_save_folders", it)
+                }
+                SettingToggle(
+                    "Convert audio downloads to MP3",
+                    mobile.optBoolean("auto_mp3", false),
+                    "Saves finished audio as MP3 in your Music folder, and converts audio you already downloaded. Needs a Music folder.",
+                ) {
+                    vm.updateMobile("auto_mp3", it)
                 }
                 for ((label, audio, key) in
                     listOf(

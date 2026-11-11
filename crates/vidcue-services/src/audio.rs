@@ -8,6 +8,7 @@ pub(crate) fn encoding(format: &str, quality: &str) -> Result<Vec<String>> {
         "opus" => "libopus",
         "vorbis" => "libvorbis",
         "m4a" | "aac" => "aac",
+        "alac" => "alac",
         _ => anyhow::bail!("Unsupported audio format"),
     };
     let bitrate = quality.ends_with(['k', 'K']);
@@ -17,7 +18,7 @@ pub(crate) fn encoding(format: &str, quality: &str) -> Result<Vec<String>> {
         "Invalid audio quality"
     );
     let mut args = vec!["-c:a".into(), codec.into()];
-    if !["flac", "wav"].contains(&format) {
+    if !["flac", "wav", "alac"].contains(&format) {
         if bitrate || value > 10.0 {
             ensure!(value > 0.0, "Audio bitrate must be positive");
             args.extend(["-b:a".into(), format!("{value}k")]);
@@ -33,4 +34,15 @@ pub(crate) fn encoding(format: &str, quality: &str) -> Result<Vec<String>> {
         }
     }
     Ok(args)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn lossless_formats_take_no_quality_arguments() {
+        assert_eq!(encoding("alac", "0").unwrap(), ["-c:a", "alac"]);
+        assert_eq!(encoding("alac", "320K").unwrap(), ["-c:a", "alac"]);
+        assert_eq!(encoding("flac", "5").unwrap(), ["-c:a", "flac"]);
+        assert!(encoding("aiff", "0").is_err());
+    }
 }

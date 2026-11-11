@@ -23,6 +23,9 @@ bundled by install.sh or its install-rust.sh compatibility alias.
   Nothing-styled themes, with licence texts in `apps/android/app/src/main/assets/licenses`.
   vidcue does not bundle Nothing's proprietary Ndot, NType or Lettera faces; the theme is an
   independent tribute and is not affiliated with Nothing Technology.
+- jump3r 1.0.5 (de.sciss:jump3r, a pure-Java port of LAME): LGPL-2.1. The Android app links
+  it as an ordinary Gradle dependency (a separate, replaceable jar) to convert offline audio to
+  MP3. Source: https://git.iem.at/sciss/jump3r. LAME itself is LGPL-2.0-or-later.
 - cliamp: MIT, referenced for service behavior. cliamp is an optional external
   application; vidcue's radio tab is native Rust.
 - yt-dlp, mpv, FFmpeg, Node.js and Deno: optional/required system tools according to the

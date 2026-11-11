@@ -365,6 +365,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     items(shownPlaylists, key = { it.optString("id") }) { playlist ->
                         val members = playlist.optJSONArray("items")?.objects() ?: emptyList()
                         val first = members.firstOrNull()
+                        var menu by remember(playlist.optString("id")) { mutableStateOf(false) }
                         MediaListRow(
                             playlist.optString("title"),
                             if (members.size == 1) "1 item" else "${members.size} items",
@@ -379,6 +380,37 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                                 "Play offline playlist ${playlist.optString("title")}",
                             ) {
                                 vm.playOfflinePlaylist(playlist)
+                            }
+                            Box {
+                                MediaIconButton(
+                                    Glyph.More,
+                                    "Offline playlist options for ${playlist.optString("title")}",
+                                    "offline-playlist-menu-${playlist.optString("id")}",
+                                ) {
+                                    menu = true
+                                }
+                                MediaMenu(menu, { menu = false }) {
+                                    MediaMenuItem(
+                                        "Open playlist folder",
+                                        Glyph.Folder,
+                                        Modifier.testTag(
+                                            "offline-playlist-folder-${playlist.optString("id")}"
+                                        ),
+                                    ) {
+                                        menu = false
+                                        vm.effect("playlist_folder", "id" to playlist.optString("id"))
+                                    }
+                                    MediaMenuItem(
+                                        "Convert playlist to MP3",
+                                        Glyph.Music,
+                                        Modifier.testTag(
+                                            "offline-playlist-mp3-${playlist.optString("id")}"
+                                        ),
+                                    ) {
+                                        menu = false
+                                        vm.effect("playlist_mp3", "id" to playlist.optString("id"))
+                                    }
+                                }
                             }
                         }
                     }
@@ -577,6 +609,9 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         enabled = name.isNotBlank() && name != playlist.optString("title"),
                     ) {
                         vm.updateOfflinePlaylist(opened, title = name)
+                    }
+                    SecondaryAction("Export as zip", enabled = items.isNotEmpty()) {
+                        vm.effect("playlist_export", "id" to opened)
                     }
                     QuietAction("Delete playlist", destructive = true) { deleting = playlist }
                 }

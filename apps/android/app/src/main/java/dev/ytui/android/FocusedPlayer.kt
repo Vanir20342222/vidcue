@@ -188,6 +188,7 @@ internal fun FocusedPlayer(
     val queue by vm.queue.collectAsState()
     val upNext by vm.upNext.collectAsState()
     val context = LocalContext.current
+    val stalled = rememberStalled(player.value.optBoolean("buffering"))
     val mediaUrl = player.media?.optString("url")
     // Keep the inline Up next list current as playback advances.
     LaunchedEffect(mediaUrl) { vm.loadUpNext() }
@@ -664,6 +665,9 @@ internal fun FocusedPlayer(
                                 }
                             }
                         }
+                        // Mid-playback rebuffering; the preparing overlay above covers loads.
+                        if (stalled && player.preparing == null)
+                            LoadingSpinner(Modifier.align(Alignment.Center))
                     }
                 } else if (player.video) {
                     // The root's distinct mode flow can lag the player snapshot
@@ -693,6 +697,8 @@ internal fun FocusedPlayer(
                                 rotationZ = trackShift.value / trackWidth * 6f
                             },
                     )
+                    // Music loads show the same spinner over the cover as video does.
+                    if (stalled || player.preparing != null) LoadingSpinner()
                 }
             }
         }

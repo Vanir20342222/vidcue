@@ -119,14 +119,9 @@ final class StorageLocations {
         /* remove its stale index only */
       }
       // Best-effort cleanup of the playlist folder this file was packed into; it stays
-      // when it still holds other files or is the user's own folder.
-      try {
-        Uri playlistFolder = Uri.parse(file.optString("playlistFolder", ""));
-        if (!playlistFolder.toString().isEmpty())
-          DocumentsContract.deleteDocument(
-              MediaBridge.context.getContentResolver(), playlistFolder);
-      } catch (Exception nonEmptyOrStale) {
-      }
+      // while it still holds other files.
+      String playlistFolder = file.optString("playlistFolder", "");
+      if (!playlistFolder.isEmpty()) deleteIfEmpty(Uri.parse(playlistFolder));
       files.remove(id);
     }
     if (!prefs().edit().putString("files", files.toString()).remove("error:" + id).commit())
@@ -151,6 +146,89 @@ final class StorageLocations {
               .put("progress", 1));
     }
     return rows;
+  }
+
+  /**
+   * The folder that the first downloaded member of an offline playlist was packed into, or null
+   * when none of its downloads has one yet.
+   */
+  static Uri playlistFolder(String playlistId) throws Exception {
+    JSONArray playlists =
+        new JSONArray(
+            NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));
+    for (int i = 0; i < playlists.length(); i++) {
+      JSONObject playlist = playlists.getJSONObject(i);
+      if (!playlistId.equals(playlist.optString("id"))) continue;
+      JSONArray items = playlist.optJSONArray("items");
+      for (int j = 0; items != null && j < items.length(); j++) {
+        JSONObject file = record(items.getJSONObject(j).optString("offline_id"));
+        String folder = file == null ? "" : file.optString("playlistFolder", "");
+        if (!folder.isEmpty()) return Uri.parse(folder);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The folder named [name] directly inside the granted [tree], created when it does not exist
+   * yet. Every member of a playlist packs into this one folder; creating it per download made
+   * the provider add "Name (1)", "Name (2)", ... folders. Synchronized so two saves of the same
+   * playlist cannot both create it.
+   */
+  static synchronized Uri childFolder(Uri tree, String name) throws IOException {
+    ContentResolver resolver = MediaBridge.context.getContentResolver();
+    String root = DocumentsContract.getTreeDocumentId(tree);
+    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, root);
+    try (android.database.Cursor cursor =
+        resolver.query(
+            children,
+            new String[] {
+              DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+              DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+              DocumentsContract.Document.COLUMN_MIME_TYPE
+            },
+            null,
+            null,
+            null)) {
+      while (cursor != null && cursor.moveToNext()) {
+        if (name.equals(cursor.getString(1))
+            && DocumentsContract.Document.MIME_TYPE_DIR.equals(cursor.getString(2)))
+          return DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0));
+      }
+    }
+    Uri created =
+        DocumentsContract.createDocument(
+            resolver,
+            DocumentsContract.buildDocumentUriUsingTree(tree, root),
+            DocumentsContract.Document.MIME_TYPE_DIR,
+            name);
+    if (created == null) throw new IOException("Could not create the playlist folder");
+    return created;
+  }
+
+  /**
+   * Deletes [folder] only when nothing is left in it. Providers delete a folder with everything
+   * inside, so a shared playlist folder must never be removed while it holds other files.
+   */
+  static void deleteIfEmpty(Uri folder) {
+    ContentResolver resolver = MediaBridge.context.getContentResolver();
+    try {
+      Uri children =
+          DocumentsContract.buildChildDocumentsUriUsingTree(
+              folder, DocumentsContract.getDocumentId(folder));
+      try (android.database.Cursor cursor =
+          resolver.query(
+              children,
+              new String[] {DocumentsContract.Document.COLUMN_DOCUMENT_ID},
+              null,
+              null,
+              null)) {
+        if (cursor == null || cursor.getCount() != 0) return;
+      }
+      DocumentsContract.deleteDocument(resolver, folder);
+    } catch (Exception staleOrUnreadable) {
+      // Leave it: an unreadable folder is never deleted blindly.
+    }
   }
 
   static void failed(String id) {

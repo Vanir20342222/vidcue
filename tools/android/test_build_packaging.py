@@ -14,8 +14,8 @@ BUILD = Path(__file__).with_name("build.sh")
 
 class BuildPackaging(unittest.TestCase):
     def test_pruning_retains_both_jni_libraries_notices_and_shared_host_cache(self):
-        for prune in ("0", "1"):
-            with self.subTest(prune=prune), tempfile.TemporaryDirectory() as folder:
+        for prune, skip_gradle in (("0", "0"), ("1", "0"), ("0", "1")):
+            with self.subTest(prune=prune, skip_gradle=skip_gradle), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder) / "repo"
                 tools = root / "tools/android"
                 tools.mkdir(parents=True)
@@ -66,7 +66,8 @@ else:
                 env.update(PATH=f"{fake}:/usr/local/bin:/usr/bin:/bin", ANDROID_HOME=str(sdk),
                            ANDROID_SDK_ROOT=str(sdk), ANDROID_NDK_HOME=str(sdk/"ndk/27.2.12479018"),
                            YTUI_ANDROID_PRUNE_TARGETS=prune, YTUI_ANDROID_VARIANT="debug",
-                           YTUI_ANDROID_ABIS="arm64-v8a x86_64", YTUI_ANDROID_RUST_ONLY="0")
+                           YTUI_ANDROID_ABIS="arm64-v8a x86_64", YTUI_ANDROID_RUST_ONLY="0",
+                           YTUI_ANDROID_SKIP_GRADLE=skip_gradle)
                 result = subprocess.run(["bash", str(tools / "build.sh")], cwd=root, env=env,
                                         capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -79,7 +80,7 @@ else:
                 self.assertEqual(json.loads((root/"target/android-dependencies.json").read_text()), {})
                 self.assertTrue((root/"target/android-assets/notices/inventory.json").is_file())
                 self.assertTrue((root/"target/android-assets/vidcue-LICENSE").is_file())
-                self.assertTrue((root/"gradle-called").is_file())
+                self.assertEqual((root/"gradle-called").is_file(), skip_gradle == "0")
 
 
 if __name__ == "__main__":
