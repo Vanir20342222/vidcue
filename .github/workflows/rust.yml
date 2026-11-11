@@ -45,6 +45,10 @@ jobs:
           shared-key: lint
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all -- --check
+      # glib/gtk/webkit build scripts query pkg-config even for clippy.
+      - name: Install the desktop app's build libraries
+        timeout-minutes: 10
+        run: bash tools/ci-install-media.sh libmpv-dev libxkbcommon-dev libwebkit2gtk-4.1-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   test:
     needs: changes
