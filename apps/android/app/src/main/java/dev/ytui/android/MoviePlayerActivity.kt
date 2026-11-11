@@ -5,23 +5,32 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.os.Bundle
+import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.*
@@ -30,11 +39,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -42,6 +58,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
@@ -49,7 +66,6 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import java.io.File
 import java.util.Locale
@@ -57,8 +73,10 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 
 /**
- * Full-screen player for Movies (alpha). Plays the checked source first and fails over to the next
- * one when a source errors mid-film, keeping the position. Quality, audio, subtitle and speed menus
+ * Full-screen player for Movies (alpha). It uses the same native video chrome as YouTube playback
+ * (the Media3 controller layout, gestures, colour grading, captions button and glass options
+ * panel) around its own player: it plays the checked source first and fails over to the next one
+ * when a source errors mid-film, keeping the position. Quality, audio, subtitle and speed options
  * read the stream's own tracks; the position is saved for Resume.
  */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
@@ -68,6 +86,7 @@ class MoviePlayerActivity : ComponentActivity() {
     private var sources: List<MovieSource> = emptyList()
     private var sourceIndex = mutableIntStateOf(0)
     private var offline: String? = null
+    private val optionsOpen = mutableStateOf(false)
 
     /** HTTP loader for Cinecat streams: per-source headers are applied on every load.
      * The UA matches the shared transfer code, which some providers expect. */
@@ -96,11 +115,13 @@ class MoviePlayerActivity : ComponentActivity() {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
+        // Seek steps follow the same setting as the YouTube player's buttons and double taps.
+        val step = MobileSettings.integer("seek_seconds") * 1000L
         val exo =
             ExoPlayer.Builder(this)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory)))
-                .setSeekBackIncrementMs(10_000)
-                .setSeekForwardIncrementMs(10_000)
+                .setSeekBackIncrementMs(step)
+                .setSeekForwardIncrementMs(step)
                 .build()
         player = exo
         exo.addListener(
@@ -116,27 +137,90 @@ class MoviePlayerActivity : ComponentActivity() {
             }
         )
         load(sourceIndex.intValue, MovieLibrary.startPosition(key))
-        setContent {
-            MaterialTheme(colorScheme = ComposeHost.colorScheme ?: darkColorScheme(), typography = ComposeHost.typography) {
-                CompositionLocalProvider(
-                    LocalContentColor provides Color.White,
-                    androidx.compose.foundation.LocalIndication provides SoftIndication,
-                ) {
-                    MoviePlayerScreen(
-                        exo,
-                        title,
-                        sources,
-                        offline != null,
-                        sourceIndex,
-                        onFailover = ::failover,
-                        onRetry = { load(0, exo.currentPosition) },
-                        onSwitch = { load(it, exo.currentPosition) },
-                        onSave = ::savePosition,
-                        onClose = ::finish,
-                    )
+
+        val view = videoView(exo, title)
+        val root = FrameLayout(this)
+        root.setBackgroundColor(android.graphics.Color.BLACK)
+        root.addView(view, matchParent())
+        setContentView(root)
+        // Failure, failover notices and the options panel sit above the video in this window,
+        // as in the YouTube fullscreen player, so system bars stay hidden.
+        root.addView(
+            ComposeView(this).apply {
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+                setContent {
+                    val scheme = ComposeHost.colorScheme ?: darkColorScheme()
+                    val reduced = AuthUi.reducedMotion || !android.animation.ValueAnimator.areAnimatorsEnabled()
+                    MaterialTheme(colorScheme = scheme, typography = ComposeHost.typography) {
+                        CompositionLocalProvider(
+                            LocalContentColor provides scheme.onSurface,
+                            LocalReducedMotion provides reduced,
+                            LocalMotion provides Motion(reduced = reduced),
+                            androidx.compose.foundation.LocalIndication provides SoftIndication,
+                        ) {
+                            MovieOverlay(
+                                exo,
+                                view,
+                                sources,
+                                offline != null,
+                                sourceIndex,
+                                optionsOpen,
+                                onFailover = ::failover,
+                                onRetry = { load(0, exo.currentPosition) },
+                                onSwitch = { load(it, exo.currentPosition) },
+                                onSave = ::savePosition,
+                                onClose = ::finish,
+                            )
+                        }
+                    }
                 }
+            },
+            matchParent(),
+        )
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            PlayerChrome.fitControls(view, cutout.left, cutout.top, cutout.right)
+            insets
+        }
+    }
+
+    /** The YouTube player's native view and chrome, bound to this activity's own player. */
+    private fun videoView(exo: ExoPlayer, title: String): PlayerView {
+        val reduced = AuthUi.reducedMotion
+        val view = layoutInflater.inflate(R.layout.ytui_player, null) as PlayerView
+        view.setBackgroundColor(android.graphics.Color.BLACK)
+        // Gestures and the captions button act on this player, never the YouTube session.
+        PlayerChrome.markStandalone(view)
+        view.useController = true
+        ComposeHost.colorScheme?.let { PlayerChrome.rememberAccent(it.primary.toArgb()) }
+        PlayerChrome.apply(view)
+        view.setControllerAnimationEnabled(!reduced && android.animation.ValueAnimator.areAnimatorsEnabled())
+        PlayerChrome.reducedMotion = reduced
+        PlayerChrome.bindCaptions(view)
+        PlayerChrome.softenPresses(view)
+        // One film per screen: no queue, shuffle or fullscreen toggle.
+        view.setShowShuffleButton(false)
+        view.setShowPreviousButton(false)
+        view.setShowNextButton(false)
+        view.findViewById<View>(R.id.ytui_collapse)?.apply {
+            setOnClickListener { finish() }
+            contentDescription = getString(R.string.ytui_player_close)
+        }
+        view.findViewById<View>(R.id.ytui_heading)?.visibility = View.VISIBLE
+        view.findViewById<TextView>(R.id.ytui_title)?.text = title
+        view.findViewById<View>(R.id.ytui_settings)?.apply {
+            visibility = View.VISIBLE
+            setOnClickListener {
+                view.hideController()
+                optionsOpen.value = true
             }
         }
+        VideoGestures.attach(view)
+        ColorGrade.attach(view)
+        PlayerChrome.trackSponsorMarks(view)
+        PlayerChrome.trackLive(view)
+        view.player = exo
+        return view
     }
 
     /** Prepares source [index] (or the offline copy) at [positionMs]. */
@@ -212,6 +296,9 @@ class MoviePlayerActivity : ComponentActivity() {
         private const val EXTRA_SOURCES = "sources"
         private const val EXTRA_OFFLINE = "offline"
 
+        private fun matchParent() =
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+
         /** Streams [sources] in order (the checked one first). */
         internal fun stream(context: Context, key: String, title: String, sources: List<MovieSource>) {
             context.startActivity(
@@ -239,48 +326,46 @@ private data class TrackChoice(val label: String, val selected: Boolean, val app
 
 private val SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
+/**
+ * Everything the movie player adds above the shared video chrome: the loading spinner, failover
+ * notices, the "Playback stopped" card and the playback options panel.
+ */
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
-private fun MoviePlayerScreen(
+private fun MovieOverlay(
     player: ExoPlayer,
-    title: String,
+    view: PlayerView,
     sources: List<MovieSource>,
     offline: Boolean,
     sourceIndex: State<Int>,
+    optionsOpen: MutableState<Boolean>,
     onFailover: () -> Boolean,
     onRetry: () -> Unit,
     onSwitch: (Int) -> Unit,
     onSave: () -> Unit,
     onClose: () -> Unit,
 ) {
-    var playing by remember { mutableStateOf(player.isPlaying) }
     var buffering by remember { mutableStateOf(true) }
-    var position by remember { mutableLongStateOf(0L) }
-    var duration by remember { mutableLongStateOf(0L) }
     var tracks by remember { mutableStateOf(player.currentTracks) }
-    var controls by remember { mutableStateOf(true) }
-    var menu by remember { mutableStateOf("") }
+    var speed by remember { mutableFloatStateOf(player.playbackParameters.speed) }
     var notice by remember { mutableStateOf("") }
     var failure by remember { mutableStateOf("") }
-    var speed by remember { mutableFloatStateOf(1f) }
-    var scrubbing by remember { mutableStateOf<Float?>(null) }
-    var lastTouch by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     DisposableEffect(player) {
         val listener =
             object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) {
-                    playing = isPlaying
-                }
-
                 override fun onPlaybackStateChanged(state: Int) {
                     buffering = state == Player.STATE_BUFFERING
                     if (state == Player.STATE_READY) failure = ""
-                    if (state == Player.STATE_ENDED) controls = true
                 }
 
                 override fun onTracksChanged(value: Tracks) {
                     tracks = value
+                    PlayerChrome.showCaptions(view)
+                }
+
+                override fun onPlaybackParametersChanged(parameters: PlaybackParameters) {
+                    speed = parameters.speed
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -291,27 +376,18 @@ private fun MoviePlayerScreen(
                         notice = "$failed stopped ($reason). Switched to $next."
                     } else {
                         failure = "$failed stopped ($reason)."
-                        controls = true
+                        view.hideController()
                     }
                 }
             }
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
+    // Save the position every five seconds of playback for Resume.
     LaunchedEffect(player) {
-        var ticks = 0
         while (true) {
-            position = player.currentPosition
-            duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: 0
-            if (++ticks % 10 == 0 && player.isPlaying) onSave()
-            delay(500)
-        }
-    }
-    // Controls fade after three quiet seconds of playback.
-    LaunchedEffect(controls, playing, lastTouch, menu) {
-        if (controls && playing && menu.isEmpty()) {
-            delay(3_000)
-            controls = false
+            delay(5_000)
+            if (player.isPlaying) onSave()
         }
     }
     LaunchedEffect(notice) {
@@ -320,78 +396,45 @@ private fun MoviePlayerScreen(
             notice = ""
         }
     }
-    BackHandler { if (menu.isNotEmpty()) menu = "" else onClose() }
+    val sourceLabel = if (offline) "Downloaded copy" else sources.getOrNull(sourceIndex.value)?.label.orEmpty()
+    SideEffect {
+        view.findViewById<TextView>(R.id.ytui_subtitle)?.apply {
+            text = sourceLabel
+            visibility = if (sourceLabel.isBlank()) View.GONE else View.VISIBLE
+        }
+    }
 
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { context ->
-                PlayerView(context).apply {
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    this.player = player
-                }
-            },
-            modifier = Modifier.fillMaxSize().testTag("movie-surface"),
-        )
-        // Tap anywhere to show or hide the controls.
-        Box(
-            Modifier.fillMaxSize().clickable(remember { MutableInteractionSource() }, null) {
-                controls = !controls
-                lastTouch = System.currentTimeMillis()
-            }
-        )
-        if (buffering && failure.isEmpty()) MediaSpinner(Modifier.align(Alignment.Center).size(48.dp), Color.White)
-        AnimatedVisibility(controls || failure.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
+    Box(Modifier.fillMaxSize()) {
+        if (rememberStalled(buffering && failure.isEmpty())) LoadingSpinner(Modifier.align(Alignment.Center))
+        AnimatedVisibility(notice.isNotEmpty(), Modifier.align(Alignment.TopCenter), enter = fadeIn(), exit = fadeOut()) {
+            Text(
+                notice,
+                Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(top = 64.dp)
+                    .clip(MediaTokens.pill)
+                    .background(Color.Black.copy(alpha = 0.8f))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White,
+            )
+        }
+        if (failure.isNotEmpty())
             Box(
                 Modifier.fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.7f),
-                            0.3f to Color.Transparent,
-                            0.65f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.8f),
-                        )
-                    )
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .pointerInput(Unit) { detectTapGestures {} },
+                contentAlignment = Alignment.Center,
             ) {
-                Row(Modifier.fillMaxWidth().align(Alignment.TopStart), verticalAlignment = Alignment.CenterVertically) {
-                    RoundIconButton(Glyph.Back, "Close player", tint = Color.White, action = onClose)
-                    Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = Color.White,
-                        )
-                        Text(
-                            if (offline) "Downloaded copy"
-                            else sources.getOrNull(sourceIndex.value)?.label.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.7f),
-                            maxLines = 1,
-                        )
-                    }
-                    RoundIconButton(Glyph.Settings, "Quality", tint = Color.White) { menu = "quality" }
-                    RoundIconButton(Glyph.Volume, "Audio", tint = Color.White) { menu = "audio" }
-                    RoundIconButton(Glyph.Captions, "Subtitles", tint = Color.White) { menu = "subtitles" }
-                    RoundIconButton(Glyph.Speed, "Speed", tint = Color.White) { menu = "speed" }
-                    if (!offline && sources.size > 1)
-                        RoundIconButton(Glyph.Link, "Source", tint = Color.White) { menu = "source" }
-                }
-                if (failure.isNotEmpty())
-                    Column(
-                        Modifier.align(Alignment.Center)
-                            .widthIn(max = 420.dp)
-                            .clip(MediaTokens.dialog)
-                            .background(Color.Black.copy(alpha = 0.75f))
-                            .padding(20.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
+                Column(
+                    Modifier.widthIn(max = 420.dp)
+                        .clip(MediaTokens.dialog)
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(20.dp)
+                        .testTag("movie-failure"),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    CompositionLocalProvider(LocalContentColor provides Color.White) {
                         Text("Playback stopped", style = MaterialTheme.typography.titleMedium, color = Color.White)
                         Text(
                             failure + if (!offline && sources.size > 1) " Every source was tried." else "",
@@ -406,119 +449,11 @@ private fun MoviePlayerScreen(
                             }
                         }
                     }
-                else
-                    Row(
-                        Modifier.align(Alignment.Center),
-                        horizontalArrangement = Arrangement.spacedBy(32.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RoundIconButton(Glyph.Previous, "Back 10 seconds", size = 56.dp, tint = Color.White) {
-                            player.seekBack()
-                            lastTouch = System.currentTimeMillis()
-                        }
-                        RoundIconButton(
-                            if (playing) Glyph.Pause else Glyph.Play,
-                            if (playing) "Pause" else "Play",
-                            Modifier.testTag("movie-play"),
-                            size = 72.dp,
-                            iconSize = 36.dp,
-                            container = Color.White.copy(alpha = 0.16f),
-                            tint = Color.White,
-                        ) {
-                            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
-                            if (player.isPlaying) player.pause() else player.play()
-                            lastTouch = System.currentTimeMillis()
-                        }
-                        RoundIconButton(Glyph.Next, "Forward 10 seconds", size = 56.dp, tint = Color.White) {
-                            player.seekForward()
-                            lastTouch = System.currentTimeMillis()
-                        }
-                    }
-                Column(Modifier.fillMaxWidth().align(Alignment.BottomCenter)) {
-                    val shown = scrubbing ?: if (duration > 0) position.toFloat() / duration else 0f
-                    Slider(
-                        shown.coerceIn(0f, 1f),
-                        onValueChange = {
-                            scrubbing = it
-                            lastTouch = System.currentTimeMillis()
-                        },
-                        onValueChangeFinished = {
-                            scrubbing?.let { player.seekTo((it * duration).toLong()) }
-                            scrubbing = null
-                        },
-                        enabled = duration > 0,
-                        colors =
-                            SliderDefaults.colors(
-                                thumbColor = Color.White,
-                                activeTrackColor = MaterialTheme.colorScheme.primary,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                            ),
-                        modifier = Modifier.testTag("movie-seek"),
-                    )
-                    Row(Modifier.fillMaxWidth()) {
-                        Text(
-                            time(((scrubbing?.times(duration))?.toLong() ?: position) / 1000f),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White,
-                        )
-                        Spacer(Modifier.weight(1f))
-                        if (speed != 1f)
-                            Text(
-                                "${speedLabel(speed)} · ",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = Color.White.copy(alpha = 0.7f),
-                            )
-                        Text(time(duration / 1000f), style = MaterialTheme.typography.labelMedium, color = Color.White)
-                    }
                 }
             }
-        }
-        AnimatedVisibility(notice.isNotEmpty(), Modifier.align(Alignment.TopCenter), enter = fadeIn(), exit = fadeOut()) {
-            Text(
-                notice,
-                Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(top = 64.dp)
-                    .clip(MediaTokens.pill)
-                    .background(Color.Black.copy(alpha = 0.8f))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White,
-            )
-        }
-        if (menu.isNotEmpty()) {
-            val choices =
-                when (menu) {
-                    "quality" -> qualityChoices(player, tracks)
-                    "audio" -> audioChoices(player, tracks)
-                    "subtitles" -> subtitleChoices(player, tracks)
-                    "speed" ->
-                        SPEEDS.map { s ->
-                            TrackChoice(speedLabel(s), s == speed) {
-                                speed = s
-                                player.setPlaybackSpeed(s)
-                            }
-                        }
-                    else ->
-                        sources.mapIndexed { i, s ->
-                            TrackChoice(s.label, i == sourceIndex.value) {
-                                if (i != sourceIndex.value) {
-                                    failure = ""
-                                    onSwitch(i)
-                                }
-                            }
-                        }
-                }
-            TrackMenu(
-                when (menu) {
-                    "quality" -> "Quality"
-                    "audio" -> "Audio"
-                    "subtitles" -> "Subtitles"
-                    "speed" -> "Playback speed"
-                    else -> "Source"
-                },
-                choices,
-                onDismiss = { menu = "" },
-            )
+        MovieOptions(player, view, tracks, speed, sources, offline, sourceIndex, optionsOpen) {
+            failure = ""
+            onSwitch(it)
         }
     }
 }
@@ -526,46 +461,177 @@ private fun MoviePlayerScreen(
 private fun speedLabel(speed: Float): String =
     if (speed == 1f) "Normal" else String.format(Locale.ROOT, "%sx", speed.toString().removeSuffix(".0"))
 
+/**
+ * The movie's playback options in the same frosted side panel as the YouTube fullscreen player:
+ * quality, audio, subtitles, speed and (when several copies were found) the source.
+ */
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
-private fun TrackMenu(title: String, choices: List<TrackChoice>, onDismiss: () -> Unit) {
-    Box(
-        Modifier.fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f))
-            .clickable(remember { MutableInteractionSource() }, null, onClick = onDismiss),
-        contentAlignment = Alignment.CenterEnd,
-    ) {
-        Column(
-            Modifier.fillMaxHeight()
-                .widthIn(max = 360.dp)
-                .fillMaxWidth(0.45f)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                .clickable(remember { MutableInteractionSource() }, null) {}
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp)
-                .testTag("movie-menu"),
-        ) {
-            CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, Modifier.weight(1f).padding(start = 8.dp), style = MaterialTheme.typography.titleMedium)
-                    SheetClose(onDismiss)
-                }
-                if (choices.isEmpty())
-                    Text(
-                        "This stream offers no choices here.",
-                        Modifier.padding(8.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                for (choice in choices)
-                    SheetAction(
-                        text = { Text(choice.label) },
-                        onClick = {
-                            choice.apply()
-                            onDismiss()
+private fun MovieOptions(
+    player: ExoPlayer,
+    view: PlayerView,
+    tracks: Tracks,
+    speed: Float,
+    sources: List<MovieSource>,
+    offline: Boolean,
+    sourceIndex: State<Int>,
+    open: MutableState<Boolean>,
+    onSwitch: (Int) -> Unit,
+) {
+    val visible = open.value
+    val reduced = LocalReducedMotion.current
+    val scheme = MaterialTheme.colorScheme
+    var page by remember { mutableStateOf("") }
+    fun close() {
+        open.value = false
+        page = ""
+    }
+    BackHandler(visible) { if (page.isNotEmpty()) page = "" else close() }
+    val blurSupported = android.os.Build.VERSION.SDK_INT >= 31
+    val blurTarget = with(LocalDensity.current) { if (visible) 28.dp.toPx() else 0f }
+    val blur by
+        animateFloatAsState(
+            blurTarget,
+            if (reduced) androidx.compose.animation.core.snap() else tween(220),
+            label = "movie-video-blur",
+        )
+    val content = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+    SideEffect { blurVideo(content, blur) }
+    DisposableEffect(content) { onDispose { blurVideo(content, 0f) } }
+
+    val sections =
+        buildList {
+            add(Triple("quality", "Quality", qualityChoices(player, tracks)))
+            add(Triple("audio", "Audio", audioChoices(player, tracks)))
+            add(Triple("subtitles", "Subtitles", subtitleChoices(player, tracks)))
+            add(
+                Triple(
+                    "speed",
+                    "Playback speed",
+                    SPEEDS.map { s -> TrackChoice(speedLabel(s), s == speed) { player.setPlaybackSpeed(s) } },
+                )
+            )
+            if (!offline && sources.size > 1)
+                add(
+                    Triple(
+                        "source",
+                        "Source",
+                        sources.mapIndexed { i, s ->
+                            TrackChoice(s.label, i == sourceIndex.value) { if (i != sourceIndex.value) onSwitch(i) }
                         },
-                        trailing = { ChoiceMark(choice.selected) },
                     )
+                )
+        }
+    val current = sections.firstOrNull { it.first == page }
+
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val wide = maxWidth > maxHeight
+        val sheetWidth = if (wide) minOf(420.dp, maxWidth * 0.5f) else maxWidth
+        AnimatedVisibility(
+            visible,
+            enter = if (reduced) EnterTransition.None else fadeIn(tween(160)),
+            exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
+        ) {
+            // Tapping the dimmed video closes the panel; it never reaches the player.
+            Box(
+                Modifier.fillMaxSize()
+                    .background(Color.Black.copy(alpha = if (blurSupported) 0.28f else 0.5f))
+                    .testTag("movie-options-scrim")
+                    .pointerInput(Unit) { detectTapGestures { close() } }
+            )
+        }
+        AnimatedVisibility(
+            visible,
+            Modifier.align(Alignment.CenterEnd),
+            enter =
+                if (reduced) EnterTransition.None
+                else slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(160)),
+            exit =
+                if (reduced) ExitTransition.None
+                else slideOutHorizontally(tween(160)) { it / 3 } + fadeOut(tween(120)),
+        ) {
+            Surface(
+                Modifier.width(sheetWidth)
+                    .fillMaxHeight()
+                    .testTag("movie-menu")
+                    .semantics { paneTitle = "Playback options" },
+                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                color = scheme.surfaceContainerLow.copy(alpha = if (blurSupported) 0.72f else 0.92f),
+                border = BorderStroke(1.dp, MediaTokens.videoGlassEdge.copy(alpha = 0.18f)),
+            ) {
+                Column(
+                    Modifier.fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(listOf(MediaTokens.videoGlassSheen, Color.Transparent), endY = 360f)
+                        )
+                        .windowInsetsPadding(
+                            WindowInsets.displayCutout.only(WindowInsetsSides.End + WindowInsetsSides.Vertical)
+                        )
+                        .padding(start = 8.dp, end = 8.dp, top = 8.dp)
+                ) {
+                    Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (current != null)
+                            MediaIconButton(Glyph.Back, "Back to playback options", "movie-options-back") { page = "" }
+                        Text(
+                            current?.second ?: "Playback options",
+                            Modifier.weight(1f).padding(horizontal = 8.dp),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        MediaIconButton(Glyph.Close, "Close playback options", "movie-options-close") { close() }
+                    }
+                    HorizontalDivider(color = scheme.outlineVariant)
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
+                        if (current == null)
+                            for ((id, label, choices) in sections)
+                                SheetAction(
+                                    text = {
+                                        Column {
+                                            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                choices.firstOrNull { it.selected }?.label
+                                                    ?: if (choices.isEmpty()) "None in this stream" else "Off",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = scheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    },
+                                    onClick = { page = id },
+                                    modifier = Modifier.testTag("movie-option-$id"),
+                                    leadingIcon = {
+                                        MediaIcon(
+                                            when (id) {
+                                                "quality" -> Glyph.Settings
+                                                "audio" -> Glyph.Volume
+                                                "subtitles" -> Glyph.Captions
+                                                "speed" -> Glyph.Speed
+                                                else -> Glyph.Link
+                                            },
+                                            Modifier.size(22.dp),
+                                            tint = scheme.onSurface,
+                                        )
+                                    },
+                                )
+                        else if (current.third.isEmpty())
+                            Text(
+                                "This stream offers no choices here.",
+                                Modifier.padding(16.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = scheme.onSurfaceVariant,
+                            )
+                        else
+                            for (choice in current.third)
+                                ChoiceRow(choice.label, choice.selected) {
+                                    choice.apply()
+                                    PlayerChrome.showCaptions(view)
+                                    close()
+                                }
+                    }
+                }
             }
         }
     }
