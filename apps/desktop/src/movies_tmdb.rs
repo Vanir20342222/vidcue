@@ -13,6 +13,7 @@ const API: &str = "https://api.themoviedb.org/3";
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Title {
     pub tmdb: u64,
+    pub imdb: String,
     pub tv: bool,
     pub title: String,
     pub overview: String,
@@ -149,6 +150,7 @@ fn title_from(v: &Value, tv_hint: Option<bool>) -> Option<Title> {
         .map(|m| m as u32);
     Some(Title {
         tmdb,
+        imdb: String::new(),
         tv,
         title: name,
         overview: str_of(v, "overview"),

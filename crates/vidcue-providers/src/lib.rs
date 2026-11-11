@@ -8,6 +8,7 @@ pub mod formats;
 pub mod http;
 pub mod images;
 pub mod lyrics;
+pub mod movie_catalog;
 pub mod music_lyrics;
 pub mod paths;
 pub mod radio;

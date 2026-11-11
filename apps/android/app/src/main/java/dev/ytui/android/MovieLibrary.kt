@@ -82,6 +82,10 @@ internal object MovieLibrary {
         val store = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = store
         root = File(app.filesDir, "movies")
+        runCatching {
+            val metadata = JSONObject(store.getString("catalog_metadata", "{}") ?: "{}")
+            metadata.keys().forEach { key -> runCatching { MovieCatalog.rememberMetadata(metadata.getJSONObject(key)) } }
+        }
         noticeSeen.value = store.getBoolean(NOTICE, false)
         resume.value = parseResume(store.getString(RESUME, null))
         // Drop records whose folder was removed outside the app.
@@ -89,6 +93,14 @@ internal object MovieLibrary {
             parseDownloads(store.getString(DOWNLOADS, null)).filterValues { File(it.entrypoint).exists() }
         // A process death mid-download leaves a private staging folder behind.
         scope.launch { root?.listFiles()?.filter { it.name.startsWith(".vidcue-cinecat-") }?.forEach { it.deleteRecursively() } }
+    }
+
+    fun rememberTitle(meta: JSONObject): MovieTitle {
+        val title = MovieCatalog.rememberMetadata(meta)
+        val metadata = runCatching { JSONObject(prefs?.getString("catalog_metadata", "{}") ?: "{}") }.getOrDefault(JSONObject())
+        metadata.put(title.id, meta)
+        prefs?.edit()?.putString("catalog_metadata", metadata.toString())?.apply()
+        return title
     }
 
     fun acceptNotice() {

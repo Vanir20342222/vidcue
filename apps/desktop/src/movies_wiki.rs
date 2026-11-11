@@ -1,17 +1,19 @@
 //! Keyless film metadata from Wikimedia: Wikidata links TMDB ids (P4947 films, P4983 series)
 //! to English Wikipedia articles, whose page image is usually the poster and whose intro is a
-//! short description. Used for the curated shelf and for search when no TMDB key is set.
+//! short description. Used for the curated shelf; legacy search is retained for live tests.
 
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
 
+#[cfg(test)]
 use super::tmdb::Title;
 
 const UA: &str = "Vidcue/0.2 (desktop app; https://github.com/Vanir20342222/vidcue)";
 const SPARQL: &str = "https://query.wikidata.org/sparql";
 const WIKI_API: &str = "https://en.wikipedia.org/w/api.php";
+#[cfg(test)]
 const WIKIDATA_API: &str = "https://www.wikidata.org/w/api.php";
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -200,6 +202,7 @@ async fn pages(client: &reqwest::Client, titles: &[String]) -> Result<HashMap<St
 }
 
 /// Films and series matching `q` that have a TMDB id, in Wikipedia's relevance order.
+#[cfg(test)]
 pub async fn search(client: &reqwest::Client, q: &str) -> Result<Vec<Title>> {
     let v = get_json(
         client,

@@ -12,6 +12,38 @@ import org.robolectric.annotation.Config
 @Config(manifest = Config.NONE, sdk = [35])
 class MovieCatalogTest {
     @Test
+    fun cyberpunkIsDiscoverableBeyondTheBuiltInPool() {
+        val result = kotlinx.coroutines.runBlocking {
+            searchMovieCatalog("cyberpunk") { request ->
+                assertEquals("movie_catalog_search", request.getString("op"))
+                assertEquals("cyberpunk", request.getString("query"))
+                JSONObject().put("titles", JSONArray().put(JSONObject()
+                    .put("id", "tt12590266").put("type", "series").put("name", "Cyberpunk: Edgerunners")))
+            }
+        }
+        assertEquals("Cyberpunk: Edgerunners", result.titles.single().title)
+        assertTrue(result.titles.single().series)
+        assertTrue(result.titles.single().seasons.isEmpty())
+    }
+
+    @Test
+    fun completeMetadataPreservesEverySeasonSpecialAndEpisodeAcrossReload() {
+        val videos = JSONArray()
+        for (season in 0..2) for (episode in 1..10)
+            videos.put(JSONObject().put("season", season).put("episode", episode).put("name", "Episode $episode"))
+        val meta = JSONObject().put("id", "tt12590266").put("type", "series")
+            .put("name", "Cyberpunk: Edgerunners").put("moviedb_id", 105248).put("videos", videos)
+        val full = MovieCatalog.rememberMetadata(JSONObject(meta.toString()))
+        assertEquals(listOf(1, 2, 0), full.seasons.map { it.number })
+        assertEquals(30, full.seasons.sumOf { it.episodes.size })
+        val pick = MoviePick(full, 2, 10)
+        assertEquals(pick, MovieCatalog.pick(pick.key))
+        assertEquals(105248L, pick.title.tmdb)
+        assertNotEquals(full.id, movieTitleFromMetadata(JSONObject().put("id", "tt12590266")
+            .put("type", "movie").put("name", "Other film")).id)
+    }
+
+    @Test
     fun everyTitleHasPlayableHttpsSourcesAndUniqueIds() {
         val ids = MovieCatalog.titles.map { it.id }
         assertEquals(ids.size, ids.toSet().size)

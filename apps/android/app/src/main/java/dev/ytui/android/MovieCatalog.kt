@@ -81,9 +81,12 @@ internal data class MovieTitle(
     val features: List<String> = emptyList(),
     /** Non-zero for Cinecat titles: the TMDB id the sources API resolves streams for. */
     val tmdb: Long = 0,
+    val catalogImdb: String = "",
+    val catalogKind: String = "",
+
 ) {
     val series: Boolean
-        get() = seasons.isNotEmpty()
+        get() = catalogKind == "series" || seasons.isNotEmpty()
 
     /** Cinecat titles resolve their streams through the sources API at play time. */
     val cinecat: Boolean
@@ -157,6 +160,8 @@ internal object MovieCatalog {
             poster = poster(posterPath),
             backdrop = backdrop(backdropPath),
             tmdb = tmdb,
+            catalogImdb = when (tmdb) { 1396L -> "tt0903747"; 1668L -> "tt0108778"; else -> "" },
+            catalogKind = if (series) "series" else "movie",
             seasons = seasons,
         )
     }
@@ -396,7 +401,22 @@ internal object MovieCatalog {
             ),
         ) + cinecatTitles
 
-    fun find(id: String): MovieTitle? = titles.firstOrNull { it.id == id }
+    private val discovered = mutableMapOf<String, MovieTitle>()
+
+    @Synchronized
+    fun cached(id: String): MovieTitle? = discovered[id]
+
+    @Synchronized
+    fun find(id: String): MovieTitle? = discovered[id] ?: titles.firstOrNull { it.id == id }
+
+    /** Keep full metadata so resume/download keys survive process death. */
+    @Synchronized
+    fun rememberMetadata(meta: JSONObject): MovieTitle {
+        val title = movieTitleFromMetadata(meta)
+        discovered[title.id] = title
+        return title
+    }
+
 
     /** Resolves a [MoviePick.key] back to a title and episode. */
     fun pick(key: String): MoviePick? {
@@ -601,4 +621,52 @@ internal fun movieArt(title: MovieTitle, widthPx: Int, heightPx: Int): MovieArt?
     val shownHeight = shownWidth / aspect
     val url = TmdbArt.sized(if (backdrop) title.backdrop else title.poster, shownWidth.toInt(), backdrop)
     return MovieArt(url, kotlin.math.ceil(maxOf(shownWidth, shownHeight)).toInt(), backdrop)
+}
+
+/** Parse both search summaries and complete metadata without fabricating seasons or episodes. */
+internal fun movieTitleFromMetadata(meta: JSONObject): MovieTitle {
+    val imdb = meta.optString("id")
+    require(imdb.matches(Regex("tt[0-9]+"))) { "Invalid catalog title ID" }
+    val kind = meta.optString("type")
+    require(kind == "movie" || kind == "series") { "Invalid catalog media type" }
+    val tmdb = meta.optLong("moviedb_id").coerceAtLeast(0)
+    val videos = meta.optJSONArray("videos") ?: JSONArray()
+    val episodes = (0 until videos.length()).mapNotNull { i ->
+        val v = videos.optJSONObject(i) ?: return@mapNotNull null
+        val season = v.optInt("season", -1)
+        val episode = v.optInt("episode", v.optInt("number", -1))
+        if (season < 0 || episode <= 0) return@mapNotNull null
+        season to MovieEpisode(episode, v.optString("name", "Episode $episode"), 0,
+            v.optString("overview", v.optString("description")), emptyList())
+    }
+    val genres = meta.optJSONArray("genres") ?: meta.optJSONArray("genre") ?: JSONArray()
+    val legacy = MovieCatalog.titles.firstOrNull { tmdb > 0 && it.tmdb == tmdb && it.series == (kind == "series") }
+    return MovieTitle(
+        id = legacy?.id ?: "catalog-$kind-$imdb",
+        title = meta.optString("name"),
+        year = meta.optString("releaseInfo", meta.optString("year")).take(4).toIntOrNull() ?: 0,
+        runtimeMinutes = Regex("[0-9]+").find(meta.optString("runtime"))?.value?.toIntOrNull() ?: 0,
+        genres = (0 until genres.length()).map { genres.optString(it) },
+        synopsis = meta.optString("description"), credit = "Cinemeta", license = "",
+        poster = meta.optString("poster"), backdrop = meta.optString("background"), tmdb = tmdb, catalogImdb = imdb, catalogKind = kind,
+        seasons = episodes.groupBy { it.first }.toSortedMap(compareBy<Int> { it == 0 }.thenBy { it }).map { (number, entries) ->
+            MovieSeason(number, entries.map { it.second }.distinctBy { it.number }.sortedBy { it.number })
+        },
+    )
+}
+
+internal data class MovieSearchResult(val titles: List<MovieTitle>, val warning: String)
+
+internal suspend fun searchMovieCatalog(
+    query: String,
+    call: suspend (JSONObject) -> Any? = { RustRpc.call(it) },
+): MovieSearchResult {
+    val data = call(JSONObject().put("op", "movie_catalog_search").put("query", query.trim())) as? JSONObject
+        ?: error("No catalog response")
+    val items = data.optJSONArray("titles") ?: error("Invalid catalog response")
+    val remote = (0 until items.length()).mapNotNull { i ->
+        runCatching { movieTitleFromMetadata(items.getJSONObject(i)) }.getOrNull()
+    }
+    val warning = data.optJSONArray("warnings")?.let { a -> (0 until a.length()).joinToString(". ") { a.optString(it) } }.orEmpty()
+    return MovieSearchResult((MovieCatalog.search(query) + remote).distinctBy { it.catalogImdb.ifBlank { it.id } }, warning)
 }

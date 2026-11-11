@@ -6710,6 +6710,7 @@ name = "vidcue-desktop"
 version = "0.2.0-alpha.17"
 dependencies = [
  "anyhow",
+ "futures-util",
  "png 0.18.1",
  "reqwest",
  "rune",
