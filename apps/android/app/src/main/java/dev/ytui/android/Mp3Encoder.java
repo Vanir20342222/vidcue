@@ -91,6 +91,11 @@ final class Mp3Encoder implements AutoCloseable {
   /** Frames encoded per call; larger blocks only need a larger output buffer. */
   static final int BLOCK_FRAMES = 8192;
 
+  /** Channels of the PCM this encoder takes: 1 or 2. */
+  int channels() {
+    return channels;
+  }
+
   /** The bitrate LAME settled on, which can be lower than asked for at low sample rates. */
   int bitrateKbps() {
     return flags.brate;

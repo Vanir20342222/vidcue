@@ -63,6 +63,8 @@ final class PlaylistZip {
         MediaBridge.context.getContentResolver().openOutputStream(destination, "w");
     if (output == null) throw new IOException("No output stream");
     try (ZipOutputStream zip = new ZipOutputStream(output)) {
+      // Audio and video are already compressed; deflating them only costs time and battery.
+      zip.setLevel(java.util.zip.Deflater.NO_COMPRESSION);
       for (Entry entry : entries) {
         String name =
             PlaybackPolicy.exportName(entry.plan.title, entry.plan.extension, entry.position);

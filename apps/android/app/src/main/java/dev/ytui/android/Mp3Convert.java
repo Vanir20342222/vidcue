@@ -26,8 +26,11 @@ import org.json.*;
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public final class Mp3Convert extends Worker {
   private static final String PREFS = "mp3";
-  /** One folder decision at a time, so two items of one playlist share a single folder. */
-  private static final Object FOLDER_LOCK = new Object();
+  /**
+   * One conversion at a time. Encoding is CPU-bound anyway, and it stops an automatic item job
+   * and the backfill from converting the same download twice.
+   */
+  private static final Object CONVERT_LOCK = new Object();
 
   enum Outcome {
     CONVERTED,
@@ -196,6 +199,14 @@ public final class Mp3Convert extends Worker {
   /** Converts one item; see the class comment for what happens to the original. */
   static Outcome convert(String id, OfflineExport.PlaylistSave playlist, BooleanSupplier cancelled)
       throws Exception {
+    synchronized (CONVERT_LOCK) {
+      if (converted(id) && playlist == null) return Outcome.ALREADY_DONE;
+      return convertLocked(id, playlist, cancelled);
+    }
+  }
+
+  private static Outcome convertLocked(
+      String id, OfflineExport.PlaylistSave playlist, BooleanSupplier cancelled) throws Exception {
     JSONObject record = StorageLocations.record(id);
     if (record != null && Mp3Policy.isMp3(record.optString("uri"))) {
       markDone(id);
@@ -214,9 +225,7 @@ public final class Mp3Convert extends Worker {
     try {
       long[] result = encode(plan, staged, cancelled);
       verify(staged, result[0], (int) result[1], (int) result[2]);
-      synchronized (FOLDER_LOCK) {
-        publish(id, request, record, playlist, plan.title, staged, cancelled);
-      }
+      publish(id, request, record, playlist, plan.title, staged, cancelled);
       markDone(id);
       return Outcome.CONVERTED;
     } finally {
@@ -242,7 +251,9 @@ public final class Mp3Convert extends Worker {
                 new Mp3Decoder.Sink() {
                   @Override
                   public void format(int sampleRate, int channels) throws IOException {
-                    if (encoder[0] != null && stats[1] == sampleRate) return;
+                    if (encoder[0] != null
+                        && stats[1] == sampleRate
+                        && encoder[0].channels() == channels) return;
                     if (encoder[0] != null)
                       throw new IOException("Audio format changed during conversion");
                     encoder[0] = new Mp3Encoder(sampleRate, channels, Mp3Encoder.BITRATE_KBPS, output);
@@ -297,16 +308,8 @@ public final class Mp3Convert extends Worker {
     Uri playlistFolder = null;
     String saved = record == null ? "" : record.optString("playlistFolder", "");
     if (!saved.isEmpty()) playlistFolder = Uri.parse(saved);
-    else if (playlist != null) playlistFolder = siblingFolder(playlist.title);
-    if (playlist != null && playlistFolder == null) {
-      playlistFolder =
-          DocumentsContract.createDocument(
-              resolver,
-              parent,
-              DocumentsContract.Document.MIME_TYPE_DIR,
-              PlaybackPolicy.folderName(playlist.title));
-      if (playlistFolder == null) throw new IOException("Could not create the playlist folder");
-    }
+    else if (playlist != null)
+      playlistFolder = StorageLocations.childFolder(tree, PlaybackPolicy.folderName(playlist.title));
     if (playlistFolder != null) parent = playlistFolder;
     Uri destination =
         DocumentsContract.createDocument(
@@ -350,18 +353,6 @@ public final class Mp3Convert extends Worker {
         android.util.Log.w("YtuiMp3", "Original file could not be removed");
       }
     }
-  }
-
-  /** The folder an earlier save of the playlist named [title] already created, if any. */
-  private static Uri siblingFolder(String title) throws Exception {
-    JSONObject files = StorageLocations.records();
-    String label = StorageLocations.label(true) + " › " + title;
-    for (Iterator<String> keys = files.keys(); keys.hasNext(); ) {
-      JSONObject file = files.getJSONObject(keys.next());
-      String folder = file.optString("playlistFolder", "");
-      if (!folder.isEmpty() && label.equals(file.optString("folder"))) return Uri.parse(folder);
-    }
-    return null;
   }
 
   private ForegroundInfo foreground() {

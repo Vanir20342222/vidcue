@@ -257,10 +257,16 @@ public final class MediaBridge {
                           event("error", "Save a playlist download to find its folder here");
                           return;
                         }
+                        // The Files app opens a plain document URI for a folder; the tree
+                        // form only carries this app's grant and is not always accepted.
+                        android.net.Uri document =
+                            android.provider.DocumentsContract.buildDocumentUri(
+                                folder.getAuthority(),
+                                android.provider.DocumentsContract.getDocumentId(folder));
                         context.startActivity(
                             new Intent(Intent.ACTION_VIEW)
                                 .setDataAndType(
-                                    folder,
+                                    document,
                                     android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
                                 .addFlags(
                                     Intent.FLAG_GRANT_READ_URI_PERMISSION

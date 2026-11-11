@@ -38,6 +38,12 @@
   which Android lacks.
 - `Mp3Policy` holds the pure decisions (what to convert, naming, frame and size checks) and
   `Mp3Convert` is the WorkManager job (`ytui-mp3-*` unique work, so queued items survive a restart).
+- Conversions run one at a time (2026-11-11 review), so an automatic item job and the backfill
+  cannot convert the same download twice. Playlist items share the playlist's one folder through
+  `StorageLocations.childFolder`, the same helper the folder saves use.
+- Review check (2026-11-11): a 440 Hz left / 1 kHz right test tone encoded and decoded with FFmpeg
+  keeps each tone on its own channel at 97% of its input level, so channel order and 16-bit to
+  LAME scaling are right.
 
 ## Licence
 

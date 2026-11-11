@@ -152,13 +152,7 @@ public final class OfflineExport extends Worker {
         if (playlist != null) {
           // Playlist downloads pack into their own folder, so the folder can be copied
           // to another device; the file prefix keeps the playlist order there.
-          Uri folder =
-              android.provider.DocumentsContract.createDocument(
-                  getApplicationContext().getContentResolver(),
-                  parent,
-                  android.provider.DocumentsContract.Document.MIME_TYPE_DIR,
-                  PlaybackPolicy.folderName(playlist.title));
-          if (folder == null) throw new IOException("Could not create the playlist folder");
+          Uri folder = StorageLocations.childFolder(tree, PlaybackPolicy.folderName(playlist.title));
           parent = folder;
           playlistFolder = folder;
           name = PlaybackPolicy.exportName(plan.title, plan.extension, playlist.position);
@@ -183,7 +177,8 @@ public final class OfflineExport extends Worker {
                 isStopped()
                     || automatic && StorageLocations.prefs().getBoolean("removed:" + id, false));
         if (automatic)
-          StorageLocations.remember(id, destination, playlistFolder, playlist.title, request);
+          StorageLocations.remember(
+              id, destination, playlistFolder, playlist == null ? null : playlist.title, request);
       }
       state(getApplicationContext(), getId().toString(), done);
       MediaBridge.event("storage_updated", "");
