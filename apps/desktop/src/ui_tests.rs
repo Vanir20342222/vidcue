@@ -351,3 +351,20 @@ fn every_scene_renders_without_panicking_and_icon_buttons_are_named() {
         unnamed.join("\n")
     );
 }
+
+#[test]
+fn resolving_a_stream_shows_only_the_spinner() {
+    for scene in ["watch", "song"] {
+        let mut rt = runtime(Some(scene));
+        rt.update(|s, _| s.player.now.as_mut().expect("scene plays").resolving = true);
+        settle(&mut rt);
+        assert!(
+            rt.state.player.now.as_ref().is_some_and(|n| n.resolving),
+            "{scene}"
+        );
+        assert!(
+            !text_present(&rt, "Finding the best stream…"),
+            "{scene}: no status text while resolving"
+        );
+    }
+}

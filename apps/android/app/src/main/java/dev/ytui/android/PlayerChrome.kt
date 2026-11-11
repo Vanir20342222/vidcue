@@ -25,13 +25,48 @@ internal object PlayerChrome {
     }
 
     /**
+     * Mark [view] as driving its own player (Movies) rather than the shared PlaybackService
+     * session: gestures and the captions button then act on the view's player directly, and the
+     * service's SponsorBlock marks are never drawn on it.
+     */
+    @JvmStatic
+    fun markStandalone(view: PlayerView) {
+        view.setTag(R.id.ytui_standalone, true)
+    }
+
+    @JvmStatic
+    fun standalone(view: PlayerView): Boolean = view.getTag(R.id.ytui_standalone) == true
+
+    /** Keep controls clear of cutouts and screen edges; scrims and video stay edge to edge. */
+    @JvmStatic
+    fun fitControls(view: PlayerView, cutoutLeft: Int, cutoutTop: Int, cutoutRight: Int) {
+        val edge = Math.round(16 * view.resources.displayMetrics.density)
+        for (id in
+            intArrayOf(
+                R.id.ytui_top_bar,
+                androidx.media3.ui.R.id.exo_bottom_bar,
+                androidx.media3.ui.R.id.exo_progress,
+                androidx.media3.ui.R.id.exo_minimal_controls,
+            )) {
+            val child = view.findViewById<View>(id) ?: continue
+            val params = child.layoutParams as? android.view.ViewGroup.MarginLayoutParams ?: continue
+            params.leftMargin = maxOf(edge, cutoutLeft)
+            params.rightMargin = maxOf(edge, cutoutRight)
+            if (id == R.id.ytui_top_bar) params.topMargin = cutoutTop
+            child.layoutParams = params
+        }
+    }
+
+    /**
      * Show SponsorBlock segments on the video controller's timebar. Media3 draws extra ad-group
      * markers as ticks, so each segment contributes a start and (when distinct) an end tick.
      * Main thread only; the service updates its marks on the main looper.
      */
     @JvmStatic
     fun showSponsorMarks(view: PlayerView) {
-        val marks = PlaybackService.current?.sponsors?.objects() ?: emptyList()
+        val marks =
+            if (standalone(view)) emptyList()
+            else PlaybackService.current?.sponsors?.objects() ?: emptyList()
         val times =
             marks
                 .flatMap { mark ->
@@ -171,11 +206,43 @@ internal object PlayerChrome {
     fun bindCaptions(view: PlayerView) {
         val button = view.findViewById<ImageButton>(R.id.ytui_captions) ?: return
         button.setOnClickListener {
-            MediaBridge.execute(org.json.JSONObject().put("op", "captions_toggle").toString())
+            if (standalone(view)) view.player?.let(::toggleOwnCaptions)
+            else MediaBridge.execute(org.json.JSONObject().put("op", "captions_toggle").toString())
             // Track selection applies on the next main-looper turn; read it back after that.
             view.postDelayed({ showCaptions(view) }, 250)
         }
         showCaptions(view)
+    }
+
+    /**
+     * Captions on/off for a standalone player. Switching on keeps an earlier choice from the
+     * options panel; without one it picks a track in the device language, else the first.
+     */
+    private fun toggleOwnCaptions(player: androidx.media3.common.Player) {
+        val text = androidx.media3.common.C.TRACK_TYPE_TEXT
+        val groups = player.currentTracks.groups.filter { it.type == text && it.length > 0 }
+        if (groups.isEmpty()) return
+        val params = player.trackSelectionParameters
+        val on = !params.disabledTrackTypes.contains(text) && groups.any { it.isSelected }
+        // An override names its track group; after a source switch the old group may be absent
+        // here, and ExoPlayer would then select nothing. Keep only overrides this item has.
+        val kept =
+            params.overrides.values.filter { o ->
+                o.type == text && groups.any { it.mediaTrackGroup == o.mediaTrackGroup }
+            }
+        val next = params.buildUpon().setTrackTypeDisabled(text, on).clearOverridesOfType(text)
+        kept.forEach { next.addOverride(it) }
+        if (!on && kept.isEmpty()) {
+            val language = java.util.Locale.getDefault().language
+            val group =
+                groups.firstOrNull { group ->
+                    group.getTrackFormat(0).language?.let {
+                        java.util.Locale.forLanguageTag(it).language == language
+                    } == true
+                } ?: groups.first()
+            next.setOverrideForType(androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0))
+        }
+        player.trackSelectionParameters = next.build()
     }
 
     /** Show the captions button only when the media has captions, with its current state. */

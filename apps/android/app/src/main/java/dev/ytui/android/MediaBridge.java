@@ -246,6 +246,38 @@ public final class MediaBridge {
                       }
                     });
                 break;
+              case "playlist_folder":
+                // The lookup reads the offline index, so it runs off the UI thread like "offline".
+                OfflineStore.IO.execute(
+                    () -> {
+                      try {
+                        android.net.Uri folder =
+                            StorageLocations.playlistFolder(request.getString("id"));
+                        if (folder == null) {
+                          event("error", "Save a playlist download to find its folder here");
+                          return;
+                        }
+                        // The Files app opens a plain document URI for a folder; the tree
+                        // form only carries this app's grant and is not always accepted.
+                        android.net.Uri document =
+                            android.provider.DocumentsContract.buildDocumentUri(
+                                folder.getAuthority(),
+                                android.provider.DocumentsContract.getDocumentId(folder));
+                        context.startActivity(
+                            new Intent(Intent.ACTION_VIEW)
+                                .setDataAndType(
+                                    document,
+                                    android.provider.DocumentsContract.Document.MIME_TYPE_DIR)
+                                .addFlags(
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        | Intent.FLAG_ACTIVITY_NEW_TASK));
+                      } catch (ActivityNotFoundException noFileManager) {
+                        event("error", "No file manager can open this folder");
+                      } catch (Exception unavailable) {
+                        event("error", "Playlist folder is unavailable; reconnect its folder");
+                      }
+                    });
+                break;
               case "folder_pick":
                 if (RustActivity.current() != null)
                   RustActivity.current().pickFolder(request.optBoolean("audio"));
@@ -266,6 +298,13 @@ public final class MediaBridge {
               case "download_export":
                 if (RustActivity.current() != null)
                   RustActivity.current().exportDownload(request.getString("id"));
+                break;
+              case "playlist_mp3":
+                Mp3Convert.enqueuePlaylist(request.getString("id"));
+                break;
+              case "playlist_export":
+                if (RustActivity.current() != null)
+                  RustActivity.current().exportPlaylist(request.getString("id"));
                 break;
               case "history_clear":
                 PlaybackRecovery.clear();

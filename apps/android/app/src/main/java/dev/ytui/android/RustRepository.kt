@@ -260,21 +260,30 @@ internal object ArtworkCache {
     private val decodeSizes = intArrayOf(96, 160, 240, 320, 480, 640, 768)
 
     /**
-     * Rounds a displayed width up to a shared decode size. Grid columns differ by a pixel of
+     * Opt-in sizes above the feed cap, for full-width artwork such as the Movies hero. Feed
+     * covers stay at 768 so a wide tablet grid does not double its bitmap memory.
+     */
+    private val largeDecodeSizes = intArrayOf(1024, 1280)
+    private val allDecodeSizes = decodeSizes + largeDecodeSizes
+
+    /**
+     * Rounds a displayed size up to a shared decode size. Grid columns differ by a pixel of
      * rounding; exact widths fetched, decoded and cached the same cover once per column width.
      */
-    fun decodeSize(pixels: Int): Int =
-        decodeSizes.firstOrNull { it >= pixels } ?: decodeSizes.last()
+    fun decodeSize(pixels: Int, large: Boolean = false): Int {
+        val sizes = if (large) allDecodeSizes else decodeSizes
+        return sizes.firstOrNull { it >= pixels } ?: sizes.last()
+    }
 
     fun hasArtwork(media: MediaCard): Boolean =
         media.artwork.optString("thumbnail").let { it.isNotBlank() && it != "null" } ||
             (media.artwork.optJSONArray("thumbnails")?.length() ?: 0) > 0
 
     /** Non-suspending memory lookup for the first frame; never decodes or fetches. */
-    fun cached(media: MediaCard, pixels: Int): Bitmap? {
-        val size = decodeSize(pixels)
+    fun cached(media: MediaCard, pixels: Int, large: Boolean = false): Bitmap? {
+        val size = decodeSize(pixels, large)
         // Reuse larger art from a player/detail view instead of flashing a placeholder.
-        for (candidate in decodeSizes) {
+        for (candidate in allDecodeSizes) {
             if (candidate < size) continue
             memory.get("${media.key}:${media.artworkSource}:$candidate")?.let {
                 return it
@@ -301,11 +310,11 @@ internal object ArtworkCache {
      */
     fun recent(media: MediaCard): Bitmap? = recentByItem.get(media.key)
 
-    suspend fun load(media: MediaCard, pixels: Int): Bitmap? {
+    suspend fun load(media: MediaCard, pixels: Int, large: Boolean = false): Bitmap? {
         if (!hasArtwork(media)) return null
-        val size = decodeSize(pixels)
+        val size = decodeSize(pixels, large)
         val key = "${media.key}:${media.artworkSource}:$size"
-        cached(media, size)?.let {
+        cached(media, size, large)?.let {
             return it
         }
         return loader.load(key) fetch@{
@@ -325,8 +334,8 @@ internal object ArtworkCache {
                     ?: return@fetch null
             if (
                 data.size < 3 ||
-                    data[0] !in 1..768 ||
-                    data[1] !in 1..768 ||
+                    data[0] !in 1..allDecodeSizes.last() ||
+                    data[1] !in 1..allDecodeSizes.last() ||
                     data.size != data[0] * data[1] + 2
             )
                 return@fetch null
@@ -348,9 +357,11 @@ internal class YtuiViewModel(
     },
 ) : ViewModel() {
     val tab = MutableStateFlow(1)
-    val feeds = Array(4) { MutableStateFlow(FeedState()) }
-    private val history = Array(4) { ArrayDeque<FeedState>() }
-    private val feedJobs = arrayOfNulls<Job>(4)
+    // Tab 4 (Movies) has its own page and never loads a feed; its slot keeps tab-indexed state
+    // (back history, search, scroll) in bounds.
+    val feeds = Array(5) { MutableStateFlow(FeedState()) }
+    private val history = Array(5) { ArrayDeque<FeedState>() }
+    private val feedJobs = arrayOfNulls<Job>(5)
 
     private data class FeedKey(val tab: Int, val request: String, val network: Long)
 

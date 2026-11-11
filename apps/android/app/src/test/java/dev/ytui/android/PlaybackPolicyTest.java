@@ -6,6 +6,12 @@ import org.junit.Test;
 
 public final class PlaybackPolicyTest {
   @Test
+  public void playlistZipsShareFolderNamingRules() {
+    assertEquals("Mix_ 1.zip", PlaybackPolicy.archiveName("Mix/ 1"));
+    assertEquals("Downloaded playlist.zip", PlaybackPolicy.archiveName("  "));
+  }
+
+  @Test
   public void delayedStartsAndPreviewRestorationRespectBackgroundPolicy() {
     for (boolean background : new boolean[] {false, true}) {
       for (boolean preview : new boolean[] {false, true}) {

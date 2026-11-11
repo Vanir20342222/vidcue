@@ -17,6 +17,7 @@ mod audio_tracks;
 pub mod equalizer;
 mod indexed_playback;
 mod lyrics;
+mod movies;
 mod resolution;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -156,8 +157,8 @@ impl Engine {
         width: u32,
         height: u32,
     ) -> Result<image::DynamicImage> {
-        let width = width.clamp(32, 768);
-        let height = height.clamp(32, 768);
+        let width = width.clamp(32, MAX_THUMBNAIL_PIXELS);
+        let height = height.clamp(32, MAX_THUMBNAIL_PIXELS);
         let cache = self.images.lock().expect("images").clone();
         let url = vidcue_providers::images::thumbnail_url(media, width, height);
         cache.load_sized(&url, width, height).await
@@ -1082,6 +1083,16 @@ impl Engine {
                     vidcue_providers::sponsorblock::fetch(&config, &media).await?
                 ))
             }
+            // A cancelled request drops this future, which also drops any download staging.
+            "movie_check" => movies::check(r, &CancellationToken::new()).await,
+            "movie_download" => movies::download(r, &CancellationToken::new()).await,
+            "movie_cinecat_resolve" => movies::cinecat_resolve(r, &CancellationToken::new()).await,
+            "movie_cinecat_check_all" => {
+                movies::cinecat_check_all(r, &CancellationToken::new()).await
+            }
+            "movie_cinecat_providers" => {
+                movies::cinecat_providers(r, &CancellationToken::new()).await
+            }
             _ => anyhow::bail!("Unknown mobile operation"),
         }
     }
@@ -1141,6 +1152,7 @@ impl Engine {
             None
         };
         let client_key = key.clone();
+        let adaptive = quality == "auto" && !audio;
         let fresh = r["fresh"].as_bool().unwrap_or(false);
         let mut value = self
             .resolver
@@ -1222,6 +1234,15 @@ impl Engine {
                     .await??;
                 let stream_at = std::time::Instant::now();
                 let mut value = stream(&data, audio)?;
+                if adaptive
+                    && let Some(manifest) = indexed_playback::adaptive(
+                        &data,
+                        AUTO_MAX_HEIGHT,
+                        data["duration"].as_f64(),
+                    )
+                {
+                    value["dash_manifest"] = manifest.into();
+                }
                 value["resolution_stream_ms"] = (stream_at.elapsed().as_millis() as u64).into();
                 for (name, ms) in [
                     ("slot", slot_ms),
@@ -1312,12 +1333,23 @@ fn video_qualities(data: &Value) -> Vec<u16> {
     heights.into_iter().rev().collect()
 }
 
+/// Largest square decode box for artwork. Feed covers ask for at most 768 px; the Movies
+/// hero asks for more so a full-width poster or backdrop is not upscaled from a small decode.
+pub const MAX_THUMBNAIL_PIXELS: u32 = 1280;
+/// Highest rendition the "auto" quality may adapt between.
+const AUTO_MAX_HEIGHT: u64 = 1080;
+
 fn mobile_format(audio: bool, quality: &str) -> Result<String> {
     if audio {
         return Ok("bestaudio/best".into());
     }
     if quality == "best" {
         return Ok("bestvideo+bestaudio/best".into());
+    }
+    if quality == "auto" {
+        // The adaptive presentation (indexed_playback::adaptive) replaces this single
+        // stream; the capped selector is what plays when no adaptive set is available.
+        return mobile_format(false, &AUTO_MAX_HEIGHT.to_string());
     }
     ensure!(
         quality.bytes().all(|b| b.is_ascii_digit())
@@ -1332,6 +1364,15 @@ fn mobile_format(audio: bool, quality: &str) -> Result<String> {
 #[cfg(test)]
 mod format_tests {
     use super::*;
+
+    #[test]
+    fn auto_quality_falls_back_to_the_capped_selector() {
+        assert_eq!(
+            mobile_format(false, "auto").unwrap(),
+            mobile_format(false, "1080").unwrap()
+        );
+        assert_eq!(mobile_format(true, "auto").unwrap(), "bestaudio/best");
+    }
 
     #[test]
     fn quality_menu_uses_unique_available_video_heights() {
@@ -1931,7 +1972,7 @@ fn stream(data: &Value, audio: bool) -> Result<Value> {
             }
         }
     }
-    let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":data["vidcue_playback_route"],"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
+    let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":indexed_playback::engine_field(data, "playback_route"),"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
     let duration = data["duration"].as_f64();
     let secondary = formats.and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"));
     result["video_qualities"] = json!(video_qualities(data));
@@ -2290,7 +2331,7 @@ mod android {
                 let raw: String = env.get_string(&media)?.into();
                 ensure!(raw.len() <= 256 * 1024, "Thumbnail request exceeds limit");
                 let media: Media = serde_json::from_str(&raw)?;
-                let width = pixels.clamp(32, 768) as u32;
+                let width = pixels.clamp(32, MAX_THUMBNAIL_PIXELS as i32) as u32;
                 let image = runtime()
                     .block_on(
                         ENGINE

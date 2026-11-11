@@ -24,26 +24,45 @@ install_media() {
     timeout --kill-after=10s 60s sudo apt-get "${apt_options[@]}" update &&
         timeout --kill-after=10s 180s sudo apt-get "${apt_options[@]}" install -y --no-install-recommends "$@"
 }
-if install_media "$@"; then
-    exit 0
-fi
-echo 'Runner package mirror failed or timed out; retrying official Ubuntu HTTPS mirrors.' >&2
-fallback_sources="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vidcue-ubuntu.XXXXXX.list")"
-trap 'rm -f -- "$fallback_sources"' EXIT
-cat > "$fallback_sources" <<'EOF'
-deb https://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-deb https://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-deb https://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+
+install_media_from() {
+    # One mirror per attempt: a single unreachable source must not sink the
+    # whole run, so every mirror gets its own sources list and update+install.
+    local list="$1"
+    shift
+    if [[ "$list" == default ]]; then
+        install_media "$@"
+        return
+    fi
+    local sources
+    sources="$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/vidcue-ubuntu.XXXXXX.list")"
+    cat > "$sources" <<EOF
+deb $list noble main restricted universe multiverse
+deb $list noble-updates main restricted universe multiverse
+deb $list noble-security main restricted universe multiverse
 EOF
-# Override sources for these commands only; preserve the runner's source files.
-# Apt drops download privileges to _apt, which must be able to read this file.
-chmod 644 "$fallback_sources"
-apt_options+=(
-    -o "Dir::Etc::sourcelist=$fallback_sources"
-    -o Dir::Etc::sourceparts=-
-)
-if install_media "$@"; then
-    exit 0
-fi
-echo 'CI media setup failed on both mirrors. No playback test result is available.' >&2
+    # Apt drops download privileges to _apt, which must be able to read this file.
+    chmod 644 "$sources"
+    local status=0
+    timeout --kill-after=10s 60s sudo apt-get "${apt_options[@]}" \
+        -o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=- update ||
+        status=$?
+    if ((status == 0)); then
+        timeout --kill-after=10s 180s sudo apt-get "${apt_options[@]}" \
+            -o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=- \
+            install -y --no-install-recommends "$@" || status=$?
+    fi
+    rm -f -- "$sources"
+    return "$status"
+}
+
+# The runner's Azure mirror first, then Canonical's archive, then the kernel.org
+# mirror CDN: one DNS or network outage must not freeze CI media setup.
+for mirror in default https://archive.ubuntu.com/ubuntu https://mirrors.edge.kernel.org/ubuntu; do
+    if install_media_from "$mirror" "$@"; then
+        exit 0
+    fi
+    echo "Mirror $mirror failed; trying the next one." >&2
+done
+echo 'CI media setup failed on every mirror. No playback test result is available.' >&2
 exit 1

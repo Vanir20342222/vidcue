@@ -137,8 +137,14 @@ final class VideoGestures {
                   show(R.drawable.ytui_gesture_seek_forward, true, seconds + " s", true);
                 } else {
                   command("pause");
-                  PlaybackService service = PlaybackService.current;
-                  boolean playing = service != null && service.player.getPlayWhenReady();
+                  boolean playing;
+                  if (PlayerChrome.standalone(view)) {
+                    androidx.media3.common.Player own = view.getPlayer();
+                    playing = own != null && own.getPlayWhenReady();
+                  } else {
+                    PlaybackService service = PlaybackService.current;
+                    playing = service != null && service.player.getPlayWhenReady();
+                  }
                   show(playing ? "Playing" : "Paused");
                 }
                 haptic(HapticFeedbackConstants.VIRTUAL_KEY);
@@ -233,7 +239,8 @@ final class VideoGestures {
               panelLastTime = event.getEventTime();
               panelVelocity = 0f;
             } else if (panel == null && swipes && middle && dy > 0
-                && activity() instanceof FullscreenActivity) {
+                && (activity() instanceof FullscreenActivity
+                    || activity() instanceof MoviePlayerActivity)) {
               drag = Drag.EXIT;
               panelStartY = event.getRawY();
             } else if (MobileSettings.gesture("gesture_video_adjust")) {
@@ -333,11 +340,16 @@ final class VideoGestures {
     hide();
   }
 
-  private static void command(String op) {
+  private void command(String op) {
     command(new JSONObject(), op, null);
   }
 
-  private static void command(JSONObject value, String op, Boolean active) {
+  private void command(JSONObject value, String op, Boolean active) {
+    if (PlayerChrome.standalone(view)) {
+      androidx.media3.common.Player own = view.getPlayer();
+      if (own != null) ownCommand(own, op, Boolean.TRUE.equals(active));
+      return;
+    }
     PlaybackService service = PlaybackService.current;
     if (service == null) return;
     try {
@@ -345,6 +357,47 @@ final class VideoGestures {
       if (active != null) value.put("active", active);
       service.command(value);
     } catch (Exception ignored) {
+    }
+  }
+
+  /** Speed to restore after press-and-hold on a standalone player. */
+  private Float heldSpeedRestore;
+
+  /** The same gesture commands as PlaybackService, applied to a standalone (Movies) player. */
+  private void ownCommand(androidx.media3.common.Player player, String op, boolean active) {
+    long step = MobileSettings.integer("seek_seconds") * 1000L;
+    switch (op) {
+      case "pause":
+        if (player.getPlayWhenReady()) player.pause();
+        else {
+          if (player.getPlaybackState() == androidx.media3.common.Player.STATE_ENDED)
+            player.seekTo(0);
+          player.play();
+        }
+        break;
+      case "forward":
+        long target = player.getCurrentPosition() + step;
+        long duration = player.getDuration();
+        player.seekTo(
+            duration == androidx.media3.common.C.TIME_UNSET ? target : Math.min(duration, target));
+        break;
+      case "back":
+        player.seekTo(Math.max(0, player.getCurrentPosition() - step));
+        break;
+      case "speed_hold":
+        // Temporary, like the shared player: the chosen speed returns on release.
+        if (active) {
+          if (heldSpeedRestore != null) break;
+          heldSpeedRestore = player.getPlaybackParameters().speed;
+          player.setPlaybackSpeed(
+              Math.max(heldSpeedRestore, MobileSettings.integer("hold_speed") / 100f));
+        } else if (heldSpeedRestore != null) {
+          player.setPlaybackSpeed(heldSpeedRestore);
+          heldSpeedRestore = null;
+        }
+        break;
+      default:
+        break;
     }
   }
 

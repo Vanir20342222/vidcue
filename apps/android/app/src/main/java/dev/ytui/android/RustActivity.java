@@ -13,6 +13,7 @@ public final class RustActivity extends ComponentActivity {
   static final java.util.concurrent.atomic.AtomicLong shutdowns =
       new java.util.concurrent.atomic.AtomicLong();
   private String exportDownload;
+  private String exportPlaylist;
   private int documentRequest;
   private long documentAccountIntent;
   private String documentToken;
@@ -36,6 +37,7 @@ public final class RustActivity extends ComponentActivity {
     if (state != null) {
       restoredIntent = true;
       exportDownload = state.getString("ytui-export-download");
+      exportPlaylist = state.getString("ytui-export-playlist");
       documentRequest = state.getInt("ytui-document-request");
       documentAccountIntent = state.getLong("ytui-document-account-intent");
       documentToken = state.getString("ytui-document-token");
@@ -130,6 +132,7 @@ public final class RustActivity extends ComponentActivity {
   @Override
   protected void onSaveInstanceState(Bundle state) {
     state.putString("ytui-export-download", exportDownload);
+    state.putString("ytui-export-playlist", exportPlaylist);
     state.putInt("ytui-document-request", documentRequest);
     state.putLong("ytui-document-account-intent", documentAccountIntent);
     state.putString("ytui-document-token", documentToken);
@@ -157,7 +160,7 @@ public final class RustActivity extends ComponentActivity {
   }
 
   void pickFolder(boolean audio) {
-    if (documentRequest != 0 || exportDownload != null) {
+    if (documentRequest != 0 || exportDownload != null || exportPlaylist != null) {
       MediaBridge.event("error", "Finish or cancel the current file picker first");
       return;
     }
@@ -181,7 +184,7 @@ public final class RustActivity extends ComponentActivity {
   }
 
   void exportDownload(String id) {
-    if (exportDownload != null) {
+    if (exportDownload != null || exportPlaylist != null) {
       MediaBridge.event("error", "Finish or cancel the open export picker first");
       return;
     }
@@ -220,6 +223,44 @@ public final class RustActivity extends ComponentActivity {
         });
   }
 
+  void exportPlaylist(String id) {
+    if (exportDownload != null || exportPlaylist != null) {
+      MediaBridge.event("error", "Finish or cancel the open export picker first");
+      return;
+    }
+    exportPlaylist = id;
+    OfflineStore.IO.execute(
+        () -> {
+          try {
+            String title = PlaylistZip.find(id).optString("title");
+            MediaBridge.main.post(
+                () -> {
+                  if (isFinishing() || isDestroyed()) {
+                    exportPlaylist = null;
+                    return;
+                  }
+                  try {
+                    startActivityForResult(
+                        new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                            .setType("application/zip")
+                            .addCategory(Intent.CATEGORY_OPENABLE)
+                            .addFlags(
+                                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                    | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                            .putExtra(Intent.EXTRA_TITLE, PlaybackPolicy.archiveName(title)),
+                        48);
+                  } catch (RuntimeException error) {
+                    exportPlaylist = null;
+                    MediaBridge.event("error", "No document provider is available for export");
+                  }
+                });
+          } catch (Exception error) {
+            MediaBridge.main.post(() -> exportPlaylist = null);
+            MediaBridge.event("error", OfflineExport.safeReason(error));
+          }
+        });
+  }
+
   @Override
   protected void onActivityResult(int request, int result, Intent data) {
     super.onActivityResult(request, result, data);
@@ -237,9 +278,10 @@ public final class RustActivity extends ComponentActivity {
             });
       return;
     }
-    if (request == 43) {
-      String id = exportDownload;
-      exportDownload = null;
+    if (request == 43 || request == 48) {
+      String id = request == 43 ? exportDownload : exportPlaylist;
+      if (request == 43) exportDownload = null;
+      else exportPlaylist = null;
       if (id == null || result != RESULT_OK || data == null || data.getData() == null) return;
       android.net.Uri destination = data.getData();
       if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
@@ -249,7 +291,8 @@ public final class RustActivity extends ComponentActivity {
         } catch (SecurityException ignored) {
         }
       }
-      OfflineExport.enqueue(id, destination);
+      if (request == 43) OfflineExport.enqueue(id, destination);
+      else OfflineExport.enqueuePlaylist(id, destination);
       return;
     }
     if (request != documentRequest || documentRequest == 0) return;

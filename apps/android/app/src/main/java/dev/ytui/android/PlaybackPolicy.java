@@ -52,6 +52,11 @@ final class PlaybackPolicy {
     return clean(title, "Downloaded playlist");
   }
 
+  /** Playlist zip name, sanitized like the folder it packs. */
+  static String archiveName(String title) {
+    return folderName(title) + ".zip";
+  }
+
   /**
    * Playlist exports carry a numeric prefix so the playlist order survives on any device or file
    * browser.

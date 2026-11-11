@@ -62,6 +62,7 @@ private val DESTINATIONS =
         Triple(1, "Home", Glyph.Home),
         Triple(2, "Music", Glyph.Music),
         Triple(3, "Radio", Glyph.Radio),
+        Triple(4, "Movies", Glyph.Film),
         Triple(0, "Downloads", Glyph.Download),
     )
 

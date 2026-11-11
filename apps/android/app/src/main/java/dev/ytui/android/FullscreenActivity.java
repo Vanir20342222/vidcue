@@ -108,25 +108,7 @@ public final class FullscreenActivity extends ComponentActivity {
 
   /** Keep controls clear of cutouts and screen edges; scrims and video stay edge to edge. */
   private void fitControls(androidx.core.graphics.Insets cutout) {
-    int edge = Math.round(16 * getResources().getDisplayMetrics().density);
-    int[] ids = {
-      R.id.ytui_top_bar,
-      androidx.media3.ui.R.id.exo_bottom_bar,
-      androidx.media3.ui.R.id.exo_progress,
-      androidx.media3.ui.R.id.exo_minimal_controls
-    };
-    for (int id : ids) {
-      android.view.View child = view.findViewById(id);
-      if (child == null
-          || !(child.getLayoutParams() instanceof android.view.ViewGroup.MarginLayoutParams))
-        continue;
-      android.view.ViewGroup.MarginLayoutParams params =
-          (android.view.ViewGroup.MarginLayoutParams) child.getLayoutParams();
-      params.leftMargin = Math.max(edge, cutout.left);
-      params.rightMargin = Math.max(edge, cutout.right);
-      if (id == R.id.ytui_top_bar) params.topMargin = cutout.top;
-      child.setLayoutParams(params);
-    }
+    PlayerChrome.fitControls(view, cutout.left, cutout.top, cutout.right);
   }
 
   /** Watch the shared player: the video size picks the orientation, playback the screen lock. */

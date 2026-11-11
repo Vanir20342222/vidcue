@@ -93,6 +93,9 @@ dependencies {
     implementation 'androidx.media3:media3-database:1.8.0'
     implementation 'androidx.javascriptengine:javascriptengine:1.1.1'
     implementation 'androidx.work:work-runtime:2.10.1'
+    // MP3 encoder (LGPL-2.1, pure Java port of LAME). Only its core classes are used: the
+    // lowlevel.LameEncoder wrapper needs javax.sound, which Android does not have.
+    implementation 'de.sciss:jump3r:1.0.5'
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.14.1'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2'
