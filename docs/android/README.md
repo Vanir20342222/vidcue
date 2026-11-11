@@ -127,7 +127,6 @@ export ANDROID_HOME=/path/to/android-sdk
 The build script installs nothing. `YTUI_ANDROID_ABIS=arm64-v8a` builds only your
 phone ABI for development; the distributed universal APK needs both ABIs for the
 inspection gate. `YTUI_ANDROID_RUST_ONLY=1` builds native libraries without Gradle.
-`YTUI_ANDROID_SKIP_GRADLE=1` also writes the license notices, then stops before Gradle.
 Output: `apps/android/app/build/outputs/apk/debug/app-debug.apk`.
 Native libraries go to ignored `target/android-jni`, with 16 KiB ELF segments.
 The script includes application and Rust dependency license inventories. Android

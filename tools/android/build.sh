@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build the shared Rust engine and package the native Android UI; installs nothing.
+# YTUI_ANDROID_RUST_ONLY=1 stops before notices and Gradle; YTUI_ANDROID_SKIP_GRADLE=1 stops after notices.
 set -euo pipefail
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 variant="${YTUI_ANDROID_VARIANT:-debug}"
