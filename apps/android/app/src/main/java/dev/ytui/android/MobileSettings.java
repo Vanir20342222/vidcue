@@ -43,6 +43,7 @@ final class MobileSettings {
           "show_section",
           "show_likes",
           "auto_color_grade",
+          "auto_mp3",
           "download_unmetered"
         })
       values.put(key, false);
@@ -156,6 +157,8 @@ final class MobileSettings {
           OfflineStore.applyNetworkRequirement();
           if (PlaybackService.current != null) PlaybackService.current.refreshPrefetch();
           if (value.optBoolean("auto_save_folders")) OfflineStore.exportPending();
+          // Turning conversion on also converts what is already downloaded.
+          if (value.optBoolean("auto_mp3")) Mp3Convert.enqueueBackfill();
         });
   }
 

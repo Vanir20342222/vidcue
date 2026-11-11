@@ -1141,6 +1141,7 @@ impl Engine {
             None
         };
         let client_key = key.clone();
+        let adaptive = quality == "auto" && !audio;
         let fresh = r["fresh"].as_bool().unwrap_or(false);
         let mut value = self
             .resolver
@@ -1222,6 +1223,15 @@ impl Engine {
                     .await??;
                 let stream_at = std::time::Instant::now();
                 let mut value = stream(&data, audio)?;
+                if adaptive
+                    && let Some(manifest) = indexed_playback::adaptive(
+                        &data,
+                        AUTO_MAX_HEIGHT,
+                        data["duration"].as_f64(),
+                    )
+                {
+                    value["dash_manifest"] = manifest.into();
+                }
                 value["resolution_stream_ms"] = (stream_at.elapsed().as_millis() as u64).into();
                 for (name, ms) in [
                     ("slot", slot_ms),
@@ -1312,12 +1322,20 @@ fn video_qualities(data: &Value) -> Vec<u16> {
     heights.into_iter().rev().collect()
 }
 
+/// Highest rendition the "auto" quality may adapt between.
+const AUTO_MAX_HEIGHT: u64 = 1080;
+
 fn mobile_format(audio: bool, quality: &str) -> Result<String> {
     if audio {
         return Ok("bestaudio/best".into());
     }
     if quality == "best" {
         return Ok("bestvideo+bestaudio/best".into());
+    }
+    if quality == "auto" {
+        // The adaptive presentation (indexed_playback::adaptive) replaces this single
+        // stream; the capped selector is what plays when no adaptive set is available.
+        return mobile_format(false, &AUTO_MAX_HEIGHT.to_string());
     }
     ensure!(
         quality.bytes().all(|b| b.is_ascii_digit())
@@ -1332,6 +1350,15 @@ fn mobile_format(audio: bool, quality: &str) -> Result<String> {
 #[cfg(test)]
 mod format_tests {
     use super::*;
+
+    #[test]
+    fn auto_quality_falls_back_to_the_capped_selector() {
+        assert_eq!(
+            mobile_format(false, "auto").unwrap(),
+            mobile_format(false, "1080").unwrap()
+        );
+        assert_eq!(mobile_format(true, "auto").unwrap(), "bestaudio/best");
+    }
 
     #[test]
     fn quality_menu_uses_unique_available_video_heights() {
@@ -1931,7 +1958,7 @@ fn stream(data: &Value, audio: bool) -> Result<Value> {
             }
         }
     }
-    let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":data["vidcue_playback_route"],"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
+    let mut result = json!({"url":url,"audio_url":audio_url,"resolution_route":indexed_playback::engine_field(data, "playback_route"),"format_id":primary["format_id"],"audio_format_id":formats.and_then(|fs|fs.iter().find(|f|f["vcodec"]=="none")).map(|f|f["format_id"].clone()),"headers":headers,"live":data["is_live"].as_bool().unwrap_or(false)||data["live_status"]=="is_live","title":data["title"],"creator":data["uploader"].as_str().or_else(||data["channel"].as_str()).unwrap_or(""),"thumbnail":data["thumbnail"],"view_count":data["view_count"],"upload_date":data["upload_date"],"like_count":data["like_count"],"channel_follower_count":data["channel_follower_count"],"description":data["description"].as_str().map(|text|text.chars().take(8192).collect::<String>()).unwrap_or_default(),"duration":data["duration"],"catalog":vidcue_providers::formats::Catalog::parse(data)});
     let duration = data["duration"].as_f64();
     let secondary = formats.and_then(|fs| fs.iter().find(|f| f["vcodec"] == "none"));
     result["video_qualities"] = json!(video_qualities(data));

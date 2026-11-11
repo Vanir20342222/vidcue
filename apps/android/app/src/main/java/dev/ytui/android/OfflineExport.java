@@ -38,13 +38,18 @@ public final class OfflineExport extends Worker {
   }
 
   static java.util.UUID enqueue(String id, Uri destination) {
+    return enqueue(new Data.Builder().putString("download", id), destination);
+  }
+
+  /** A whole offline playlist, packed into one zip at [destination]. */
+  static java.util.UUID enqueuePlaylist(String playlistId, Uri destination) {
+    return enqueue(new Data.Builder().putString("playlist", playlistId), destination);
+  }
+
+  private static java.util.UUID enqueue(Data.Builder input, Uri destination) {
     OneTimeWorkRequest work =
         new OneTimeWorkRequest.Builder(OfflineExport.class)
-            .setInputData(
-                new Data.Builder()
-                    .putString("download", id)
-                    .putString("destination", destination.toString())
-                    .build())
+            .setInputData(input.putString("destination", destination.toString()).build())
             .addTag("ytui-export")
             .build();
     state(MediaBridge.context, work.getId().toString(), "Export queued");
@@ -86,6 +91,11 @@ public final class OfflineExport extends Worker {
   }
 
   static void enqueueAuto(String id) {
+    // With automatic MP3 conversion on, an audio download is saved once, as an MP3.
+    if (Mp3Convert.takesOver(id)) {
+      Mp3Convert.enqueueAuto(id);
+      return;
+    }
     if (!MobileSettings.enabled("auto_save_folders")) return;
     try {
       if (StorageLocations.record(id) != null) return;
@@ -116,8 +126,9 @@ public final class OfflineExport extends Worker {
   @Override
   public Result doWork() {
     String id = getInputData().getString("download"), raw = getInputData().getString("destination");
+    String playlistId = getInputData().getString("playlist");
     boolean automatic = getInputData().getBoolean("auto", false);
-    if (id == null || (raw == null && !automatic)) return Result.failure();
+    if ((id == null && playlistId == null) || (raw == null && !automatic)) return Result.failure();
     Uri destination = raw == null ? null : Uri.parse(raw);
     try {
       JSONObject request = null;
@@ -141,13 +152,7 @@ public final class OfflineExport extends Worker {
         if (playlist != null) {
           // Playlist downloads pack into their own folder, so the folder can be copied
           // to another device; the file prefix keeps the playlist order there.
-          Uri folder =
-              android.provider.DocumentsContract.createDocument(
-                  getApplicationContext().getContentResolver(),
-                  parent,
-                  android.provider.DocumentsContract.Document.MIME_TYPE_DIR,
-                  PlaybackPolicy.folderName(playlist.title));
-          if (folder == null) throw new IOException("Could not create the playlist folder");
+          Uri folder = StorageLocations.childFolder(tree, PlaybackPolicy.folderName(playlist.title));
           parent = folder;
           playlistFolder = folder;
           name = PlaybackPolicy.exportName(plan.title, plan.extension, playlist.position);
@@ -159,15 +164,23 @@ public final class OfflineExport extends Worker {
       }
       setForegroundAsync(foreground()).get(15, TimeUnit.SECONDS);
       state(getApplicationContext(), getId().toString(), "Exporting file");
-      write(
-          id,
-          destination,
-          () ->
-              isStopped()
-                  || automatic && StorageLocations.prefs().getBoolean("removed:" + id, false));
-      if (automatic)
-        StorageLocations.remember(id, destination, playlistFolder, playlist.title, request);
-      state(getApplicationContext(), getId().toString(), "Export complete");
+      String done = "Export complete";
+      if (playlistId != null) {
+        int skipped =
+            PlaylistZip.write(PlaylistZip.find(playlistId), destination, this::isStopped);
+        if (skipped > 0) done += "; " + skipped + " unavailable items left out";
+      } else {
+        write(
+            id,
+            destination,
+            () ->
+                isStopped()
+                    || automatic && StorageLocations.prefs().getBoolean("removed:" + id, false));
+        if (automatic)
+          StorageLocations.remember(
+              id, destination, playlistFolder, playlist == null ? null : playlist.title, request);
+      }
+      state(getApplicationContext(), getId().toString(), done);
       MediaBridge.event("storage_updated", "");
       return Result.success();
     } catch (Exception error) {
@@ -286,6 +299,15 @@ public final class OfflineExport extends Worker {
 
   static void write(String id, Uri destination, BooleanSupplier cancelled) throws Exception {
     Plan plan = inspect(id);
+    try (OutputStream output =
+        MediaBridge.context.getContentResolver().openOutputStream(destination, "w")) {
+      if (output == null) throw new IOException("No output stream");
+      writeTo(plan, output, cancelled);
+    }
+  }
+
+  /** Writes the finished media to [output]. The caller owns the stream and closes it. */
+  static void writeTo(Plan plan, OutputStream output, BooleanSupplier cancelled) throws Exception {
     check(cancelled);
     File staged = null;
     try {
@@ -299,32 +321,28 @@ public final class OfflineExport extends Worker {
                 "ytui-export-", "." + plan.extension, MediaBridge.context.getCacheDir());
         mux(plan, staged, cancelled);
       }
-      try (OutputStream output =
-          MediaBridge.context.getContentResolver().openOutputStream(destination, "w")) {
-        if (output == null) throw new IOException("No output stream");
-        if (staged != null) {
-          try (InputStream input = new FileInputStream(staged)) {
-            byte[] buffer = new byte[65536];
-            int count;
-            while ((count = input.read(buffer)) != -1) {
-              check(cancelled);
-              output.write(buffer, 0, count);
-            }
+      if (staged != null) {
+        try (InputStream input = new FileInputStream(staged)) {
+          byte[] buffer = new byte[65536];
+          int count;
+          while ((count = input.read(buffer)) != -1) {
+            check(cancelled);
+            output.write(buffer, 0, count);
           }
-        } else
-          try (CachedInput input = new CachedInput(plan.parts.get(0))) {
-            byte[] buffer = new byte[65536];
-            long position = 0;
-            int count;
-            while ((count = input.readAt(position, buffer, 0, buffer.length)) != -1) {
-              check(cancelled);
-              if (count == 0) throw new IOException("Offline cache stalled");
-              output.write(buffer, 0, count);
-              position += count;
-            }
-            if (position != input.getSize()) throw new EOFException("Offline cache is incomplete");
+        }
+      } else
+        try (CachedInput input = new CachedInput(plan.parts.get(0))) {
+          byte[] buffer = new byte[65536];
+          long position = 0;
+          int count;
+          while ((count = input.readAt(position, buffer, 0, buffer.length)) != -1) {
+            check(cancelled);
+            if (count == 0) throw new IOException("Offline cache stalled");
+            output.write(buffer, 0, count);
+            position += count;
           }
-      }
+          if (position != input.getSize()) throw new EOFException("Offline cache is incomplete");
+        }
     } finally {
       if (staged != null) staged.delete();
     }
