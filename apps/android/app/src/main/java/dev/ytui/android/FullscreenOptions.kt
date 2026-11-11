@@ -82,7 +82,7 @@ internal object FullscreenOptions {
 }
 
 /** Blur (radius in px) the video layer under the options panel; no-op before Android 12. */
-private fun blurVideo(content: View?, radius: Float) {
+internal fun blurVideo(content: View?, radius: Float) {
     if (content == null || android.os.Build.VERSION.SDK_INT < 31) return
     content.setRenderEffect(
         if (radius < 0.5f) null

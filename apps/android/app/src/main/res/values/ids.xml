@@ -9,4 +9,6 @@
     <item name="ytui_color_grade" type="id" />
     <!-- Tag slot for the PlayerView's live-stream pill updater (PlayerChrome.trackLive). -->
     <item name="ytui_live_tracker" type="id" />
+    <!-- View tag: this PlayerView drives its own player (Movies), not PlaybackService. -->
+    <item name="ytui_standalone" type="id" />
 </resources>
