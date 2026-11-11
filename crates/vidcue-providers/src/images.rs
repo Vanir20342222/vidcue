@@ -134,7 +134,8 @@ impl ImageCache {
         height: u32,
     ) -> Result<image::DynamicImage> {
         vidcue_core::http_url(url)?;
-        let (width, height) = (width.clamp(1, 1280), height.clamp(1, 720));
+        // Portrait art (movie posters) needs a tall box; callers pass the size they display.
+        let (width, height) = (width.clamp(1, 1280), height.clamp(1, 1280));
         let key = hex::encode(Sha256::digest(format!("v2:{url}:{width}:{height}")));
         if let Some(image) = self.memory.lock().unwrap().get(&key) {
             return Ok(image);

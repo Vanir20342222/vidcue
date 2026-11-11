@@ -366,8 +366,9 @@ internal fun MoviePoster(title: MovieTitle, modifier: Modifier, shape: androidx.
             )
         )
     ) {
-        val pixels = with(LocalDensity.current) { maxWidth.roundToPx() }
-        if (title.poster.isBlank()) {
+        val art =
+            movieArt(title, constraints.maxWidth, if (constraints.hasBoundedHeight) constraints.maxHeight else 0)
+        if (art == null) {
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
                 MediaIcon(Glyph.Film, Modifier.size(28.dp), Color.White.copy(alpha = 0.8f))
                 Text(
@@ -381,15 +382,17 @@ internal fun MoviePoster(title: MovieTitle, modifier: Modifier, shape: androidx.
             return@BoxWithConstraints
         }
         val card =
-            remember(title.id) {
-                MediaCard(JSONObject().put("kind", "video").put("url", "movie:${title.id}").put("thumbnail", title.poster))
+            remember(title.id, art.url) {
+                MediaCard(JSONObject().put("kind", "video").put("url", "movie:${title.id}").put("thumbnail", art.url))
             }
-        var bitmap by remember(card, pixels) { mutableStateOf(ArtworkCache.cached(card, pixels)) }
+        val pixels = art.decodePixels
+        // Full-width hero art may decode above the feed cover cap; small frames never reach it.
+        var bitmap by remember(card, pixels) { mutableStateOf(ArtworkCache.cached(card, pixels, large = true)) }
         LaunchedEffect(card, pixels) {
             if (bitmap == null)
                 bitmap =
                     try {
-                        ArtworkCache.load(card, pixels)
+                        ArtworkCache.load(card, pixels, large = true)
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {

@@ -35,6 +35,43 @@ class MovieCatalogTest {
     }
 
     @Test
+    fun everyFilmAndCinecatTitleHasHighResolutionPosterAndBackdrop() {
+        for (title in MovieCatalog.titles) {
+            // Stream Lab is a set of player-test streams with generated art, not a film.
+            if (title.id == "stream-lab") continue
+            assertTrue(title.id, title.poster.startsWith("https://image.tmdb.org/t/p/w500/"))
+            assertTrue(title.id, title.backdrop.startsWith("https://image.tmdb.org/t/p/w1280/"))
+        }
+        assertNull(movieArt(MovieCatalog.find("stream-lab")!!, 400, 600))
+    }
+
+    @Test
+    fun artCoversItsFrameWithoutFetchingOversizedFiles() {
+        val dune = MovieCatalog.titles.first { it.tmdb == 438631L }
+        // 132 dp poster card at 2.625x: the square decode box follows the 2:3 height, so the
+        // poster is decoded at the width it is drawn at instead of two thirds of it.
+        val card = movieArt(dune, 347, 520)!!
+        assertFalse(card.backdrop)
+        assertTrue(card.decodePixels.toString(), card.decodePixels in 519..522)
+        assertTrue(card.url, card.url.contains("/t/p/w500/"))
+        // Phone hero (about square): portrait poster at its largest size.
+        val phone = movieArt(dune, 1080, 1120)!!
+        assertFalse(phone.backdrop)
+        assertTrue(phone.url, phone.url.contains("/t/p/w780/"))
+        assertTrue(phone.decodePixels > 768)
+        // Tablet hero and Continue watching (wide): the 16:9 backdrop.
+        val tablet = movieArt(dune, 2560, 900)!!
+        assertTrue(tablet.backdrop)
+        assertTrue(tablet.url, tablet.url.contains("/t/p/w1280/"))
+        val resume = movieArt(dune, 578, 325)!!
+        assertTrue(resume.backdrop)
+        assertTrue(resume.url, resume.url.contains("/t/p/w780/"))
+        // Detail sheet thumbnail fetches a small file; unknown hosts pass through unchanged.
+        assertTrue(movieArt(dune, 294, 441)!!.url.contains("/t/p/w342/"))
+        assertEquals("https://example.test/a.jpg", TmdbArt.sized("https://example.test/a.jpg", 100, false))
+    }
+
+    @Test
     fun picksRoundTripThroughTheirKeys() {
         val film = MoviePick(MovieCatalog.find("sintel")!!)
         assertEquals("sintel", film.key)
