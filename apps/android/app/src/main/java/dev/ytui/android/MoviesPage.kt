@@ -91,24 +91,27 @@ internal fun MoviesPage(vm: YtuiViewModel) {
         contentPadding = PaddingValues(bottom = bottom + 24.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (!noticeSeen) item("notice") { AlphaNotice(MovieLibrary::acceptNotice) }
-        item("hero") {
-            Hero(
-                featured,
-                resumeOf = continuing.firstOrNull { it.first.title.id == featured.id },
-                onPlay = { open(continuing.firstOrNull { it.first.title.id == featured.id }?.first ?: MoviePick(featured)) },
-                onDetails = { open(MoviePick(featured)) },
-            )
-        }
+        // Search leads the page so it is reachable without scrolling past the hero artwork.
         item("search") {
             MediaTextField(
                 query,
                 { query = it },
                 "Search films, test streams and Cinecat",
-                Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset).testTag("movies-search"),
+                Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset).padding(top = 12.dp).testTag("movies-search"),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             )
         }
+        if (!noticeSeen) item("notice") { AlphaNotice(MovieLibrary::acceptNotice) }
+        // While searching, results sit directly under the field instead of below the tall hero.
+        if (query.isBlank())
+            item("hero") {
+                Hero(
+                    featured,
+                    resumeOf = continuing.firstOrNull { it.first.title.id == featured.id },
+                    onPlay = { open(continuing.firstOrNull { it.first.title.id == featured.id }?.first ?: MoviePick(featured)) },
+                    onDetails = { open(MoviePick(featured)) },
+                )
+            }
         if (query.isNotBlank())
             item("results") {
                 if (results.isEmpty())
