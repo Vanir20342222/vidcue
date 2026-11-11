@@ -40,6 +40,12 @@ fn main() {
         }
         return;
     }
+    // Windows draws the title-bar, taskbar and Alt+Tab icon from the window, not the exe;
+    // without this it shows the generic application icon. Linux uses the desktop entry's.
+    #[cfg(windows)]
+    if let Err(e) = rune::set_app_icon(include_bytes!("../assets/vidcue-256.png").as_slice()) {
+        eprintln!("{e}");
+    }
     rune::prewarm_gpu();
     let spec = AppSpec::<app::App> {
         min_size: Some((960.0, 620.0)),

@@ -136,7 +136,17 @@ fn write_atomic(path: &Path, data: &[u8], replace: bool) -> Result<()> {
     } else {
         temp.persist_noclobber(path).map_err(|e| e.error)?;
     }
-    fs::File::open(parent)?.sync_all()?;
+    sync_dir(parent)?;
+    Ok(())
+}
+/// Flush a directory entry change (a rename or removal) to disk. Unix only: Windows refuses
+/// to open a directory as a file ("Access is denied", os error 5), and NTFS journals the
+/// rename itself, so there is nothing to flush there.
+pub fn sync_dir(dir: &Path) -> Result<()> {
+    #[cfg(unix)]
+    fs::File::open(dir)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = dir;
     Ok(())
 }
 pub fn private_dir(path: &Path) -> Result<()> {

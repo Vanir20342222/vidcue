@@ -48,6 +48,8 @@ jobs:
           Add-Content $env:GITHUB_PATH $bin
           Add-Content $env:GITHUB_ENV "CC_x86_64_pc_windows_gnu=$bin\gcc.exe"
           Add-Content $env:GITHUB_ENV "AR_x86_64_pc_windows_gnu=$bin\ar.exe"
+          # apps/desktop/build.rs compiles the exe icon with it.
+          Add-Content $env:GITHUB_ENV "WINDRES=$bin\windres.exe"
           # libesedb-sys (rookie's Edge cookie reader) enables its WinAPI configuration only
           # for MSVC or when HAVE_WINDOWS_H is set; without it MinGW leaves memory_* undefined.
           Add-Content $env:GITHUB_ENV "CFLAGS_x86_64_pc_windows_gnu=-DHAVE_WINDOWS_H"

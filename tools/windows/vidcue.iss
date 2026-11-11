@@ -29,6 +29,7 @@ OutputBaseFilename=VidcueSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=apps\desktop\assets\vidcue.ico
 UninstallDisplayIcon={app}\vidcue.exe
 
 [Tasks]

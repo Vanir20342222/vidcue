@@ -121,7 +121,7 @@ pub(crate) fn remove(root: &Path) -> Result<()> {
             Err(e) => return Err(e.into()),
         }
     }
-    std::fs::File::open(root)?.sync_all()?;
+    vidcue_providers::paths::sync_dir(root)?;
     Ok(())
 }
 
