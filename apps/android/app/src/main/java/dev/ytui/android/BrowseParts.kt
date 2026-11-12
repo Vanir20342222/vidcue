@@ -172,8 +172,8 @@ internal fun ArtworkBadge(live: Boolean, text: String, modifier: Modifier = Modi
     Row(
         modifier
             .padding(8.dp)
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (live) Color(0xffd7263d) else MediaTokens.videoScrim)
+            .clip(MediaTokens.badge)
+            .background(if (live) MediaTokens.live else MediaTokens.videoScrim)
             .padding(horizontal = 6.dp, vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="vidcue_transport_gap">16dp</dimen>
+    <!-- Controller scrims. Under 400dp wide the 16:9 video is only about 200dp tall, so the
+         full-height scrims would meet in the middle and dim the whole picture. -->
+    <dimen name="vidcue_top_scrim">112dp</dimen>
+    <dimen name="vidcue_bottom_scrim">136dp</dimen>
+</resources>

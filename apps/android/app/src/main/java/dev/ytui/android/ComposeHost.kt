@@ -12,7 +12,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.withInfiniteAnimationFrameNanos
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -91,6 +90,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.compose.ui.graphics.luminance
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -125,6 +125,15 @@ object ComposeHost {
     /** Type that goes with [colorScheme]; Nothing palettes use dot-matrix display type. */
     internal var typography: androidx.compose.material3.Typography = MediaTokens.typography
 
+    /**
+     * Last applied motion settings, so the sign-in, fullscreen and Movies windows animate with the
+     * same style and speed as the app instead of fixed durations.
+     */
+    @Volatile internal var motion: Motion = Motion()
+
+    /** [motion] for a secondary window; [reduced] adds that window's own system-animation check. */
+    internal fun motionFor(reduced: Boolean): Motion = motion.copy(reduced = motion.reduced || reduced)
+
     private val authWorking = MutableStateFlow(false)
     private val authStatus = MutableStateFlow("")
 
@@ -154,12 +163,29 @@ object ComposeHost {
             val message by authStatus.collectAsState()
             val dark = isSystemInDarkTheme()
             val scheme = colorScheme ?: if (dark) darkColorScheme() else lightColorScheme()
+            // Same edge-to-edge treatment as the main window: the page colour runs under the
+            // status and gesture bars instead of a separate system band.
+            SideEffect {
+                val window = activity.window
+                WindowCompat.setDecorFitsSystemWindows(window, false)
+                window.statusBarColor = android.graphics.Color.TRANSPARENT
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    window.isNavigationBarContrastEnforced = false
+                    window.isStatusBarContrastEnforced = false
+                }
+                val light = scheme.background.luminance() > 0.5f
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = light
+                    isAppearanceLightNavigationBars = light
+                }
+            }
             MaterialTheme(colorScheme = scheme, typography = typography) {
                 CompositionLocalProvider(
                     LocalContentColor provides scheme.onBackground,
                     LocalIndication provides SoftIndication,
                     LocalRippleConfiguration provides null,
-                    LocalMotion provides Motion(reduced = AuthUi.reducedMotion),
+                    LocalMotion provides motionFor(AuthUi.reducedMotion),
                 ) {
                     AuthScreen(activity, web, busy, message)
                 }
@@ -366,6 +392,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         remember(mobile, config.optBoolean("reduced_motion")) {
             Motion.from(mobile, config.optBoolean("reduced_motion"))
         }
+    SideEffect { ComposeHost.motion = motion }
     // Once the music player has finished opening it covers the whole window, so the page
     // underneath stops drawing (it stays composed). Dragging the player down or closing it shows
     // the page again at once.
@@ -745,13 +772,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     )
                 if (!onboarding && !fullscreen) AppUpdateHost()
                 SharedLinkPlayer(vm, blocked = onboarding)
-                val reducedMotion = config.optBoolean("reduced_motion")
                 AnimatedVisibility(
                     visible = onboarding,
                     enter = EnterTransition.None,
                     exit =
-                        if (reducedMotion) ExitTransition.None
-                        else fadeOut(tween(280)) + scaleOut(tween(320), targetScale = 1.04f),
+                        if (!motion.animate) ExitTransition.None
+                        else fadeOut(motion.exit(280)) + scaleOut(motion.exit(320), targetScale = 1.04f),
                 ) {
                     Onboarding(vm, dark) {
                         OnboardingStore.complete(activity)
@@ -1205,9 +1231,13 @@ private fun BrowsePane(
     }
     // Include the full-width headers, and wait for this page to be measured before
     // using layout indices (the preceding page or skeleton may still be laid out).
+    // An empty page explains itself once: its notice becomes the empty state's text instead of
+    // a separate line above a second, generic message.
+    val noticeInEmptyState =
+        feed.notice != null && !feed.loading && feed.cards.isEmpty() && feed.error == null
     val pageItemCount =
         (shelves?.let { it.size * 2 } ?: feed.cards.size) +
-            (if (showFeedBack) 1 else 0) + (if (feed.notice != null) 1 else 0)
+            (if (showFeedBack) 1 else 0) + (if (feed.notice != null && !noticeInEmptyState) 1 else 0)
     // A page that arrived empty but says more exists (a shell whose shelves load separately)
     // fetches its next part once, instead of waiting for a scroll that cannot happen.
     var emptyFollowed by remember(tab, feed.request) { mutableStateOf(false) }
@@ -1340,7 +1370,7 @@ private fun BrowsePane(
                             }
                         }
                     }
-                if (feed.notice != null)
+                if (feed.notice != null && !noticeInEmptyState)
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
                             feed.notice!!,
@@ -1356,7 +1386,12 @@ private fun BrowsePane(
                         EmptyMediaState(
                             if (needsAccount) Glyph.Account else Glyph.Info,
                             if (needsAccount) "Account needed" else "This feed is unavailable",
-                            feed.error!!,
+                            // The engine's account messages point at menus by name; on this
+                            // screen the button below is the way there.
+                            if (needsAccount)
+                                "Sign in to YouTube, or import a session from another browser, " +
+                                    "to open this feed."
+                            else feed.error!!,
                         ) {
                             FlowRow(
                                 horizontalArrangement =
@@ -1364,7 +1399,7 @@ private fun BrowsePane(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 if (needsAccount) {
-                                    Action("Sign in / import cookies", "feed-account-action") {
+                                    Action("Open account", "feed-account-action") {
                                         onAccount()
                                     }
                                     QuietAction("Try again") { vm.retryFeed() }
@@ -1508,10 +1543,11 @@ private fun BrowsePane(
                             else if (tab == 3) Glyph.Radio else Glyph.Search,
                             if (tab == 2) "No music loaded"
                             else if (tab == 3) "No stations loaded" else "No videos loaded",
-                            if (tab == 3)
-                                "Search a station, explore a genre or browse cliamp channels."
-                            else
-                                "Search above or connect your YouTube account for a feed made for you.",
+                            feed.notice
+                                ?: if (tab == 3)
+                                    "Search a station, explore a genre or browse cliamp channels."
+                                else
+                                    "Search above or connect your YouTube account for a feed made for you.",
                         ) {
                             Action(if (tab == 3) "Browse stations" else "Explore feeds") {
                                 onFeeds()
@@ -1854,7 +1890,9 @@ private fun MediaRow(
                 )
                 if (mobile.optBoolean("show_channel", true))
                     Text(
-                        media.creator.ifBlank {
+                        // Stations named after their genre ("Lofi" by "Lofi") say what kind
+                        // of item they are instead of repeating the title.
+                        media.creator.takeUnless { it.trim().equals(media.title.trim(), true) }.orEmpty().ifBlank {
                             if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
                             else if (tab == 3) "Radio station" else "YouTube"
                         },
@@ -2606,10 +2644,10 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
                         .aspectRatio(1f)
                         .align(Alignment.Center)
                         .beat(levels) { liquidTime }
-                        .shadow(18.dp, RoundedCornerShape(16.dp), ambientColor = Color.Black, spotColor = Color.Black)
-                        .clip(RoundedCornerShape(16.dp)),
+                        .shadow(18.dp, MediaTokens.card, ambientColor = Color.Black, spotColor = Color.Black)
+                        .clip(MediaTokens.card),
                     config.optBoolean("thumbnails", true),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = MediaTokens.card,
                 )
             }
         } else {
@@ -2690,7 +2728,7 @@ private fun SettingsPanel(
                         listOf(
                             Triple("Privacy", Glyph.History, "History and resume"),
                             Triple("Performance", Glyph.Speed, "Startup timing report"),
-                            Triple("Setup guide", Glyph.Play, "Replay the welcome and setup steps"),
+                            Triple("Setup guide", Glyph.Refresh, "Replay the welcome and setup steps"),
                         ),
                 )) {
                 SettingGroup(group) {
@@ -2743,9 +2781,6 @@ private fun SettingsPanel(
                                 )
                             }
                         },
-                        leadingIcon = {
-                            GlyphTile(Glyph.Palette, Modifier.size(36.dp).clip(MediaTokens.medium))
-                        },
                         trailing = {
                             PaletteSwatch(
                                 if (current == "custom") appliedPalette else palettes.optJSONObject(current)
@@ -2794,7 +2829,6 @@ private fun SettingsPanel(
                 }
                 ValueRow(
                     "Import a palette",
-                    glyph = Glyph.Edit,
                     subtitle = "Caelestia, Omarchy or Vidcue palette files",
                     chevron = false,
                 ) {
@@ -2808,7 +2842,7 @@ private fun SettingsPanel(
                     vm.updateConfig(dark) { it.put("thumbnails", value) }
                 }
                 SettingToggle(
-                    "Reduced motion",
+                    "Reduce motion",
                     config.optBoolean("reduced_motion"),
                     "Keep visualizers still and turn off all animations",
                 ) { value ->
@@ -2830,14 +2864,10 @@ private fun SettingsPanel(
                     "Maximum video quality",
                     config.optJSONObject("download")?.optString("quality", "1080") ?: "1080",
                     listOf("360", "480", "720", "1080", "best"),
+                    subtitle = "Also limits videos you save offline",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("quality", value) }
                 }
-                Text(
-                    "Also limits videos you save offline.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Choice(
                     "SponsorBlock",
                     config.optString("playback_sponsorblock", "skip"),
@@ -2911,7 +2941,7 @@ private fun SettingsPanel(
                 val reducedMotion = config.optBoolean("reduced_motion")
                 if (reducedMotion)
                     Text(
-                        "Reduced motion is on, so animations are off. These choices apply when it is off.",
+                        "Reduce motion is on, so animations are off. These choices apply when it is off.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2919,19 +2949,16 @@ private fun SettingsPanel(
                     "Animation style",
                     mobile.optString("animation_style", "smooth"),
                     listOf("smooth", "snappy", "bouncy", "gentle"),
+                    subtitle =
+                        when (mobile.optString("animation_style", "smooth")) {
+                            "snappy" -> "Short, crisp transitions"
+                            "bouncy" -> "Springy, with a little overshoot"
+                            "gentle" -> "Longer, softer transitions"
+                            else -> "Fluid ease-out transitions (default)"
+                        },
                 ) {
                     vm.updateMobile("animation_style", it)
                 }
-                Text(
-                    when (mobile.optString("animation_style", "smooth")) {
-                        "snappy" -> "Short, crisp transitions"
-                        "bouncy" -> "Springy, with a little overshoot"
-                        "gentle" -> "Longer, softer transitions"
-                        else -> "Fluid ease-out transitions (default)"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Choice(
                     "Animation speed",
                     animationSpeedLabel(mobile.optInt("animation_speed", 100)),
@@ -2965,7 +2992,6 @@ private fun SettingsPanel(
                 val context = androidx.compose.ui.platform.LocalContext.current
                 ValueRow(
                     "Show gesture tips again",
-                    glyph = Glyph.Info,
                     subtitle = "The mini player shows how to swipe it next time it appears",
                     chevron = false,
                 ) {
@@ -3008,14 +3034,14 @@ private fun SettingsPanel(
                     }
                 }
                 Choice(
-                    "Color grading",
+                    "Colour grading",
                     mobile.optString("color_grade", "off"),
                     ColorGradeMath.PRESETS,
                 ) {
                     vm.updateMobile("color_grade", it)
                 }
                 SettingToggle(
-                    "Auto color grade",
+                    "Auto colour grade",
                     mobile.optBoolean("auto_color_grade", false),
                     "Analyses the playing video and adds a slight fitting grade",
                 ) {
@@ -3032,29 +3058,21 @@ private fun SettingsPanel(
                     "Streaming cache (MiB)",
                     mobile.optInt("stream_cache_mb", 128).toString(),
                     listOf("32", "64", "128", "256", "512"),
+                    subtitle = "Applies after restarting the app. Separate from your offline library",
                 ) {
                     vm.updateMobile("stream_cache_mb", it.toInt())
                 }
-                Text(
-                    "Cache size applies after restarting the app. Streaming cache is separate from your offline library.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         if (shown == "Offline & storage")
             SettingGroup("Offline media", showTitle = false) {
                 SettingToggle(
                     "Audio-only saves",
                     config.optJSONObject("download")?.optBoolean("audio") == true,
-                    "Save YouTube Music without video. YouTube videos always keep video.",
+                    "Save YouTube Music without video. YouTube videos always keep video, " +
+                        "up to the maximum quality set in Playback.",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
                 }
-                Text(
-                    "Video quality for saves follows Playback › Maximum video quality.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 Choice(
                     "Simultaneous downloads",
                     mobile.optInt("download_parallel", 3).toString(),
@@ -3091,13 +3109,12 @@ private fun SettingsPanel(
                     )) {
                     ValueRow(
                         label,
-                        glyph = if (audio) Glyph.Music else Glyph.Preview,
                         subtitle = mobile.optString(key, "App storage").ifBlank { "App storage" },
                     ) {
                         vm.effect("folder_pick", "audio" to audio)
                     }
                 }
-                ValueRow("Retry folder saves", glyph = Glyph.Repeat, chevron = false) {
+                ValueRow("Retry folder saves", chevron = false) {
                     vm.effect("folder_retry")
                 }
             }
@@ -3159,7 +3176,7 @@ private val GESTURE_SETTINGS =
         Triple(
             "gesture_swipe_tabs",
             "Swipe between tabs",
-            "Swipe sideways to move between Home, Music, Radio and Downloads",
+            "Swipe a page left or right to open the next tab",
         ),
         Triple(
             "gesture_swipe_dismiss",
@@ -3240,11 +3257,12 @@ private fun Choice(
     value: String,
     values: List<String>,
     label: (String) -> String = ::choiceLabel,
+    subtitle: String = "",
     changed: (String) -> Unit,
 ) {
     var open by remember { mutableStateOf(false) }
     Box {
-        ValueRow(title, value = label(value)) { open = true }
+        ValueRow(title, value = label(value), subtitle = subtitle) { open = true }
         if (open)
             Panel(title, { open = false }) {
                 values.forEach { item ->
@@ -3330,7 +3348,7 @@ private fun AccountPanel(vm: YtuiViewModel, close: () -> Unit) {
             )
             ValueRow(
                 "Choose cookie file",
-                glyph = Glyph.Link,
+                glyph = Glyph.Folder,
                 subtitle = "Netscape cookie format",
                 modifier = Modifier.testTag("account-import"),
             ) {

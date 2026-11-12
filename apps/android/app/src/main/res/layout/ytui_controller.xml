@@ -28,8 +28,8 @@
 
   <!-- Scrims fade the frame behind the chrome only; the picture centre stays clear. -->
   <!-- Tall, three-stop gradients: the darkening fades out gradually instead of ending in a band. -->
-  <View android:id="@+id/ytui_top_scrim" android:layout_width="match_parent" android:layout_height="112dp" android:layout_gravity="top" />
-  <View android:id="@+id/ytui_bottom_scrim" android:layout_width="match_parent" android:layout_height="136dp" android:layout_gravity="bottom" />
+  <View android:id="@+id/ytui_top_scrim" android:layout_width="match_parent" android:layout_height="@dimen/vidcue_top_scrim" android:layout_gravity="top" />
+  <View android:id="@+id/ytui_bottom_scrim" android:layout_width="match_parent" android:layout_height="@dimen/vidcue_bottom_scrim" android:layout_gravity="bottom" />
 
   <!-- Top bar: leave, what is playing (fullscreen only), captions and the app's playback options. -->
   <LinearLayout android:id="@+id/ytui_top_bar" android:layout_width="match_parent" android:layout_height="52dp" android:layout_gravity="top" android:gravity="center_vertical" android:paddingHorizontal="2dp" android:layoutDirection="ltr">
@@ -162,21 +162,21 @@
     <ImageButton android:id="@id/exo_prev"
         style="@style/ExoStyledControls.Button.Center.Previous"
         android:layout_width="48dp" android:layout_height="48dp" android:padding="14dp"
-        android:layout_marginEnd="16dp" android:scaleType="fitCenter"/>
+        android:layout_marginEnd="@dimen/vidcue_transport_gap" android:scaleType="fitCenter"/>
 
     <include layout="@layout/exo_player_control_rewind_button" />
 
     <ImageButton android:id="@id/exo_play_pause"
         style="@style/ExoStyledControls.Button.Center.PlayPause"
         android:layout_width="64dp" android:layout_height="64dp" android:padding="17dp"
-        android:layout_marginHorizontal="16dp" android:scaleType="fitCenter"/>
+        android:layout_marginHorizontal="@dimen/vidcue_transport_gap" android:scaleType="fitCenter"/>
 
     <include layout="@layout/exo_player_control_ffwd_button" />
 
     <ImageButton android:id="@id/exo_next"
         style="@style/ExoStyledControls.Button.Center.Next"
         android:layout_width="48dp" android:layout_height="48dp" android:padding="14dp"
-        android:layout_marginStart="16dp" android:scaleType="fitCenter"/>
+        android:layout_marginStart="@dimen/vidcue_transport_gap" android:scaleType="fitCenter"/>
 
   </LinearLayout>
 

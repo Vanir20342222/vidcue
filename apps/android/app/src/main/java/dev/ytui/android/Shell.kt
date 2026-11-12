@@ -431,7 +431,9 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            media.creator.ifBlank {
+                            // A station between tracks is titled by its own name; say what it
+                            // is rather than repeating that name.
+                            media.creator.takeUnless { it.trim().equals(player.title.trim(), true) }.orEmpty().ifBlank {
                                 if (player.preview) "Muted preview"
                                 else if (media.live && media.kind == "station") "Live radio"
                                 else if (media.live) "Live stream"

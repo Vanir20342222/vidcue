@@ -18,7 +18,6 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
@@ -56,7 +55,6 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -193,6 +191,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Uni
         activity?.let(NotificationPermission::requestOnce)
     }
     val reduced = LocalReducedMotion.current
+    val motion = LocalMotion.current
     val mobile by vm.mobile.collectAsState()
     var step by rememberSaveable { mutableIntStateOf(0) }
     val colors = MaterialTheme.colorScheme
@@ -237,15 +236,11 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Uni
                     else {
                         val forward = OnboardingSteps.isForward(initialState, targetState)
                         val sign = if (forward) 1 else -1
-                        (slideInHorizontally(tween(PageMillis, easing = FastOutSlowInEasing)) {
-                            it / 4 * sign
-                        } + fadeIn(tween(PageMillis, easing = FastOutSlowInEasing)))
+                        (slideInHorizontally(motion.enter(PageMillis)) { it / 4 * sign } +
+                                fadeIn(motion.fade(PageMillis)))
                             .togetherWith(
-                                slideOutHorizontally(
-                                    tween(PageMillis, easing = FastOutSlowInEasing)
-                                ) {
-                                    -it / 4 * sign
-                                } + fadeOut(tween(PageMillis * 2 / 3, easing = FastOutSlowInEasing))
+                                slideOutHorizontally(motion.exit(PageMillis)) { -it / 4 * sign } +
+                                    fadeOut(motion.exit(PageMillis * 2 / 3))
                             )
                     }
                 },
@@ -268,7 +263,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Uni
 private fun colorTween(target: Color, reduced: Boolean) =
     animateColorAsState(
         target,
-        if (reduced) snap<Color>() else tween<Color>(300),
+        LocalMotion.current.fade(300),
         label = "onboarding-colour",
     )
 
@@ -309,7 +304,7 @@ private fun StepDots(step: Int) {
             val width by
                 animateDpAsState(
                     if (index == step) 24.dp else 8.dp,
-                    if (reduced) snap<Dp>() else spring(Spring.DampingRatioMediumBouncy),
+                    LocalMotion.current.spring(),
                     label = "dot-width",
                 )
             val color by
@@ -364,7 +359,7 @@ private fun Staggered(index: Int, modifier: Modifier = Modifier, content: @Compo
     val progress by
         animateFloatAsState(
             if (shown) 1f else 0f,
-            if (reduced) snap<Float>() else tween<Float>(360, easing = FastOutSlowInEasing),
+            LocalMotion.current.enter(360),
             label = "stagger",
         )
     Box(
@@ -472,7 +467,7 @@ private fun SettingSwitchRow(
     Row(
         Modifier.fillMaxWidth()
             .heightIn(min = 64.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MediaTokens.card)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .toggleable(checked, enabled = enabled, role = Role.Switch, onValueChange = onChange)
             .padding(horizontal = 16.dp, vertical = 10.dp)
@@ -538,7 +533,7 @@ private fun WelcomeText(center: Boolean) {
         }
         Staggered(4) {
             Text(
-                "YouTube, YouTube Music and radio — native, fast, yours.",
+                "Videos, music, radio and downloads in one app.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = align,
@@ -619,7 +614,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     val choices = listOf("system") + themes.filter { it != "system" }
     PageColumn {
         PageBadge(Glyph.Palette)
-        PageTitle("Look & feel", "Pick a colour theme. It applies right away and you can change it any time in Settings.")
+        PageTitle("Look and feel", "Pick a colour theme. It applies right away and you can change it any time in Settings.")
         if (!editable)
             Text(
                 if (ready) "Your settings could not be loaded, so they are left unchanged. Choose a theme later in Settings."
@@ -664,6 +659,7 @@ private fun ThemeChip(
     onClick: () -> Unit,
 ) {
     val reduced = LocalReducedMotion.current
+    val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     val container by colorTween(if (selected) colors.onBackground else colors.surfaceContainerHigh, reduced)
     val label by colorTween(if (selected) colors.background else colors.onSurface, reduced)
@@ -683,12 +679,10 @@ private fun ThemeChip(
             enter =
                 if (reduced) EnterTransition.None
                 else
-                    expandHorizontally(spring(Spring.DampingRatioMediumBouncy)) +
-                        scaleIn(spring(Spring.DampingRatioMediumBouncy)) +
-                        fadeIn(),
+                    expandHorizontally(motion.spring()) + scaleIn(motion.spring()) + fadeIn(motion.fade(160)),
             exit =
                 if (reduced) ExitTransition.None
-                else shrinkHorizontally(tween(160)) + fadeOut(tween(120)),
+                else shrinkHorizontally(motion.exit(160)) + fadeOut(motion.exit(120)),
         ) {
             Row {
                 MediaIcon(Glyph.Check, Modifier.size(18.dp), label)
@@ -716,14 +710,14 @@ private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
     val ready by vm.ready.collectAsState()
     PageColumn {
         PageBadge(Glyph.Play)
-        PageTitle("Playback", "Choose how ytui plays. Every option is also in Settings later.")
+        PageTitle("Playback", "Choose how Vidcue plays. You can change these later in Settings.")
         val rows =
             listOf(
-                Triple("background_playback", Glyph.Play, "Keep playing in the background" to "Audio continues when you leave the app"),
+                Triple("background_playback", Glyph.Headphones, "Keep playing in the background" to "Audio continues when you leave the app"),
                 Triple("autoplay_related", Glyph.Next, "Autoplay related videos" to "Keep going when the queue ends"),
                 Triple("preload_next", Glyph.Download, "Preload the next item" to "Start the next video sooner"),
-                Triple("gestures", Glyph.Expand, "Swipe gestures" to "Swipe to seek and move between pages"),
-                Triple("auto_color_grade", Glyph.Palette, "Auto color grade" to "Analyses each video and adds a slight fitting grade"),
+                Triple("gestures", Glyph.Drag, "Swipe gestures" to "Swipe to seek and move between pages"),
+                Triple("auto_color_grade", Glyph.Palette, "Auto colour grade" to "Analyses each video and adds a slight fitting grade"),
             )
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             rows.forEachIndexed { index, (key, glyph, text) ->
@@ -744,7 +738,7 @@ private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
                 val presets = ColorGradeMath.PRESETS
                 SettingCycleRow(
                     Glyph.Palette,
-                    "Color grading",
+                    "Colour grading",
                     "A look for videos: warm, cool, vivid or cinematic",
                     grade.replaceFirstChar(Char::titlecase),
                     "onboarding-color-grade",
@@ -774,7 +768,7 @@ private fun SettingCycleRow(
     Row(
         Modifier.fillMaxWidth()
             .heightIn(min = 64.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MediaTokens.card)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp)
@@ -791,7 +785,7 @@ private fun SettingCycleRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -824,7 +818,7 @@ private fun AccountPage(vm: YtuiViewModel) {
                     Row(
                         Modifier.fillMaxWidth()
                             .heightIn(min = 64.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .clip(MediaTokens.card)
                             .background(MaterialTheme.colorScheme.surfaceContainer)
                             .padding(horizontal = 16.dp, vertical = 10.dp)
                             .testTag("onboarding-signed-in"),
@@ -884,7 +878,7 @@ private fun ReadyPage(vm: YtuiViewModel) {
         Staggered(4, Modifier.fillMaxWidth()) {
             Column(
                 Modifier.fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(MediaTokens.card)
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .padding(horizontal = 16.dp, vertical = 8.dp)
                     .testTag("onboarding-summary")
@@ -893,8 +887,8 @@ private fun ReadyPage(vm: YtuiViewModel) {
                 SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
                 SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
                 SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))
-                SummaryRow("Color grading", mobile.optString("color_grade", "off").replaceFirstChar(Char::titlecase))
-                SummaryRow("Auto color grade", onOff(mobile.optBoolean("auto_color_grade", false)))
+                SummaryRow("Colour grading", mobile.optString("color_grade", "off").replaceFirstChar(Char::titlecase))
+                SummaryRow("Auto colour grade", onOff(mobile.optBoolean("auto_color_grade", false)))
                 SummaryRow("Equalizer", EqualizerModel.label(EqualizerModel.selected(config)))
                 SummaryRow("Account", if (account.optBoolean("connected")) "Signed in" else "Not signed in")
             }

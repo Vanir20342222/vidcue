@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -185,7 +184,7 @@ internal fun EqualizerSettings(
     var renaming by remember { mutableStateOf<String?>(null) }
     Column(
         modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(MediaTokens.card)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .padding(16.dp)
             .testTag("equalizer"),

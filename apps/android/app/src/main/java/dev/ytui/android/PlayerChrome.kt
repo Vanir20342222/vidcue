@@ -101,7 +101,7 @@ internal object PlayerChrome {
     }
 
     private const val LIVE_TICK_MS = 500L
-    private val LIVE_RED = Color(0xffd7263d).toArgb() // ArtworkBadge's live colour.
+    private val LIVE_RED = MediaTokens.live.toArgb() // ArtworkBadge's live colour.
     private val LIVE_BEHIND = android.graphics.Color.argb(0x99, 0xff, 0xff, 0xff)
 
     /**

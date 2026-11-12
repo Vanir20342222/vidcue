@@ -273,7 +273,7 @@ private fun DownloadsShortcut(
                     progress != null && progress > 0f -> "${state.ifBlank { "Downloading" }} · ${percentLabel(progress)}"
                     else -> state.ifBlank { "Queued" }
                 }
-            val shape = RoundedCornerShape(22.dp)
+            val shape = MediaTokens.dock
             Column(
                 Modifier.graphicsLayer {
                         scaleX = bounce.value
@@ -302,8 +302,8 @@ private fun DownloadsShortcut(
                     Box(Modifier.size(40.dp).trackCentre(onCentre)) {
                         val card = shown
                         if (card != null)
-                            Artwork(card, Modifier.fillMaxSize(), thumbnails, shape = RoundedCornerShape(10.dp))
-                        else GlyphTile(Glyph.Download, Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp)))
+                            Artwork(card, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.thumb)
+                        else GlyphTile(Glyph.Download, Modifier.fillMaxSize().clip(MediaTokens.thumb))
                     }
                     Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
