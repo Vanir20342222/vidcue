@@ -27,7 +27,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,9 +49,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -139,6 +136,7 @@ internal object AuthUi {
 
 @Composable
 internal fun AuthScreen(activity: AuthActivity, webView: android.webkit.WebView, busy: Boolean, message: String) {
+    val motion = LocalMotion.current
     val showWeb by AuthUi.web.collectAsState()
     val address by AuthUi.url.collectAsState()
     val progress by AuthUi.progress.collectAsState()
@@ -173,15 +171,12 @@ internal fun AuthScreen(activity: AuthActivity, webView: android.webkit.WebView,
                 transitionSpec = {
                     if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
                     else if (targetState)
-                        (fadeIn(tween(220, 80)) +
-                            slideInVertically(tween(320, easing = FastOutSlowInEasing)) {
-                                it / 10
-                            }) togetherWith
-                            (fadeOut(tween(160)) + scaleOut(tween(200), targetScale = 0.96f))
+                        (fadeIn(motion.enter(220, 80)) +
+                            slideInVertically(motion.enter(320)) { it / 10 }) togetherWith
+                            (fadeOut(motion.exit(160)) + scaleOut(motion.exit(200), targetScale = 0.96f))
                     else
-                        (fadeIn(tween(220, 60)) + scaleIn(tween(260), initialScale = 0.96f)) togetherWith
-                            (fadeOut(tween(160)) +
-                                slideOutVertically(tween(220)) { it / 10 })
+                        (fadeIn(motion.enter(220, 60)) + scaleIn(motion.enter(260), initialScale = 0.96f)) togetherWith
+                            (fadeOut(motion.exit(160)) + slideOutVertically(motion.exit(220)) { it / 10 })
                 },
                 label = "sign-in-stage",
             ) { web ->
@@ -270,9 +265,10 @@ private fun AuthWebPane(
     reduced: Boolean,
     use: () -> Unit,
 ) {
+    val motion = LocalMotion.current
     Surface(
         Modifier.fillMaxSize().padding(horizontal = 12.dp).testTag("sign-in-web"),
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shape = MediaTokens.sheet,
         color = MaterialTheme.colorScheme.surface,
     ) {
         Box(Modifier.fillMaxSize()) {
@@ -288,8 +284,8 @@ private fun AuthWebPane(
             // with a native confirmation instead of leaving the user to guess what to do.
             AnimatedVisibility(
                 found,
-                enter = if (reduced) EnterTransition.None else fadeIn(tween(240)),
-                exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
+                enter = if (reduced) EnterTransition.None else fadeIn(motion.fade(240)),
+                exit = if (reduced) ExitTransition.None else fadeOut(motion.exit(120)),
             ) {
                 AuthSignedInCard(busy, use)
             }
@@ -334,9 +330,10 @@ private fun AuthIntro(
     cancel: () -> Unit,
     open: (String) -> Unit,
 ) {
+    val motion = LocalMotion.current
     val scheme = MaterialTheme.colorScheme
     val entry = remember { Animatable(if (reduced) 1f else 0f) }
-    LaunchedEffect(Unit) { if (!reduced) entry.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(Unit) { if (!reduced) entry.animateTo(1f, motion.enter(420)) }
     BoxWithConstraints(Modifier.fillMaxSize().testTag("sign-in-intro")) {
         val wide = maxWidth >= 720.dp
         val viewport = maxHeight
@@ -357,7 +354,7 @@ private fun AuthIntro(
             ) {
                 Surface(
                     Modifier.fillMaxWidth().testTag("sign-in-card"),
-                    shape = RoundedCornerShape(28.dp),
+                    shape = MediaTokens.dialog,
                     color = scheme.surfaceContainerLow,
                     border = BorderStroke(1.dp, scheme.outlineVariant),
                 ) {
@@ -375,7 +372,7 @@ private fun AuthIntro(
                                 color = scheme.onSurfaceVariant,
                             )
                         }
-                        HorizontalDivider(color = scheme.outlineVariant)
+                        MenuRule()
                         if (wide)
                             Row(
                                 Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 40.dp),
@@ -435,25 +432,17 @@ private fun AuthIdentity(modifier: Modifier, large: Boolean) {
         Image(
             painterResource(R.drawable.ic_ytui),
             contentDescription = null,
-            modifier = Modifier.size(if (large) 56.dp else 48.dp).clip(RoundedCornerShape(14.dp)),
+            modifier = Modifier.size(if (large) 56.dp else 48.dp).clip(MediaTokens.appMark),
         )
         Text(
             "Sign in",
             Modifier.semantics { heading() },
             style =
-                MaterialTheme.typography.displaySmall.copy(
-                    fontSize = if (large) 40.sp else 32.sp,
-                    lineHeight = if (large) 48.sp else 40.sp,
-                    fontWeight = FontWeight.Normal,
-                ),
+                if (large) MaterialTheme.typography.displaySmall
+                else MaterialTheme.typography.headlineMedium,
         )
         Text(
-            buildAnnotatedString {
-                append("Continue to ")
-                withStyle(SpanStyle(color = scheme.primary, fontWeight = FontWeight.Medium)) {
-                    append("YouTube")
-                }
-            },
+            "Continue to YouTube",
             style = MaterialTheme.typography.bodyLarge,
             color = scheme.onSurfaceVariant,
         )
@@ -477,7 +466,7 @@ private fun AuthChoices(
             onClick = proceed,
             enabled = !busy,
             modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("sign-in-account-choice"),
-            shape = RoundedCornerShape(8.dp),
+            shape = MediaTokens.fieldShape,
             color = scheme.surfaceContainerLow,
             border = BorderStroke(1.dp, scheme.outline),
         ) {
@@ -547,12 +536,13 @@ private fun AuthReturnStrip(
     reduced: Boolean,
     use: () -> Unit,
 ) {
+    val motion = LocalMotion.current
     val scheme = MaterialTheme.colorScheme
     val band by
         animateColorAsState(
             if (found && showWeb) lerpColor(scheme.surfaceContainer, scheme.primary, 0.14f)
             else scheme.surfaceContainer,
-            tween(if (reduced) 0 else 320),
+            motion.fade(320),
             label = "sign-in-band",
         )
     Surface(Modifier.fillMaxWidth().testTag("sign-in-return"), color = band) {
@@ -566,7 +556,7 @@ private fun AuthReturnStrip(
                 Image(
                     painterResource(R.drawable.ic_ytui),
                     contentDescription = null,
-                    modifier = Modifier.size(32.dp).clip(RoundedCornerShape(8.dp)),
+                    modifier = Modifier.size(32.dp).clip(MediaTokens.small),
                 )
                 val text =
                     when {
@@ -581,7 +571,7 @@ private fun AuthReturnStrip(
                     Modifier.weight(1f),
                     transitionSpec = {
                         if (reduced) EnterTransition.None togetherWith ExitTransition.None using null
-                        else fadeIn(tween(200)) togetherWith fadeOut(tween(120))
+                        else fadeIn(motion.fade(200)) togetherWith fadeOut(motion.exit(120))
                     },
                     label = "sign-in-return-text",
                 ) { value ->
@@ -594,8 +584,8 @@ private fun AuthReturnStrip(
                 }
                 AnimatedVisibility(
                     showWeb,
-                    enter = if (reduced) EnterTransition.None else fadeIn(tween(200)) + scaleIn(tween(240), 0.9f),
-                    exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
+                    enter = if (reduced) EnterTransition.None else fadeIn(motion.fade(200)) + scaleIn(motion.enter(240), 0.9f),
+                    exit = if (reduced) ExitTransition.None else fadeOut(motion.exit(120)),
                 ) {
                     // Read inside the layer block: the pulse redraws without recomposing.
                     val pulse =
@@ -603,7 +593,7 @@ private fun AuthReturnStrip(
                             rememberInfiniteTransition(label = "sign-in-pulse").animateFloat(
                                 1f,
                                 1.05f,
-                                infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                                infiniteRepeatable(tween(motion.millis(700), easing = FastOutSlowInEasing), RepeatMode.Reverse),
                                 label = "sign-in-pulse-scale",
                             )
                         else null

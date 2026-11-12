@@ -7,7 +7,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -18,7 +17,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,7 +31,6 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -135,6 +132,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
     val reduced =
         config.optBoolean("reduced_motion") ||
             !android.animation.ValueAnimator.areAnimatorsEnabled()
+    val motion = ComposeHost.motionFor(reduced)
     var page by remember { mutableStateOf("") }
     fun close() {
         FullscreenOptions.open.value = false
@@ -149,7 +147,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
     val blur by
         animateFloatAsState(
             blurTarget,
-            if (reduced) androidx.compose.animation.core.snap() else tween(220),
+            motion.fade(220),
             label = "video-blur",
         )
     val content = view.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
@@ -159,7 +157,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
         CompositionLocalProvider(
             LocalContentColor provides scheme.onSurface,
             LocalReducedMotion provides reduced,
-            LocalMotion provides Motion(reduced = reduced),
+            LocalMotion provides motion,
             androidx.compose.foundation.LocalIndication provides SoftIndication,
             LocalRippleConfiguration provides null,
         ) {
@@ -168,8 +166,8 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                 val sheetWidth = if (wide) minOf(420.dp, maxWidth * 0.5f) else maxWidth
                 AnimatedVisibility(
                     visible,
-                    enter = if (reduced) EnterTransition.None else fadeIn(tween(160)),
-                    exit = if (reduced) ExitTransition.None else fadeOut(tween(120)),
+                    enter = if (reduced) EnterTransition.None else fadeIn(motion.fade(160)),
+                    exit = if (reduced) ExitTransition.None else fadeOut(motion.exit(120)),
                 ) {
                     // Tapping the dimmed video closes the panel; it never reaches the player.
                     Box(
@@ -184,17 +182,17 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                     Modifier.align(Alignment.CenterEnd),
                     enter =
                         if (reduced) EnterTransition.None
-                        else slideInHorizontally(tween(220)) { it / 3 } + fadeIn(tween(160)),
+                        else slideInHorizontally(motion.enter(220)) { it / 3 } + fadeIn(motion.fade(160)),
                     exit =
                         if (reduced) ExitTransition.None
-                        else slideOutHorizontally(tween(160)) { it / 3 } + fadeOut(tween(120)),
+                        else slideOutHorizontally(motion.exit(160)) { it / 3 } + fadeOut(motion.exit(120)),
                 ) {
                     Surface(
                         Modifier.width(sheetWidth)
                             .fillMaxHeight()
                             .testTag("fullscreen-options")
                             .semantics { paneTitle = "Playback options" },
-                        shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                        shape = MediaTokens.sideSheet,
                         color = scheme.surfaceContainerLow.copy(alpha = if (blurSupported) 0.72f else 0.92f),
                         border = BorderStroke(1.dp, MediaTokens.videoGlassEdge.copy(alpha = 0.18f)),
                     ) {
@@ -233,7 +231,6 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                                     },
                                     Modifier.weight(1f).padding(horizontal = 8.dp),
                                     style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Medium,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -245,7 +242,7 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                                     close()
                                 }
                             }
-                            HorizontalDivider(color = scheme.outlineVariant)
+                            MenuRule()
                             when (page) {
                                 "queue" ->
                                     UpNext(

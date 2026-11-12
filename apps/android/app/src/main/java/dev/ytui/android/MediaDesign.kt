@@ -68,12 +68,22 @@ internal object MediaTokens {
     val medium = RoundedCornerShape(12.dp)
     /** Feed artwork: a softer radius than controls, so pictures read as objects. */
     val card = RoundedCornerShape(16.dp)
+    /** Portrait watch-page video: flush with the top edge, rounded where it meets the page. */
+    val cardBottom = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val chip = RoundedCornerShape(12.dp)
     val menu = RoundedCornerShape(18.dp)
     val dock = RoundedCornerShape(24.dp)
     val pill = RoundedCornerShape(50)
     val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val dialog = RoundedCornerShape(28.dp)
+    /** Side sheet over fullscreen video: rounded only on its inner (start) edge. */
+    val sideSheet = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+    /** Small framed artwork inside rows and transfer chips. */
+    val thumb = RoundedCornerShape(10.dp)
+    /** Duration and live badges over artwork. */
+    val badge = RoundedCornerShape(6.dp)
+    /** The app's own mark (launcher art) wherever it appears in the interface. */
+    val appMark = RoundedCornerShape(14.dp)
     /** Inputs are soft rectangles, so single and multi-line fields match. */
     val fieldShape = RoundedCornerShape(16.dp)
     val videoInk = Color.White
@@ -86,6 +96,8 @@ internal object MediaTokens {
     val videoGlassSheen = Color.White.copy(alpha = 0.09f)
     /** SponsorBlock ticks on the video timebar; amber reads over video and every accent. */
     val sponsorMark = Color(0xffffc107)
+    /** Live badge and live time bar: one red for every surface that marks a live stream. */
+    val live = Color(0xffd7263d)
     val transparent = Color.Transparent
     val typography = YtuiType.typography
 }

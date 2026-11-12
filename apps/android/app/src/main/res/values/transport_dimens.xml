@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Gap between the video transport buttons. Narrow phones (under 400dp wide, such as
+         360dp devices) use a tight gap so previous and next keep full 48dp targets on screen. -->
+    <dimen name="vidcue_transport_gap">2dp</dimen>
+    <!-- Controller scrims. Under 400dp wide the 16:9 video is only about 200dp tall, so the
+         full-height scrims would meet in the middle and dim the whole picture. -->
+    <dimen name="vidcue_top_scrim">80dp</dimen>
+    <dimen name="vidcue_bottom_scrim">96dp</dimen>
+</resources>

@@ -16,7 +16,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -611,12 +610,7 @@ internal fun FocusedPlayer(
                             // Soft corners: full bleed at the top edge in portrait, a rounded
                             // pane beside the details in landscape.
                             .clip(
-                                if (landscape) androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
-                                else
-                                    androidx.compose.foundation.shape.RoundedCornerShape(
-                                        bottomStart = 16.dp,
-                                        bottomEnd = 16.dp,
-                                    )
+                                if (landscape) MediaTokens.card else MediaTokens.cardBottom
                             )
                     ) {
                         VideoSurface(
@@ -970,7 +964,7 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                     atEdge,
                     "Live",
                     Modifier.heightIn(min = 36.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(MediaTokens.small)
                         .clickable(
                             enabled = !atEdge,
                             onClickLabel = "Jump to live",

@@ -8,8 +8,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.progressSemantics
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,8 +55,6 @@ internal fun AppUpdateHost() {
             Text(
                 "Vidcue ${release.versionName}",
                 style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
             )
             Text(
                 "You have ${BuildConfig.VERSION_NAME}. The update installs over this app and keeps your account, settings and library.",
@@ -65,9 +63,11 @@ internal fun AppUpdateHost() {
             )
             when (val current = state) {
                 is UpdateState.Downloading -> {
-                    LinearProgressIndicator(
-                        progress = { current.progress },
-                        modifier = Modifier.fillMaxWidth().testTag("app-update-progress"),
+                    MediaProgressBar(
+                        current.progress,
+                        Modifier.fillMaxWidth()
+                            .progressSemantics(current.progress)
+                            .testTag("app-update-progress"),
                     )
                     Text(
                         "Downloading… ${(current.progress * 100).toInt()}%",

@@ -194,7 +194,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Pill(
-                "Save a link",
+                "Save from a link",
                 Modifier.testTag("add-download").semantics {
                     contentDescription = "Save a video or playlist offline"
                 },
