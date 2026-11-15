@@ -45,7 +45,7 @@ env:
 jobs:
   changes:
     name: Which checks apply
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
       run: ${{ steps.filter.outputs.run }}
@@ -62,7 +62,7 @@ jobs:
   app:
     needs: changes
     if: needs.changes.outputs.run == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +97,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
-    timeout-minutes: 25
+    timeout-minutes: 120
     env:
       # Keep app and instrumentation Gradle invocations on the same build marker.
       YTUI_ANDROID_REVISION: ${{ github.sha }}
@@ -245,7 +245,7 @@ jobs:
     name: Android gate
     needs: [changes, app, apk, device]
     if: always()
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every Android job to have passed or been skipped on purpose

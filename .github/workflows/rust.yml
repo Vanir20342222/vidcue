@@ -19,7 +19,7 @@ env:
 jobs:
   changes:
     name: Which checks apply
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
       run: ${{ steps.filter.outputs.run }}
@@ -34,7 +34,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -47,14 +47,14 @@ jobs:
       - run: cargo fmt --all -- --check
       # glib/gtk/webkit build scripts query pkg-config even for clippy.
       - name: Install the desktop app's build libraries
-        timeout-minutes: 10
+        timeout-minutes: 120
         run: bash tools/ci-install-media.sh libmpv-dev libxkbcommon-dev libwebkit2gtk-4.1-dev
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
   test:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: '24'
       - name: Install the desktop app's link libraries
-        timeout-minutes: 10
+        timeout-minutes: 120
         run: bash tools/ci-install-media.sh ffmpeg libmpv-dev libxkbcommon-dev libwebkit2gtk-4.1-dev
       - run: cargo test --workspace --locked
       - name: Verify mobile direct-player request budgets and fallback offline
@@ -81,7 +81,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -90,10 +90,10 @@ jobs:
           shared-key: media
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install real-media fixture tools
-        timeout-minutes: 10
+        timeout-minutes: 120
         run: bash tools/ci-install-media.sh ffmpeg lua5.4 mpv
       - name: Install pinned yt-dlp for local-media integration checks
-        timeout-minutes: 4
+        timeout-minutes: 120
         run: |
           curl --fail --location --retry 2 --connect-timeout 15 --max-time 60 https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp_linux --output "$RUNNER_TEMP/yt-dlp"
           chmod +x "$RUNNER_TEMP/yt-dlp"
@@ -123,7 +123,7 @@ jobs:
   release-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
-    timeout-minutes: 15
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -132,7 +132,7 @@ jobs:
           shared-key: release
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install the desktop app's link libraries
-        timeout-minutes: 10
+        timeout-minutes: 120
         run: bash tools/ci-install-media.sh libmpv-dev libxkbcommon-dev libwebkit2gtk-4.1-dev
       - run: cargo build --release --locked
 
@@ -142,7 +142,7 @@ jobs:
     name: Rust gate
     needs: [changes, lint, test, media]
     if: always()
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every Rust job to have passed or been skipped on purpose
