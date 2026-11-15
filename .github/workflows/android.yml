@@ -80,7 +80,7 @@ jobs:
           cat >> "$HOME/.gradle/gradle.properties" <<'PROPS'
           org.gradle.workers.max=4
           org.gradle.caching=true
-          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
           PROPS
       - name: Install the pinned Android platform
         run: sdkmanager 'platforms;android-35' 'build-tools;35.0.0'
@@ -96,8 +96,8 @@ jobs:
   apk:
     needs: changes
     if: needs.changes.outputs.run == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    timeout-minutes: 120
     env:
       # Keep app and instrumentation Gradle invocations on the same build marker.
       YTUI_ANDROID_REVISION: ${{ github.sha }}
@@ -127,7 +127,7 @@ jobs:
           cat >> "$HOME/.gradle/gradle.properties" <<'PROPS'
           org.gradle.workers.max=4
           org.gradle.caching=true
-          org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
           PROPS
       - name: Install pinned Android build tools and fixture media
         run: |
