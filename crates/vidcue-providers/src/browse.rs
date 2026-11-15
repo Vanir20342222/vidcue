@@ -11,6 +11,8 @@ use tokio::sync::Mutex;
 use vidcue_core::{BrowseRequest, Media, MediaKind, Page, clean_text};
 
 const MEMBERS_ONLY_NOTICE: &str = "Members-only videos are hidden.";
+/// Sent on signed-out requests so EU/UK visitors are not redirected to the consent page.
+const ANONYMOUS_CONSENT_COOKIE: &str = "SOCS=CAI";
 /// Browse params that select a channel's Videos tab (every upload, newest first)
 /// instead of its Home tab, which shows only a few featured shelves.
 const CHANNEL_VIDEOS_PARAMS: &str = "EgZ2aWRlb3PyBgQKAjoA";
@@ -171,7 +173,10 @@ impl Browser {
                 .header("Authorization", authorization)
                 .header("X-Goog-AuthUser", self.account.to_string()))
         } else {
-            Ok(request)
+            // Without a session, YouTube in the EU/UK redirects to its cookie-consent page and the
+            // whole feed fails. `SOCS=CAI` records "reject all" for non-essential cookies, the
+            // same answer a visitor gives on that page; it identifies no one.
+            Ok(request.header("Cookie", ANONYMOUS_CONSENT_COOKIE))
         }
     }
     async fn bootstrap(&self, music: bool) -> Result<Value> {
@@ -2120,7 +2125,9 @@ mod request_tests {
             let (headers, body) = request.split_once("\r\n\r\n").unwrap();
             let target = headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
             let lower = headers.to_ascii_lowercase();
-            assert!(!lower.contains("\ncookie:"));
+            // Signed out, the only cookie is the consent answer; no session is ever sent.
+            let cookies: Vec<&str> = lower.lines().filter(|line| line.starts_with("cookie:")).collect();
+            assert_eq!(cookies, ["cookie: socs=cai"]);
             assert!(!lower.contains("\nauthorization:"));
             let music = target.starts_with("/music");
             let version = if music {"music-fixture"} else {"web-fixture"};
@@ -2642,9 +2649,17 @@ mod request_tests {
     #[tokio::test]
     async fn bootstrap_rate_limits_http_dates_and_transport_failures_are_retryable() {
         let date = httpdate::fmt_http_date(SystemTime::now() + Duration::from_secs(120));
-        let (base, task) =
-            crate::test_http::serve(move |_| (429, format!("Retry-After: {date}\r\n"), vec![]))
-                .await;
+        let (base, task) = crate::test_http::serve_request(move |request| {
+            // Signed out, the consent answer is the only cookie sent.
+            let lower = request.to_ascii_lowercase();
+            let cookies: Vec<&str> = lower
+                .lines()
+                .filter(|line| line.starts_with("cookie:"))
+                .collect();
+            assert_eq!(cookies, ["cookie: socs=cai"]);
+            (429, format!("Retry-After: {date}\r\n"), vec![])
+        })
+        .await;
         let mut browser = Browser::new(client(), None, 0);
         browser.origins = [base.clone(), base.clone()];
         let error = browser
