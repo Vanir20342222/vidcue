@@ -650,7 +650,8 @@ internal class YtuiViewModel(
         retry: Int = 0,
         autoPlay: Boolean = false,
     ) {
-        if (index !in 1..3) return
+        // Tab 0 (Library) loads the account's own feeds: playlists, liked, watch later, saved.
+        if (index !in 0..3) return
         val previous = feeds[index].value
         if (append && (previous.loading || previous.continuation == null)) return
         feedJobs[index]?.cancel()
@@ -889,6 +890,17 @@ internal class YtuiViewModel(
         )
     }
 
+    /** Whether the current page of [index] was opened from another page (Back returns there). */
+    fun canGoBack(index: Int): Boolean = history.getOrNull(index)?.isNotEmpty() == true
+
+    /**
+     * The card a collection page was opened from, so its header can show the cover, owner and
+     * kind before (and regardless of) what the provider page returns.
+     */
+    private val openedCollections = HashMap<String, MediaCard>()
+
+    fun collectionCard(id: String): MediaCard? = openedCollections[id]
+
     fun back(): Boolean {
         if (history[tab.value].isEmpty()) return false
         val index = tab.value
@@ -914,7 +926,7 @@ internal class YtuiViewModel(
             runCatching { linked(link) }
                 .onSuccess { play(it) }
                 .onFailure {
-                    status.value = "Enter a valid HTTP(S) video or playlist URL"
+                    status.value = "That link isn't a video or playlist."
                     actionError.value = status.value
                 }
         } else navigate(request = json((if (tab.value == 3) "RadioSearch" else "Search") to query))
@@ -1086,7 +1098,7 @@ internal class YtuiViewModel(
                 )
             else recovery?.let { !it.optBoolean("video") } ?: (media.audio || musicCollection)
         if (download && media.live) {
-            status.value = "Live recording is not available"
+            status.value = "Live streams can't be downloaded."
             actionError.value = status.value
             return
         }
@@ -1101,7 +1113,10 @@ internal class YtuiViewModel(
                     "title" to media.title,
                     "create_offline_playlist" to (media.kind == "playlist"),
                 )
-            else navigate(request = json("Collection" to media.collectionId))
+            else {
+                openedCollections[media.collectionId] = media
+                navigate(request = json("Collection" to media.collectionId))
+            }
             return
         }
         val timing =
@@ -1341,10 +1356,41 @@ internal class YtuiViewModel(
     fun save(media: MediaCard) = task {
         val result = RustRpc.objectCall("save_media", "media" to media.value)
         status.value =
-            if (result.optBoolean("saved")) "Saved locally" else "Removed from saved items"
+            if (result.optBoolean("saved")) "Saved to your library" else "Removed from Saved"
         confirm(if (result.optBoolean("saved")) "saved" else "unsaved")
         if (feeds[tab.value].value.request == "Favorites")
             navigate(request = "Favorites", remember = false)
+    }
+
+    /** Queue [media] ahead of everything else already queued. */
+    fun playNext(media: MediaCard) = task {
+        RustRpc.call(
+            json(
+                "op" to "enqueue",
+                "media" to media.value,
+                "music" to (tab.value == 2 || media.musicSource),
+            )
+        )
+        val items = RustRpc.arrayCall("queue").objects()
+        if (items.size > 1)
+            RustRpc.objectCall("queue_move", "from" to items.lastIndex, "to" to 0, "url" to media.url)
+        loadQueue()
+        effect("queue_changed")
+        status.value = "Plays next"
+        confirm("next")
+    }
+
+    /**
+     * Stop from a gesture that is easy to make by accident (the mini player's swipe down). The
+     * notice offers Undo, which starts the same item again from where it was.
+     */
+    fun stopWithUndo() {
+        val media = player.value.media?.let(::MediaCard)
+        command("stop")
+        if (media == null) return
+        Notices.show(
+            Notice("Playback stopped", Glyph.Stop, "Undo", { play(media, resume = true) })
+        )
     }
 
     fun enqueue(media: MediaCard) = task {

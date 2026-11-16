@@ -393,14 +393,14 @@ private fun FlyingCover(
                         rotationZ = if (flight.toShortcut) -12f * t * (1f - t) * 4f else -12f * t
                         alpha = if (t < 0.85f || flight.toShortcut) 1f else (1f - t) / 0.15f
                     }
-                    .shadow(12.dp, RoundedCornerShape(14.dp), ambientColor = Color.Black, spotColor = Color.Black)
+                    .shadow(12.dp, MediaTokens.medium, ambientColor = Color.Black, spotColor = Color.Black)
                     .testTag("download-flight")
                     .semantics {
                         contentDescription = "Download queued"
                         if (!flight.toShortcut) liveRegion = LiveRegionMode.Polite
                     }
             ) {
-                Artwork(flight.media, Modifier.fillMaxSize(), thumbnails, shape = RoundedCornerShape(14.dp))
+                Artwork(flight.media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.medium)
             }
         }
     }

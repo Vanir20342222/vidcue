@@ -25,6 +25,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -48,6 +49,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
@@ -71,19 +74,20 @@ internal object MediaTokens {
     /** Portrait watch-page video: flush with the top edge, rounded where it meets the page. */
     val cardBottom = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val chip = RoundedCornerShape(12.dp)
-    val menu = RoundedCornerShape(18.dp)
-    val dock = RoundedCornerShape(24.dp)
+    val menu = RoundedCornerShape(16.dp)
+    /** Navigation dock and mini player: a soft capsule. */
+    val dock = RoundedCornerShape(28.dp)
     val pill = RoundedCornerShape(50)
     val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val dialog = RoundedCornerShape(28.dp)
     /** Side sheet over fullscreen video: rounded only on its inner (start) edge. */
     val sideSheet = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
     /** Small framed artwork inside rows and transfer chips. */
-    val thumb = RoundedCornerShape(10.dp)
+    val thumb = RoundedCornerShape(8.dp)
     /** Duration and live badges over artwork. */
-    val badge = RoundedCornerShape(6.dp)
+    val badge = RoundedCornerShape(8.dp)
     /** The app's own mark (launcher art) wherever it appears in the interface. */
-    val appMark = RoundedCornerShape(14.dp)
+    val appMark = RoundedCornerShape(12.dp)
     /** Inputs are soft rectangles, so single and multi-line fields match. */
     val fieldShape = RoundedCornerShape(16.dp)
     val videoInk = Color.White
@@ -186,6 +190,10 @@ internal enum class Glyph {
     Clipboard,
     Folder,
     Film,
+    Library,
+    PlayNext,
+    /** Up-left arrow: put a suggestion into the search field to edit it. */
+    FillQuery,
 }
 
 @Composable
@@ -330,10 +338,47 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Settings -> {
-                    for (y in listOf(5f, 12f, 19f)) line(3f, y, 21f, y)
-                    drawCircle(tint, 2.5f, Offset(8f, 5f))
-                    drawCircle(tint, 2.5f, Offset(16f, 12f))
-                    drawCircle(tint, 2.5f, Offset(10f, 19f))
+                    // A gear: eight square teeth around a ring, with an open hub.
+                    val gear =
+                        Path().apply {
+                            for (tooth in 0 until 8) {
+                                val centre = Math.toRadians(tooth * 45.0)
+                                fun at(angle: Double, radius: Float) =
+                                    (12f + radius * kotlin.math.cos(angle).toFloat()) to
+                                        (12f + radius * kotlin.math.sin(angle).toFloat())
+                                val points =
+                                    listOf(
+                                        at(centre - 0.42, 7f),
+                                        at(centre - 0.24, 9.6f),
+                                        at(centre + 0.24, 9.6f),
+                                        at(centre + 0.42, 7f),
+                                    )
+                                points.forEachIndexed { i, (x, y) ->
+                                    if (tooth == 0 && i == 0) moveTo(x, y) else lineTo(x, y)
+                                }
+                            }
+                            close()
+                        }
+                    drawPath(gear, tint, style = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    drawCircle(tint, 3f, Offset(12f, 12f), style = Stroke(1.8f))
+                }
+                Glyph.Library -> {
+                    // Two upright spines and one leaning against them.
+                    if (filled) {
+                        drawRoundRect(tint, Offset(3.5f, 4f), Size(3.6f, 16.5f), CornerRadius(1f))
+                        drawRoundRect(tint, Offset(9f, 4f), Size(3.6f, 16.5f), CornerRadius(1f))
+                    } else {
+                        line(5.3f, 4.5f, 5.3f, 20f)
+                        line(10.8f, 4.5f, 10.8f, 20f)
+                    }
+                    drawLine(tint, Offset(15f, 5f), Offset(20f, 19.6f), if (filled) 3.6f else 1.8f, StrokeCap.Round)
+                }
+                Glyph.PlayNext -> {
+                    // A list with a play mark on its first line: "play this next".
+                    outline(3f to 4f, 9f to 7.5f, 3f to 11f, closed = true)
+                    line(12f, 7.5f, 21f, 7.5f)
+                    line(3f, 14f, 21f, 14f)
+                    line(3f, 19f, 21f, 19f)
                 }
                 Glyph.More -> for (y in listOf(5f, 12f, 19f)) drawCircle(tint, 1.7f, Offset(12f, y))
                 Glyph.ArrowRight -> {
@@ -557,6 +602,10 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Up -> outline(5f to 15f, 12f to 8f, 19f to 15f)
+                Glyph.FillQuery -> {
+                    outline(6f to 15f, 6f to 6f, 15f to 6f)
+                    line(6f, 6f, 18f, 18f)
+                }
                 Glyph.Down -> outline(5f to 9f, 12f to 16f, 19f to 9f)
                 Glyph.Stop -> drawRoundRect(tint, Offset(5f, 5f), Size(14f, 14f))
                 Glyph.Forward -> outline(9f to 5f, 16f to 12f, 9f to 19f)
@@ -629,15 +678,18 @@ internal fun MediaChip(
     // tag is 36dp inside a 48dp touch target.
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
+    // The selected chip is the accent itself (as Spotify's green), clearly apart from the rest;
+    // unselected chips keep full-contrast text so they never look disabled.
+    val selectedFill = colors.primary
     val container by
         animateColorAsState(
-            if (selected) colors.onBackground else colors.surfaceContainer,
+            if (selected) selectedFill else colors.surfaceContainer,
             motion.fade(220),
             label = "chip-fill",
         )
     val ink by
         animateColorAsState(
-            if (selected) colors.background else colors.onSurface,
+            if (selected) colors.onPrimary else colors.onSurface,
             motion.fade(220),
             label = "chip-ink",
         )
@@ -1139,3 +1191,57 @@ internal fun Modifier.opensChannel(
         clickable(onClickLabel = "Open channel", role = Role.Button) { open(channelId) }
             .semantics { contentDescription = "Open channel $creator".trim() }
             .testTag("channel-$channelId")
+
+/**
+ * Fades a sideways-scrolling row out at whichever end has more to show, so a chip cut by the
+ * screen edge reads as "more this way", not as clipped.
+ */
+internal fun Modifier.fadingEdges(state: androidx.compose.foundation.lazy.LazyListState, width: Dp = 24.dp): Modifier =
+    this.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val fade = width.toPx()
+            val solid = Color.Black
+            val clear = Color.Transparent
+            if (state.canScrollBackward)
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(solid, clear), 0f, fade),
+                    size = androidx.compose.ui.geometry.Size(fade, size.height),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+                )
+            if (state.canScrollForward)
+                drawRect(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(clear, solid), size.width - fade, size.width),
+                    topLeft = androidx.compose.ui.geometry.Offset(size.width - fade, 0f),
+                    size = androidx.compose.ui.geometry.Size(fade, size.height),
+                    blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+                )
+        }
+
+/** A chip row whose ends fade while there is more to scroll to. */
+@Composable
+internal fun FadingLazyRow(
+    modifier: Modifier = Modifier,
+    contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(0.dp),
+    horizontalArrangement: androidx.compose.foundation.layout.Arrangement.Horizontal =
+        androidx.compose.foundation.layout.Arrangement.Start,
+    content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
+) {
+    val state = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.foundation.lazy.LazyRow(
+        modifier.fadingEdges(state),
+        state = state,
+        contentPadding = contentPadding,
+        horizontalArrangement = horizontalArrangement,
+        content = content,
+    )
+}
+
+/** Widens the element by [amount] on each side without moving its neighbours. */
+internal fun Modifier.bleedHorizontally(amount: Dp): Modifier =
+    this.layout { measurable, constraints ->
+        val extra = amount.roundToPx()
+        val width = constraints.maxWidth + extra * 2
+        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+        layout(constraints.maxWidth, placeable.height) { placeable.place(-extra, 0) }
+    }

@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -56,15 +57,23 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.abs
 import kotlinx.coroutines.launch
 
-/** Destinations in display order: (tab index, label, glyph). */
+/** Destinations in display order: (tab index, label, glyph). Tab 0 is the Library. */
 private val DESTINATIONS =
     listOf(
         Triple(1, "Home", Glyph.Home),
         Triple(2, "Music", Glyph.Music),
         Triple(3, "Radio", Glyph.Radio),
         Triple(4, "Movies", Glyph.Film),
-        Triple(0, "Downloads", Glyph.Download),
+        Triple(0, "Library", Glyph.Library),
     )
+
+/** Movies is an alpha test page; it is listed only when Settings turns it on. */
+internal fun destinations(showMovies: Boolean) =
+    if (showMovies) DESTINATIONS else DESTINATIONS.filter { it.first != 4 }
+
+/** Name of a destination, as the dock and page title show it. */
+internal fun destinationTitle(tab: Int): String =
+    DESTINATIONS.firstOrNull { it.first == tab }?.second ?: "Home"
 
 /**
  * Height of the floating mini player and navigation dock over the bottom of the page. Scrolling
@@ -74,10 +83,11 @@ private val DESTINATIONS =
 internal val LocalBottomOverlay = compositionLocalOf { 0.dp }
 
 /** The destination beside [tab] in display order ([forward] = +1 or -1), or null at an end. */
-internal fun neighbourTab(tab: Int, forward: Int): Int? {
-    val at = DESTINATIONS.indexOfFirst { it.first == tab }
+internal fun neighbourTab(tab: Int, forward: Int, showMovies: Boolean = false): Int? {
+    val list = destinations(showMovies)
+    val at = list.indexOfFirst { it.first == tab }
     if (at < 0) return null
-    return DESTINATIONS.getOrNull(at + forward)?.first
+    return list.getOrNull(at + forward)?.first
 }
 
 /** Page name in the display face; a new destination rises in as the old one sinks away. */
@@ -124,15 +134,16 @@ internal fun AccountButton(connected: Boolean, open: () -> Unit) {
 }
 
 /**
- * The floating phone navigation dock (tablets use [TabletSidebar]): icons only (the page title names where you are). A soft highlight
- * slides between destinations with a stretch: the leading edge arrives first and the trailing edge
- * follows, so the move reads as one gesture. Each tab keeps its name for accessibility.
+ * The phone navigation bar (tablets use [TabletSidebar]): each destination has its icon and a short label, as every major
+ * media app does. A soft highlight slides between destinations with a stretch: the leading edge
+ * arrives first and the trailing edge follows, so the move reads as one gesture.
  */
 @Composable
-internal fun AppNavigation(tab: Int, choose: (Int) -> Unit) {
+internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean = false) {
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
-    val position = DESTINATIONS.indexOfFirst { it.first == tab }.coerceAtLeast(0)
+    val shown = destinations(showMovies)
+    val position = shown.indexOfFirst { it.first == tab }.coerceAtLeast(0)
     // Edges of the highlight, in cells; animated separately for the stretch.
     val lead = remember { Animatable(position.toFloat()) }
     val trail = remember { Animatable(position.toFloat()) }
@@ -151,7 +162,6 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit) {
             launch { (if (forward) trail else lead).animateTo(target, slow) }
         }
     }
-    val dockColor = lerp(colors.background, colors.surfaceContainerHigh, 0.92f)
     val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.08f)
 
     @Composable
@@ -176,46 +186,51 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit) {
                     bounce.animateTo(1f, spring(0.4f, Spring.StiffnessMediumLow))
                 }
             }
-        Box(
+        Column(
             modifier
                 .selectable(selected, source, indication = null, role = Role.Tab) { choose(index) }
                 .semantics { contentDescription = title }
-                .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
                 .testTag("tab-$index"),
-            contentAlignment = Alignment.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
         ) {
             MediaIcon(
                 glyph,
-                Modifier.size(26.dp).pressScale(source, 0.9f).graphicsLayer {
-                    scaleX = bounce.value
-                    scaleY = bounce.value
-                },
+                Modifier.size(24.dp)
+                    .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
+                    .pressScale(source, 0.9f)
+                    .graphicsLayer {
+                        scaleX = bounce.value
+                        scaleY = bounce.value
+                    },
                 tint,
                 filled = selected,
+            )
+            Text(
+                title,
+                // The tab itself carries the name; the visible label is not read twice.
+                Modifier.clearAndSetSemantics {},
+                style = MaterialTheme.typography.labelSmall,
+                color = tint,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
 
-    val dock =
-        Modifier.shadow(16.dp, MediaTokens.dock, ambientColor = Color.Black, spotColor = Color.Black)
-            .clip(MediaTokens.dock)
-            .background(dockColor)
-            .border(1.dp, colors.outlineVariant, MediaTokens.dock)
-
-    BoxWithConstraints(
-        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
-    ) {
-        val cell = maxWidth / DESTINATIONS.size
+    // Phones: a full-width bar in the page colour, as in the major media apps. The page
+    // fades into it from above, and the mini player floats over that fade.
+    BoxWithConstraints(Modifier.fillMaxWidth().background(colors.background).padding(horizontal = 8.dp)) {
+        val cell = maxWidth / shown.size
         Box(
             Modifier.fillMaxWidth()
                 .height(64.dp)
-                .then(dock)
                 .selectableGroup()
                 .testTag("bottom-navigation")
         ) {
             Highlight(lead.value, trail.value, cell, highlight)
             Row(Modifier.fillMaxSize()) {
-                DESTINATIONS.forEach { (index, title, glyph) ->
+                shown.forEach { (index, title, glyph) ->
                     Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
                 }
             }
@@ -233,7 +248,7 @@ private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color
             .width(cell * span)
             .fillMaxHeight()
             .padding(inset)
-            .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
+            .clip(MediaTokens.pill)
             .background(color)
     )
 }
@@ -321,7 +336,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "Swipe sideways to skip · swipe down to close",
+                "Swipe sideways to skip · swipe down to stop",
                 style = MaterialTheme.typography.labelMedium,
                 color = colors.onSurfaceVariant,
             )
@@ -333,7 +348,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
     CompositionLocalProvider(LocalContentColor provides ink) {
         Box(
             Modifier.fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
                 .graphicsLayer {
                     val lift = (1f - appear.value) * 28.dp.toPx()
                     translationX = sideways.value
@@ -372,12 +387,13 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                             vertical.snapTo(0f)
                         } else {
                             vertical.animateTo(with(density) { 96.dp.toPx() }, motion.exit(180))
-                            vm.command("stop")
+                            // An easy gesture to make by accident: stopping offers Undo.
+                            vm.stopWithUndo()
                         }
                     },
                 )
-                .shadow(14.dp, MediaTokens.dock, ambientColor = Color.Black, spotColor = Color.Black)
-                .clip(MediaTokens.dock)
+                .shadow(14.dp, MediaTokens.card, ambientColor = Color.Black, spotColor = Color.Black)
+                .clip(MediaTokens.card)
                 .background(card)
                 .clickable(onClickLabel = "Open player", role = Role.Button) {
                     vm.playerOpen.value = true
@@ -397,7 +413,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
-                        player.title,
+                        if (player.video) player.title else MusicTitles.clean(player.title, media.creator),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
@@ -410,7 +426,8 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                         Text(
                             // A station between tracks is titled by its own name; say what it
                             // is rather than repeating that name.
-                            media.creator.takeUnless { it.trim().equals(player.title.trim(), true) }.orEmpty().ifBlank {
+                            (if (player.video) media.creator else cleanByline(media.creator))
+                                .takeUnless { it.trim().equals(player.title.trim(), true) }.orEmpty().ifBlank {
                                 if (player.preview) "Muted preview"
                                 else if (media.live && media.kind == "station") "Live radio"
                                 else if (media.live) "Live stream"
@@ -435,25 +452,22 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                         .semantics { contentDescription = if (player.playing) "Pause" else "Play" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        Modifier.size(40.dp).background(ink, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        PlayPauseIcon(player.playing, Modifier.size(20.dp), card)
-                    }
+                    // A plain icon, like Next beside it: the mini player should not outshine the page.
+                    PlayPauseIcon(player.playing, Modifier.size(26.dp), ink)
                 }
-                if (player.video) {
-                    MediaIconButton(Glyph.Close, "Stop and close player", "dock-close") {
-                        vm.command("stop")
-                    }
-                } else {
-                    MediaIconButton(Glyph.Next, "Next track", "dock-next") {
-                        vm.command("next")
-                    }
+                // The same control for music and video; closing is the swipe down.
+                MediaIconButton(Glyph.Next, if (player.video) "Next video" else "Next track", "dock-next") {
+                    vm.command("next")
                 }
             }
+            // On the flat part of the bottom edge: inset by the corner radius.
             if (player.duration > 0)
-                Canvas(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp)) {
+                Canvas(
+                    Modifier.align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(2.dp)
+                ) {
                     drawLine(
                         ink.copy(alpha = 0.16f),
                         Offset(0f, size.height / 2),
@@ -465,7 +479,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                         Offset(0f, size.height / 2),
                         Offset(size.width * glide.value, size.height / 2),
                         size.height,
-                        StrokeCap.Butt,
+                        StrokeCap.Round,
                     )
                 }
         }

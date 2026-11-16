@@ -90,7 +90,7 @@ internal fun MoviesPage(vm: YtuiViewModel) {
             val full = if (title.catalogImdb.isNotBlank()) {
                 val meta = RustRpc.call(JSONObject().put("op", "movie_catalog_details")
                     .put("kind", title.catalogKind).put("imdb", title.catalogImdb)) as? JSONObject
-                    ?: error("No title metadata returned")
+                    ?: error("This title has no details yet. Try again later.")
                 val parsed = movieTitleFromMetadata(meta)
                 check(parsed.tmdb > 0) { "This title has no playback provider ID yet." }
                 check(!parsed.series || parsed.seasons.isNotEmpty()) { "Episode listings are not available yet. Try again later." }
@@ -130,7 +130,7 @@ internal fun MoviesPage(vm: YtuiViewModel) {
             remoteResults = result.titles
             searchError = result.warning
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { searchError = e.message ?: "Online search failed" }
+        catch (e: Exception) { searchError = e.message ?: "Search didn't work. Check your connection and try again." }
         finally { searching = false }
     }
     val results = (MovieCatalog.search(query) + remoteResults).distinctBy { it.catalogImdb.ifBlank { it.id } }
@@ -645,9 +645,9 @@ private suspend fun resolveCinecat(pick: MoviePick): Pair<List<MovieSource>, Lis
             .put("tmdb", pick.title.tmdb)
     pick.season?.let { payload.put("season", it) }
     pick.episode?.let { payload.put("episode", it) }
-    val data = RustRpc.call(payload) as? JSONObject ?: throw IllegalStateException("Empty resolution")
+    val data = RustRpc.call(payload) as? JSONObject ?: throw IllegalStateException("No source answered. Try again in a moment.")
     val sources = parseSources(data.optJSONArray("sources"))
-    if (sources.isEmpty()) throw IllegalStateException("No provider served the title.")
+    if (sources.isEmpty()) throw IllegalStateException("No source has this title right now.")
     return sources to CinecatReport.parse(data.optJSONArray("attempts"))
 }
 
@@ -660,7 +660,7 @@ private suspend fun checkAllCinecat(pick: MoviePick): List<CinecatReport> {
             .put("segments", 2)
     pick.season?.let { payload.put("season", it) }
     pick.episode?.let { payload.put("episode", it) }
-    val data = RustRpc.call(payload) as? JSONObject ?: throw IllegalStateException("Empty reports")
+    val data = RustRpc.call(payload) as? JSONObject ?: throw IllegalStateException("No source answered. Try again in a moment.")
     return CinecatReport.parse(data.optJSONArray("reports"))
 }
 
@@ -680,7 +680,7 @@ internal fun downloadCinecat(pick: MoviePick) {
         } catch (error: Exception) {
             MovieLibrary.transfers.update { map ->
                 val current = map[pick.key] ?: MovieTransfer(pick.key, pick.displayTitle)
-                map + (pick.key to current.copy(queued = false, error = error.message ?: "Could not resolve the title"))
+                map + (pick.key to current.copy(queued = false, error = error.message ?: "This title couldn't be played. Try again in a moment."))
             }
         }
     }
@@ -762,7 +762,7 @@ private fun MovieSheet(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                checkError = error.message ?: "Could not resolve the title"
+                checkError = error.message ?: "This title couldn't be played. Try again in a moment."
             } finally {
                 checking = false
             }
@@ -781,7 +781,7 @@ private fun MovieSheet(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                checkError = error.message ?: "Could not check providers"
+                checkError = error.message ?: "Sources couldn't be checked. Try again in a moment."
             } finally {
                 checking = false
             }

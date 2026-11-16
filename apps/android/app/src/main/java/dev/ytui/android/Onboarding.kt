@@ -2,7 +2,6 @@ package dev.ytui.android
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -45,6 +44,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -71,6 +71,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -128,12 +129,12 @@ internal object OnboardingStore {
 
 /** Pure step navigation so it can be unit tested without Compose. */
 internal object OnboardingSteps {
-    const val COUNT = 5
+    // Three pages: what the app is, how it looks, and optional sign-in. Playback choices keep
+    // their defaults and live in Settings; nobody can judge them before using the app.
+    const val COUNT = 3
     const val WELCOME = 0
     const val LOOK = 1
-    const val PLAYBACK = 2
-    const val ACCOUNT = 3
-    const val READY = 4
+    const val ACCOUNT = 2
 
     fun clamp(step: Int): Int = step.coerceIn(0, COUNT - 1)
 
@@ -184,12 +185,8 @@ internal fun themeLabel(id: String): String =
 /** Full-screen first-run setup. Calls [onSetupDone] on skip and on completion; callers persist. */
 @Composable
 internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Unit) {
-    val activity = LocalActivity.current
-    // Notifications are asked for only once setup is finished or skipped, never on top of it.
-    val onFinish: () -> Unit = {
-        onSetupDone()
-        activity?.let(NotificationPermission::requestOnce)
-    }
+    // Notifications are asked for when something first plays or downloads (ComposeHost).
+    val onFinish: () -> Unit = onSetupDone
     val reduced = LocalReducedMotion.current
     val motion = LocalMotion.current
     val mobile by vm.mobile.collectAsState()
@@ -249,9 +246,7 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Uni
                 when (page) {
                     OnboardingSteps.WELCOME -> WelcomePage(background)
                     OnboardingSteps.LOOK -> LookPage(vm, dark)
-                    OnboardingSteps.PLAYBACK -> PlaybackPage(vm, dark)
-                    OnboardingSteps.ACCOUNT -> AccountPage(vm)
-                    else -> ReadyPage(vm)
+                    else -> AccountPage(vm)
                 }
             }
             BottomBar(step, vm, onNext = { step = OnboardingSteps.next(step) }, onFinish)
@@ -330,13 +325,29 @@ private fun BottomBar(step: Int, vm: YtuiViewModel, onNext: () -> Unit, onFinish
             contentAlignment = Alignment.Center,
         ) {
             when {
+                // The last page is the account. Not signed in: Sign in takes the main button's
+                // place, and finishing without it is the quiet choice under it.
+                OnboardingSteps.isLast(step) && !account.optBoolean("connected") ->
+                    Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Pill(
+                            "Sign in to YouTube",
+                            Modifier.testTag("onboarding-sign-in"),
+                            PillStyle.Primary,
+                            fill = true,
+                        ) {
+                            vm.actionError.value = null
+                            vm.effect("login")
+                        }
+                        QuietAction("Maybe later", Modifier.testTag("onboarding-finish"), action = onFinish)
+                    }
                 OnboardingSteps.isLast(step) ->
                     Pill("Start watching", Modifier.testTag("onboarding-finish"), PillStyle.Primary, fill = true, onClick = onFinish)
                 step == OnboardingSteps.WELCOME ->
                     Pill("Get started", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
-                // Not signed in: sign-in is the page's primary action, so advancing is quiet.
-                step == OnboardingSteps.ACCOUNT && !account.optBoolean("connected") ->
-                    QuietAction("Maybe later", Modifier.testTag("onboarding-next"), action = onNext)
                 else -> Pill("Continue", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
             }
         }
@@ -385,8 +396,27 @@ private fun PageColumn(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val minimum = maxHeight
         val centred = horizontal == Alignment.CenterHorizontally
+        val scroll = rememberScrollState()
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize()
+                // Content that continues below fades out above the button instead of being cut.
+                .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    if (scroll.canScrollForward) {
+                        val fade = 32.dp.toPx()
+                        drawRect(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                listOf(androidx.compose.ui.graphics.Color.Transparent, androidx.compose.ui.graphics.Color.Black),
+                                startY = size.height - fade,
+                                endY = size.height,
+                            ),
+                            topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - fade),
+                            blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+                        )
+                    }
+                }
+                .verticalScroll(scroll),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Column(
@@ -533,7 +563,7 @@ private fun WelcomeText(center: Boolean) {
         }
         Staggered(4) {
             Text(
-                "Videos, music, radio and downloads in one app.",
+                "Videos, music and radio, all in one place.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = align,
@@ -553,19 +583,17 @@ private fun WelcomeHero(background: Color, size: Dp) {
     }
     Box(Modifier.size(size), contentAlignment = Alignment.Center) {
         PulseRings(brand, reduced)
-        Box(
-            Modifier.size(size * 0.46f)
-                .graphicsLayer {
+        // The launcher's own mark, so the first screen is the app people just tapped.
+        androidx.compose.foundation.Image(
+            androidx.compose.ui.res.painterResource(R.drawable.ic_vidcue_launcher_foreground),
+            contentDescription = null,
+            modifier =
+                Modifier.size(size * 0.62f).graphicsLayer {
                     scaleX = pop.value
                     scaleY = pop.value
                     alpha = ((pop.value - 0.4f) / 0.6f).coerceIn(0f, 1f)
-                }
-                .background(brand.copy(alpha = 0.18f), CircleShape)
-                .border(BorderStroke(2.dp, brand.copy(alpha = 0.6f)), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            MediaIcon(Glyph.Play, Modifier.size(size * 0.22f), brand)
-        }
+                },
+        )
     }
 }
 
@@ -612,6 +640,9 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     val palettes by vm.palettes.collectAsState()
     LaunchedEffect(Unit) { vm.loadPalettes() }
     val choices = listOf("system") + themes.filter { it != "system" }
+    // System and the app's own two themes first; the rest are one tap away.
+    val main = choices.filter { it == "system" || it.startsWith("vidcue") }
+    var moreThemes by rememberSaveable { mutableStateOf(selected !in main) }
     PageColumn {
         PageBadge(Glyph.Palette)
         PageTitle("Look and feel", "Pick a colour theme. It applies right away and you can change it any time in Settings.")
@@ -629,17 +660,19 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                for (name in choices)
+                for (name in if (moreThemes) choices else main)
                     ThemeChip(name, name == selected, editable, palettes.optJSONObject(name)) {
                         vm.updateConfig(dark) { it.put("theme", name) }
                     }
+                if (!moreThemes && choices.size > main.size)
+                    MediaChip("More themes", modifier = Modifier.testTag("onboarding-more-themes")) { moreThemes = true }
             }
         }
         Staggered(4, Modifier.fillMaxWidth()) {
             SettingSwitchRow(
                 Glyph.Speed,
                 "Reduce motion",
-                "Fewer animations and still visualizers",
+                "Fewer animations and still visualisers",
                 config.optBoolean("reduced_motion"),
                 "onboarding-reduce-motion",
                 enabled = editable,
@@ -661,9 +694,10 @@ private fun ThemeChip(
     val reduced = LocalReducedMotion.current
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
-    val container by colorTween(if (selected) colors.onBackground else colors.surfaceContainerHigh, reduced)
-    val label by colorTween(if (selected) colors.background else colors.onSurface, reduced)
-    val outline by colorTween(if (selected) colors.onBackground else colors.outlineVariant, reduced)
+    // Selected matches the app's chips: the accent with its own readable ink.
+    val container by colorTween(if (selected) colors.primary else colors.surfaceContainerHigh, reduced)
+    val label by colorTween(if (selected) colors.onPrimary else colors.onSurface, reduced)
+    val outline by colorTween(if (selected) colors.primary else colors.outlineVariant, reduced)
     Row(
         Modifier.heightIn(min = 48.dp)
             .clip(MediaTokens.pill)
@@ -701,95 +735,7 @@ private fun ThemeChip(
     }
 }
 
-// ---------------------------------------------------------------- 3 Playback
-
-@Composable
-private fun PlaybackPage(vm: YtuiViewModel, dark: Boolean) {
-    val mobile by vm.mobile.collectAsState()
-    val config by vm.config.collectAsState()
-    val ready by vm.ready.collectAsState()
-    PageColumn {
-        PageBadge(Glyph.Play)
-        PageTitle("Playback", "Choose how Vidcue plays. You can change these later in Settings.")
-        val rows =
-            listOf(
-                Triple("background_playback", Glyph.Headphones, "Keep playing in the background" to "Audio continues when you leave the app"),
-                Triple("autoplay_related", Glyph.Next, "Autoplay related videos" to "Keep going when the queue ends"),
-                Triple("preload_next", Glyph.Download, "Preload the next item" to "Start the next video sooner"),
-                Triple("gestures", Glyph.Drag, "Swipe gestures" to "Swipe to seek and move between pages"),
-                Triple("auto_color_grade", Glyph.Palette, "Auto colour grade" to "Analyses each video and adds a slight fitting grade"),
-            )
-        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            rows.forEachIndexed { index, (key, glyph, text) ->
-                Staggered(3 + index, Modifier.fillMaxWidth()) {
-                    SettingSwitchRow(
-                        glyph,
-                        text.first,
-                        text.second,
-                        mobile.optBoolean(key, MobileSettings.BOOLEANS[key] ?: true),
-                        "onboarding-toggle-$key",
-                    ) { value ->
-                        vm.updateMobile(key, value)
-                    }
-                }
-            }
-            Staggered(3 + rows.size, Modifier.fillMaxWidth()) {
-                val grade = mobile.optString("color_grade", "off")
-                val presets = ColorGradeMath.PRESETS
-                SettingCycleRow(
-                    Glyph.Palette,
-                    "Colour grading",
-                    "A look for videos: warm, cool, vivid or cinematic",
-                    grade.replaceFirstChar(Char::titlecase),
-                    "onboarding-color-grade",
-                ) {
-                    val next = presets[(presets.indexOf(grade) + 1).mod(presets.size)]
-                    vm.updateMobile("color_grade", next)
-                }
-            }
-            // Saving writes the whole settings document; wait until it has loaded (see LookPage).
-            Staggered(4 + rows.size, Modifier.fillMaxWidth()) {
-                EqualizerSettings(vm, dark, config, enabled = ready && config.length() > 0)
-            }
-        }
-    }
-}
-
-/** A setup row that steps through a short list of choices on each tap. */
-@Composable
-private fun SettingCycleRow(
-    glyph: Glyph,
-    title: String,
-    subtitle: String,
-    value: String,
-    tag: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        Modifier.fillMaxWidth()
-            .heightIn(min = 64.dp)
-            .clip(MediaTokens.card)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
-            .testTag(tag),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        MediaIcon(glyph, Modifier.size(24.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Text(value, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-// ---------------------------------------------------------------- 4 Account
+// ---------------------------------------------------------------- 3 Account
 
 @Composable
 private fun AccountPage(vm: YtuiViewModel) {
@@ -836,16 +782,13 @@ private fun AccountPage(vm: YtuiViewModel) {
                         }
                     }
                 } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Action("Sign in to YouTube", "onboarding-sign-in") {
-                            vm.actionError.value = null
-                            vm.effect("login")
-                        }
-                        // The sign-in card's "import instead" link returns here, so offer it.
-                        QuietAction("Import a cookie file", Modifier.testTag("onboarding-import")) {
-                            vm.actionError.value = null
-                            vm.effect("pick", "kind" to "cookies")
-                        }
+                    // Sign in is the page's main button, in the same place as Continue on the
+                    // pages before. Importing a session from another browser is the other way.
+                    // Pulled back by the quiet button's inner padding so its text lines up with the
+                    // paragraph above.
+                    QuietAction("Other ways to sign in", Modifier.offset(x = (-14).dp).testTag("onboarding-import")) {
+                        vm.actionError.value = null
+                        vm.effect("pick", "kind" to "cookies")
                     }
                 }
             }
@@ -862,97 +805,5 @@ private fun AccountPage(vm: YtuiViewModel) {
                 color = MaterialTheme.colorScheme.error,
             )
         }
-    }
-}
-
-// ---------------------------------------------------------------- 5 Ready
-
-@Composable
-private fun ReadyPage(vm: YtuiViewModel) {
-    val config by vm.config.collectAsState()
-    val mobile by vm.mobile.collectAsState()
-    val account by vm.account.collectAsState()
-    PageColumn(Alignment.CenterHorizontally) {
-        AnimatedCheck()
-        PageTitle("You're all set", "Here's what you chose. Everything lives in Settings if you change your mind.", center = true, firstIndex = 2)
-        Staggered(4, Modifier.fillMaxWidth()) {
-            Column(
-                Modifier.fillMaxWidth()
-                    .clip(MediaTokens.card)
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .testTag("onboarding-summary")
-            ) {
-                SummaryRow("Theme", themeLabel(config.optString("theme", "system")))
-                SummaryRow("Reduce motion", onOff(config.optBoolean("reduced_motion")))
-                SummaryRow("Background playback", onOff(mobile.optBoolean("background_playback", true)))
-                SummaryRow("Autoplay related", onOff(mobile.optBoolean("autoplay_related", true)))
-                SummaryRow("Colour grading", mobile.optString("color_grade", "off").replaceFirstChar(Char::titlecase))
-                SummaryRow("Auto colour grade", onOff(mobile.optBoolean("auto_color_grade", false)))
-                SummaryRow("Equalizer", EqualizerModel.label(EqualizerModel.selected(config)))
-                SummaryRow("Account", if (account.optBoolean("connected")) "Signed in" else "Not signed in")
-            }
-        }
-    }
-}
-
-private fun onOff(value: Boolean) = if (value) "On" else "Off"
-
-@Composable
-private fun SummaryRow(label: String, value: String) {
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 40.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-    }
-}
-
-/** A circle that pops in, then a check mark that draws itself. */
-@Composable
-private fun AnimatedCheck() {
-    val reduced = LocalReducedMotion.current
-    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
-    val pop = remember { Animatable(if (reduced) 1f else 0f) }
-    val draw = remember { Animatable(if (reduced) 1f else 0f) }
-    LaunchedEffect(reduced) {
-        if (reduced) {
-            pop.snapTo(1f)
-            draw.snapTo(1f)
-        } else {
-            delay(120)
-            pop.animateTo(1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow))
-            draw.animateTo(1f, tween(450, easing = FastOutSlowInEasing))
-        }
-    }
-    Canvas(
-        Modifier.size(120.dp)
-            .graphicsLayer {
-                scaleX = pop.value
-                scaleY = pop.value
-                alpha = pop.value.coerceIn(0f, 1f)
-            }
-            .semantics { contentDescription = "Setup complete" }
-            .testTag("onboarding-check")
-    ) {
-        val s = size.minDimension
-        drawCircle(brand.copy(alpha = 0.18f), s / 2f)
-        drawCircle(brand.copy(alpha = 0.6f), s / 2f - 1.dp.toPx(), style = Stroke(2.dp.toPx()))
-        val check =
-            Path().apply {
-                moveTo(s * 0.30f, s * 0.52f)
-                lineTo(s * 0.45f, s * 0.67f)
-                lineTo(s * 0.71f, s * 0.36f)
-            }
-        val measure = PathMeasure().apply { setPath(check, false) }
-        val partial = Path()
-        measure.getSegment(0f, measure.length * draw.value, partial, true)
-        drawPath(
-            partial,
-            brand,
-            style = Stroke(max(4.dp.toPx(), 1f), cap = StrokeCap.Round, join = StrokeJoin.Round),
-        )
     }
 }

@@ -6,8 +6,9 @@ import android.os.Build;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Asks for the Android 13+ notification permission at most once per app launch, and only after
- * first-run setup has finished or been skipped (AR-23).
+ * Asks for the Android 13+ notification permission at most once per app launch. It is asked when
+ * something first plays or a download starts, so the request arrives with a reason in view, and
+ * never on top of first-run setup (AR-23).
  */
 final class NotificationPermission {
   static final String PERMISSION = "android.permission.POST_NOTIFICATIONS";

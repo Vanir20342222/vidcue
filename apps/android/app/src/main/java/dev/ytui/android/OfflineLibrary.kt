@@ -31,12 +31,19 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
 @Composable
-internal fun OfflineLibrary(vm: YtuiViewModel) {
+internal fun OfflineLibrary(
+    vm: YtuiViewModel,
+    /** "Offline" (downloaded items), "Playlists" (offline playlists) or "Transfers". */
+    section: String = "Offline",
+    /** Moves the Library to another of its sections (after a save or a new playlist). */
+    onSection: (String) -> Unit = {},
+    /** The Library's section chips, shown where this page used to show its own. */
+    chips: @Composable () -> Unit = {},
+) {
     val downloads by vm.downloads.collectAsState()
     val playlists by vm.offlinePlaylists.collectAsState()
     val config by vm.config.collectAsState()
     val playerOpen by vm.playerOpen.collectAsState()
-    var section by rememberSaveable { mutableStateOf("Offline") }
     var add by remember { mutableStateOf(false) }
     var newPlaylist by remember { mutableStateOf(false) }
     var addTo by remember { mutableStateOf<List<JSONObject>?>(null) }
@@ -152,39 +159,13 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                     else (selectedIds + visibleIds).distinct()
             }
         } else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // No page heading: the tab label already names this screen. One filter
-        // row carries the sections, with the two creation actions at its end.
-        Row(
-            Modifier.fillMaxWidth().padding(end = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LazyRow(
-                Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(listOf("Offline", "Playlists", "Transfers")) { title ->
-                    val count =
-                        when (title) {
-                            "Transfers" -> transfers.size
-                            else -> 0
-                        }
-                    MediaChip(
-                        if (count > 0) "$title · $count" else title,
-                        selected = section == title,
-                        modifier = Modifier.testTag("library-$title"),
-                    ) {
-                        section = title
-                        clearSelection()
-                    }
-                }
-            }
-        }
+        // The Library's one chip row names every section, offline and online.
+        chips()
         if (section != "Transfers" && (available.isNotEmpty() || playlists.isNotEmpty()))
             OfflineSearchField(
                 query,
                 { query = it },
-                if (section == "Playlists") "Search offline playlists" else "Search offline media",
+                if (section == "Playlists") "Search offline playlists" else "Search downloads",
                 Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
                 onFocusChange = { searchFocused = it },
             )
@@ -192,13 +173,16 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
         FlowRow(
             Modifier.fillMaxWidth().padding(horizontal = MediaTokens.textInset),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // Short labels so both actions share one line on a phone; the download icon and the
+            // spoken description say what "From a link" does.
             Pill(
-                "Save from a link",
+                "From a link",
                 Modifier.testTag("add-download").semantics {
-                    contentDescription = "Save a video or playlist offline"
+                    contentDescription = "Download a video or playlist from a link"
                 },
-                glyph = Glyph.Link,
+                glyph = Glyph.Download,
             ) {
                 add = true
             }
@@ -259,10 +243,10 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
                         item {
                             EmptyMediaState(
                                 Glyph.Download,
-                                "No offline media",
-                                "Save songs or videos to play without a connection.",
+                                "No downloads yet",
+                                "Choose Download on any song, video or playlist to play it without a connection.",
                             ) {
-                                Action("Save from a link") { add = true }
+                                Action("Browse music", "offline-browse-music") { vm.chooseTab(2) }
                             }
                         }
                     items(shown, key = { it.optString("id") }) { item ->
@@ -505,7 +489,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
     if (add)
         AddOfflinePanel(vm) {
             add = false
-            section = "Transfers"
+            onSection("Transfers")
         }
     if (addTo != null)
         Panel("Add to offline playlist", { addTo = null }) {
@@ -551,7 +535,7 @@ internal fun OfflineLibrary(vm: YtuiViewModel) {
             newPlaylist = false
             playlistItems = emptyList()
             clearSelection()
-            section = "Playlists"
+            onSection("Playlists")
         }
         Panel("New offline playlist", { newPlaylist = false }) {
             if (playlistItems.isNotEmpty()) Text("${playlistItems.size} selected items")

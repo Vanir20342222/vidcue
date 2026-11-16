@@ -131,47 +131,48 @@ internal object YtuiType {
                 TextStyle(
                     fontFamily = display,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 34.sp,
-                    lineHeight = 38.sp,
-                    letterSpacing = (-0.8).sp,
+                    fontSize = 32.sp,
+                    lineHeight = 36.sp,
+                    letterSpacing = (-0.4).sp,
                 ),
             headlineMedium =
                 TextStyle(
                     fontFamily = display,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 28.sp,
-                    lineHeight = 32.sp,
-                    letterSpacing = (-0.6).sp,
+                    fontSize = 26.sp,
+                    lineHeight = 31.sp,
+                    letterSpacing = (-0.3).sp,
                 ),
             headlineSmall =
                 TextStyle(
                     fontFamily = display,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 24.sp,
-                    lineHeight = 28.sp,
-                    letterSpacing = (-0.4).sp,
+                    fontSize = 22.sp,
+                    lineHeight = 27.sp,
+                    letterSpacing = (-0.2).sp,
                 ),
             titleLarge =
                 TextStyle(
                     fontFamily = title,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    lineHeight = 25.sp,
-                    letterSpacing = (-0.2).sp,
+                    fontSize = 19.sp,
+                    lineHeight = 24.sp,
+                    letterSpacing = (-0.1).sp,
                 ),
             titleMedium =
                 TextStyle(
                     fontFamily = text,
                     fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                    lineHeight = 22.sp,
+                    fontSize = 15.5.sp,
+                    lineHeight = 21.sp,
                 ),
             titleSmall =
                 TextStyle(
                     fontFamily = text,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp,
+                    // Row and card titles: medium weight, so lists read calm and dense.
+                    fontWeight = FontWeight.Medium,
+                    fontSize = 14.5.sp,
+                    lineHeight = 19.sp,
                 ),
             bodyLarge = TextStyle(fontFamily = text, fontSize = 16.sp, lineHeight = 23.sp),
             bodyMedium = TextStyle(fontFamily = text, fontSize = 14.sp, lineHeight = 20.sp),
@@ -388,13 +389,14 @@ internal fun Pill(
     val colors = MaterialTheme.colorScheme
     val container =
         when (style) {
-            PillStyle.Primary -> colors.onBackground
+            // The one main action on a screen carries the theme's accent.
+            PillStyle.Primary -> colors.primary
             PillStyle.Tonal -> colors.surfaceContainerHigh
             else -> MediaTokens.transparent
         }
     val ink =
         when (style) {
-            PillStyle.Primary -> colors.background
+            PillStyle.Primary -> colors.onPrimary
             PillStyle.Destructive -> colors.error
             else -> colors.onSurface
         }
@@ -868,15 +870,29 @@ internal object ArtworkTint {
 }
 
 /** A panel's ambient wash: the artwork tint at the top falling off into the page colour. */
-internal fun Modifier.ambientGlow(tint: Color, background: Color, strength: Float = 1f): Modifier =
+internal fun Modifier.ambientGlow(
+    tint: Color,
+    background: Color,
+    strength: Float = 1f,
+    /** Rise from the page colour at the top too, so a plain bar above meets it without a seam. */
+    softTop: Boolean = false,
+): Modifier =
     drawWithContent {
         drawRect(background)
         drawRect(
-            Brush.verticalGradient(
-                0f to lerp(background, tint, 0.85f * strength),
-                0.55f to lerp(background, tint, 0.32f * strength),
-                1f to background,
-            )
+            if (softTop)
+                Brush.verticalGradient(
+                    0f to background,
+                    0.22f to lerp(background, tint, 0.7f * strength),
+                    0.6f to lerp(background, tint, 0.3f * strength),
+                    1f to background,
+                )
+            else
+                Brush.verticalGradient(
+                    0f to lerp(background, tint, 0.85f * strength),
+                    0.55f to lerp(background, tint, 0.32f * strength),
+                    1f to background,
+                )
         )
         drawContent()
     }

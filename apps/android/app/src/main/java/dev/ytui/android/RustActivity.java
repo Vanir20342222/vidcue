@@ -65,8 +65,7 @@ public final class RustActivity extends ComponentActivity {
               return insets;
             });
     getWindow().getDecorView().requestApplyInsets();
-    // First-run setup asks once it is finished or skipped (Onboarding); otherwise ask now.
-    if (!OnboardingStore.showsAtLaunch(this)) NotificationPermission.requestOnce(this);
+    // The notification permission is asked when something first plays or downloads (ComposeHost).
     onNewIntent(getIntent());
   }
 

@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,8 +52,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
 /**
- * Search input: a calm field that brightens its edge while focused. The submit arrow turns into a
- * filled button once there is something to search for.
+ * Search input: a calm field that brightens its edge while focused. The keyboard's search key
+ * submits; a clear button appears once there is text.
  */
 @Composable
 internal fun SearchField(
@@ -70,7 +71,8 @@ internal fun SearchField(
     val focused by source.collectIsFocusedAsState()
     val edge by
         animateColorAsState(
-            if (focused) colors.onSurface.copy(alpha = 0.55f) else colors.onSurface.copy(alpha = 0f),
+            // A filled bar, no outline: focus shows as a lighter fill and the cursor.
+            colors.onSurface.copy(alpha = 0f),
             motion.fade(180),
             label = "search-edge",
         )
@@ -80,9 +82,19 @@ internal fun SearchField(
             motion.fade(180),
             label = "search-fill",
         )
+    // Text set from outside (reopening search, a picked suggestion) puts the cursor at its end,
+    // so typing continues the query instead of starting before it.
+    var field by remember {
+        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(query, androidx.compose.ui.text.TextRange(query.length)))
+    }
+    if (field.text != query)
+        field = androidx.compose.ui.text.input.TextFieldValue(query, androidx.compose.ui.text.TextRange(query.length))
     BasicTextField(
-        query,
-        onQuery,
+        field,
+        { value ->
+            field = value
+            if (value.text != query) onQuery(value.text)
+        },
         modifier,
         singleLine = true,
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
@@ -113,7 +125,8 @@ internal fun SearchField(
                         )
                     inner()
                 }
-                if (searching && query.isNotEmpty())
+                // The keyboard's search key submits; the field only offers to clear its text.
+                if (query.isNotEmpty())
                     RoundIconButton(
                         Glyph.Close,
                         "Clear search",
@@ -121,17 +134,6 @@ internal fun SearchField(
                         tint = colors.onSurfaceVariant,
                         action = onClear,
                     )
-                val ready = query.isNotBlank()
-                RoundIconButton(
-                    Glyph.ArrowRight,
-                    "Search",
-                    Modifier.testTag("search-button"),
-                    size = 44.dp,
-                    iconSize = 18.dp,
-                    container = if (ready) colors.onBackground else MediaTokens.transparent,
-                    tint = if (ready) colors.background else colors.onSurfaceVariant,
-                    action = onSubmit,
-                )
             }
         },
     )

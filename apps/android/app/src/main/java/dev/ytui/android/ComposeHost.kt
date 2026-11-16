@@ -43,6 +43,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.zIndex
@@ -244,6 +245,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
         remember(vm) { vm.player.map { it.media != null }.distinctUntilChanged() }
             .collectAsState(false)
     val ready by vm.ready.collectAsState()
+    // Notifications matter once something plays (background controls) or downloads (progress),
+    // so the permission is asked then, with a reason in view, not on the first look at Home.
+    val transferring by
+        remember(vm) { vm.downloads.map { list -> list.any { it.optString("state") != "Complete" } }.distinctUntilChanged() }
+            .collectAsState(false)
+    LaunchedEffect(hasPlayer, transferring) {
+        if (hasPlayer || transferring) NotificationPermission.requestOnce(activity)
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
@@ -284,20 +293,16 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val searchRequestState =
         remember(vm, tab) {
             val feed = vm.feeds[tab]
-            val initial =
-                (feed.value.request as? JSONObject)?.has(
-                    if (tab == 3) "RadioSearch" else "Search"
-                ) == true
-            feed
-                .map {
-                    (it.request as? JSONObject)?.has(if (tab == 3) "RadioSearch" else "Search") ==
-                        true
-                }
-                .distinctUntilChanged() to initial
+            // Filtered searches (Videos, Songs, ...) are search results too.
+            val initial = SearchRequests.isSearch(feed.value.request)
+            feed.map { SearchRequests.isSearch(it.request) }.distinctUntilChanged() to initial
         }
     val searchResults =
         key(tab) { searchRequestState.first.collectAsState(searchRequestState.second).value }
     val searchMode = searchFocused || searchResults
+    val showMovies = mobile.optBoolean("show_movies", false)
+    // Turning Movies off while it is open returns to Home.
+    LaunchedEffect(showMovies, tab) { if (!showMovies && tab == 4) vm.chooseTab(1) }
     var dialog by rememberSaveable { mutableStateOf("") }
     // First-run setup. Instrumented offline launches opt in explicitly so existing
     // UI tests keep starting on the feed.
@@ -308,7 +313,6 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     activity.intent.getBooleanExtra("ytui.onboarding", false))
         )
     }
-    var menu by remember { mutableStateOf(false) }
     // Imported documents can legitimately reuse a built-in name. Their paint
     // roles must remain exactly the imported values rather than the default preset.
     val neutralPreset = config.optString("theme", "system") != "custom"
@@ -475,80 +479,15 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                             shrinkTowards = Alignment.Top,
                                         ),
                         ) {
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .testTag("app-toolbar")
-                                    .heightIn(min = 64.dp)
-                                    .padding(start = 8.dp, end = 4.dp, top = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                // The place you are, set in the display face. It replaces
-                                // the wordmark: the launcher already names the app.
-                                PageTitle(
-                                    when (tab) {
-                                        0 -> "Downloads"
-                                        2 -> "Music"
-                                        3 -> "Radio"
-                                        4 -> "Movies"
-                                        else -> "Home"
-                                    },
-                                    Modifier.padding(start = 8.dp).weight(1f),
-                                )
+                            AppToolbar(
+                                vm,
+                                tab,
+                                connected = account.optBoolean("connected"),
+                                onSearch = { searchFocused = true },
+                                onYou = { dialog = "settings" },
                                 // Tablets keep account and settings at the foot of the sidebar.
-                                if (!tabletLayout) {
-                                    AccountButton(account.optBoolean("connected")) { dialog = "account" }
-                                    MediaIconButton(Glyph.Settings, "Settings", "settings-button") {
-                                        dialog = "settings"
-                                    }
-                                }
-                                Box {
-                                    MediaIconButton(Glyph.More, "More options", "menu-button") {
-                                        menu = true
-                                    }
-                                    MediaMenu(menu, { menu = false }) {
-                                        // Feed actions first, then player panels, then About;
-                                        // every row has its own glyph so none read alike.
-                                        if (tab in 1..3) {
-                                            MediaMenuItem(
-                                                "Browse",
-                                                if (tab == 3) Glyph.Radio else Glyph.Browse,
-                                                Modifier.testTag("feeds-button").semantics {
-                                                    contentDescription = "Browse"
-                                                },
-                                            ) {
-                                                menu = false
-                                                dialog = "feeds"
-                                            }
-                                            MediaMenuItem("Refresh feed", Glyph.Refresh) {
-                                                menu = false
-                                                vm.navigate(
-                                                    request = vm.feeds[tab].value.request,
-                                                    remember = false,
-                                                )
-                                            }
-                                            MenuRule()
-                                        }
-                                        for ((label, name, icon) in
-                                            listOf(
-                                                Triple("Playback queue", "queue", Glyph.UpNext),
-                                                Triple("Recently played", "history", Glyph.History),
-                                                Triple("Lyrics", "lyrics", Glyph.Lyrics),
-                                                Triple("Sleep timer", "sleep", Glyph.Sleep),
-                                                Triple("About", "about", Glyph.Info),
-                                            )) {
-                                            if (name == "about") MenuRule()
-                                            MediaMenuItem(label, icon) {
-                                                menu = false
-                                                dialog = name
-                                                if (name == "queue") vm.loadQueue()
-                                                if (name == "history") vm.loadHistory()
-                                                if (name == "lyrics")
-                                                    vm.player.value.media?.let(vm::lyricLoad)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                                showYou = !tabletLayout,
+                            )
                         }
                         }
                         if (!tabletLayout) Toolbar()
@@ -569,6 +508,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         ::selectTab,
                                         connected = account.optBoolean("connected"),
                                         compact = compactSidebar,
+                                        showMovies = showMovies,
                                     ) { name ->
                                         dialog = name
                                         if (name == "queue") vm.loadQueue()
@@ -579,11 +519,26 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 Box(
                                     Modifier.weight(1f)
                                         .fillMaxWidth()
-                                        .tabSwipe(tab, enabled = mobile.gesture("gesture_swipe_tabs") && !searchMode) {
+                                        .tabSwipe(tab, enabled = mobile.gesture("gesture_swipe_tabs") && !searchMode, showMovies = showMovies) {
                                             vm.chooseTab(it)
                                         }
                                 ) {
-                                    if (tab == 0) OfflineLibrary(vm)
+                                    if (tab == 0)
+                                        LibraryPage(vm, onAccount = { dialog = "account" }) { chips ->
+                                            BrowsePane(
+                                                vm,
+                                                0,
+                                                onAccount = { dialog = "account" },
+                                                onFeeds = {},
+                                                searchActive = false,
+                                                onSearchFocus = {},
+                                                releaseSearchFocus = ::releaseSearchFocus,
+                                                browseFocus = browseFocus,
+                                                scrollToTop = scrollToTop,
+                                                library = true,
+                                                chips = chips,
+                                            )
+                                        }
                                     else if (tab == 4) MoviesPage(vm)
                                     else
                                         key(tab) {
@@ -623,10 +578,22 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     Modifier.align(Alignment.BottomCenter)
                                         .fillMaxWidth()
                                         .onSizeChanged { dockHeight = it.height }
+                                        // The page fades out behind the player and navigation, so
+                                        // nothing shows through between and beside them.
+                                        .drawBehind {
+                                            val page = colors.background
+                                            drawRect(
+                                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                                    0f to page.copy(alpha = 0f),
+                                                    0.28f to page.copy(alpha = 0.94f),
+                                                    1f to page,
+                                                )
+                                            )
+                                        }
                                         .testTag("bottom-dock")
                                 ) {
                                     PlayerDock(vm)
-                                    AppNavigation(tab, ::selectTab)
+                                    AppNavigation(tab, ::selectTab, showMovies = showMovies)
                                 }
                         }
                     }
@@ -711,6 +678,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 },
                                 onSleep = { dialog = "sleep" },
                                 onDone = { dialog = "" },
+                                onOutput = { dialog = "output" },
                             )
                         }
                     "settings" ->
@@ -718,6 +686,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             vm,
                             dark,
                             onAccount = { dialog = "account" },
+                            onOpen = { name ->
+                                dialog = name
+                                if (name == "queue") vm.loadQueue()
+                                if (name == "history") vm.loadHistory()
+                            },
                             onSetup = {
                                 // Replay keeps the saved completion, so a process death
                                 // mid-replay does not turn it into a first run again.
@@ -743,10 +716,14 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                     "about" ->
                         Panel("About Vidcue", { dialog = "" }) {
                             Text(
-                                "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\nRust engine · native Android UI\nSource ${BuildConfig.SOURCE_REVISION}"
+                                "Vidcue plays videos, music and radio, and keeps downloads for when " +
+                                    "you are offline. This is a preview build.",
+                                style = MaterialTheme.typography.bodyLarge,
                             )
                             Text(
-                                "All provider, extraction, account and library operations use the shared Rust engine. Android supplies touch, keyboard, video and background media. Development preview. Device playback, network and update checks are tracked in the validation report."
+                                "Version ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · build ${BuildConfig.SOURCE_REVISION.take(7)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             AppUpdateSettings()
                             ValueRow("Radio artwork credits", glyph = Glyph.Link) {
@@ -756,7 +733,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         "https://github.com/Vanir20342222/vidcue/blob/main/docs/android/RADIO_ARTWORK.md",
                                 )
                             }
-                            ValueRow("Mobile documentation", glyph = Glyph.Link) {
+                            ValueRow("Help and documentation", glyph = Glyph.Link) {
                                 vm.effect(
                                     "open",
                                     "url" to
@@ -1050,7 +1027,7 @@ private var pendingTabEntry = 0
  * themselves (filter chips, shelves) keep their own drags.
  */
 @Composable
-private fun Modifier.tabSwipe(tab: Int, enabled: Boolean, choose: (Int) -> Unit): Modifier {
+private fun Modifier.tabSwipe(tab: Int, enabled: Boolean, showMovies: Boolean, choose: (Int) -> Unit): Modifier {
     val motion = LocalMotion.current
     val density = LocalDensity.current
     val width = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
@@ -1063,9 +1040,9 @@ private fun Modifier.tabSwipe(tab: Int, enabled: Boolean, choose: (Int) -> Unit)
             offset = pull,
             threshold = with(density) { 96.dp.toPx() },
             // Dragging left (negative) moves forward.
-            allow = { neighbourTab(current, -it) != null },
+            allow = { neighbourTab(current, -it, showMovies) != null },
             onSwipe = { direction ->
-                val next = neighbourTab(current, -direction) ?: return@swipeAxis
+                val next = neighbourTab(current, -direction, showMovies) ?: return@swipeAxis
                 pull.animateTo(direction * width * 0.35f, motion.exit(160))
                 pendingTabEntry = -direction
                 select(next)
@@ -1091,6 +1068,9 @@ private fun BrowsePane(
     releaseSearchFocus: () -> Unit,
     browseFocus: FocusRequester,
     scrollToTop: Int = 0,
+    /** Library pages: no search, and [chips] replaces the filter row. */
+    library: Boolean = false,
+    chips: (@Composable () -> Unit)? = null,
 ) {
     // Sheets outlive recycled grid items, including relayout while the IME closes.
     var cardMenu by remember { mutableStateOf<Pair<MediaCard, Boolean>?>(null) }
@@ -1105,10 +1085,13 @@ private fun BrowsePane(
     // Collected once per pane, not once per card.
     val thumbnails = config.optBoolean("thumbnails", true)
     val reduced = LocalReducedMotion.current
+    val account by vm.account.collectAsState()
+    val connected = account.optBoolean("connected")
+    val history by vm.recent.collectAsState()
     val wideSearch =
         tab == 1 &&
             LocalConfiguration.current.screenWidthDp >= 840 &&
-            (feed.request as? JSONObject)?.has("Search") == true
+            SearchRequests.isSearch(feed.request)
     val motion = LocalMotion.current
     val density = LocalDensity.current
     // A committed tab swipe (handled around the whole content area) slides the next tab in
@@ -1133,16 +1116,35 @@ private fun BrowsePane(
         remember(feed.cards) { feed.cards.withIndex().associate { it.value.key to it.index } }
     var query by rememberSaveable(tab) { mutableStateOf("") }
     val keyboard = LocalSoftwareKeyboardController.current
-    val searchKey = if (tab == 3) "RadioSearch" else "Search"
-    val searchResults = (feed.request as? JSONObject)?.has(searchKey) == true
-    val searchMode = searchActive || searchResults
-    val showFeedBack = feed.request != "Home" && feed.request != "Cliamp" && !searchResults
-    LaunchedEffect(feed.request) {
-        (feed.request as? JSONObject)
-            ?.optString(searchKey)
-            ?.takeIf { it.isNotBlank() }
-            ?.let { query = it }
+    val searchResults = !library && SearchRequests.isSearch(feed.request)
+    val searchMode = !library && (searchActive || searchResults)
+    LaunchedEffect(feed.request) { SearchRequests.query(feed.request)?.let { query = it } }
+    // Pages opened from another page (playlists, albums, channels) get a header; lists of results
+    // and library feeds read as rows.
+    val collectionPage = SubPages.collectionId(feed.request) != null
+    val compactList = tab == 0 || (tab != 3 && (searchResults || (collectionPage && tab == 1)))
+    val numberedTracks =
+        collectionPage && vm.collectionCard(SubPages.collectionId(feed.request)!!)?.kind == "album"
+    // Side inset of full-width rows: Music and Radio grids already pad their content.
+    val sideInset = if (tab in 2..3) 0.dp else MediaTokens.textInset
+    val homeTopic = if (tab == 1) SearchRequests.topicName(feed.request) else null
+    val atHome = (feed.request == "Home" || homeTopic != null) && !searchResults
+    // Signed out, YouTube's Home is empty: show what is popular this week instead of an empty page.
+    LaunchedEffect(tab, connected, feed.request, feed.loading, feed.cards.isEmpty(), feed.generation) {
+        if (tab == 1 && !connected && feed.request == "Home" && !feed.loading && feed.generation > 0L &&
+            feed.cards.isEmpty() && feed.error == null)
+            vm.navigate(1, SearchRequests.topic(SearchRequests.topics.first()), remember = false)
     }
+    val resumeVideo =
+        if (tab == 1 && atHome) history.firstOrNull { it.kind == "video" && !it.live && it.url.isNotBlank() }
+        else null
+    val recentSongs =
+        if (tab == 2 && atHome) history.filter { it.audio && it.url.isNotBlank() }.distinctBy { it.key }.take(6)
+        else emptyList()
+    val leadItems =
+        (if (resumeVideo != null) 1 else 0) +
+            (if (recentSongs.size >= 2) 1 else 0) +
+            (if (collectionPage) 1 else 0)
     val focus = remember { FocusRequester() }
     // Dismissing the keyboard from an empty, unsubmitted search leaves search mode. Otherwise
     // the page title, Settings and More stay hidden behind an empty field (most visibly at
@@ -1251,7 +1253,7 @@ private fun BrowsePane(
         feed.notice != null && !feed.loading && feed.cards.isEmpty() && feed.error == null
     val pageItemCount =
         (shelves?.let { it.size * 2 } ?: feed.cards.size) +
-            (if (showFeedBack) 1 else 0) + (if (feed.notice != null && !noticeInEmptyState) 1 else 0)
+            leadItems + (if (feed.notice != null && !noticeInEmptyState) 1 else 0)
     // A page that arrived empty but says more exists (a shell whose shelves load separately)
     // fetches its next part once, instead of waiting for a scroll that cannot happen.
     var emptyFollowed by remember(tab, feed.request) { mutableStateOf(false) }
@@ -1320,7 +1322,7 @@ private fun BrowsePane(
                         }
                 },
         ) {
-            val fixedColumns = tab == 2 && LocalConfiguration.current.screenWidthDp < 600
+            val fixedColumns = tab in 2..3 && LocalConfiguration.current.screenWidthDp < 600
             val minCell = if (tab in 2..3) 164.dp else 280.dp
             val sidePadding = if (tab in 2..3) 16.dp else 0.dp
             val cellGap = if (tab in 2..3) 12.dp else 8.dp
@@ -1370,18 +1372,30 @@ private fun BrowsePane(
                         bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
-                verticalArrangement = Arrangement.spacedBy(if (tab in 2..3) 20.dp else 28.dp),
+                // Lists of rows sit close together, as in music apps; cards and shelves breathe.
+                verticalArrangement =
+                    Arrangement.spacedBy(
+                        when {
+                            compactList || collectionPage -> 4.dp
+                            tab in 2..3 -> 20.dp
+                            else -> 28.dp
+                        }
+                    ),
             ) {
-                if (showFeedBack)
-                    item(span = { GridItemSpan(maxLineSpan) }) {
-                        Box(Modifier.padding(horizontal = 4.dp), contentAlignment = Alignment.CenterStart) {
-                            Pill(
-                                "Back to previous feed",
-                                style = PillStyle.Quiet,
-                                glyph = Glyph.Back,
-                            ) {
-                                vm.back()
-                            }
+                if (collectionPage)
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "collection-header", contentType = "collection-header") {
+                        CollectionHeader(vm, feed, tab, thumbnails, inset = sideInset, modifier = Modifier.padding(bottom = 12.dp))
+                    }
+                if (resumeVideo != null)
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
+                        CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                            ContinueHero(resumeVideo, thumbnails) { vm.play(resumeVideo, resume = true) }
+                        }
+                    }
+                if (recentSongs.size >= 2)
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "recent", contentType = "recent") {
+                        CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                            RecentTiles("Jump back in", recentSongs, thumbnails, inset = sideInset) { vm.play(it) }
                         }
                     }
                 if (feed.notice != null && !noticeInEmptyState)
@@ -1399,12 +1413,12 @@ private fun BrowsePane(
                             feed.errorCode in listOf("auth_required", "consent_required")
                         EmptyMediaState(
                             if (needsAccount) Glyph.Account else Glyph.Info,
-                            if (needsAccount) "Account needed" else "This feed is unavailable",
+                            if (needsAccount) "Sign in to see this" else "This page didn't load",
                             // The engine's account messages point at menus by name; on this
                             // screen the button below is the way there.
                             if (needsAccount)
                                 "Sign in to YouTube, or import a session from another browser, " +
-                                    "to open this feed."
+                                    "to open this page."
                             else feed.error!!,
                         ) {
                             FlowRow(
@@ -1428,53 +1442,50 @@ private fun BrowsePane(
                     }
                 if (shelves != null)
                     for ((section, cards) in shelves) {
+                        val heading = section.ifBlank { "More for you" }
+                        // Albums and playlists open as their own pages, so a shelf of only
+                        // collections or live entries has nothing to play in order.
+                        val canPlayAll = cards.any { !it.collection && !it.live && it.url.isNotBlank() }
                         item(
                             span = { GridItemSpan(maxLineSpan) },
                             key = "shelf-head:$section",
                             contentType = "shelf-head",
                         ) {
-                            val inset = if (tab == 1) MediaTokens.textInset else 0.dp
-                            Row(
-                                Modifier.fillMaxWidth().padding(start = inset, end = inset, top = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ShelfHeading(
+                                heading,
+                                Modifier.testTag("shelf-$section"),
+                                inset = sideInset,
+                                action = if (canPlayAll) "Play all" else null,
+                                actionTag = "shelf-play-all-$section",
                             ) {
-                                Text(
-                                    section.ifBlank { "More for you" },
-                                    Modifier.weight(1f)
-                                        .semantics { heading() }
-                                        .testTag("shelf-$section"),
-                                    style = MaterialTheme.typography.titleLarge,
-                                )
-                                // Albums and playlists open as their own pages, so a shelf of
-                                // only collections or live entries has nothing to play in order.
-                                if (cards.any { !it.collection && !it.live && it.url.isNotBlank() })
-                                    // Icon only, sized to the title; the label stays for TalkBack.
-                                    RoundIconButton(
-                                        Glyph.Play,
-                                        "Play all ${section.ifBlank { "More for you" }}",
-                                        Modifier.border(
-                                                1.dp,
-                                                MaterialTheme.colorScheme.outlineVariant,
-                                                CircleShape,
-                                            )
-                                            .testTag("shelf-play-all-$section"),
-                                        size = 40.dp,
-                                        iconSize = 20.dp,
-                                    ) {
-                                        vm.playAll(cards)
-                                    }
+                                vm.playAll(cards)
                             }
                         }
                         item(
                             span = { GridItemSpan(maxLineSpan) },
                             key = "shelf:$section",
-                            contentType = "shelf",
+                            contentType = if (cards.all { it.isSongRow(tab) }) "song-shelf" else "shelf",
                         ) {
+                            if (cards.all { it.isSongRow(tab) })
+                                CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                                    QuickPicksShelf(
+                                        cards,
+                                        thumbnails,
+                                        mobile.optBoolean("show_channel", true),
+                                        playingUrl,
+                                        playingNow,
+                                        onPlay = { vm.play(it) },
+                                        onMenu = { openCardMenu(it, true) },
+                                        // In a padded grid (Music, Radio) shelves still scroll to
+                                        // the screen edges; their first item keeps its place.
+                                        inset = if (tab in 2..3) 20.dp else sideInset,
+                                        modifier = if (tab in 2..3) Modifier.bleedHorizontally(16.dp) else Modifier,
+                                    )
+                                }
+                            else
                             LazyRow(
-                                Modifier.fillMaxWidth(),
-                                contentPadding =
-                                    PaddingValues(horizontal = if (tab == 1) MediaTokens.textInset else 0.dp),
+                                if (tab in 2..3) Modifier.fillMaxWidth().bleedHorizontally(16.dp) else Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = if (tab in 2..3) 16.dp else sideInset),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
@@ -1506,8 +1517,19 @@ private fun BrowsePane(
                 else items(
                     feed.cards,
                     key = { it.key },
-                    span = { GridItemSpan(if (wideSearch) maxLineSpan else 1) },
-                    contentType = { "media-card" },
+                    span = {
+                        GridItemSpan(
+                            if (wideSearch || compactList || it.isSongRow(tab)) maxLineSpan else 1
+                        )
+                    },
+                    contentType = {
+                        when {
+                            wideSearch -> "wide-row"
+                            it.isSongRow(tab) -> "song-row"
+                            compactList -> "compact-row"
+                            else -> "media-card"
+                        }
+                    },
                 ) { media ->
                     // Scroll state is read in image effects, without recomposing every card.
                     run {
@@ -1527,6 +1549,34 @@ private fun BrowsePane(
                         ) {
                             val current = media.url.isNotBlank() && media.url == playingUrl
                             if (wideSearch) WideMediaRow(vm, media, thumbnails, mobile, openCardMenu)
+                            else if (media.isSongRow(tab))
+                                CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                                    SongRow(
+                                        media,
+                                        thumbnails,
+                                        mobile.optBoolean("show_channel", true),
+                                        current,
+                                        current && playingNow,
+                                        onPlay = { vm.play(media) },
+                                        onMenu = { openCardMenu(media, true) },
+                                        number =
+                                            if (numberedTracks) (cardIndex[media.key] ?: 0) + 1 else null,
+                                    )
+                                }
+                            else if (compactList)
+                                CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                                    CompactMediaRow(
+                                        media,
+                                        thumbnails,
+                                        mobile,
+                                        current,
+                                        current && playingNow,
+                                        onPlay = { vm.play(media) },
+                                        onMenu = { openCardMenu(media, media.audio || media.kind == "album") },
+                                        inset = sideInset,
+                                        music = tab == 2,
+                                    )
+                                }
                             else
                                 MediaRow(
                                     vm, media, tab, thumbnails, mobile, current,
@@ -1552,20 +1602,26 @@ private fun BrowsePane(
                     }
                 if (!feed.loading && feed.cards.isEmpty() && feed.error == null)
                     item(span = { GridItemSpan(maxLineSpan) }) {
+                        // Signed out, Home has no recommendations: offer topics and sign-in
+                        // instead of an empty page.
+                        if (tab in 1..2 && atHome && !connected)
+                            QuickStart(onTopic = { vm.navigate(1, SearchRequests.topic(it), remember = false) }, onSignIn = onAccount)
+                        else
                         EmptyMediaState(
                             if (tab == 2) Glyph.Music
-                            else if (tab == 3) Glyph.Radio else Glyph.Search,
-                            if (tab == 2) "No music loaded"
-                            else if (tab == 3) "No stations loaded" else "No videos loaded",
-                            feed.notice
-                                ?: if (tab == 3)
-                                    "Search a station, explore a genre or browse cliamp channels."
-                                else
-                                    "Search above or connect your YouTube account for a feed made for you.",
+                            else if (tab == 3) Glyph.Radio
+                            else if (tab == 0) Glyph.Library else Glyph.Search,
+                            if (searchResults) "No results" else "Nothing here yet",
+                            if (searchResults) "Try different words, or another filter."
+                            else feed.notice
+                                ?: when (tab) {
+                                    3 -> "Search for a station, or browse by country or genre."
+                                    0 -> "What you save, like or add to a playlist appears here."
+                                    else -> "Search for something to watch, or sign in for a Home made for you."
+                                },
                         ) {
-                            Action(if (tab == 3) "Browse stations" else "Explore feeds") {
-                                onFeeds()
-                            }
+                            if (tab == 3) Action("Browse stations") { onFeeds() }
+                            else if (tab != 0 && !searchResults) Action("Search") { onSearchFocus(true) }
                         }
                     }
             }
@@ -1597,67 +1653,153 @@ private fun BrowsePane(
                 modifier = Modifier.fillMaxSize().padding(top = headerSpace),
             )
         }
+        // While typing, suggestions cover the page: the text as typed, then earlier searches
+        // and titles you played or can see that contain it.
+        val submitted = SearchRequests.query(feed.request)
+        androidx.compose.animation.AnimatedVisibility(
+            searchActive && query.isNotBlank() && query.trim() != submitted,
+            Modifier.matchParentSize(),
+            enter = fadeIn(motion.fade(120)),
+            exit = fadeOut(motion.fade(100)),
+        ) {
+            val recentSearches = remember(searchActive) { RecentSearches.load(context, tab == 3) }
+            val names =
+                remember(feed.cards, history) {
+                    history.flatMap { listOf(it.title, it.creator) } +
+                        feed.cards.flatMap { listOf(it.title, it.creator) }
+                }
+            TypingSuggestions(
+                query,
+                recentSearches,
+                names,
+                onPick = { text ->
+                    query = text
+                    keyboard?.hide()
+                    if (rememberSearches) RecentSearches.add(context, tab == 3, text)
+                    vm.search(text)
+                },
+                onFill = { query = it },
+                modifier = Modifier.fillMaxSize().padding(top = headerSpace),
+            )
         }
+        }
+        // Chips belong to top-level pages; a playlist or channel page has its own header.
+        val subpage = SubPages.isSubpage(feed.request)
+        val filters = if (searchResults) SearchRequests.filters(tab) else emptyList()
+        // A lone "For you" chip on For you itself chooses nothing (signed out, no categories).
+        val loneSource = tab == 2 && feed.request == "Home" && feed.categories.isEmpty()
+        val showChips =
+            !searchMode && !subpage && !loneSource && (chips != null || tab in 1..3 || feed.categories.isNotEmpty())
         Column(
             Modifier.fillMaxWidth()
                 .onSizeChanged { headerHeight = it.height }
                 .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
                 .background(MaterialTheme.colorScheme.background)
-                .padding(bottom = 12.dp)
+                .padding(bottom = if (searchMode || showChips) 12.dp else 0.dp)
                 .testTag("browse-header"),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-        Row(
-            Modifier.align(Alignment.CenterHorizontally)
-                .padding(horizontal = MediaTokens.textInset)
-                .widthIn(max = 720.dp)
-                .fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (searchMode)
+        // Search is opened from the page header's search button; the field shows only then.
+        if (searchMode) {
+            var fieldHadFocus by remember { mutableStateOf(false) }
+            Row(
+                Modifier.align(Alignment.CenterHorizontally)
+                    .padding(horizontal = 8.dp)
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth()
+                    .padding(top = 8.dp)
+                    .testTag("search-row"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 MediaIconButton(Glyph.Back, "Leave search") {
                     releaseSearchFocus()
                     if (searchResults) vm.back()
                 }
-            SearchField(
-                query,
-                { query = it },
-                if (tab == 3) "Search stations or genres" else "Search or paste a link",
-                // A single-line input should not stretch across a wide canvas;
-                // cap it and center it when the pane is wider than the cap.
-                Modifier.weight(1f)
-                    .focusRequester(focus)
-                    .onFocusChanged { onSearchFocus(it.isFocused) }
-                    .testTag("search-field"),
-                searching = searchMode,
-                onClear = {
-                    query = ""
-                    focus.requestFocus()
+                SearchField(
+                    query,
+                    { query = it },
+                    if (tab == 3) "Search stations" else "Search",
+                    // A single-line input should not stretch across a wide canvas;
+                    // cap it and center it when the pane is wider than the cap.
+                    Modifier.weight(1f)
+                        .padding(end = 8.dp)
+                        .focusRequester(focus)
+                        .onFocusChanged {
+                            // The first report is "not focused" before focus is requested;
+                            // only a real loss of focus ends the search session.
+                            if (it.isFocused) {
+                                fieldHadFocus = true
+                                onSearchFocus(true)
+                            } else if (fieldHadFocus) {
+                                fieldHadFocus = false
+                                onSearchFocus(false)
+                            }
+                        }
+                        .testTag("search-field"),
+                    searching = true,
+                    onClear = {
+                        query = ""
+                        focus.requestFocus()
+                        keyboard?.show()
+                    },
+                    onSubmit = {
+                        if (rememberSearches) RecentSearches.add(context, tab == 3, query)
+                        vm.search(query)
+                        // Results take over: no blinking cursor or keyboard over them.
+                        releaseSearchFocus()
+                    },
+                )
+            }
+            // Opened from the search button: take focus and bring up the keyboard.
+            LaunchedEffect(Unit) {
+                if (searchActive && !searchResults) {
+                    runCatching { focus.requestFocus() }
                     keyboard?.show()
-                },
-                onSubmit = {
-                    keyboard?.hide()
-                    if (rememberSearches) RecentSearches.add(context, tab == 3, query)
-                    vm.search(query)
-                },
-            )
+                }
+            }
         }
-        if (tab in 1..2 || feed.categories.isNotEmpty())
-            LazyRow(
-                Modifier.fillMaxWidth().testTag("feed-filters"),
+        if (filters.isNotEmpty())
+            FadingLazyRow(
+                Modifier.fillMaxWidth().testTag("search-filters"),
                 contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                if (tab in 1..2)
+                items(filters) { label ->
+                    MediaChip(
+                        label,
+                        selected = SearchRequests.filter(feed.request) == label,
+                        modifier = Modifier.testTag("search-filter-$label"),
+                    ) {
+                        val text = SearchRequests.query(feed.request) ?: query
+                        vm.navigate(request = SearchRequests.request(tab, text, label), remember = false)
+                    }
+                }
+            }
+        else if (showChips && chips != null) chips()
+        else if (showChips)
+            FadingLazyRow(
+                Modifier.fillMaxWidth().padding(top = 4.dp).testTag("feed-filters"),
+                contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Signed out, Home's chips are topics: each shows what is popular this week.
+                if (tab == 1 && !connected)
+                    items(SearchRequests.topics) { topic ->
+                        MediaChip(
+                            topic,
+                            selected = homeTopic == topic,
+                            modifier = Modifier.testTag("topic-$topic"),
+                        ) {
+                            vm.navigate(1, SearchRequests.topic(topic), remember = false)
+                        }
+                    }
+                else if (tab in 1..2)
                     items(
-                        // Library feeds the Browse sheet already offers, surfaced
-                        // where people look for them (Home only for video feeds).
+                        // Your own playlists, likes and saves live in Library; Home keeps the
+                        // two feeds people switch between.
                         listOfNotNull(
                             "For you" to "Home",
-                            "My playlists" to "Playlists",
-                            "Liked" to "Liked",
-                            if (tab == 1) "Subscriptions" to "Subscriptions" else null,
-                            if (tab == 1) "Watch later" to "WatchLater" else null,
+                            if (tab == 1 && connected) "Subscriptions" to "Subscriptions" else null,
                         )
                     ) { (label, request) ->
                         MediaChip(
@@ -1668,19 +1810,27 @@ private fun BrowsePane(
                             vm.navigate(tab, request)
                         }
                     }
-                items(feed.categories) { category ->
+                if (tab == 3) {
+                    items(listOf("Featured" to "Cliamp", "Saved" to "Favorites")) { (label, request) ->
+                        MediaChip(
+                            label,
+                            selected = feed.request == request,
+                            modifier = Modifier.testTag("source-$request"),
+                        ) {
+                            vm.navigate(tab, request, remember = false)
+                        }
+                    }
+                    item {
+                        MediaChip("Countries and genres", modifier = Modifier.testTag("feeds-button")) { onFeeds() }
+                    }
+                }
+                if (homeTopic == null) items(feed.categories) { category ->
                     MediaChip(
                         category.optString("title"),
                         modifier = Modifier.testTag("category-${category.optString("title")}"),
                         selected =
-                            feed.request !in
-                                listOf(
-                                    "Home",
-                                    "Subscriptions",
-                                    "WatchLater",
-                                    "Playlists",
-                                    "Liked",
-                                ) && category.opt("request")?.toString() == feed.request.toString(),
+                            feed.request !in listOf("Home", "Subscriptions") &&
+                                category.opt("request")?.toString() == feed.request.toString(),
                     ) {
                         vm.navigate(request = category.get("request"))
                     }
@@ -1822,6 +1972,7 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MediaRow(
     vm: YtuiViewModel,
@@ -1835,10 +1986,16 @@ private fun MediaRow(
     openMenu: (MediaCard, Boolean) -> Unit,
 ) {
     val square = tab in 2..3 || media.kind in setOf("album", "song", "station")
-    // Feed video art is full bleed; in a shelf it is a rounded object like the music covers.
+    // Feed videos sit inside a small side margin with rounded corners, the same treatment as
+    // the cards in shelves, so a page never mixes square-cut and rounded artwork.
     val bleed = !square && !shelf
-    val artShape = if (bleed) RoundedCornerShape(0.dp) else MediaTokens.medium
-    Column(Modifier.fillMaxWidth().testTag("media-card-${media.key}")) {
+    val artShape = MediaTokens.medium
+    val openMenu = { openMenu(media, square) }
+    Column(
+        Modifier.fillMaxWidth()
+            .padding(horizontal = if (bleed) 12.dp else 0.dp)
+            .testTag("media-card-${media.key}")
+    ) {
         Box(
             Modifier.fillMaxWidth()
                 .aspectRatio(if (square) 1f else 16f / 9f)
@@ -1847,7 +2004,11 @@ private fun MediaRow(
             Artwork(
                 media,
                 Modifier.fillMaxSize()
-                    .clickable { vm.play(media) }
+                    .combinedClickable(
+                        onLongClickLabel = "More options",
+                        onLongClick = openMenu,
+                        onClick = { vm.play(media) },
+                    )
                     .semantics { contentDescription = "Play ${media.title}" },
                 thumbnails,
                 shape = artShape,
@@ -1859,12 +2020,7 @@ private fun MediaRow(
             if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
         }
         Row(
-            Modifier.fillMaxWidth()
-                .padding(
-                    start = if (bleed) 16.dp else 0.dp,
-                    end = if (bleed) 4.dp else 0.dp,
-                    top = 8.dp,
-                ),
+            Modifier.fillMaxWidth().padding(top = 10.dp),
             verticalAlignment = Alignment.Top,
         ) {
             if (bleed) {
@@ -1885,7 +2041,11 @@ private fun MediaRow(
             Column(
                 Modifier.weight(1f)
                     .heightIn(min = 48.dp)
-                    .clickable { vm.play(media) }
+                    .combinedClickable(
+                        onLongClickLabel = "More options",
+                        onLongClick = openMenu,
+                        onClick = { vm.play(media) },
+                    )
                     .padding(top = 3.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -1908,7 +2068,10 @@ private fun MediaRow(
                         // of item they are instead of repeating the title.
                         media.creator.takeUnless { it.trim().equals(media.title.trim(), true) }.orEmpty().ifBlank {
                             if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
-                            else if (tab == 3) "Radio station" else "YouTube"
+                            else if (tab == 3)
+                                media.value.optString("description").takeUnless { it.isBlank() || it == "null" }
+                                    ?: "Live radio"
+                            else "YouTube"
                         },
                         Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
                         maxLines = 1,
@@ -1918,7 +2081,8 @@ private fun MediaRow(
                     )
                 CardInformation(media.value, mobile)
             }
-            MediaCardActions(media) { openMenu(media, square) }
+            // Small shelf cards give the title the room; their menu opens on press and hold.
+            if (!shelf) MediaCardActions(media, openMenu)
         }
     }
 }
@@ -1949,12 +2113,16 @@ private fun MediaCardMenu(
         ) {
             QuickTile(
                 Glyph.Play,
-                if (media.collection) "Open collection" else "Play now",
+                if (media.collection) "Open" else "Play",
                 Modifier.weight(1f),
                 primary = true,
             ) {
                 execute { vm.play(media) }
             }
+            if (!media.collection && !media.live)
+                QuickTile(Glyph.PlayNext, "Play next", Modifier.weight(1f)) {
+                    execute { vm.playNext(media) }
+                }
             QuickTile(Glyph.Queue, "Add to queue", Modifier.weight(1f)) {
                 execute { vm.enqueue(media) }
             }
@@ -1971,14 +2139,15 @@ private fun MediaCardMenu(
                     }
                 }
             }
-            if (!media.collection && !media.live)
-                QuickTile(Glyph.Preview, "Preview", Modifier.weight(1f)) {
-                    execute { vm.play(media, preview = true) }
-                }
         }
         if (media.collection)
             ValueRow("Play all", glyph = Glyph.Queue, chevron = false) {
                 execute { vm.playCollection(media) }
+            }
+        // A muted preview is rarely wanted, so it is a row rather than one of the four tiles.
+        if (!media.collection && !media.live)
+            ValueRow("Preview without sound", glyph = Glyph.Preview, chevron = false) {
+                execute { vm.play(media, preview = true) }
             }
         if (media.channelId.isNotBlank() && media.kind !in setOf("channel", "artist"))
             ValueRow(
@@ -1989,12 +2158,7 @@ private fun MediaCardMenu(
             ) {
                 execute { vm.openChannel(media.channelId) }
             }
-        ValueRow(
-            "Bookmark",
-            glyph = Glyph.Save,
-            subtitle = "Keep a link in Saved locally, without downloading",
-            chevron = false,
-        ) {
+        ValueRow("Save to Library", glyph = Glyph.Save, chevron = false) {
             execute { vm.save(media) }
         }
         if (media.value.optString("tracks_url").let { it.isNotBlank() && it != "null" })
@@ -2152,6 +2316,7 @@ internal fun PlayerPane(
     onSleep: () -> Unit = {},
     onDone: () -> Unit = {},
     onSettings: (() -> Unit)? = null,
+    onOutput: (() -> Unit)? = null,
 ) {
     val player by vm.player.collectAsState()
     val config by vm.config.collectAsState()
@@ -2281,11 +2446,11 @@ internal fun PlayerPane(
                 ) {
                     TransportButton(Glyph.Previous, "Previous track") { vm.command("previous") }
                     val seekSeconds = mobile.optInt("seek_seconds", 10)
-                    SeekJump("−$seekSeconds", "Back $seekSeconds seconds") { vm.command("back") }
+                    SeekJump(seekSeconds, forward = false, "Back $seekSeconds seconds") { vm.command("back") }
                     PlayDisc(player.playing, Modifier.testTag("player-pause"), size = 64.dp) {
                         vm.command("pause")
                     }
-                    SeekJump("+$seekSeconds", "Forward $seekSeconds seconds") { vm.command("forward") }
+                    SeekJump(seekSeconds, forward = true, "Forward $seekSeconds seconds") { vm.command("forward") }
                     TransportButton(Glyph.Next, "Next track") { vm.command("next") }
                 }
                 Row(
@@ -2309,8 +2474,8 @@ internal fun PlayerPane(
                     ) {
                         vm.command("repeat")
                     }
+                    // Stop lives in Playback options only; pausing is enough here.
                     MediaIconButton(Glyph.UpNext, "Playback queue") { onQueue() }
-                    MediaIconButton(Glyph.Stop, "Stop playback") { vm.command("stop") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     SecondaryAction("Open full player", glyph = Glyph.Expand) {
@@ -2452,6 +2617,18 @@ internal fun PlayerPane(
                             page = "audio"
                         }
                     ValueRow("Playback queue", glyph = Glyph.UpNext) { onQueue() }
+                    // Audio output moved here from the player's tray.
+                    if (onOutput != null)
+                        player.output?.let { output ->
+                            ValueRow(
+                                "Audio output",
+                                value = output.name,
+                                glyph = if (output.bluetooth) Glyph.Bluetooth else Glyph.Headphones,
+                                modifier = Modifier.testTag("player-output"),
+                            ) {
+                                onOutput()
+                            }
+                        }
                     val sleepLeft = rememberSleepLeft(player)
                     ValueRow(
                         "Sleep timer",
@@ -2689,8 +2866,11 @@ private fun SettingsPanel(
     dark: Boolean,
     onAccount: () -> Unit,
     onSetup: () -> Unit,
+    /** Opens another sheet by name: "history", "queue", "sleep" or "about". */
+    onOpen: (String) -> Unit = {},
     close: () -> Unit,
 ) {
+    val account by vm.account.collectAsState()
     var category by rememberSaveable { mutableStateOf("") }
     val mobile by vm.mobile.collectAsState()
     val config by vm.config.collectAsState()
@@ -2711,7 +2891,7 @@ private fun SettingsPanel(
     val twoPane = LocalConfiguration.current.screenWidthDp >= 960
     val shown = if (twoPane && category.isBlank()) "Appearance" else category
     Panel(
-        if (twoPane) "Settings" else category.ifBlank { "Settings" },
+        if (twoPane) "You" else category.ifBlank { "You" },
         close,
         page = true,
         scroll = !twoPane,
@@ -2721,28 +2901,49 @@ private fun SettingsPanel(
         BackHandler(category.isNotBlank() && !twoPane) { category = "" }
         @Composable
         fun RootList() {
+            // Who you are first: the account card opens sign-in or the session details.
+            val connected = account.optBoolean("connected")
+            ValueRow(
+                if (connected) "Signed in to YouTube" else "Sign in",
+                Modifier.testTag("settings-Account"),
+                glyph = Glyph.Account,
+                subtitle =
+                    if (connected) "Your subscriptions, playlists and likes are available"
+                    else "Get your subscriptions, playlists and likes",
+            ) {
+                onAccount()
+            }
+            SettingGroup("Your activity") {
+                ValueRow("History", Modifier.testTag("settings-History"), glyph = Glyph.History, subtitle = "What you played recently") {
+                    onOpen("history")
+                }
+                ValueRow("Playback queue", Modifier.testTag("settings-Queue"), glyph = Glyph.UpNext, subtitle = "What plays next") {
+                    onOpen("queue")
+                }
+                ValueRow("Sleep timer", Modifier.testTag("settings-Sleep"), glyph = Glyph.Sleep, subtitle = "Stop playback after a while") {
+                    onOpen("sleep")
+                }
+            }
             for ((group, rows) in
                 listOf(
                     "Look and feel" to
                         listOf(
-                            Triple("Appearance", Glyph.Palette, "Theme, motion, music player, gestures"),
-                            Triple("What cards show", Glyph.Info, "Channel, views, dates and more on each card"),
+                            Triple("Appearance", Glyph.Palette, "Theme, player style, motion"),
+                            Triple("Gestures", Glyph.Drag, "Swipes and taps in lists and the player"),
+                            Triple("Card details", Glyph.Info, "Channel, views, dates and more on each card"),
                         ),
                     "Listening" to
                         listOf(
-                            Triple("Playback", Glyph.Play, "Quality, SponsorBlock, preloading, seeking"),
-                            Triple("Offline & storage", Glyph.Download, "Audio-only saves and folders"),
-                        ),
-                    "Connection" to
-                        listOf(
-                            Triple("Account", Glyph.Account, "Sign in or import a session"),
-                            Triple("Network", Glyph.Link, "Proxy"),
+                            Triple("Playback", Glyph.Play, "Quality, SponsorBlock, equalizer"),
+                            Triple("Offline & storage", Glyph.Download, "Downloads, audio-only, folders"),
                         ),
                     "This device" to
                         listOf(
+                            Triple("Network", Glyph.Link, "Proxy"),
                             Triple("Privacy", Glyph.History, "History and resume"),
-                            Triple("Performance", Glyph.Speed, "Startup timing report"),
+                            Triple("Advanced", Glyph.Settings, "Animation tuning, cache, diagnostics, Movies"),
                             Triple("Setup guide", Glyph.Refresh, "Replay the welcome and setup steps"),
+                            Triple("About", Glyph.Info, "Version, credits and help"),
                         ),
                 )) {
                 SettingGroup(group) {
@@ -2760,8 +2961,8 @@ private fun SettingsPanel(
                                 ),
                         ) {
                             when (label) {
-                                "Account" -> onAccount()
                                 "Setup guide" -> onSetup()
+                                "About" -> onOpen("about")
                                 else -> category = label
                             }
                         }
@@ -2858,7 +3059,7 @@ private fun SettingsPanel(
                 SettingToggle(
                     "Reduce motion",
                     config.optBoolean("reduced_motion"),
-                    "Keep visualizers still and turn off all animations",
+                    "Keep visualisers still and turn off all animations",
                 ) { value ->
                     vm.updateConfig(dark) { it.put("reduced_motion", value) }
                 }
@@ -2878,7 +3079,7 @@ private fun SettingsPanel(
                     "Maximum video quality",
                     config.optJSONObject("download")?.optString("quality", "1080") ?: "1080",
                     listOf("360", "480", "720", "1080", "best"),
-                    subtitle = "Also limits videos you save offline",
+                    subtitle = "Also limits videos you download",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("quality", value) }
                 }
@@ -2901,7 +3102,60 @@ private fun SettingsPanel(
                     vm.updateConfig(dark) { it.put("playback_history", value) }
                 }
             }
-        if (shown == "Performance") {
+        if (shown == "Advanced") {
+            SettingGroup("Animation tuning") {
+                Choice(
+                    "Animation style",
+                    mobile.optString("animation_style", "smooth"),
+                    listOf("smooth", "snappy", "bouncy", "gentle"),
+                    subtitle =
+                        when (mobile.optString("animation_style", "smooth")) {
+                            "snappy" -> "Short, crisp transitions"
+                            "bouncy" -> "Springy, with a little overshoot"
+                            "gentle" -> "Longer, softer transitions"
+                            else -> "Fluid ease-out transitions (default)"
+                        },
+                ) {
+                    vm.updateMobile("animation_style", it)
+                }
+                Choice(
+                    "Animation speed",
+                    animationSpeedLabel(mobile.optInt("animation_speed", 100)),
+                    ANIMATION_SPEEDS.map { it.second },
+                ) { label ->
+                    ANIMATION_SPEEDS.firstOrNull { it.second == label }?.let {
+                        vm.updateMobile("animation_speed", it.first)
+                    }
+                }
+            }
+            SettingGroup("Data and cache") {
+                SettingToggle(
+                    "Preload on mobile data",
+                    mobile.optBoolean("preload_mobile", MobileSettings.BOOLEANS["preload_mobile"] == true),
+                    "Prepare the next items on cellular too; uses more data",
+                ) {
+                    vm.updateMobile("preload_mobile", it)
+                }
+                Choice(
+                    "Streaming cache (MiB)",
+                    mobile.optInt("stream_cache_mb", 128).toString(),
+                    listOf("32", "64", "128", "256", "512"),
+                    subtitle = "Applies after restarting the app. Separate from your downloads",
+                ) {
+                    vm.updateMobile("stream_cache_mb", it.toInt())
+                }
+            }
+            SettingGroup("Experiments") {
+                SettingToggle(
+                    "Movies (alpha)",
+                    mobile.optBoolean("show_movies", false),
+                    "Adds a Movies tab with openly licensed films and test streams",
+                ) {
+                    vm.updateMobile("show_movies", it)
+                }
+            }
+        }
+        if (shown == "Advanced") {
             val player by vm.player.collectAsState()
             val report = remember(player) { StartupTimings.report() }
             val context = androidx.compose.ui.platform.LocalContext.current
@@ -2959,29 +3213,6 @@ private fun SettingsPanel(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                Choice(
-                    "Animation style",
-                    mobile.optString("animation_style", "smooth"),
-                    listOf("smooth", "snappy", "bouncy", "gentle"),
-                    subtitle =
-                        when (mobile.optString("animation_style", "smooth")) {
-                            "snappy" -> "Short, crisp transitions"
-                            "bouncy" -> "Springy, with a little overshoot"
-                            "gentle" -> "Longer, softer transitions"
-                            else -> "Fluid ease-out transitions (default)"
-                        },
-                ) {
-                    vm.updateMobile("animation_style", it)
-                }
-                Choice(
-                    "Animation speed",
-                    animationSpeedLabel(mobile.optInt("animation_speed", 100)),
-                    ANIMATION_SPEEDS.map { it.second },
-                ) { label ->
-                    ANIMATION_SPEEDS.firstOrNull { it.second == label }?.let {
-                        vm.updateMobile("animation_speed", it.first)
-                    }
-                }
                 SettingToggle(
                     "Animated cards",
                     mobile.optBoolean("animate_cards", true),
@@ -2997,10 +3228,10 @@ private fun SettingsPanel(
                     vm.updateMobile("haptics", it)
                 }
             }
-        if (shown == "Appearance")
-            SettingGroup("Gestures") {
-                val gesturesOn = mobile.optBoolean("gestures", true)
-                SettingToggle("Swipe gestures", gesturesOn, "Master switch for every gesture below") {
+        if (shown == "Gestures") {
+            val gesturesOn = mobile.optBoolean("gestures", true)
+            SettingGroup("Gestures", showTitle = false) {
+                SettingToggle("Swipe gestures", gesturesOn, "Turns every gesture below on or off") {
                     vm.updateMobile("gestures", it)
                 }
                 val context = androidx.compose.ui.platform.LocalContext.current
@@ -3012,32 +3243,34 @@ private fun SettingsPanel(
                     GestureTips.reset(context)
                     vm.confirm("tips")
                 }
-                if (gesturesOn) {
-                    for ((key, title, detail) in GESTURE_SETTINGS)
-                        SettingToggle(title, mobile.optBoolean(key, true), detail) {
-                            vm.updateMobile(key, it)
-                        }
-                    if (mobile.optBoolean("gesture_hold_speed", true))
-                        Choice(
-                            "Hold-to-speed rate",
-                            "${mobile.optInt("hold_speed", 200) / 100f}×".replace(".0×", "×"),
-                            listOf("1.25×", "1.5×", "2×", "3×"),
-                        ) {
-                            val percent =
-                                (it.removeSuffix("×").toFloat() * 100).roundToInt()
-                            vm.updateMobile("hold_speed", percent)
-                        }
-                }
             }
+            if (gesturesOn)
+                for ((group, keys) in GESTURE_GROUPS)
+                    SettingGroup(group) {
+                        for ((key, title, detail) in GESTURE_SETTINGS.filter { it.first in keys })
+                            SettingToggle(title, mobile.optBoolean(key, MobileSettings.BOOLEANS[key] == true), detail) {
+                                vm.updateMobile(key, it)
+                            }
+                        if ("gesture_hold_speed" in keys && mobile.optBoolean("gesture_hold_speed", true))
+                            Choice(
+                                "Hold-to-speed rate",
+                                "${mobile.optInt("hold_speed", 200) / 100f}×".replace(".0×", "×"),
+                                listOf("1.25×", "1.5×", "2×", "3×"),
+                            ) {
+                                val percent =
+                                    (it.removeSuffix("×").toFloat() * 100).roundToInt()
+                                vm.updateMobile("hold_speed", percent)
+                            }
+                    }
+        }
         if (shown == "Playback")
             SettingGroup("Fast playback") {
                 for ((key, label) in
                     listOf(
                         "preload_next" to "Preload visible and next items",
-                        "preload_mobile" to "Preload on mobile data",
                         "autoplay_related" to "Related media autoplay",
                         "resume_on_play" to "Resume videos where you left off",
-                        "prefer_offline" to "Prefer saved offline media",
+                        "prefer_offline" to "Play downloads when available",
                         "background_playback" to "Background playback",
                     )) {
                     SettingToggle(
@@ -3068,21 +3301,13 @@ private fun SettingsPanel(
                 ) {
                     vm.updateMobile("seek_seconds", it.toInt())
                 }
-                Choice(
-                    "Streaming cache (MiB)",
-                    mobile.optInt("stream_cache_mb", 128).toString(),
-                    listOf("32", "64", "128", "256", "512"),
-                    subtitle = "Applies after restarting the app. Separate from your offline library",
-                ) {
-                    vm.updateMobile("stream_cache_mb", it.toInt())
-                }
             }
         if (shown == "Offline & storage")
-            SettingGroup("Offline media", showTitle = false) {
+            SettingGroup("Downloads", showTitle = false) {
                 SettingToggle(
-                    "Audio-only saves",
+                    "Audio-only downloads",
                     config.optJSONObject("download")?.optBoolean("audio") == true,
-                    "Save YouTube Music without video. YouTube videos always keep video, " +
+                    "Download YouTube Music without video. YouTube videos always keep video, " +
                         "up to the maximum quality set in Playback.",
                 ) { value ->
                     vm.updateConfig(dark) { it.getJSONObject("download").put("audio", value) }
@@ -3103,7 +3328,7 @@ private fun SettingsPanel(
                 }
                 SectionHeader("Folders")
                 SettingToggle(
-                    "Save completed media to selected folders",
+                    "Copy finished downloads to folders",
                     mobile.optBoolean("auto_save_folders", true),
                     "Real files in your Music or Video folder; playlist downloads keep their own subfolder.",
                 ) {
@@ -3128,11 +3353,11 @@ private fun SettingsPanel(
                         vm.effect("folder_pick", "audio" to audio)
                     }
                 }
-                ValueRow("Retry folder saves", chevron = false) {
+                ValueRow("Retry folder copies", chevron = false) {
                     vm.effect("folder_retry")
                 }
             }
-        if (shown == "What cards show")
+        if (shown == "Card details")
             SettingGroup(
                 "Visible information",
                 subtitle = "Choose details for Home, search and feed cards. The player always shows available video information.",
@@ -3185,6 +3410,15 @@ private val ANIMATION_SPEEDS =
 private fun animationSpeedLabel(percent: Int) =
     ANIMATION_SPEEDS.minByOrNull { abs(it.first - percent) }?.second ?: "Normal"
 
+/** Gesture pages: where each gesture acts. */
+private val GESTURE_GROUPS =
+    listOf(
+        "Pages" to setOf("gesture_swipe_tabs"),
+        "Players" to setOf("gesture_swipe_dismiss", "gesture_mini_player", "gesture_swipe_tracks"),
+        "Video" to
+            setOf("gesture_double_tap_seek", "gesture_hold_speed", "gesture_video_adjust", "gesture_pinch_zoom"),
+    )
+
 private val GESTURE_SETTINGS =
     listOf(
         Triple(
@@ -3210,7 +3444,7 @@ private val GESTURE_SETTINGS =
         Triple(
             "gesture_double_tap_seek",
             "Double-tap to seek",
-            "Video: left or right to seek, centre to pause · Music artwork: pause",
+            "Left or right to seek, centre to pause",
         ),
         Triple(
             "gesture_hold_speed",
@@ -3347,49 +3581,59 @@ private fun AccountPanel(vm: YtuiViewModel, close: () -> Unit) {
             ) {
                 vm.effect("login")
             }
-            Text(
-                "Google may reject embedded sign-in. You can also import your session below.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
-        SettingGroup("Import a session") {
-            Text(
-                "Android cannot read another browser's private data. Import only a session you own.",
-                Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            ValueRow(
-                "Choose cookie file",
-                glyph = Glyph.Folder,
-                subtitle = "Netscape cookie format",
-                modifier = Modifier.testTag("account-import"),
-            ) {
-                vm.effect("pick", "kind" to "cookies")
-            }
-            Column(
-                Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                MediaTextField(
-                    header,
-                    { header = it },
-                    "Cookie header (optional)",
-                    Modifier.testTag("cookie-header-field"),
-                    singleLine = false,
-                    minLines = 2,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+        // Importing a session is for people whose sign-in did not work; it stays folded away.
+        var otherWays by rememberSaveable { mutableStateOf(false) }
+        ValueRow(
+            "Other ways to sign in",
+            Modifier.testTag("account-other-ways"),
+            glyph = Glyph.Folder,
+            subtitle = "Import a session from a browser you use",
+            chevron = false,
+            value = if (otherWays) "Hide" else "Show",
+        ) {
+            otherWays = !otherWays
+        }
+        if (otherWays)
+            SettingGroup("Import a session") {
+                Text(
+                    "If Google rejects the sign-in window, import your session instead. Android " +
+                        "cannot read another browser's private data, so export it there first. " +
+                        "Import only a session you own.",
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    SecondaryAction("Import header", enabled = header.isNotBlank()) {
-                        vm.changeAccount("import_cookies", "header" to header)
-                        header = ""
+                ValueRow(
+                    "Choose cookie file",
+                    glyph = Glyph.Folder,
+                    subtitle = "Netscape cookie format",
+                    modifier = Modifier.testTag("account-import"),
+                ) {
+                    vm.effect("pick", "kind" to "cookies")
+                }
+                Column(
+                    Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    MediaTextField(
+                        header,
+                        { header = it },
+                        "Cookie header (optional)",
+                        Modifier.testTag("cookie-header-field"),
+                        singleLine = false,
+                        minLines = 2,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        SecondaryAction("Import header", enabled = header.isNotBlank()) {
+                            vm.changeAccount("import_cookies", "header" to header)
+                            header = ""
+                        }
                     }
                 }
             }
-        }
         SettingGroup("Session & privacy") {
             Row(
                 Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
@@ -3422,9 +3666,9 @@ private fun FeedPanel(vm: YtuiViewModel, close: () -> Unit) {
     val tab by vm.tab.collectAsState()
     var country by remember { mutableStateOf("") }
     var tag by remember { mutableStateOf("") }
-    Panel("Feeds and library", close) {
+    Panel(if (tab == 3) "Browse stations" else "Feeds and library", close) {
         val choices =
-            if (tab == 3) listOf("Cliamp channels" to "Cliamp", "Saved stations" to "Favorites")
+            if (tab == 3) listOf("Featured stations" to "Cliamp", "Saved stations" to "Favorites")
             else
                 listOf(
                     "For you" to "Home",
@@ -3433,7 +3677,7 @@ private fun FeedPanel(vm: YtuiViewModel, close: () -> Unit) {
                     "Watch later" to "WatchLater",
                     "My playlists" to "Playlists",
                     "Library" to "Library",
-                    "Saved locally" to "Favorites",
+                    "Saved" to "Favorites",
                 )
         for ((title, request) in choices) {
             SheetAction(
@@ -3459,7 +3703,7 @@ private fun FeedPanel(vm: YtuiViewModel, close: () -> Unit) {
             )
         }
         if (tab == 3) {
-            SectionHeader("Browse by country or genre")
+            SectionHeader("By country or genre")
             for ((value, label, button, key) in
                 listOf(
                     listOf(
@@ -3468,7 +3712,7 @@ private fun FeedPanel(vm: YtuiViewModel, close: () -> Unit) {
                         "Browse country",
                         "RadioCountry",
                     ),
-                    listOf(tag, "Radio genre / tag", "Browse genre", "RadioTag"),
+                    listOf(tag, "Genre, for example jazz", "Browse genre", "RadioTag"),
                 )) {
                 Row(
                     Modifier.fillMaxWidth(),
@@ -3648,7 +3892,7 @@ private fun HistoryPanel(vm: YtuiViewModel, close: () -> Unit) {
     val history by vm.recent.collectAsState()
     val config by vm.config.collectAsState()
     val mobile by vm.mobile.collectAsState()
-    Panel("Recently played", close, scroll = false) {
+    Panel("History", close, scroll = false) {
         val context = androidx.compose.ui.platform.LocalContext.current
         QuietAction("Clear history and resume positions", destructive = true) {
             vm.command("history_clear")

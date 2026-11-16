@@ -306,8 +306,11 @@ class CatalogUiTest {
                 .onNodeWithTag("artwork-${cards[0].key}", useUnmergedTree = true)
                 .fetchSemanticsNode()
                 .boundsInRoot
-        Assert.assertEquals("Video art must be full bleed", pane.left, cover.left, 2f)
-        Assert.assertEquals("Video art must fill the pane", pane.width, cover.width, 2f)
+        // Feed video art sits inside a 12dp side margin with rounded corners, like shelf cards.
+        val margin =
+            12f * InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        Assert.assertEquals("Video art keeps the side margin", pane.left + margin, cover.left, 2f)
+        Assert.assertEquals("Video art spans the pane inside its margins", pane.width - 2 * margin, cover.width, 2f)
         Assert.assertEquals("Video art remains 16:9", 16f / 9f, cover.width / cover.height, 0.01f)
         val source = compose.onNodeWithTag("source-Home").fetchSemanticsNode().boundsInRoot
         // Categories and source filters share one lazy row, not two independently styled strips.
@@ -318,7 +321,7 @@ class CatalogUiTest {
         captureSettled("native-catalog.png")
         compose.onNodeWithTag("media-menu-${cards[0].key}").performClick()
         for (label in
-            listOf("Play now", "Preview", "Add to queue", "Bookmark", "Download")) compose
+            listOf("Play", "Play next", "Add to queue", "Download", "Preview without sound", "Save to Library")) compose
             .onNodeWithText(label)
             .assertIsDisplayed()
         captureSettled("native-card-menu.png")
@@ -821,12 +824,13 @@ class CatalogUiTest {
             val cards = populate(1)
             captureSettled("restyle-large-text-feed.png")
             assertNavigationTabsNamed()
+            compose.onNodeWithTag("search-button").performClick()
             compose
                 .onNodeWithTag("search-field")
                 .assertIsDisplayed()
                 .performTextInput("large input")
             compose.onNodeWithContentDescription("Clear search").performClick()
-            compose.onNodeWithTag("search-field").assertTextContains("Search or paste a link")
+            compose.onNodeWithTag("search-field").assertTextContains("Search")
             device.pressBack()
             // The card menu is not re-opened at this text size: its ⋮ button was not reliably
             // reachable on the software emulator, and the phone card-menu tests cover the sheet.
@@ -982,8 +986,8 @@ class CatalogUiTest {
                     // Synthetic records in the explicitly disposable test app only.
                     PlaybackService.rpc(json("op" to "history_record", "media" to card.value))
                 }
-                compose.onNodeWithTag("menu-button").performClick()
-                compose.onNodeWithText("Playback queue").performClick()
+                compose.onNodeWithTag("settings-button").performClick()
+                compose.onNodeWithTag("settings-Queue").performScrollTo().performClick()
                 compose.waitUntil(10_000) {
                     compose
                         .onAllNodesWithTag("queue-item-${cards[2].key}")
@@ -1020,8 +1024,8 @@ class CatalogUiTest {
                 compose.waitUntil(10_000) { queueNow().size == 2 }
                 captureSettled("restyle-fidelity-$profile-queue-edited.png")
                 compose.onNodeWithContentDescription("Close").performClick()
-                compose.onNodeWithTag("menu-button").performClick()
-                compose.onNodeWithText("Recently played").performClick()
+                compose.onNodeWithTag("settings-button").performClick()
+                compose.onNodeWithTag("settings-History").performScrollTo().performClick()
                 compose.onNodeWithTag("history-list").assertIsDisplayed()
                 compose.onNodeWithText("Clear history and resume positions").assertIsDisplayed()
                 compose.waitUntil(10_000) {
@@ -1036,21 +1040,23 @@ class CatalogUiTest {
                 }
                 captureSettled("restyle-fidelity-$profile-history.png")
                 compose.onNodeWithContentDescription("Close").performClick()
-                compose.onNodeWithTag("menu-button").performClick()
-                compose.onNodeWithText("Sleep timer").performClick()
+                compose.onNodeWithTag("settings-button").performClick()
+                compose.onNodeWithTag("settings-Sleep").performScrollTo().performClick()
                 compose.onNodeWithText("15 minutes").assertIsDisplayed()
                 // No timer runs here, so there is nothing to cancel.
                 compose.onNodeWithText("Cancel timer").assertDoesNotExist()
                 captureSettled("restyle-fidelity-$profile-sleep.png")
                 compose.onNodeWithContentDescription("Close").performClick()
-                compose.onNodeWithTag("menu-button").performClick()
+                // Browsing by country or genre is Radio's; its chip opens the sheet.
+                compose.onNodeWithTag("tab-3").performClick()
                 compose.onNodeWithTag("feeds-button").performClick()
-                compose.onNodeWithText("Feeds and library").assertIsDisplayed()
+                compose.onNodeWithText("Browse stations").assertIsDisplayed()
                 captureSettled("restyle-fidelity-$profile-feeds.png")
                 compose.onNodeWithContentDescription("Close").performClick()
+                compose.onNodeWithTag("tab-1").performClick()
                 clearQueue()
-                compose.onNodeWithTag("menu-button").performClick()
-                compose.onNodeWithText("Playback queue").performClick()
+                compose.onNodeWithTag("settings-button").performClick()
+                compose.onNodeWithTag("settings-Queue").performScrollTo().performClick()
                 compose.waitUntil(10_000) {
                     compose.onAllNodesWithTag("queue-empty").fetchSemanticsNodes().isNotEmpty()
                 }
@@ -1527,9 +1533,9 @@ class CatalogUiTest {
             compose.onNodeWithContentDescription("Minimize player").performClick()
             frames(400)
             mark("open timer sheet")
-            compose.onNodeWithTag("menu-button").performClick()
+            compose.onNodeWithTag("settings-button").performClick()
             frames(240)
-            compose.onNodeWithText("Sleep timer").performClick()
+            compose.onNodeWithTag("settings-Sleep").performScrollTo().performClick()
             frames(600)
             // "Cancel timer" only shows while a timer runs; the first choice marks the sheet.
             compose.onNodeWithText("15 minutes").assertIsDisplayed()
@@ -1626,8 +1632,8 @@ class CatalogUiTest {
     }
 
     private fun assertNavigationTabsNamed() {
-        // The dock is icon-only; every tab must still be a named, reachable 48dp tab.
-        for ((index, name) in listOf(0 to "Downloads", 1 to "Home", 2 to "Music", 3 to "Radio")) {
+        // Every dock tab shows its label and is a named, reachable 48dp tab.
+        for ((index, name) in listOf(0 to "Library", 1 to "Home", 2 to "Music", 3 to "Radio")) {
             compose
                 .onNodeWithTag("tab-$index")
                 .assertIsDisplayed()
