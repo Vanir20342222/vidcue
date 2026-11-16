@@ -124,12 +124,12 @@ internal fun AccountButton(connected: Boolean, open: () -> Unit) {
 }
 
 /**
- * The floating navigation dock: icons only (the page title names where you are). A soft highlight
+ * The floating phone navigation dock (tablets use [TabletSidebar]): icons only (the page title names where you are). A soft highlight
  * slides between destinations with a stretch: the leading edge arrives first and the trailing edge
  * follows, so the move reads as one gesture. Each tab keeps its name for accessibility.
  */
 @Composable
-internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = false) {
+internal fun AppNavigation(tab: Int, choose: (Int) -> Unit) {
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     val position = DESTINATIONS.indexOfFirst { it.first == tab }.coerceAtLeast(0)
@@ -202,59 +202,36 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, vertical: Boolean = 
             .background(dockColor)
             .border(1.dp, colors.outlineVariant, MediaTokens.dock)
 
-    if (vertical)
-        BoxWithConstraints(Modifier.fillMaxHeight().padding(start = 12.dp, top = 4.dp, bottom = 16.dp)) {
-            // Short windows (phone landscape) share the height evenly, never below a touch target.
-            val itemHeight = minOf(68.dp, (maxHeight - 16.dp) / DESTINATIONS.size).coerceAtLeast(56.dp)
-            Box(
-                Modifier.width(72.dp)
-                    .then(dock)
-                    .verticalScroll(rememberScrollState())
-                    .selectableGroup()
-                    .testTag("navigation-rail")
-                    .padding(vertical = 8.dp)
-            ) {
-                Highlight(lead.value, trail.value, itemHeight, highlight, vertical = true)
-                Column(Modifier.fillMaxWidth()) {
-                    DESTINATIONS.forEach { (index, title, glyph) ->
-                        Cell(index, title, glyph, Modifier.fillMaxWidth().height(itemHeight))
-                    }
-                }
-            }
-        }
-    else
-        BoxWithConstraints(
-            Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
+    BoxWithConstraints(
+        Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 10.dp)
+    ) {
+        val cell = maxWidth / DESTINATIONS.size
+        Box(
+            Modifier.fillMaxWidth()
+                .height(64.dp)
+                .then(dock)
+                .selectableGroup()
+                .testTag("bottom-navigation")
         ) {
-            val cell = maxWidth / DESTINATIONS.size
-            Box(
-                Modifier.fillMaxWidth()
-                    .height(64.dp)
-                    .then(dock)
-                    .selectableGroup()
-                    .testTag("bottom-navigation")
-            ) {
-                Highlight(lead.value, trail.value, cell, highlight, vertical = false)
-                Row(Modifier.fillMaxSize()) {
-                    DESTINATIONS.forEach { (index, title, glyph) ->
-                        Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
-                    }
+            Highlight(lead.value, trail.value, cell, highlight)
+            Row(Modifier.fillMaxSize()) {
+                DESTINATIONS.forEach { (index, title, glyph) ->
+                    Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
                 }
             }
         }
+    }
 }
 
 @Composable
-private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color, vertical: Boolean) {
+private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color) {
     val start = minOf(lead, trail)
     val span = abs(lead - trail) + 1f
     val inset = 6.dp
     Box(
-        Modifier.then(
-                if (vertical)
-                    Modifier.offset(y = cell * start).height(cell * span).fillMaxWidth()
-                else Modifier.offset(x = cell * start).width(cell * span).fillMaxHeight()
-            )
+        Modifier.offset(x = cell * start)
+            .width(cell * span)
+            .fillMaxHeight()
             .padding(inset)
             .clip(androidx.compose.foundation.shape.RoundedCornerShape(18.dp))
             .background(color)

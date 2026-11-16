@@ -448,6 +448,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .imePadding()
                 ) {
                     val tabletLayout = maxWidth >= 840.dp
+                    val compactSidebar = maxWidth < 1000.dp
                     Column(Modifier.fillMaxSize()) {
                         // First in traversal order, so a root re-entry also lands here.
                         Spacer(Modifier.size(0.dp).focusRequester(focusSink).focusable())
@@ -493,9 +494,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     },
                                     Modifier.padding(start = 8.dp).weight(1f),
                                 )
-                                AccountButton(account.optBoolean("connected")) { dialog = "account" }
-                                MediaIconButton(Glyph.Settings, "Settings", "settings-button") {
-                                    dialog = "settings"
+                                // Tablets keep account and settings at the foot of the sidebar.
+                                if (!tabletLayout) {
+                                    AccountButton(account.optBoolean("connected")) { dialog = "account" }
+                                    MediaIconButton(Glyph.Settings, "Settings", "settings-button") {
+                                        dialog = "settings"
+                                    }
                                 }
                                 Box {
                                     MediaIconButton(Glyph.More, "More options", "menu-button") {
@@ -559,7 +563,17 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     if (bottomDock) with(LocalDensity.current) { dockHeight.toDp() } else 0.dp
                             ) {
                             Row(Modifier.fillMaxSize()) {
-                                if (tablet) AppNavigation(tab, ::selectTab, vertical = true)
+                                if (tablet)
+                                    TabletSidebar(
+                                        tab,
+                                        ::selectTab,
+                                        connected = account.optBoolean("connected"),
+                                        compact = compactSidebar,
+                                    ) { name ->
+                                        dialog = name
+                                        if (name == "queue") vm.loadQueue()
+                                        if (name == "history") vm.loadHistory()
+                                    }
                                 Column(Modifier.weight(1f).fillMaxHeight()) {
                                 if (tablet) Toolbar()
                                 Box(
