@@ -1,5 +1,6 @@
 package dev.ytui.android
 
+import androidx.compose.ui.unit.dp
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -201,7 +202,7 @@ class CatalogUiTest {
     fun videoInformationOnHomeAndAlwaysInPlayer() {
         val cards = populate(1)
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val review = MetadataReviewDriver(scenario)
+        val review = MetadataReviewDriver(scenario) { compose.mainClock.advanceTimeByFrame() }
         fun visibleText(text: String) = review.visibleText(text)
         fun capture(name: String) = review.capture(name)
         run {
@@ -235,6 +236,8 @@ class CatalogUiTest {
             )).toString())
             MediaBridge.event("show_player", "")
             MediaRuntimeTest.await("Review captures require decoded fixture video") {
+                // The player's video surface is composed only when the test clock moves.
+                compose.mainClock.advanceTimeByFrame()
                 MediaRuntimeTest.status().optBoolean("playing") && MediaBridge.videoFrames.get() > 0
             }
             scenario.onActivity { PlaybackService.current!!.player.repeatMode = androidx.media3.common.Player.REPEAT_MODE_ONE }
@@ -310,7 +313,16 @@ class CatalogUiTest {
         val margin =
             12f * InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
         Assert.assertEquals("Video art keeps the side margin", pane.left + margin, cover.left, 2f)
-        Assert.assertEquals("Video art spans the pane inside its margins", pane.width - 2 * margin, cover.width, 2f)
+        // Home cells are at least 280 dp with 8 dp gaps: one column on a phone, two on a 753 dp
+        // portrait Galaxy Tab S9. Each cover spans its column inside the margins.
+        val (minCell, gap) = with(compose.density) { 280.dp.roundToPx() to 8.dp.roundToPx() }
+        val columns = maxOf(1, (pane.width.toInt() + gap) / (minCell + gap))
+        Assert.assertEquals(
+            "Video art spans its column inside its margins",
+            (pane.width - gap * (columns - 1)) / columns - 2 * margin,
+            cover.width,
+            2f,
+        )
         Assert.assertEquals("Video art remains 16:9", 16f / 9f, cover.width / cover.height, 0.01f)
         val source = compose.onNodeWithTag("source-Home").fetchSemanticsNode().boundsInRoot
         // Categories and source filters share one lazy row, not two independently styled strips.

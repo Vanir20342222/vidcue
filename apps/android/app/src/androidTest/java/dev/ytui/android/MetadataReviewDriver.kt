@@ -14,9 +14,19 @@ import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Assert.*
 
-/** Read laid-out text without requiring a continuously repainting media screen to be idle. */
-internal class MetadataReviewDriver(private val scenario: ActivityScenario<RustActivity>) {
+/**
+ * Read laid-out text without requiring a continuously repainting media screen to be idle.
+ *
+ * A Compose test rule drives every composition in the process with its test clock, which only
+ * moves when the test syncs. [frame] advances one frame before each look, so state changed
+ * outside Compose (settings, feeds) is drawn without waiting for an idle screen.
+ */
+internal class MetadataReviewDriver(
+    private val scenario: ActivityScenario<RustActivity>,
+    private val frame: () -> Unit = {},
+) {
     private fun inspect(check: (SemanticsNode) -> Boolean): Boolean {
+        frame()
         var found = false
         scenario.onActivity { activity ->
             fun walk(node: SemanticsNode) {

@@ -646,6 +646,11 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             )
                         }
                     }
+                    // Each opening gets a fresh panel. Reopened during the closing fade, the
+                    // old one was reused still "leaving" and lowered, so Minimize did nothing
+                    // and the app behind stayed hidden from accessibility.
+                    var panelOpening by remember { mutableIntStateOf(0) }
+                    LaunchedEffect(playerOpen) { if (playerOpen) panelOpening++ }
                     // Changing animation parameters mid-transition retains the old
                     // graphics layer. A native video view must never inherit it.
                     if (videoPlayer) {
@@ -661,7 +666,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 if (motion.animate) fadeOut(motion.exit(200))
                                 else ExitTransition.None,
                         ) {
-                            PlaybackPanel(allowVideoSurface = false)
+                            key(panelOpening) { PlaybackPanel(allowVideoSurface = false) }
                         }
                     }
                 }

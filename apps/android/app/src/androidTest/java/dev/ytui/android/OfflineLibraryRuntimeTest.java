@@ -56,16 +56,15 @@ public final class OfflineLibraryRuntimeTest {
       assertNotNull(
           "Folder picker opened the wrong directory",
           device.wait(Until.findObject(By.text(folderName)), 10000));
-      UiObject2 use =
-          device.wait(
-              Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)use this folder"))),
-              10000);
+      // The system picker's confirm button is android:id/button1 in every language
+      // ("Use this folder", "Diesen Ordner verwenden", ...).
+      UiObject2 use = device.wait(Until.findObject(By.res("android", "button1")), 10000);
       assertNotNull("System folder picker did not open at the requested folder", use);
       assertTrue("The chosen folder must be writable", use.isEnabled());
       use.click();
-      UiObject2 allow =
-          device.wait(
-              Until.findObject(By.text(java.util.regex.Pattern.compile("(?i)allow"))), 3000);
+      // Then the access confirmation ("Allow"/"Zulassen"), also the dialog's positive button.
+      device.wait(Until.gone(By.text(folderName)), 3000);
+      UiObject2 allow = device.wait(Until.findObject(By.res("android", "button1")), 3000);
       if (allow != null) allow.click();
       MediaRuntimeTest.await(
           "Document-tree read/write permission was not persisted",
