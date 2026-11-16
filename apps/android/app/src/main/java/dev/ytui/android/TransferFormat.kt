@@ -22,11 +22,12 @@ internal fun transferTone(state: String): TransferTone =
         else -> TransferTone.Waiting
     }
 
+/** English digits to match the English labels around them ("1.2 GB", not "1,2 GB"). */
 internal fun byteLabel(bytes: Long): String =
     when {
-        bytes >= 1L shl 30 -> "%.1f GB".format(bytes / (1L shl 30).toDouble())
-        bytes >= 1L shl 20 -> "%.0f MB".format(bytes / (1L shl 20).toDouble())
-        else -> "%.0f KB".format(bytes / 1024.0)
+        bytes >= 1L shl 30 -> "%.1f GB".format(java.util.Locale.ENGLISH, bytes / (1L shl 30).toDouble())
+        bytes >= 1L shl 20 -> "%.0f MB".format(java.util.Locale.ENGLISH, bytes / (1L shl 20).toDouble())
+        else -> "%.0f KB".format(java.util.Locale.ENGLISH, bytes / 1024.0)
     }
 
 /** "12 MB of 1.2 GB"; just "12 MB" while the size is unknown; null before anything arrived. */

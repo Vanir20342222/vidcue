@@ -299,6 +299,8 @@ public final class OfflineExport extends Worker {
 
   static void write(String id, Uri destination, BooleanSupplier cancelled) throws Exception {
     Plan plan = inspect(id);
+    // Opening the destination creates it; a job cancelled before it starts leaves nothing behind.
+    check(cancelled);
     try (OutputStream output =
         MediaBridge.context.getContentResolver().openOutputStream(destination, "w")) {
       if (output == null) throw new IOException("No output stream");

@@ -58,13 +58,16 @@ private fun mediaLength(media: JSONObject): String =
 /** "283K", "1.2M": the short counts a watch page shows instead of every digit. */
 internal fun compactCount(count: Long): String {
     val digits = if (count in 1_000..9_999 || count in 1_000_000..9_999_999) 1 else 0
+    // The surrounding labels are English, so counts are too: a German device would otherwise
+    // print "2834 likes" (ICU has no short thousands form there) next to "1.2K views".
+    val locale = java.util.Locale.ENGLISH
     // Building an ICU formatter loads locale data; doing it per card cost scroll frames.
     // Formatters are kept per locale and digit count (and are not shared across threads).
     val format =
         synchronized(COMPACT_FORMATS) {
-            COMPACT_FORMATS.getOrPut(java.util.Locale.getDefault() to digits) {
+            COMPACT_FORMATS.getOrPut(locale to digits) {
                 android.icu.text.CompactDecimalFormat.getInstance(
-                        java.util.Locale.getDefault(),
+                        locale,
                         android.icu.text.CompactDecimalFormat.CompactStyle.SHORT,
                     )
                     .apply {

@@ -77,8 +77,33 @@ class NativeUiTest {
             }
             ime.get()
         }
+        // Insets report the keyboard as soon as its slide-in starts. Samsung Keyboard on a
+        // Galaxy Tab S9 is still binding its input session then and kept only the first key
+        // typed ~170 ms later. Type once the keyboard has stopped moving.
+        var settled = 0
+        var lastHeight = -1
+        compose.waitUntil(10_000) {
+            var height = 0
+            scenario.onActivity {
+                height =
+                    ViewCompat.getRootWindowInsets(it.window.decorView)
+                        ?.getInsets(WindowInsetsCompat.Type.ime())
+                        ?.bottom ?: 0
+            }
+            settled = if (height > 0 && height == lastHeight) settled + 1 else 0
+            lastHeight = height
+            if (settled < 3) Thread.sleep(150)
+            settled >= 3
+        }
         UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
             .executeShellCommand("input text tablet-input")
+        // `input text` returns once its key events are queued, not delivered.
+        compose.waitUntil(5_000) {
+            compose
+                .onAllNodes(hasTestTag("search-field") and hasText("tablet-input", substring = true))
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input")
         compose.onNodeWithTag("search-field").performTextInput(" Grüße")
         compose.onNodeWithTag("search-field").assertTextContains("tablet-input Grüße")

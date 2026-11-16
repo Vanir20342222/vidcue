@@ -26,6 +26,18 @@ class TransferFormatTest {
     }
 
     @Test
+    fun sizesKeepEnglishDigitsOnAGermanDevice() {
+        val original = java.util.Locale.getDefault()
+        java.util.Locale.setDefault(java.util.Locale.GERMANY)
+        try {
+            // Found on a de_DE Galaxy Tab S9: "1,2 GB" beside English labels.
+            assertEquals("12 MB of 1.2 GB", downloadedLabel(12L shl 20, (1.2 * (1L shl 30)).toLong()))
+        } finally {
+            java.util.Locale.setDefault(original)
+        }
+    }
+
+    @Test
     fun timeLeftNeedsASpeedAndARemainingSize() {
         assertNull(secondsLeft(10, 100, 0.0))
         assertNull(secondsLeft(100, 100, 5.0))
