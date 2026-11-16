@@ -555,7 +555,7 @@ private fun MovieOptions(
                     .fillMaxHeight()
                     .testTag("movie-menu")
                     .semantics { paneTitle = "Playback options" },
-                shape = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp),
+                shape = MediaTokens.sideSheet,
                 color = scheme.surfaceContainerLow.copy(alpha = if (blurSupported) 0.72f else 0.92f),
                 border = BorderStroke(1.dp, MediaTokens.videoGlassEdge.copy(alpha = 0.18f)),
             ) {

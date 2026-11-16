@@ -12,14 +12,14 @@ internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
         val count = media.optLong("view_count", -1)
         val views =
             if (count >= 0) "${compactCount(count)} ${if (count == 1L) "view" else "views"}"
-            else media.optString("views_text").takeUnless { it == "null" } ?: ""
+            else media.optString("views_text").takeUnless { it == "null" }?.let(::compactViewsText) ?: ""
         if (views.isNotBlank()) details += views
     }
     if (settings.optBoolean("show_upload_date", true)) {
         val date = media.optString("upload_date").takeIf { it.matches(UPLOAD_DATE) }
         val text =
             date?.let(::relativeUploadDate)
-                ?: media.optString("published_text").takeUnless { it == "null" }
+                ?: media.optString("published_text").takeUnless { it == "null" }?.let(::spelledAge)
                 ?: ""
         if (text.isNotBlank()) details += text
     }
@@ -81,6 +81,31 @@ private val COMPACT_FORMATS = HashMap<Pair<java.util.Locale, Int>, android.icu.t
 private val UPLOAD_DATE = Regex("[0-9]{8}")
 
 /** `yyyyMMdd` as "3 days ago" / "7 months ago"; falls back to the ISO date when parsing fails. */
+/** "11,635,532 views" as YouTube writes it on cards: "11M views". Other text is kept. */
+internal fun compactViewsText(text: String): String {
+    val match = Regex("""^([\d,.\u00A0\u202F ]+)\s+(views?)$""", RegexOption.IGNORE_CASE).find(text.trim()) ?: return text
+    val digits = match.groupValues[1].filter(Char::isDigit)
+    val count = digits.toLongOrNull() ?: return text
+    return "${compactCount(count)} ${if (count == 1L) "view" else "views"}"
+}
+
+/** "7d ago" and "3mo ago" spelled out ("7 days ago"), as cards write ages elsewhere. */
+internal fun spelledAge(text: String): String {
+    val match = Regex("""^(\d+)\s*(s|m|min|h|d|w|mo|y)\s+ago$""").find(text.trim()) ?: return text
+    val n = match.groupValues[1].toInt()
+    val unit =
+        when (match.groupValues[2]) {
+            "s" -> "second"
+            "m", "min" -> "minute"
+            "h" -> "hour"
+            "d" -> "day"
+            "w" -> "week"
+            "mo" -> "month"
+            else -> "year"
+        }
+    return "$n $unit${if (n == 1) "" else "s"} ago"
+}
+
 internal fun relativeUploadDate(date: String, today: java.time.LocalDate = java.time.LocalDate.now()): String {
     val iso = "${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}"
     val day = runCatching { java.time.LocalDate.parse(iso) }.getOrNull() ?: return iso

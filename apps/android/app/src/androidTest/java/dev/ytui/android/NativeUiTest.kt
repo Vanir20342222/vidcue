@@ -65,7 +65,8 @@ class NativeUiTest {
 
     @Test
     fun realKeyboardAndSettingsTextFieldsAcceptInput() {
-        compose.onNodeWithTag("search-field").performClick()
+        // Search opens from the page header; the field takes focus and raises the keyboard.
+        compose.onNodeWithTag("search-button").performClick()
         val ime = AtomicBoolean()
         compose.waitUntil(10_000) {
             scenario.onActivity {
@@ -205,18 +206,19 @@ class NativeUiTest {
                 .getJSONObject("data")
                 .optBoolean("connected"),
         )
-        compose.onNodeWithTag("menu-button").performClick()
-        compose.onNodeWithTag("feeds-button").performClick()
-        // Home also offers a Subscriptions chip; choose the Browse sheet's row.
-        compose
-            .onNode(hasText("Subscriptions") and hasAnyAncestor(hasTestTag("panel-body")))
-            .performClick()
+        // Signed out, the app no longer lists account-only feeds; one opened anyway (a stale link
+        // or a session that expired) must still lead to sign-in and session import.
+        scenario.onActivity {
+            androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java].navigate(1, "Subscriptions")
+        }
         compose.waitUntil(10_000) {
             compose.onAllNodesWithTag("feed-account-action").fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Account needed").assertIsDisplayed()
+        compose.onNodeWithText("Sign in to see this").assertIsDisplayed()
         compose.onNodeWithTag("feed-account-action").performClick()
-        compose.onNodeWithTag("account-import").assertIsDisplayed()
+        // Session import is folded under "Other ways to sign in".
+        compose.onNodeWithTag("account-other-ways").performScrollTo().performClick()
+        compose.onNodeWithTag("account-import").performScrollTo().assertIsDisplayed()
         captureSettled("native-account.png")
         compose
             .onNodeWithTag("cookie-header-field")
@@ -409,9 +411,11 @@ class NativeUiTest {
                 if (wide) device.setOrientationLeft() else device.setOrientationNatural()
                 compose.waitForIdle()
                 compose.onNodeWithTag("tab-1").performClick()
+                compose.onNodeWithTag("search-button").performClick()
                 val pane = compose.onNodeWithTag("browse-pane").fetchSemanticsNode().boundsInRoot
-                val search = compose.onNodeWithTag("search-field").fetchSemanticsNode().boundsInRoot
-                val expected = kotlin.math.min(pane.width - 32f * density, 720f * density)
+                // The search row (back arrow and field) is capped and centred as one unit.
+                val search = compose.onNodeWithTag("search-row").fetchSemanticsNode().boundsInRoot
+                val expected = kotlin.math.min(pane.width - 16f * density, 720f * density)
                 Assert.assertEquals(
                     "Search must be capped on wide screens and fill narrow screens",
                     expected,
@@ -424,9 +428,10 @@ class NativeUiTest {
                     search.center.x,
                     2f,
                 )
-                chipBounds(listOf("source-Home", "source-Playlists", "source-Liked"))
+                compose.onNodeWithContentDescription("Leave search").performClick()
+                chipBounds(listOf("source-Home", "category-All", "category-Discover"))
                 compose.onNodeWithTag("tab-0").performClick()
-                chipBounds(listOf("library-Offline", "library-Playlists", "library-Transfers"))
+                chipBounds(listOf("library-Offline", "library-Playlists", "library-Favorites", "library-History"))
             }
         } finally {
             device.setOrientationNatural()
@@ -448,12 +453,12 @@ class NativeUiTest {
                     )
                 compose.onNodeWithTag("settings-button").assertIsDisplayed()
                 if (index == 0) compose.onNodeWithTag("add-download").assertIsDisplayed()
-                else compose.onNodeWithTag("search-field").assertIsDisplayed()
+                else compose.onNodeWithTag("search-button").assertIsDisplayed()
             }
-            for (label in
-                listOf("Playback queue", "Recently played", "Lyrics", "Sleep timer", "About")) {
-                compose.onNodeWithTag("menu-button").performClick()
-                compose.onNodeWithText(label).performClick()
+            // Lyrics opens from the player only; the rest are rows of the You sheet.
+            for (label in listOf("Playback queue", "History", "Sleep timer", "About")) {
+                compose.onNodeWithTag("settings-button").performClick()
+                compose.onNodeWithText(label).performScrollTo().performClick()
                 captureSettled("restyle-panel-${label.lowercase().replace(" ", "-")}.png")
                 compose.onNodeWithContentDescription("Close").assertIsDisplayed().performClick()
             }
@@ -472,7 +477,8 @@ class NativeUiTest {
         try {
             // On hardware-keyboard emulators, focus must also work without a soft IME.
             device.executeShellCommand("settings put secure show_ime_with_hard_keyboard 0")
-            compose.onNodeWithTag("search-field").performClick().performTextInput("retained query")
+            compose.onNodeWithTag("search-button").performClick()
+            compose.onNodeWithTag("search-field").performTextInput("retained query")
             compose.onNodeWithTag("app-toolbar").assertDoesNotExist()
             captureSettled("restyle-fidelity-focused-search.png")
             val keyboardShowing = AtomicBoolean()
@@ -505,6 +511,8 @@ class NativeUiTest {
                 device.pressBack()
             }
             awaitBrowsingHeader("hardware-back-exit")
+            // Reopening search brings back the unsubmitted text.
+            compose.onNodeWithTag("search-button").performClick()
             compose.onNodeWithTag("search-field").assertTextContains("retained query")
             Assert.assertEquals(androidx.lifecycle.Lifecycle.State.RESUMED, scenario.state)
             captureSettled("restyle-fidelity-search-return.png")
@@ -520,7 +528,8 @@ class NativeUiTest {
 
     private fun awaitBrowsingHeader(stage: String) {
         try {
-            compose.onNodeWithTag("search-field").assertIsNotFocused()
+            // Leaving search closes the field and returns focus to the page.
+            compose.onNodeWithTag("search-field").assertDoesNotExist()
             compose.onNodeWithTag("feed-list").assertIsFocused()
             compose.waitUntil(10_000) {
                 compose.onAllNodesWithTag("app-toolbar").fetchSemanticsNodes().isNotEmpty()
@@ -528,11 +537,14 @@ class NativeUiTest {
         } catch (error: Throwable) {
             captureSettled("restyle-fidelity-search-$stage-failed.png")
             val focus =
-                compose
-                    .onNodeWithTag("search-field")
-                    .fetchSemanticsNode()
-                    .config
-                    .getOrNull(SemanticsProperties.Focused)
+                runCatching {
+                        compose
+                            .onNodeWithTag("search-field")
+                            .fetchSemanticsNode()
+                            .config
+                            .getOrNull(SemanticsProperties.Focused)
+                    }
+                    .getOrNull()
             scenario.onActivity {
                 val vm = androidx.lifecycle.ViewModelProvider(it)[YtuiViewModel::class.java]
                 val request = vm.feeds[vm.tab.value].value.request

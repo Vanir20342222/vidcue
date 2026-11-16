@@ -27,7 +27,6 @@ final class MobileSettings {
           "auto_save_folders",
           "animate_cards",
           "haptics",
-          "gesture_swipe_tabs",
           "gesture_swipe_dismiss",
           "gesture_mini_player",
           "gesture_swipe_tracks",
@@ -44,7 +43,11 @@ final class MobileSettings {
           "show_likes",
           "auto_color_grade",
           "auto_mp3",
-          "download_unmetered"
+          "download_unmetered",
+          // Sideways swipes between tabs misfired on pages full of sideways rows; opt in.
+          "gesture_swipe_tabs",
+          // Movies is an alpha test page; it joins the navigation only when turned on.
+          "show_movies"
         })
       values.put(key, false);
     BOOLEANS = Collections.unmodifiableMap(values);

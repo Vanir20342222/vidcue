@@ -41,7 +41,7 @@ class OnboardingUiTest {
                 .putExtra("ytui.offline-ui", true)
                 .putExtra("ytui.onboarding", true)
         scenario = ActivityScenario.launch(intent)
-        awaitStep("Step 1 of 5")
+        awaitStep("Step 1 of 3")
     }
 
     @After
@@ -64,13 +64,13 @@ class OnboardingUiTest {
     fun nextStepsThroughEveryPageUntilFinish() {
         var moves = 0
         while (!exists("onboarding-finish")) {
-            Assert.assertTrue("Setup must reach its finish page within five pages", moves < 4)
+            Assert.assertTrue("Setup must reach its finish page within three pages", moves < 2)
             compose.onNodeWithTag("onboarding-skip").assertIsDisplayed()
             compose.onNodeWithTag("onboarding-next").performClick()
             moves++
-            awaitStep("Step ${moves + 1} of 5")
+            awaitStep("Step ${moves + 1} of 3")
         }
-        Assert.assertEquals("Five pages means four forward moves", 4, moves)
+        Assert.assertEquals("Three pages means two forward moves", 2, moves)
         Assert.assertFalse(
             "The finish page hides Skip",
             exists("onboarding-skip"),
@@ -84,13 +84,13 @@ class OnboardingUiTest {
     fun backReturnsToThePreviousPageAndTheFirstPageHasNoBack() {
         compose.onNodeWithTag("onboarding-back").assertDoesNotExist()
         compose.onNodeWithTag("onboarding-next").performClick()
-        awaitStep("Step 2 of 5")
+        awaitStep("Step 2 of 3")
         compose.onNodeWithTag("onboarding-next").performClick()
-        awaitStep("Step 3 of 5")
+        awaitStep("Step 3 of 3")
         compose.onNodeWithTag("onboarding-back").performClick()
-        awaitStep("Step 2 of 5")
+        awaitStep("Step 2 of 3")
         compose.onNodeWithTag("onboarding-back").performClick()
-        awaitStep("Step 1 of 5")
+        awaitStep("Step 1 of 3")
         compose.onNodeWithTag("onboarding-back").assertDoesNotExist()
         compose.onNodeWithTag("onboarding-skip").assertIsDisplayed()
     }

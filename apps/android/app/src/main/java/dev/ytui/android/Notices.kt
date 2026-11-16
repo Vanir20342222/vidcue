@@ -62,9 +62,10 @@ internal object Notices {
 private val CONFIRMATIONS =
     mapOf(
         "queue" to (Glyph.Queue to "Added to queue"),
-        // "download" flies the cover into the Downloads tab instead (DownloadFlight).
-        "saved" to (Glyph.Save to "Saved locally"),
-        "unsaved" to (Glyph.Save to "Removed from saved items"),
+        "next" to (Glyph.PlayNext to "Plays next"),
+        // "download" flies the cover into the Library tab instead (DownloadFlight).
+        "saved" to (Glyph.Save to "Saved to your library"),
+        "unsaved" to (Glyph.Save to "Removed from Saved"),
         "lyrics" to (Glyph.Lyrics to "Lyrics saved locally"),
         "palette" to (Glyph.Palette to "Palette applied"),
         "tips" to (Glyph.Info to "Gesture tips will show again"),

@@ -21,9 +21,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
@@ -230,16 +235,6 @@ internal fun FocusedPlayer(
                 trackShift.animateTo(0f, motion.spring())
             },
         )
-    val artTaps =
-        Modifier.pointerInput(mobile.gesture("gesture_double_tap_seek")) {
-            if (mobile.gesture("gesture_double_tap_seek"))
-                detectTapGestures(
-                    onDoubleTap = {
-                        haptic()
-                        vm.command("pause")
-                    }
-                )
-        }
     val scope = rememberCoroutineScope()
     // The collapse buttons leave the way the swipe does: the panel glides down off screen.
     val animatedMinimize: () -> Unit = {
@@ -322,9 +317,9 @@ internal fun FocusedPlayer(
             }
             @Composable
             fun ActionRow() {
-                // One soft tray of evenly spaced icons, music and video alike, so nothing has to
-                // be scrolled sideways on a phone. Each icon keeps its spoken name; video puts
-                // ⋮ in the tray so the first and last icons line up with the title's edges.
+                // One soft tray of labelled actions, music and video alike: the four things
+                // people reach for here, then More. Audio output and the sleep timer live in
+                // More; a running timer shows its countdown here.
                 val media = player.media
                 val canSave =
                     media != null &&
@@ -333,107 +328,69 @@ internal fun FocusedPlayer(
                         !player.preview
                 Row(
                     Modifier.fillMaxWidth()
-                        .then(
-                            // One soft tray, the same shape language as the dock, instead of
-                            // loose icons or pills that overflow a narrow screen.
-                            Modifier.clip(MediaTokens.card)
-                                .background(LocalContentColor.current.copy(alpha = 0.07f))
-                                .padding(
-                                    horizontal = if (player.video) 0.dp else 4.dp,
-                                    vertical = 2.dp,
-                                )
-                        )
+                        .clip(MediaTokens.card)
+                        .background(LocalContentColor.current.copy(alpha = 0.07f))
+                        // Equal cells edge to edge: the first and last line up with the title.
+                        .padding(vertical = 2.dp)
                         .testTag("player-actions"),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val compact = true
-                        // Video: equal cells, so five or six actions always fit the width.
-                        val cell = if (player.video) Modifier.weight(1f) else Modifier
-                        PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = compact, modifier = cell, action = onQueue)
-                        if (!player.video)
-                            PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = compact, action = onLyrics)
-                        if (canSave && media != null) {
-                            var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
-                            PlayerAction(
-                                Glyph.Download,
-                                "Save",
-                                "Save offline",
-                                "player-download",
-                                compact,
-                                modifier = cell.trackCentre { saveCentre = it },
-                            ) {
-                                val card = MediaCard(media)
-                                DownloadFlight.launch(card, saveCentre)
-                                vm.play(card, download = true)
-                            }
+                    val cell = Modifier.weight(1f)
+                    PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = true, modifier = cell, action = onQueue)
+                    if (!player.video)
+                        PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = true, modifier = cell, action = onLyrics)
+                    if (canSave && media != null) {
+                        var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
+                        PlayerAction(
+                            Glyph.Download,
+                            "Download",
+                            "Download",
+                            "player-download",
+                            true,
+                            modifier = cell.trackCentre { saveCentre = it },
+                        ) {
+                            val card = MediaCard(media)
+                            DownloadFlight.launch(card, saveCentre)
+                            vm.play(card, download = true)
                         }
-                        player.output?.let { output ->
-                            // Accent while audio goes to Bluetooth; opens the output picker.
-                            PlayerAction(
-                                Glyph.Bluetooth,
-                                output.name,
-                                "Audio output, ${output.name}",
-                                "player-output",
-                                compact,
-                                active = output.bluetooth,
-                                modifier = cell,
-                                action = onOutput,
-                            )
-                        }
-                        val shareUrl = media?.optString("url").orEmpty()
-                        if (player.video && shareUrl.startsWith("http"))
-                            PlayerAction(Glyph.Link, "Share", "Share link", "player-share", compact, modifier = cell) {
-                                val send =
-                                    Intent(Intent.ACTION_SEND)
-                                        .setType("text/plain")
-                                        .putExtra(Intent.EXTRA_SUBJECT, player.title)
-                                        .putExtra(Intent.EXTRA_TEXT, shareUrl)
-                                runCatching {
-                                    context.startActivity(
-                                        Intent.createChooser(send, null)
-                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    )
-                                }
-                            }
-                        val sleepLeft = rememberSleepLeft(player)
-                        // Video keeps the row short: the timer lives in ⋮ until it is running.
-                        if (!player.video || sleepLeft > 0) {
-                            PlayerAction(
-                                Glyph.Sleep,
-                                if (sleepLeft > 0) sleepLabel(sleepLeft) else "Sleep",
-                                if (sleepLeft > 0) "Sleep timer, ${sleepLabel(sleepLeft)} left" else "Sleep timer",
-                                compact = compact,
-                                active = sleepLeft > 0,
-                                countdown = if (sleepLeft > 0) sleepFraction(player, sleepLeft) else null,
-                                modifier = cell,
-                                action = onSleep,
-                            )
-                        }
-                        if (player.video)
-                            PlayerAction(
-                                Glyph.More,
-                                "More",
-                                "Playback options",
-                                "player-options",
-                                compact,
-                                modifier = cell,
-                                action = onMore,
-                            )
                     }
-                    if (!player.video) {
-                        Spacer(Modifier.width(4.dp))
-                        MediaIconButton(
-                            Glyph.More,
-                            "Playback options",
-                            "player-options",
-                            action = onMore,
+                    val shareUrl = media?.optString("url").orEmpty()
+                    if (shareUrl.startsWith("http"))
+                        PlayerAction(Glyph.Link, "Share", "Share link", "player-share", true, modifier = cell) {
+                            val send =
+                                Intent(Intent.ACTION_SEND)
+                                    .setType("text/plain")
+                                    .putExtra(Intent.EXTRA_SUBJECT, player.title)
+                                    .putExtra(Intent.EXTRA_TEXT, shareUrl)
+                            runCatching {
+                                context.startActivity(
+                                    Intent.createChooser(send, null)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
+                        }
+                    val sleepLeft = rememberSleepLeft(player)
+                    if (sleepLeft > 0)
+                        PlayerAction(
+                            Glyph.Sleep,
+                            sleepLabel(sleepLeft),
+                            "Sleep timer, ${sleepLabel(sleepLeft)} left",
+                            compact = true,
+                            active = true,
+                            countdown = sleepFraction(player, sleepLeft),
+                            modifier = cell,
+                            action = onSleep,
                         )
-                    }
+                    PlayerAction(
+                        Glyph.More,
+                        "More",
+                        "Playback options",
+                        "player-options",
+                        true,
+                        modifier = cell,
+                        action = onMore,
+                    )
                 }
             }
             Column(
@@ -492,9 +449,10 @@ internal fun FocusedPlayer(
                     // Music keeps one line (long titles scroll) so the controls below never move
                     // when the next track has a longer or not-yet-known title.
                     Text(
-                        player.title.ifBlank { " " },
+                        (if (player.video) player.title
+                        else MusicTitles.clean(player.title, player.media?.optString("creator").orEmpty())).ifBlank { " " },
                         if (player.video) Modifier
-                        else Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1800),
+                        else Modifier.fillMaxWidth().fadingMarquee(),
                         style =
                             if (player.video) MaterialTheme.typography.titleLarge
                             else MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
@@ -506,7 +464,7 @@ internal fun FocusedPlayer(
                     if (player.video) player.media?.let { MediaInformation(it, mobile) }
                     val creator =
                         player.value.optString("station").ifBlank {
-                            player.media?.optString("creator") ?: ""
+                            (player.media?.optString("creator") ?: "").let { if (player.video) it else cleanByline(it) }
                         }
                     val showCreator =
                         creator.isNotBlank() &&
@@ -597,7 +555,7 @@ internal fun FocusedPlayer(
         fun Art(modifier: Modifier) {
             BoxWithConstraints(
                 modifier.then(
-                    if (player.video) Modifier else dismiss.then(trackSwipe).then(artTaps)
+                    if (player.video) Modifier else dismiss.then(trackSwipe)
                 ),
                 // Music art shares spare height above and below instead of
                 // leaving one gap between the cover and its title.
@@ -717,6 +675,10 @@ internal fun FocusedPlayer(
                         mobile.optBoolean("show_channel", true),
                         Modifier.weight(1f),
                         onQueue,
+                        onRemove = { index, media -> vm.removeQueue(index, media) },
+                        onPlayNext = { vm.playNext(it) },
+                        onEnqueue = { vm.enqueue(it) },
+                        onBrowse = animatedMinimize,
                         play = vm::playUpNext,
                     )
                 }
@@ -750,6 +712,12 @@ internal fun UpNext(
     modifier: Modifier,
     onManage: (() -> Unit)?,
     showHeader: Boolean = true,
+    /** Row actions; null hides that action. Queue indexes are positions in [queue]. */
+    onRemove: ((Int, MediaCard) -> Unit)? = null,
+    onPlayNext: ((MediaCard) -> Unit)? = null,
+    onEnqueue: ((MediaCard) -> Unit)? = null,
+    /** Shown with an empty queue: leaves the player to find something to add. */
+    onBrowse: (() -> Unit)? = null,
     play: (MediaCard, Boolean) -> Unit,
 ) {
     val upcoming = queue.filter { it.url.isBlank() || it.url != playingUrl }
@@ -781,13 +749,19 @@ internal fun UpNext(
                     Pill("Edit queue", style = PillStyle.Quiet, onClick = onManage)
             }
         if (queue.isEmpty() && state.context.isEmpty())
-            Text(
-                if (state.loading) "Finding what plays next…"
-                else "Nothing queued. Add videos with Add to queue in any ⋮ menu.",
+            Column(
                 Modifier.padding(horizontal = MediaTokens.textInset, vertical = 8.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    if (state.loading) "Finding what plays next…"
+                    else "Nothing queued yet. Add videos from the menu on any card.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!state.loading && onBrowse != null)
+                    Pill("Find something to add", style = PillStyle.Tonal, glyph = Glyph.Search, onClick = onBrowse)
+            }
         else
             androidx.compose.foundation.lazy.LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
@@ -795,8 +769,9 @@ internal fun UpNext(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 @Composable
-                fun Entry(media: MediaCard, fromQueue: Boolean) {
+                fun Entry(media: MediaCard, fromQueue: Boolean, index: Int) {
                     val current = media.url.isNotBlank() && media.url == playingUrl
+                    var actions by remember(media.key, index) { mutableStateOf(false) }
                     val label =
                         when {
                             current -> "Playing"
@@ -812,9 +787,37 @@ internal fun UpNext(
                         square = media.audio,
                         highlighted = current,
                         onClick = { play(media, fromQueue) },
+                        trailing =
+                            if (current || (onRemove == null && onPlayNext == null && onEnqueue == null)) null
+                            else {
+                                {
+                                    Box {
+                                        MediaIconButton(Glyph.More, "Options for ${media.title}", "up-next-menu-${media.key}") {
+                                            actions = true
+                                        }
+                                        MediaMenu(actions, { actions = false }) {
+                                            if (!fromQueue && onPlayNext != null)
+                                                MediaMenuItem("Play next", Glyph.PlayNext) {
+                                                    actions = false
+                                                    onPlayNext(media)
+                                                }
+                                            if (!fromQueue && onEnqueue != null)
+                                                MediaMenuItem("Add to queue", Glyph.Queue) {
+                                                    actions = false
+                                                    onEnqueue(media)
+                                                }
+                                            if (fromQueue && onRemove != null)
+                                                MediaMenuItem("Remove from queue", Glyph.Close, destructive = true) {
+                                                    actions = false
+                                                    onRemove(index, media)
+                                                }
+                                        }
+                                    }
+                                }
+                            },
                     )
                 }
-                items(queue.size, key = { "${queue[it].key}#$it" }) { Entry(queue[it], true) }
+                items(queue.size, key = { "${queue[it].key}#$it" }) { Entry(queue[it], true, it) }
                 if (state.context.isNotEmpty()) {
                     if (queue.isNotEmpty() || !showHeader)
                         item(key = "context-header") {
@@ -824,7 +827,7 @@ internal fun UpNext(
                             )
                         }
                     items(state.context.size, key = { "context:${state.context[it].key}#$it" }) {
-                        Entry(state.context[it], false)
+                        Entry(state.context[it], false, it)
                     }
                     if (state.more)
                         item(key = "context-more") {
@@ -857,20 +860,29 @@ internal fun PlayerAction(
     val source = remember { MutableInteractionSource() }
     val accent = mediaReadableText(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
     if (compact) {
-        // Music: an evenly spaced, icon-only row; the accessible name carries the label.
-        Box(
+        // The player's tray: an icon over a short label in equal cells. The label is visible
+        // for everyone; the accessible name stays the fuller description.
+        Column(
             modifier.testTag(tag)
                 .pressScale(source, 0.9f)
                 .widthIn(min = 56.dp)
-                .heightIn(min = 56.dp)
+                .heightIn(min = 60.dp)
                 .clip(MediaTokens.medium)
                 .clickable(source, SoftIndication, role = Role.Button, onClick = action)
-                .semantics { contentDescription = description }
-                .padding(6.dp),
-            contentAlignment = Alignment.Center,
+                .clearAndSetSemantics { contentDescription = description }
+                .padding(horizontal = 2.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         ) {
             if (countdown != null) CountdownRing(glyph, countdown, accent)
-            else MediaIcon(glyph, Modifier.size(24.dp), if (active) accent else LocalContentColor.current, filled = active)
+            else MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (active) accent else LocalContentColor.current.copy(alpha = 0.86f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         return
     }
@@ -997,17 +1009,21 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
                     drag?.let { vm.command("seek", "seconds" to it) }
                     drag = null
                 },
-                modifier = Modifier.fillMaxWidth().testTag("seek-slider"),
+                // Material insets the track by half the thumb; widen by that much so the line
+                // starts and ends exactly above the times.
+                modifier = Modifier.fillMaxWidth().bleedHorizontally(9.dp).testTag("seek-slider"),
                 marks = player.sponsorMarks(),
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            // The times sit just under the line (the slider's touch area is taller than the line),
+            // elapsed on the left and the full length on the right, as music apps show them.
+            Row(Modifier.fillMaxWidth().offset(y = (-10).dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 val numbers =
                     MaterialTheme.typography.labelMedium.merge(
                         androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
                     )
                 Text(time(drag ?: player.position), style = numbers, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
-                    "-" + time((player.duration - (drag ?: player.position)).coerceAtLeast(0f)),
+                    time(player.duration),
                     style = numbers,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1097,8 +1113,9 @@ internal fun MediaSeekSlider(
 
 /** Labelled seek jump ("−10" / "+10") with the same round press as other transport keys. */
 @Composable
-internal fun SeekJump(label: String, description: String, action: () -> Unit) {
+internal fun SeekJump(seconds: Int, forward: Boolean, description: String, action: () -> Unit) {
     val source = remember { MutableInteractionSource() }
+    val ink = LocalContentColor.current
     Box(
         Modifier.size(52.dp)
             .pressScale(source, 0.9f)
@@ -1107,10 +1124,28 @@ internal fun SeekJump(label: String, description: String, action: () -> Unit) {
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
+        // A circular arrow around the number of seconds, turning the way it seeks.
+        Canvas(Modifier.size(34.dp).clearAndSetSemantics {}) {
+            val stroke = 1.8.dp.toPx()
+            val inset = stroke * 1.5f
+            val arc = androidx.compose.ui.geometry.Size(size.width - inset * 2, size.height - inset * 2)
+            val start = if (forward) -60f else -120f
+            val sweep = if (forward) 300f else -300f
+            drawArc(ink, start, sweep, false, Offset(inset, inset), arc, style = Stroke(stroke, cap = StrokeCap.Round))
+            // Arrowhead at the arc's start, pointing along the direction of travel.
+            val radius = arc.width / 2
+            val centre = Offset(size.width / 2, size.height / 2)
+            val angle = Math.toRadians(start.toDouble())
+            val tip = Offset(centre.x + radius * kotlin.math.cos(angle).toFloat(), centre.y + radius * kotlin.math.sin(angle).toFloat())
+            val head = 5.dp.toPx()
+            val back = if (forward) -1f else 1f
+            drawLine(ink, tip, Offset(tip.x + back * head, tip.y - head * 0.15f), stroke, StrokeCap.Round)
+            drawLine(ink, tip, Offset(tip.x + back * head * 0.25f, tip.y + head), stroke, StrokeCap.Round)
+        }
         Text(
-            label,
+            "$seconds",
             style =
-                MaterialTheme.typography.titleSmall.merge(
+                MaterialTheme.typography.labelSmall.merge(
                     androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
                 ),
             modifier = Modifier.clearAndSetSemantics {},
@@ -1182,3 +1217,38 @@ private fun musicSource(media: org.json.JSONObject?): Boolean =
     android.net.Uri.parse(media?.optString("url").orEmpty())
         .host
         .equals("music.youtube.com", ignoreCase = true)
+
+/**
+ * A scrolling one-line title whose ends fade instead of being cut. The marquee reaches 16dp into
+ * the page margin on both sides, so the resting text keeps its place and the fades sit outside it.
+ */
+private fun Modifier.fadingMarquee(): Modifier {
+    val extra = 16.dp
+    return this
+        .layout { measurable, constraints ->
+            val grow = extra.roundToPx() * 2
+            val width = constraints.maxWidth + grow
+            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+            layout(constraints.maxWidth, placeable.height) { placeable.place(-grow / 2, 0) }
+        }
+        .graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val fade = extra.toPx()
+            val clear = androidx.compose.ui.graphics.Color.Transparent
+            val solid = androidx.compose.ui.graphics.Color.Black
+            drawRect(
+                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(solid, clear), 0f, fade),
+                size = androidx.compose.ui.geometry.Size(fade, size.height),
+                blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+            )
+            drawRect(
+                androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(clear, solid), size.width - fade, size.width),
+                topLeft = Offset(size.width - fade, 0f),
+                size = androidx.compose.ui.geometry.Size(fade, size.height),
+                blendMode = androidx.compose.ui.graphics.BlendMode.DstOut,
+            )
+        }
+        .basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1800)
+        .padding(horizontal = extra)
+}

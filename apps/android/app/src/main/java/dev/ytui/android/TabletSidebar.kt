@@ -32,21 +32,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Sidebar destinations in display order: (tab index, label, glyph). */
-private val SIDEBAR_DESTINATIONS =
-    listOf(
-        Triple(1, "Home", Glyph.Home),
-        Triple(2, "Music", Glyph.Music),
-        Triple(3, "Radio", Glyph.Radio),
-        Triple(4, "Movies", Glyph.Film),
-        Triple(0, "Downloads", Glyph.Download),
-    )
-
-/** Library shortcuts: (label, dialog name, glyph). */
+/** Activity shortcuts, as in the You sheet: (label, dialog name, glyph). */
 private val SIDEBAR_LIBRARY =
     listOf(
+        Triple("History", "history", Glyph.History),
         Triple("Playback queue", "queue", Glyph.UpNext),
-        Triple("Recently played", "history", Glyph.History),
         Triple("Sleep timer", "sleep", Glyph.Sleep),
     )
 
@@ -64,6 +54,8 @@ internal fun TabletSidebar(
     choose: (Int) -> Unit,
     connected: Boolean,
     compact: Boolean,
+    /** Movies (alpha) is listed only when turned on in Settings → Advanced, as on phones. */
+    showMovies: Boolean = false,
     openDialog: (String) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -90,7 +82,7 @@ internal fun TabletSidebar(
                     Modifier.selectableGroup(),
                     verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 4.dp),
                 ) {
-                    SIDEBAR_DESTINATIONS.forEach { (index, title, glyph) ->
+                    destinations(showMovies).forEach { (index, title, glyph) ->
                         Destination(index, title, glyph, tab == index, compact, dark) { choose(index) }
                     }
                 }
@@ -102,7 +94,7 @@ internal fun TabletSidebar(
                             .background(colors.outlineVariant)
                     )
                     Text(
-                        "LIBRARY",
+                        "YOUR ACTIVITY",
                         Modifier.padding(start = 14.dp, bottom = 6.dp),
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurfaceVariant,
