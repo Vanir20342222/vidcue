@@ -24,7 +24,8 @@ final class StartupBudget {
   static boolean enforced() {
     Bundle arguments = InstrumentationRegistry.getArguments();
     return "enforce".equals(arguments.getString("ytui_timing"))
-        || "enforce".equals(arguments.getString("ytui_subsecond"));
+        || "enforce".equals(arguments.getString("ytui_subsecond"))
+        || "enforce".equals(arguments.getString("vidcue_video_latency"));
   }
 
   /** Milliseconds from the tap within which visible output must arrive. */

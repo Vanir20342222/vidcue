@@ -5,10 +5,12 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Local, bounded, identifier-free tap-to-output measurements. All times are monotonic. */
 final class StartupTimings {
-  static final long TARGET_MS = 1000;
+  static final long TARGET_MS = 500;
+  static final long AUDIO_TARGET_MS = 100;
   static final String[] PHASES = {
     "selection",
     "offline",
+    "offline_lookup",
     "rpc_queue",
     "engine",
     "flight_wait",
@@ -28,7 +30,8 @@ final class StartupTimings {
     "audio_codec",
     "codec_init",
     "audio_codec_init",
-    "view_inflate"
+    "view_inflate",
+    "service_setup"
   };
   private static final AtomicLong ids = new AtomicLong();
   private static final ArrayDeque<Sample> samples = new ArrayDeque<>();
@@ -39,7 +42,8 @@ final class StartupTimings {
     String route = "unknown", cache = "unknown", disposition = "pending/cancelled";
     String quality = "unknown", transport = "unknown";
     long ended = -1;
-    int byteCache = -1, playerCache = -1;
+    long audioTrack = -1;
+    int byteCache = -1, playerCache = -1, sourceCache = -1;
     long[] stages = new long[PHASES.length];
 
     Sample(long id, long tap, boolean video) {
@@ -118,6 +122,11 @@ final class StartupTimings {
     sample.prepared = "ready".equals(source);
   }
 
+  static synchronized void sourceCache(long id, boolean reused) {
+    Sample sample = find(id);
+    if (sample != null) sample.sourceCache = reused ? 1 : 0;
+  }
+
   static synchronized void playerCache(long id, boolean ready) {
     Sample sample = find(id);
     if (sample != null && sample.playerCache < 0) sample.playerCache = ready ? 1 : 0;
@@ -180,6 +189,20 @@ final class StartupTimings {
         : Math.max(sample.output, sample.playing);
   }
 
+  /** AudioTrack position advancement is stronger evidence than Player.isPlaying alone. */
+  static synchronized void audioOutput(long id, long now) {
+    Sample sample = find(id);
+    if (sample != null && !sample.video && sample.handoff >= 0 && sample.ended < 0
+        && sample.audioTrack < 0 && now >= sample.tap) sample.audioTrack = now - sample.tap;
+  }
+
+  static synchronized long audioUsable(long id) {
+    Sample sample = find(id);
+    long active = usable(id);
+    return sample == null || sample.video || sample.audioTrack < 0 || active < 0
+        ? -1 : Math.max(active, sample.audioTrack);
+  }
+
   static synchronized long elapsed(long id, long now) {
     Sample sample = find(id);
     return sample == null || now < sample.tap ? -1 : now - sample.tap;
@@ -193,8 +216,8 @@ final class StartupTimings {
   static synchronized String report() {
     StringBuilder text =
         new StringBuilder("Vidcue startup timings (milliseconds)\n")
-            .append("Target: video tap to visible frame < 1000 ms\n")
-            .append("Usable start requires both visible output and active playback < 1000 ms.\n")
+            .append("Target: video tap to visible frame and active playback < 500 ms\n")
+            .append("Target: audio tap to active playback < 100 ms (not acoustic output).\n")
             .append(
                 "Resolve includes offline lookup and queue selection. Pending attempts are"
                     + " included.\n");
@@ -212,7 +235,8 @@ final class StartupTimings {
           .append(
               sample.output < 0
                   ? " " + sample.disposition
-                  : sample.video && sample.output >= TARGET_MS ? " OVER TARGET" : "")
+                  : sample.output >= (sample.video ? TARGET_MS : AUDIO_TARGET_MS)
+                      ? " OVER TARGET" : "")
           .append(" cache=")
           .append(sample.cache);
       if (sample.ended >= 0) text.append(" ended_ms=").append(sample.ended);
@@ -223,6 +247,8 @@ final class StartupTimings {
           .append(sample.quality)
           .append(" transport=")
           .append(sample.transport);
+      if (sample.sourceCache >= 0)
+        text.append(" source_preloaded_reused=").append(sample.sourceCache == 1);
       if (sample.playerCache >= 0)
         text.append(" player_at_tap=").append(sample.playerCache == 1 ? "ready" : "cold");
       if (sample.byteCache >= 0)
@@ -231,7 +257,13 @@ final class StartupTimings {
           .append(sample.playing)
           .append(" usable_start=")
           .append(usable(sample.id));
-      if (sample.video && usable(sample.id) >= TARGET_MS) text.append(" USABLE OVER TARGET");
+      if (!sample.video)
+        text.append(" audio_track_ms=").append(sample.audioTrack)
+            .append(" audio_usable_ms=").append(audioUsable(sample.id));
+      if (!sample.video && audioUsable(sample.id) >= AUDIO_TARGET_MS)
+        text.append(" AUDIO OUTPUT OVER TARGET");
+      if (usable(sample.id) >= (sample.video ? TARGET_MS : AUDIO_TARGET_MS))
+        text.append(" USABLE OVER TARGET");
       else if (sample.video && sample.output >= 0 && sample.playing < 0)
         text.append(" ").append(sample.ended >= 0 ? sample.disposition : "waiting_for_playback");
       text.append('\n');

@@ -10,6 +10,21 @@ import org.junit.Test;
 
 public final class PlaybackHttpTest {
   @Test
+  public void promotionDoesNotReviveCancelledSocketsOrRetainForegroundCalls() {
+    OkHttpClient client = new OkHttpClient();
+    PlaybackHttp.Cancellation calls = new PlaybackHttp.Cancellation();
+    Call speculative = calls.track(client.newCall(new Request.Builder().url("https://example.invalid/").build()));
+    calls.cancel();
+    assertTrue(speculative.isCanceled());
+    calls.promote();
+    assertTrue(calls.isPromoted());
+    Call foreground = calls.track(client.newCall(new Request.Builder().url("https://example.invalid/").build()));
+    calls.cancel();
+    assertTrue(speculative.isCanceled());
+    assertFalse(foreground.isCanceled());
+  }
+
+  @Test
   public void aClosedPooledConnectionRecoversWithoutRetryingRateLimits() throws Exception {
     OkHttpClient client = PlaybackHttp.newClient(null).proxy(Proxy.NO_PROXY).build();
     try (MockWebServer server = new MockWebServer()) {

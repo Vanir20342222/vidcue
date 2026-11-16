@@ -16,9 +16,15 @@ import org.junit.Assert
  * Pass `-e ytui_subsecond enforce` (or `YTUI_ANDROID_SUBSECOND=enforce` with
  * `tools/android/run-device-tests.sh`) to make the 1000 ms target a hard assertion again, for
  * example on a physical device.
+ * Pass `-e vidcue_video_latency enforce` to enforce the owner's newer 500 ms target.
  */
 internal object SubsecondTarget {
     const val TARGET_MS = 1000L
+    private val halfSecondEnforced: Boolean
+        get() = InstrumentationRegistry.getArguments().getString("vidcue_video_latency") == "enforce"
+
+    val budgetMs: Long
+        get() = if (halfSecondEnforced) 500L else TARGET_MS
 
     /**
      * The tap-to-visible-frame startup gate: 2000 ms when timing is enforced (nightly, physical
@@ -28,14 +34,15 @@ internal object SubsecondTarget {
         get() = StartupBudget.ms()
 
     val enforced: Boolean
-        get() = InstrumentationRegistry.getArguments().getString("ytui_subsecond") == "enforce"
+        get() = halfSecondEnforced ||
+            InstrumentationRegistry.getArguments().getString("ytui_subsecond") == "enforce"
 
     /** How long a test keeps observing after the tap. */
     val observeMs: Long
-        get() = if (enforced) TARGET_MS else FUNCTIONAL_MS
+        get() = if (enforced) budgetMs else FUNCTIONAL_MS
 
     fun met(rgb: Boolean, visible: Long, usable: Long): Boolean =
-        rgb && visible in 1 until TARGET_MS && usable in 1 until TARGET_MS
+        rgb && visible in 1 until budgetMs && usable in 1 until budgetMs
 
     /**
      * Fails on missing output, or on a missed target when enforced. Returns the evidence line,
@@ -46,11 +53,11 @@ internal object SubsecondTarget {
         val line =
             "$name subsecond_target=${if (met) "met" else "missed"} " +
                 "mode=${if (enforced) "enforced" else "advisory"} " +
-                "pixels_ms=$visible usable_ms=$usable"
+                "target_ms=$budgetMs pixels_ms=$visible usable_ms=$usable"
         Log.i("SubsecondTarget", line)
         if (enforced)
             Assert.assertTrue(
-                "$name actual visible and playing output must be under${TARGET_MS}ms: " +
+                "$name actual visible and playing output must be under${budgetMs}ms: " +
                     "pixels=$visible usable=$usable\n$report",
                 met,
             )

@@ -32,6 +32,110 @@ public final class PlaybackService extends MediaSessionService {
   android.media.AudioDeviceCallback outputCallback;
   private volatile boolean initialized;
   private int lastStartId;
+  private long serviceSetupMs;
+
+  private androidx.media3.exoplayer.source.preload.DefaultPreloadManager.Builder preloadBuilder;
+  private androidx.media3.exoplayer.source.preload.DefaultPreloadManager sourcePreloader;
+
+  boolean sourcePreloaderCreated() { return sourcePreloader != null; }
+  private volatile PreparedSource preparedSource;
+  long preparedSourcesUsed;
+
+  boolean sourcePreparedFor(JSONObject request) {
+    PreparedSource candidate = preparedSource;
+    try {
+      return candidate != null && candidate.ready
+          && candidate.expires >= SystemClock.elapsedRealtime()
+          && candidate.key.equals(SourcePreparationKey.of(
+              request, NativeBridge.accountIntent(), NetworkSettings.revision.get()));
+    } catch (Exception invalid) { return false; }
+  }
+
+
+  private static final class PreparedSource {
+    String key;
+    long byteToken, expires;
+    boolean ready;
+    MediaSource source;
+    final PlaybackHttp.Cancellation network = new PlaybackHttp.Cancellation();
+    Map<String, String> captions = new HashMap<>();
+  }
+
+  /** Main thread only. One speculative source, released on cancellation or replacement. */
+  void prepareSource(JSONObject request, long byteToken) {
+    if (!initialized || !PlaybackCache.sourceIntentCurrent(byteToken)
+        || request.optJSONObject("media") == null
+        || request.optJSONObject("stream") == null
+        || request.optJSONObject("stream").optBoolean("live")
+        || !PlaybackCache.allowed(request.optJSONObject("media"))) return;
+    try {
+      if (sourcePreloader == null) sourcePreloader = preloadBuilder.build();
+      PreparedSource candidate = new PreparedSource();
+      candidate.key = SourcePreparationKey.of(
+          request, NativeBridge.accountIntent(), NetworkSettings.revision.get());
+      candidate.byteToken = byteToken;
+      candidate.expires = SystemClock.elapsedRealtime() + 30_000;
+      MediaSource source = buildMediaSource(request, 0, 0, candidate.captions, candidate.network);
+      cancelPreparedSourceNetwork();
+      sourcePreloader.reset();
+      sourcePreloader.clearListeners();
+      sourcePreloader.addListener(
+          new androidx.media3.exoplayer.source.preload.PreloadManagerListener() {
+            @Override public void onCompleted(MediaItem item) {
+              if (preparedSource == candidate) candidate.ready = true;
+            }
+            @Override public void onError(
+                androidx.media3.exoplayer.source.preload.PreloadException error) {
+              if (preparedSource == candidate) {
+                candidate.network.close();
+                preparedSource = null;
+                sourcePreloader.reset();
+              }
+            }
+          });
+      sourcePreloader.add(source, 0);
+      candidate.source = sourcePreloader.getMediaSource(source.getMediaItem());
+      preparedSource = candidate;
+      sourcePreloader.invalidate();
+    } catch (Exception unavailable) {
+      preparedSource = null;
+      if (sourcePreloader != null) sourcePreloader.reset();
+      // Speculation cannot report an error or change current playback/history.
+    }
+  }
+
+  void cancelPreparedSourceNetwork() {
+    PreparedSource candidate = preparedSource;
+    if (candidate != null) candidate.network.cancel();
+  }
+
+  void discardPreparedSource(long cancelledBefore) {
+    if (preparedSource != null && preparedSource.byteToken < cancelledBefore) {
+      preparedSource.network.close();
+      preparedSource = null;
+      sourcePreloader.reset();
+    }
+  }
+
+  private PreparedSource takePreparedSource(JSONObject request) {
+    PreparedSource candidate = preparedSource;
+    if (candidate == null) return null;
+    try {
+      if (!candidate.ready || request.optBoolean("offline") || request.optBoolean("local")
+          || request.optBoolean("preview") || !PlaybackCache.allowed(request.getJSONObject("media"))
+          || candidate.expires < SystemClock.elapsedRealtime()
+          || !candidate.key.equals(SourcePreparationKey.of(
+              request, NativeBridge.accountIntent(), NetworkSettings.revision.get()))) return null;
+      candidate.network.promote();
+      preparedSourcesUsed++;
+      preparedSource = null;
+      // Keep the manager's reference until replacement/release; playback acquires
+      // this same wrapper on its shared playback looper without dropping samples.
+      return candidate;
+    } catch (Exception invalid) {
+      return null;
+    }
+  }
 
   static boolean warmReady() {
     PlaybackService service = current;
@@ -111,6 +215,7 @@ public final class PlaybackService extends MediaSessionService {
 
   @Override
   public void onCreate() {
+    long setupAt = SystemClock.elapsedRealtime();
     super.onCreate();
     current = this;
     android.app.NotificationManager notifications =
@@ -124,10 +229,8 @@ public final class PlaybackService extends MediaSessionService {
             .setChannelId("ytui-playback")
             .build());
     prefs = getSharedPreferences("player", MODE_PRIVATE);
-    player =
-        new ExoPlayer.Builder(
-                this,
-                new DefaultRenderersFactory(this) {
+    DefaultRenderersFactory renderers =
+        new DefaultRenderersFactory(this) {
                   @Override
                   protected void buildVideoRenderers(
                       android.content.Context ctx,
@@ -187,6 +290,10 @@ public final class PlaybackService extends MediaSessionService {
                             })
                         .setEnableFloatOutput(false)
                         .setEnableAudioTrackPlaybackParams(playbackParams)
+                        // Report when output really starts advancing; without it media3 1.8
+                        // can signal late, after the AudioTrack has already been playing.
+                        .setEnableOnAudioPositionAdvancingFix(true)
+                        .setAudioTrackProvider(new QuickStartAudioTrackProvider())
                         .build();
                   }
                 }.setEnableDecoderFallback(true)
@@ -210,12 +317,17 @@ public final class PlaybackService extends MediaSessionService {
                             if (!software.isEmpty()) return software;
                           }
                           return decoders;
-                        }))
-            .setLoadControl(
-                new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(5000, 20000, 100, 750)
-                    .build())
-            .build();
+                        });
+    preloadBuilder =
+        new androidx.media3.exoplayer.source.preload.DefaultPreloadManager.Builder(
+                this,
+                rank -> androidx.media3.exoplayer.source.preload.DefaultPreloadManager
+                    .PreloadStatus.specifiedRangeLoaded(250))
+            .setRenderersFactory(renderers)
+            .setLoadControl(new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(5000, 20000, 100, 750).build());
+    player = preloadBuilder.buildExoPlayer();
+    // Build the preload manager only for an eligible, byte-warmed candidate.
     player.setAudioAttributes(
         new AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -265,6 +377,24 @@ public final class PlaybackService extends MediaSessionService {
             if (at >= startupAt && StartupTimings.total(startupToken) < 0) {
               StartupTimings.stage(startupToken, "audio_codec", at - startupAt);
               StartupTimings.stage(startupToken, "audio_codec_init", duration);
+            }
+          }
+
+          @Override
+          public void onAudioPositionAdvancing(EventTime time, long playoutStartSystemTimeMs) {
+            // Reject delayed events from a timeline replaced by a newer selection.
+            if (currentRequest.optBoolean("audio") && time.realtimeMs >= startupAt
+                && time.windowIndex == player.getCurrentMediaItemIndex()
+                && time.timeline.equals(player.getCurrentTimeline())) {
+              // The callback reaches this (main) thread after the output began; the supplied
+              // playout start is wall time, so map it onto the monotonic clock. Never earlier
+              // than the event itself was raised on the playback thread.
+              long now = SystemClock.elapsedRealtime();
+              long playout = now - Math.max(0, System.currentTimeMillis() - playoutStartSystemTimeMs);
+              StartupTimings.audioOutput(startupToken, Math.min(now, Math.max(playout, time.realtimeMs)));
+              if (BuildConfig.DEBUG)
+                android.util.Log.d("AudioStart", "raised_ms=" + (time.realtimeMs - startupAt)
+                    + " playout_ms=" + (playout - startupAt) + " delivered_ms=" + (now - startupAt));
             }
           }
         });
@@ -553,6 +683,7 @@ public final class PlaybackService extends MediaSessionService {
           } catch (Exception ignored) {
           }
         });
+    serviceSetupMs = SystemClock.elapsedRealtime() - setupAt;
     initialized = true;
   }
 
@@ -752,6 +883,7 @@ public final class PlaybackService extends MediaSessionService {
     // Resolution is finished: hand cached bytes to the foreground reader and
     // stop speculative prefix I/O competing with initial audio/video buffering.
     // Cancellation retains completed cache spans and Rust stream leases.
+    PreparedSource prepared = takePreparedSource(request);
     PlaybackCache.cancel();
     if (request.optBoolean("preview")
         && previewRestore == null
@@ -797,6 +929,7 @@ public final class PlaybackService extends MediaSessionService {
     streamRefreshing = false;
     startupToken = request.optLong("startup_token");
     StartupTimings.handoff(startupToken, startupAt);
+    StartupTimings.stage(startupToken, "service_setup", serviceSetupMs);
     pendingStart = !request.optBoolean("preview");
     resumePending = request.optBoolean("resume") && !request.has("start_position_ms");
     navigationPending = false;
@@ -812,138 +945,15 @@ public final class PlaybackService extends MediaSessionService {
     JSONObject stream = request.getJSONObject("stream"), media = request.getJSONObject("media");
     if (stream.optBoolean("live")) media.put("live", true);
     pendingQueueUrl = request.optBoolean("queued") ? media.optString("url") : "";
-    HttpDataSource.Factory http = PlaybackHttp.factory(headers(stream.optJSONObject("headers")));
-    DataSource.Factory upstream =
-        request.optBoolean("offline")
-            ? OfflineStore.offlineFactory()
-            : request.optBoolean("local") || media.optBoolean("live") || stream.optBoolean("live")
-                ? new androidx.media3.datasource.DefaultDataSource.Factory(this, http)
-                : PlaybackCache.source(stream);
-    long networkToken = startupToken, networkStart = startupAt;
-    java.util.concurrent.atomic.AtomicBoolean responseSeen =
-        new java.util.concurrent.atomic.AtomicBoolean();
-    java.util.concurrent.atomic.AtomicBoolean byteSeen =
-        new java.util.concurrent.atomic.AtomicBoolean();
-    DataSource.Factory traced =
-        () -> {
-          DataSource dataSource = upstream.createDataSource();
-          dataSource.addTransferListener(
-              new TransferListener() {
-                @Override
-                public void onTransferInitializing(
-                    DataSource source, DataSpec spec, boolean network) {}
-
-                @Override
-                public void onTransferStart(DataSource source, DataSpec spec, boolean network) {
-                  if (network && responseSeen.compareAndSet(false, true))
-                    StartupTimings.stage(
-                        networkToken, "net_response", SystemClock.elapsedRealtime() - networkStart);
-                }
-
-                @Override
-                public void onBytesTransferred(
-                    DataSource source, DataSpec spec, boolean network, int bytes) {
-                  if (network && bytes > 0 && byteSeen.compareAndSet(false, true))
-                    StartupTimings.stage(
-                        networkToken, "net_byte", SystemClock.elapsedRealtime() - networkStart);
-                }
-
-                @Override
-                public void onTransferEnd(DataSource source, DataSpec spec, boolean network) {}
-              });
-          return dataSource;
-        };
-    DefaultMediaSourceFactory sources =
-        new DefaultMediaSourceFactory(
-                PlaybackManifestDataSource.factory(
-                    traced,
-                    request.optBoolean("offline") ? "" : stream.optString("dash_manifest"),
-                    request.optBoolean("offline") ? "" : stream.optString("audio_dash_manifest")))
-            .setLoadErrorHandlingPolicy(
-                new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
-                  @Override
-                  public long getRetryDelayMsFor(
-                      androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
-                          info) {
-                    return rateLimited(info.exception)
-                        ? C.TIME_UNSET
-                        : super.getRetryDelayMsFor(info);
-                  }
-                });
-    MediaMetadata metadata =
-        new MediaMetadata.Builder()
-            .setTitle(media.optString("title"))
-            .setArtist(media.optString("creator"))
-            .setArtworkUri(artwork.register(media))
-            .build();
-    JSONObject catalog = stream.optJSONObject("catalog");
-    JSONArray choices = catalog == null ? null : catalog.optJSONArray("captions");
-    // Ordered by use (uploader, spoken-language automatic, translations the user reads)
-    // and named readably; see Captions.
-    java.util.List<MediaItem.SubtitleConfiguration> captions =
-        Captions.configurations(request.optBoolean("offline") ? null : choices, captionKinds);
-    String hlsMaster = request.optBoolean("offline") ? "" : stream.optString("hls_master");
-    String dash = request.optBoolean("offline") ? "" : stream.optString("dash_manifest");
-    boolean indexed = !dash.isEmpty() && dash.length() <= 65536;
-    // Rust preserves the chosen muxed HLS variant's CODECS in a small in-memory
-    // master. Media3 can prepare tracks without first sniffing a media segment.
-    // Downloads/offline reads retain their original URIs and cache identities.
-    boolean chunkless = !indexed && !hlsMaster.isEmpty() && hlsMaster.length() <= 65536;
-    int contentType =
-        androidx.media3.common.util.Util.inferContentTypeForUriAndMimeType(
-            android.net.Uri.parse(stream.getString("url")), null);
-    StartupTimings.presentation(
-        startupToken,
-        playbackQuality,
-        request.optBoolean("offline")
-            ? "offline"
-            : indexed
-                ? "dash-indexed"
-                : chunkless
-                    ? "hls-chunkless"
-                    : contentType == C.CONTENT_TYPE_HLS
-                        ? "hls"
-                        : contentType == C.CONTENT_TYPE_DASH ? "dash" : "progressive");
-    String sourceUri =
-        indexed
-            ? PlaybackManifestDataSource.VIDEO
-            : chunkless
-                ? "data:application/vnd.apple.mpegurl;base64,"
-                    + android.util.Base64.encodeToString(
-                        hlsMaster.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        android.util.Base64.NO_WRAP)
-                : stream.getString("url");
-    MediaItem main =
-        new MediaItem.Builder()
-            .setUri(sourceUri)
-            .setMimeType(
-                indexed ? MimeTypes.APPLICATION_MPD : chunkless ? MimeTypes.APPLICATION_M3U8 : null)
-            .setCustomCacheKey(
-                indexed || chunkless || stream.isNull("cache_key")
-                    ? null
-                    : stream.optString("cache_key"))
-            .setMediaId(media.optString("url"))
-            .setSubtitleConfigurations(captions)
-            .setMediaMetadata(metadata)
-            .build();
-    MediaSource source = sources.createMediaSource(main);
-    String audio = stream.optString("audio_url", "");
-    String audioDash = request.optBoolean("offline") ? "" : stream.optString("audio_dash_manifest");
-    boolean indexedAudio = !audioDash.isEmpty() && audioDash.length() <= 65536;
-    if (!indexed && !audio.isEmpty() && !audio.equals("null"))
-      source =
-          new MergingMediaSource(
-              true,
-              source,
-              sources.createMediaSource(
-                  new MediaItem.Builder()
-                      .setUri(indexedAudio ? PlaybackManifestDataSource.AUDIO : audio)
-                      .setMimeType(indexedAudio ? MimeTypes.APPLICATION_MPD : null)
-                      .setCustomCacheKey(
-                          indexedAudio || stream.isNull("audio_cache_key")
-                              ? null
-                              : stream.optString("audio_cache_key"))
-                      .build()));
+    StartupTimings.sourceCache(startupToken, prepared != null);
+    if (prepared != null)
+      StartupTimings.presentation(startupToken, playbackQuality, sourceTransport(request));
+    MediaSource source;
+    if (prepared != null) {
+      source = prepared.source;
+      captionKinds.clear();
+      captionKinds.putAll(prepared.captions);
+    } else source = buildMediaSource(request, startupToken, startupAt, captionKinds, null);
     int audioContent = PlaybackLifecycle.contentType(request.optBoolean("audio", true));
     if (audioContent != audioContentType) {
       audioContentType = audioContent;
@@ -1007,6 +1017,159 @@ public final class PlaybackService extends MediaSessionService {
           }
         });
     publish();
+  }
+
+  private static String sourceTransport(JSONObject request) {
+    JSONObject stream = request.optJSONObject("stream");
+    if (request.optBoolean("offline")) return "offline";
+    if (stream == null) return "unknown";
+    String dash = stream.optString("dash_manifest"), hls = stream.optString("hls_master");
+    if (!dash.isEmpty() && dash.length() <= 65536) return "dash-indexed";
+    if (!hls.isEmpty() && hls.length() <= 65536) return "hls-chunkless";
+    int type = androidx.media3.common.util.Util.inferContentTypeForUriAndMimeType(
+        android.net.Uri.parse(stream.optString("url")), null);
+    return type == C.CONTENT_TYPE_HLS ? "hls" : type == C.CONTENT_TYPE_DASH ? "dash" : "progressive";
+  }
+
+  private MediaSource buildMediaSource(
+      JSONObject request, long token, long startedAt, Map<String, String> sourceCaptions,
+      PlaybackHttp.Cancellation sourceNetwork)
+      throws JSONException {
+    JSONObject stream = request.getJSONObject("stream"), media = request.getJSONObject("media");
+    HttpDataSource.Factory http = PlaybackHttp.factory(headers(stream.optJSONObject("headers")), sourceNetwork);
+    DataSource.Factory upstream =
+        request.optBoolean("offline")
+            ? OfflineStore.offlineFactory()
+            : request.optBoolean("local") || media.optBoolean("live") || stream.optBoolean("live")
+                ? new androidx.media3.datasource.DefaultDataSource.Factory(this, http)
+                : sourceNetwork == null ? PlaybackCache.source(stream)
+                    : PlaybackCache.preparedSource(stream, sourceNetwork);
+    long networkToken = token, networkStart = startedAt;
+    java.util.concurrent.atomic.AtomicBoolean responseSeen =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    java.util.concurrent.atomic.AtomicBoolean byteSeen =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    DataSource.Factory traced =
+        () -> {
+          DataSource dataSource = upstream.createDataSource();
+          dataSource.addTransferListener(
+              new TransferListener() {
+                @Override
+                public void onTransferInitializing(
+                    DataSource source, DataSpec spec, boolean network) {}
+
+                @Override
+                public void onTransferStart(DataSource source, DataSpec spec, boolean network) {
+                  if (network && responseSeen.compareAndSet(false, true))
+                    StartupTimings.stage(
+                        networkToken, "net_response", SystemClock.elapsedRealtime() - networkStart);
+                }
+
+                @Override
+                public void onBytesTransferred(
+                    DataSource source, DataSpec spec, boolean network, int bytes) {
+                  if (network && bytes > 0 && byteSeen.compareAndSet(false, true))
+                    StartupTimings.stage(
+                        networkToken, "net_byte", SystemClock.elapsedRealtime() - networkStart);
+                }
+
+                @Override
+                public void onTransferEnd(DataSource source, DataSpec spec, boolean network) {}
+              });
+          return dataSource;
+        };
+    DefaultMediaSourceFactory sources =
+        new DefaultMediaSourceFactory(
+                PlaybackManifestDataSource.factory(
+                    traced,
+                    request.optBoolean("offline") ? "" : stream.optString("dash_manifest"),
+                    request.optBoolean("offline") ? "" : stream.optString("audio_dash_manifest")))
+            .setLoadErrorHandlingPolicy(
+                new androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy() {
+                  @Override
+                  public long getRetryDelayMsFor(
+                      androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy.LoadErrorInfo
+                          info) {
+                    return rateLimited(info.exception)
+                        ? C.TIME_UNSET
+                        : super.getRetryDelayMsFor(info);
+                  }
+                });
+    MediaMetadata metadata =
+        new MediaMetadata.Builder()
+            .setTitle(media.optString("title"))
+            .setArtist(media.optString("creator"))
+            .setArtworkUri(artwork.register(media))
+            .build();
+    JSONObject catalog = stream.optJSONObject("catalog");
+    JSONArray choices = catalog == null ? null : catalog.optJSONArray("captions");
+    // Ordered by use (uploader, spoken-language automatic, translations the user reads)
+    // and named readably; see Captions.
+    java.util.List<MediaItem.SubtitleConfiguration> captions =
+        Captions.configurations(request.optBoolean("offline") ? null : choices, sourceCaptions);
+    String hlsMaster = request.optBoolean("offline") ? "" : stream.optString("hls_master");
+    String dash = request.optBoolean("offline") ? "" : stream.optString("dash_manifest");
+    boolean indexed = !dash.isEmpty() && dash.length() <= 65536;
+    // Rust preserves the chosen muxed HLS variant's CODECS in a small in-memory
+    // master. Media3 can prepare tracks without first sniffing a media segment.
+    // Downloads/offline reads retain their original URIs and cache identities.
+    boolean chunkless = !indexed && !hlsMaster.isEmpty() && hlsMaster.length() <= 65536;
+    int contentType =
+        androidx.media3.common.util.Util.inferContentTypeForUriAndMimeType(
+            android.net.Uri.parse(stream.getString("url")), null);
+    StartupTimings.presentation(
+        token,
+        request.optString("quality", "best"),
+        request.optBoolean("offline")
+            ? "offline"
+            : indexed
+                ? "dash-indexed"
+                : chunkless
+                    ? "hls-chunkless"
+                    : contentType == C.CONTENT_TYPE_HLS
+                        ? "hls"
+                        : contentType == C.CONTENT_TYPE_DASH ? "dash" : "progressive");
+    String sourceUri =
+        indexed
+            ? PlaybackManifestDataSource.VIDEO
+            : chunkless
+                ? "data:application/vnd.apple.mpegurl;base64,"
+                    + android.util.Base64.encodeToString(
+                        hlsMaster.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        android.util.Base64.NO_WRAP)
+                : stream.getString("url");
+    MediaItem main =
+        new MediaItem.Builder()
+            .setUri(sourceUri)
+            .setMimeType(
+                indexed ? MimeTypes.APPLICATION_MPD : chunkless ? MimeTypes.APPLICATION_M3U8 : null)
+            .setCustomCacheKey(
+                indexed || chunkless || stream.isNull("cache_key")
+                    ? null
+                    : stream.optString("cache_key"))
+            .setMediaId(media.optString("url"))
+            .setSubtitleConfigurations(captions)
+            .setMediaMetadata(metadata)
+            .build();
+    MediaSource source = sources.createMediaSource(main);
+    String audio = stream.optString("audio_url", "");
+    String audioDash = request.optBoolean("offline") ? "" : stream.optString("audio_dash_manifest");
+    boolean indexedAudio = !audioDash.isEmpty() && audioDash.length() <= 65536;
+    if (!indexed && !audio.isEmpty() && !audio.equals("null"))
+      source =
+          new MergingMediaSource(
+              true,
+              source,
+              sources.createMediaSource(
+                  new MediaItem.Builder()
+                      .setUri(indexedAudio ? PlaybackManifestDataSource.AUDIO : audio)
+                      .setMimeType(indexedAudio ? MimeTypes.APPLICATION_MPD : null)
+                      .setCustomCacheKey(
+                          indexedAudio || stream.isNull("audio_cache_key")
+                              ? null
+                              : stream.optString("audio_cache_key"))
+                      .build()));
+    return source;
   }
 
   void recordStarted() {
@@ -2290,6 +2453,7 @@ public final class PlaybackService extends MediaSessionService {
     session.release();
     artwork.release();
     player.release();
+    if (sourcePreloader != null) sourcePreloader.release();
     MediaBridge.playerSnapshot = "{}";
     super.onDestroy();
   }

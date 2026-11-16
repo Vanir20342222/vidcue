@@ -6,6 +6,25 @@ import org.junit.Test;
 
 public final class StartupTimingsTest {
   @Test
+  public void activePlaybackAloneCannotQualifyAudioOutput() {
+    long token = StartupTimings.begin(1000, false);
+    StartupTimings.audioOutput(token, 1005); // no handoff yet
+    StartupTimings.handoff(token, 1010);
+    StartupTimings.output(token, 1040, false);
+    assertEquals(40, StartupTimings.usable(token));
+    assertEquals(-1, StartupTimings.audioUsable(token));
+    StartupTimings.audioOutput(token, 1120);
+    assertEquals(120, StartupTimings.audioUsable(token));
+    assertTrue(StartupTimings.report().contains("audio_usable_ms=120 AUDIO OUTPUT OVER TARGET"));
+    StartupTimings.audioOutput(token, 1300);
+    assertEquals(120, StartupTimings.audioUsable(token));
+    long video = StartupTimings.begin(2000, true);
+    StartupTimings.handoff(video, 2010);
+    StartupTimings.audioOutput(video, 2020);
+    assertEquals(-1, StartupTimings.audioUsable(video));
+  }
+
+  @Test
   public void subsecondGoalIncludesPlayingAndKeepsByteReadinessSeparateFromResolution() {
     long token = StartupTimings.begin(1000, true);
     StartupTimings.resolved(token, 1002, true);
@@ -16,10 +35,21 @@ public final class StartupTimingsTest {
     StartupTimings.started(token, 2000);
     assertEquals(1000, StartupTimings.usable(token));
     String report = StartupTimings.report();
-    assertTrue(report.contains("< 1000 ms"));
+    assertTrue(report.contains("< 500 ms"));
     assertTrue(report.contains("warmup_bytes_at_tap=not_ready"));
     assertTrue(report.contains("player_at_tap=ready"));
     assertTrue(report.contains("USABLE OVER TARGET"));
+  }
+
+  @Test
+  public void audioTargetReportsTheHundredMillisecondBoundaryWithoutClaimingAcousticOutput() {
+    long token = StartupTimings.begin(1000, false);
+    StartupTimings.handoff(token, 1010);
+    StartupTimings.output(token, 1100, false);
+    assertEquals(100, StartupTimings.usable(token));
+    String report = StartupTimings.report();
+    assertTrue(report.contains("< 100 ms (not acoustic output)"));
+    assertTrue(report.contains("playing=100 OVER TARGET"));
   }
 
   @Test

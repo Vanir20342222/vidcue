@@ -30,6 +30,7 @@ class FeedStartupTest {
         MediaBridge.offlineUi = false
         MobileSettings.prefs().edit().putBoolean("preload_next", false).commit()
         val calls = mutableListOf<Pair<Int, Any>>()
+        val themeNames = CompletableDeferred<List<String>>()
         val model =
             YtuiViewModel(browsePage = { tab, request, _ ->
                 calls.add(tab to request)
@@ -38,7 +39,7 @@ class FeedStartupTest {
                         json("title" to "music", "url" to "https://example.invalid/music")
                     )
                 )
-            })
+            }, readThemes = { themeNames.await() })
         val store = ViewModelStore().apply { put("startup", model) }
         try {
             model.initialize(false)
@@ -57,6 +58,10 @@ class FeedStartupTest {
             assertEquals(2, model.tab.value)
             assertEquals("music", model.feeds[2].value.cards.single().title)
             assertEquals("Ready", model.status.value)
+            assertTrue("First content must not wait for the theme picker", model.themes.value.isEmpty())
+            themeNames.complete(listOf("system", "dark"))
+            dispatcher.scheduler.runCurrent()
+            assertEquals(listOf("system", "dark"), model.themes.value)
         } finally {
             store.clear()
             dispatcher.scheduler.runCurrent()

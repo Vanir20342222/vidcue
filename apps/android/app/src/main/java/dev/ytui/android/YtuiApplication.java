@@ -20,6 +20,7 @@ public final class YtuiApplication extends Application {
   @Override
   public void onCreate() {
     super.onCreate();
+    FirstFeedTiming.current.begin(android.os.Process.getStartElapsedRealtime());
     String failure =
         NativeBridge.init(getFilesDir().getAbsolutePath(), getCacheDir().getAbsolutePath());
     // Already sanitized by the engine. The UI keeps it as the status and shows it once.
