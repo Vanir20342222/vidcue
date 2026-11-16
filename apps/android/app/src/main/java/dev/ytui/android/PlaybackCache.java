@@ -50,7 +50,7 @@ final class PlaybackCache {
     return source(stream, null);
   }
 
-  private static CacheDataSource.Factory source(
+  static CacheDataSource.Factory source(
       JSONObject stream, PlaybackHttp.Cancellation calls) {
     HttpDataSource.Factory http =
         PlaybackHttp.factory(PlaybackService.headers(stream.optJSONObject("headers")), calls);
@@ -62,8 +62,21 @@ final class PlaybackCache {
                 MediaBridge.context, IndexedRangeDataSource.factory(http)));
   }
 
+  static DataSource.Factory preparedSource(JSONObject stream, PlaybackHttp.Cancellation gate) {
+    DataSource.Factory cached = new DefaultDataSource.Factory(MediaBridge.context,
+        new CacheDataSource.Factory().setCache(cache()).setUpstreamDataSourceFactory(null));
+    DataSource.Factory foreground = source(stream);
+    return () -> new PreparedPlaybackDataSource(cached, foreground, gate::isPromoted);
+  }
+
   static synchronized void cancel() {
-    intent.incrementAndGet();
+    long cancelledBefore = intent.incrementAndGet();
+    PlaybackService service = PlaybackService.current;
+    if (service != null) service.cancelPreparedSourceNetwork();
+    MediaBridge.main.post(() -> {
+      PlaybackService active = PlaybackService.current;
+      if (active != null) active.discardPreparedSource(cancelledBefore);
+    });
     if (activeRequest != 0) NativeBridge.cancel(activeRequest);
     if (current != null) current.cancel(true);
     for (CacheWriter writer : writers) writer.cancel();
@@ -82,8 +95,14 @@ final class PlaybackCache {
   // later at the service handoff). Completed spans remain available.
   static synchronized void pauseBytes() {
     bytesPaused = true;
+    PlaybackService service = PlaybackService.current;
+    if (service != null) service.cancelPreparedSourceNetwork();
     for (CacheWriter writer : writers) writer.cancel();
     for (PlaybackHttp.Cancellation calls : networkCalls.values()) calls.cancel();
+  }
+
+  static boolean sourceIntentCurrent(long token) {
+    return token == intent.get() && !bytesPaused;
   }
 
   static synchronized boolean readyFor(JSONObject media, boolean audio, String quality) {
@@ -166,6 +185,7 @@ final class PlaybackCache {
     if (account != NativeBridge.accountIntent() || network != NetworkSettings.revision.get())
       return;
     if (!allowed(media)) {
+      if (BuildConfig.DEBUG) android.util.Log.d("PlaybackCache", "Preload not allowed by settings/network");
       cancel();
       return;
     }
@@ -190,7 +210,11 @@ final class PlaybackCache {
               () -> {
                 try {
                   // The current decoder's initial buffer takes priority over speculation.
-                  if (!waitForBuffer(token) || bytesPaused) return;
+                  if (!waitForBuffer(token) || bytesPaused) {
+                    if (BuildConfig.DEBUG)
+                      android.util.Log.d("PlaybackCache", "Preload abandoned before resolve: superseded=" + (token != intent.get()) + " paused=" + bytesPaused);
+                    return;
+                  }
                   JSONObject stream =
                       resolved != null
                           ? resolved
@@ -206,6 +230,8 @@ final class PlaybackCache {
                       || account != NativeBridge.accountIntent()
                       || network != NetworkSettings.revision.get()) return;
                   boolean warmed = warmTracks(stream, audio, token);
+                  if (BuildConfig.DEBUG && !warmed)
+                    android.util.Log.d("PlaybackCache", "Preload bytes not warmed: superseded=" + (token != intent.get()) + " paused=" + bytesPaused);
                   boolean publish = false;
                   synchronized (PlaybackCache.class) {
                     if (token == intent.get()
@@ -217,9 +243,24 @@ final class PlaybackCache {
                       publish = true;
                     }
                   }
-                  if (publish) MediaBridge.notifyUi();
+                  if (publish) {
+                    JSONObject request = new JSONObject()
+                        .put("media", new JSONObject(media.toString()))
+                        .put("stream", new JSONObject(stream.toString()))
+                        .put("audio", audio).put("quality", quality);
+                    PlaybackService.mergeMetadata(request.getJSONObject("media"), stream);
+                    MediaBridge.main.post(() -> {
+                      PlaybackService service = PlaybackService.current;
+                      if (service != null && account == NativeBridge.accountIntent()
+                          && network == NetworkSettings.revision.get())
+                        service.prepareSource(request, token);
+                    });
+                    MediaBridge.notifyUi();
+                  }
                 } catch (Exception ignored) {
                   /* speculative failure never interrupts current playback */
+                  if (BuildConfig.DEBUG)
+                    android.util.Log.d("PlaybackCache", "Preload failed: " + ignored.getClass().getSimpleName());
                 } finally {
                   calls.close();
                   networkCalls.remove(token, calls);

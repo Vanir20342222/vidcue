@@ -355,6 +355,11 @@ internal class YtuiViewModel(
     private val readHistory: suspend () -> List<MediaCard> = {
         RustRpc.arrayCall("history_list").objects().map(::MediaCard)
     },
+    private val readThemes: suspend () -> List<String> = {
+        RustRpc.arrayCall("themes").let { values ->
+            (0 until values.length()).map { values.getString(it) }
+        }
+    },
 ) : ViewModel() {
     val tab = MutableStateFlow(1)
     // Tab 4 (Movies) has its own page and never loads a feed; its slot keeps tab-indexed state
@@ -474,10 +479,6 @@ internal class YtuiViewModel(
                     mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
                     config.value = RustRpc.objectCall("settings")
                     palette.value = RustRpc.objectCall("theme", "dark" to dark)
-                    themes.value =
-                        RustRpc.arrayCall("themes").let { values ->
-                            (0 until values.length()).map { values.getString(it) }
-                        }
                     account.value = RustRpc.objectCall("account")
                     refreshWatchHistory()
                     account.value
@@ -489,6 +490,9 @@ internal class YtuiViewModel(
             EngineStartup.current.claimNotice()?.let { actionError.value = it }
             ready.value = true
             loadFeedIfNeeded(tab.value)
+            // Only the active palette is needed to draw the feed. A theme-picker catalog
+            // request must not delay first content or prevent account/history initialization.
+            task { themes.value = readThemes() }
         }
     }
 
@@ -1155,32 +1159,33 @@ internal class YtuiViewModel(
             try {
                 actionError.value = null
                 status.value = if (download) "Preparing download…" else "Resolving playback…"
+                val preferOffline = mobile.value.optBoolean("prefer_offline", true)
                 val offlineAt = android.os.SystemClock.elapsedRealtime()
-                val local =
-                    if (
-                        recovery
-                            ?.optJSONObject("media")
-                            ?.optString("offline_id")
-                            .orEmpty()
-                            .isNotEmpty()
-                    )
-                        withContext(Dispatchers.IO) {
-                            OfflineStore.offlineRequest(
-                                recovery!!.getJSONObject("media").getString("offline_id")
-                            )
-                        }
-                    else if (!download && !preview && mobile.value.optBoolean("prefer_offline", true))
-                        withContext(Dispatchers.IO) {
+                // Resolve immediately after disk lookup on the worker. Returning to the
+                // busy UI thread between them adds an avoidable scheduling round trip.
+                val (local, stream) = withContext(Dispatchers.IO) {
+                    val lookupAt = android.os.SystemClock.elapsedRealtime()
+                    val local = try {
+                        if (
+                            recovery?.optJSONObject("media")?.optString("offline_id")
+                                .orEmpty().isNotEmpty()
+                        ) OfflineStore.offlineRequest(
+                            recovery!!.getJSONObject("media").getString("offline_id")
+                        )
+                        else if (!download && !preview && preferOffline)
                             OfflineStore.find(media.value, audio, quality)
-                        }
-                    else null
-                StartupTimings.stage(
-                    timing,
-                    "offline",
-                    android.os.SystemClock.elapsedRealtime() - offlineAt,
-                )
-                val stream =
-                    local?.optJSONObject("stream")
+                        else null
+                    } finally {
+                        StartupTimings.stage(
+                            timing, "offline_lookup",
+                            android.os.SystemClock.elapsedRealtime() - lookupAt,
+                        )
+                    }
+                    StartupTimings.stage(
+                        timing, "offline",
+                        android.os.SystemClock.elapsedRealtime() - offlineAt,
+                    )
+                    val stream = local?.optJSONObject("stream")
                         ?: RustRpc.objectCall(
                             "resolve",
                             "startup_token" to timing,
@@ -1188,6 +1193,8 @@ internal class YtuiViewModel(
                             "audio" to audio,
                             "quality" to quality,
                         )
+                    local to stream
+                }
                 if (epoch != accountEpoch || network != NetworkSettings.revision.get()) {
                     StartupTimings.ended(
                         timing,

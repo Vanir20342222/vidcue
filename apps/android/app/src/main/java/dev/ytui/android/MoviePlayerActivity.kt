@@ -124,15 +124,21 @@ class MoviePlayerActivity : ComponentActivity() {
                 .setSeekForwardIncrementMs(step)
                 .build()
         player = exo
+        MovieStartup.position = { exo.currentPosition }
         exo.addListener(
             object : Player.Listener {
                 override fun onIsPlayingChanged(playing: Boolean) {
+                    if (playing) MovieStartup.playing(android.os.SystemClock.elapsedRealtime())
                     if (playing) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                     else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 }
 
                 override fun onPlaybackStateChanged(state: Int) {
                     if (state == Player.STATE_ENDED) MovieLibrary.clearPosition(key)
+                }
+
+                override fun onRenderedFirstFrame() {
+                    MovieStartup.frame(android.os.SystemClock.elapsedRealtime())
                 }
             }
         )
@@ -301,13 +307,14 @@ class MoviePlayerActivity : ComponentActivity() {
 
         /** Streams [sources] in order (the checked one first). */
         internal fun stream(context: Context, key: String, title: String, sources: List<MovieSource>) {
-            context.startActivity(
-                Intent(context, MoviePlayerActivity::class.java)
-                    .putExtra(EXTRA_KEY, key)
-                    .putExtra(EXTRA_TITLE, title)
-                    .putExtra(EXTRA_SOURCES, JSONArray(sources.map { it.json() }).toString())
-            )
+            context.startActivity(streamIntent(context, key, title, sources))
         }
+
+        internal fun streamIntent(context: Context, key: String, title: String, sources: List<MovieSource>): Intent =
+            Intent(context, MoviePlayerActivity::class.java)
+                .putExtra(EXTRA_KEY, key)
+                .putExtra(EXTRA_TITLE, title)
+                .putExtra(EXTRA_SOURCES, JSONArray(sources.map { it.json() }).toString())
 
         /** Plays a finished download from app storage. */
         internal fun offline(context: Context, download: MovieDownload) {
@@ -318,6 +325,32 @@ class MoviePlayerActivity : ComponentActivity() {
                     .putExtra(EXTRA_OFFLINE, download.entrypoint)
             )
         }
+    }
+}
+
+/**
+ * When the latest film player first drew a frame and started playing (elapsedRealtime), so live
+ * device tests can time a film from the tap. Holds no titles, URLs or headers.
+ */
+internal object MovieStartup {
+    @Volatile var firstFrameAt = -1L
+        private set
+    @Volatile var playingAt = -1L
+        private set
+    @Volatile var position: () -> Long = { -1L }
+
+    fun reset() {
+        firstFrameAt = -1L
+        playingAt = -1L
+        position = { -1L }
+    }
+
+    fun frame(now: Long) {
+        if (firstFrameAt < 0) firstFrameAt = now
+    }
+
+    fun playing(now: Long) {
+        if (playingAt < 0) playingAt = now
     }
 }
 

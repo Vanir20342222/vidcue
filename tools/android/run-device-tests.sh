@@ -32,7 +32,7 @@ collect_evidence() {
     adb pull /sdcard/Android/data/$test_package/files/startup-timings.txt "$evidence/startup-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-hls-timings.txt "$evidence/startup-hls-timings.txt" > /dev/null 2>&1 || true
     adb pull /sdcard/Android/data/$test_package/files/startup-indexed-timings.txt "$evidence/startup-indexed-timings.txt" > /dev/null 2>&1 || true
-    for name in public-startup-timings startup-subsecond-timings startup-indexed-prefetched-timings; do
+    for name in public-startup-timings startup-subsecond-timings startup-indexed-prefetched-timings music-latency-timings download-throughput source-preparation-audio-timings source-preparation-video-timings source-preparation-comparison live-media-timings live-media-startup-video live-media-startup-song; do
         adb pull "/sdcard/Android/data/$test_package/files/$name.txt" "$evidence/$name.txt" > /dev/null 2>&1 || true
     done
     for state in cold prepared missing-frame settings hls hls-prepared indexed indexed-prefetched indexed-prefetched-failed subsecond subsecond-cold subsecond-failed; do
@@ -63,6 +63,19 @@ subsecond="${YTUI_ANDROID_SUBSECOND:-advisory}"
 case "$subsecond" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_SUBSECOND (advisory|enforce).' >&2; exit 1;; esac
 timing="${YTUI_ANDROID_TIMING:-advisory}"
 case "$timing" in advisory|enforce) ;; *) echo 'Invalid YTUI_ANDROID_TIMING (advisory|enforce).' >&2; exit 1;; esac
+# Opt-in owner targets, independent of the existing regression budgets.
+video_latency="${YTUI_ANDROID_VIDEO_LATENCY:-advisory}"
+music_latency="${YTUI_ANDROID_MUSIC_LATENCY:-advisory}"
+for latency in "$video_latency" "$music_latency"; do
+    case "$latency" in advisory|enforce) ;; *) echo 'Invalid latency mode (advisory|enforce).' >&2; exit 1;; esac
+done
+download_throughput="${YTUI_ANDROID_DOWNLOAD_THROUGHPUT:-off}"
+case "$download_throughput" in off|measure) ;; *) echo 'Invalid YTUI_ANDROID_DOWNLOAD_THROUGHPUT (off|measure).' >&2; exit 1;; esac
+source_benchmark="${YTUI_ANDROID_SOURCE_BENCHMARK:-off}"
+case "$source_benchmark" in off|measure) ;; *) echo 'Invalid YTUI_ANDROID_SOURCE_BENCHMARK (off|measure).' >&2; exit 1;; esac
+# Opt-in real network media (public YouTube videos/songs, feed pages, openly licensed films).
+live="${YTUI_ANDROID_LIVE:-off}"
+case "$live" in off|measure|enforce) ;; *) echo 'Invalid YTUI_ANDROID_LIVE (off|measure|enforce).' >&2; exit 1;; esac
 public_quality="${YTUI_ANDROID_PUBLIC_QUALITY:-best}"
 public_target="${YTUI_ANDROID_PUBLIC_TARGET_MS:-1000}"
 if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
@@ -89,6 +102,11 @@ if [[ -n "${YTUI_ANDROID_TEST_APKS:-}" ]]; then
     instrument=(adb shell am instrument -w -r -e numShards "$num_shards" -e shardIndex "$shard_index")
     [[ "$subsecond" == enforce ]] && instrument+=(-e vidcue_subsecond enforce)
     [[ "$timing" == enforce ]] && instrument+=(-e vidcue_timing enforce)
+    [[ "$video_latency" == enforce ]] && instrument+=(-e vidcue_video_latency enforce)
+    [[ "$music_latency" == enforce ]] && instrument+=(-e vidcue_music_latency enforce)
+    [[ "$download_throughput" == measure ]] && instrument+=(-e vidcue_download_throughput measure)
+    [[ "$source_benchmark" == measure ]] && instrument+=(-e vidcue_source_benchmark measure)
+    [[ "$live" != off ]] && instrument+=(-e vidcue_live "$live")
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         # adb joins arguments into one device shell command; single-quote the URL.
         [[ "$YTUI_ANDROID_PUBLIC_URL" != *"'"* ]] || { echo 'Public URL must not contain a single quote.' >&2; exit 1; }
@@ -108,6 +126,11 @@ else
     arguments=(-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true)
     [[ "$subsecond" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_subsecond=enforce)
     [[ "$timing" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_timing=enforce)
+    [[ "$video_latency" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_video_latency=enforce)
+    [[ "$music_latency" == enforce ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_music_latency=enforce)
+    [[ "$download_throughput" == measure ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_download_throughput=measure)
+    [[ "$source_benchmark" == measure ]] && arguments+=(-Pandroid.testInstrumentationRunnerArguments.vidcue_source_benchmark=measure)
+    [[ "$live" != off ]] && arguments+=("-Pandroid.testInstrumentationRunnerArguments.vidcue_live=$live")
     if [[ -n "${YTUI_ANDROID_PUBLIC_URL:-}" ]]; then
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeUrl=$YTUI_ANDROID_PUBLIC_URL")
         arguments+=("-Pandroid.testInstrumentationRunnerArguments.youtubeQuality=$public_quality")

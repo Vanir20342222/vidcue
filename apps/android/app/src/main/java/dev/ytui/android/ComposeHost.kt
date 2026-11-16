@@ -45,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
@@ -244,6 +245,10 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val hasPlayer by
         remember(vm) { vm.player.map { it.media != null }.distinctUntilChanged() }
             .collectAsState(false)
+    val anythingPlaying by
+        remember(vm) { vm.player.map { it.playing }.distinctUntilChanged() }.collectAsState(false)
+    // Music and Radio pages keep the output awake so a chosen song starts at once.
+    WarmAudioOutputWhile(tab in 2..3 && !anythingPlaying)
     val ready by vm.ready.collectAsState()
     // Notifications matter once something plays (background controls) or downloads (progress),
     // so the permission is asked then, with a reason in view, not on the first look at Home.
@@ -1366,6 +1371,20 @@ private fun BrowsePane(
                             translationX = settle * enterFrom * 64.dp.toPx()
                         }
                         .testTag("feed-list")
+                        .drawWithContent {
+                            drawContent()
+                            val elapsed = FirstFeedTiming.current.drawn(
+                                android.os.SystemClock.elapsedRealtime(),
+                                feed.cards.isNotEmpty(),
+                                feed.instantContent || entry.value >= 1f,
+                            )
+                            if (elapsed >= 0) android.util.Log.i(
+                                "FeedStartup",
+                                "first_populated_draw_ms=$elapsed target_ms=1000 " +
+                                    "source=${if (MediaBridge.offlineUi) "synthetic" else "provider"} " +
+                                    "artwork_decode_not_measured=true",
+                            )
+                        }
                         .focusRequester(browseFocus)
                         .focusable(),
                 state = grid,

@@ -190,15 +190,48 @@ public final class OfflineStore {
       }
       ids.add(hashId(canonical + (audio ? "|audio" : "|video")));
       ids.add(hashId(canonical));
-      for (String id : ids)
+      DownloadIndex index = null;
+      try {
+        index = manager().getDownloadIndex();
+      } catch (Exception unavailable) {
+        // Folder exports remain usable when the app cache cannot be opened.
+      }
+      JSONObject files = null;
+      for (String id : ids) {
+        JSONObject stored = null;
         try {
-          JSONObject stored = offlineRequest(id);
-          if (stored.optBoolean(
-                  "audio",
-                  PlaybackPolicy.audioOnly(stored.getJSONObject("media").optString("kind")))
-              == audio) return stored;
+          Download item = index == null ? null : index.getDownload(id);
+          if (item != null && item.state == Download.STATE_COMPLETED)
+            stored = cachedRequest(item);
         } catch (Exception incomplete) {
+          // An incomplete paired download may still have an exported folder copy.
         }
+        if (stored == null) {
+          if (files == null) {
+            try {
+              files = StorageLocations.records();
+            } catch (Exception unavailable) {
+              files = new JSONObject();
+            }
+          }
+          if (files.has(id)) {
+            try {
+              stored = StorageLocations.request(id);
+            } catch (Exception unavailable) {
+              // Revoked or removed folder entries must not hide later candidates.
+            }
+          }
+        }
+        try {
+          if (stored != null
+              && stored.optBoolean(
+                      "audio",
+                      PlaybackPolicy.audioOnly(stored.getJSONObject("media").optString("kind")))
+                  == audio) return stored;
+        } catch (Exception invalidCandidate) {
+          // Keep searching after malformed legacy metadata.
+        }
+      }
     } catch (Exception invalid) {
     }
     return null;
@@ -304,6 +337,11 @@ public final class OfflineStore {
     Download item = manager().getDownloadIndex().getDownload(id);
     if (item == null || item.state != Download.STATE_COMPLETED)
       throw new Exception("Download is not complete");
+    return cachedRequest(item);
+  }
+
+  private static JSONObject cachedRequest(Download item) throws Exception {
+    String id = item.request.id;
     JSONObject request =
         new JSONObject(new String(item.request.data, java.nio.charset.StandardCharsets.UTF_8));
     String audio = request.getJSONObject("stream").optString("audio_url", "");

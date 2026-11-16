@@ -75,20 +75,32 @@ final class PlaybackHttp {
   static final class Cancellation {
     private final Set<Call> calls = ConcurrentHashMap.newKeySet();
     private volatile boolean cancelled;
+    private boolean promoted;
 
-    Call track(Call call) {
+    synchronized Call track(Call call) {
+      if (promoted) return call;
       calls.add(call);
       if (cancelled) call.cancel();
       return call;
     }
 
-    void cancel() {
+    synchronized void cancel() {
+      if (promoted) return;
       cancelled = true;
       for (Call call : calls) call.cancel();
     }
 
-    void close() {
+    synchronized void close() {
       cancel();
+      calls.clear();
+    }
+
+    synchronized boolean isPromoted() { return promoted; }
+
+    /** New foreground reads are ordinary calls; previously cancelled sockets stay cancelled. */
+    synchronized void promote() {
+      promoted = true;
+      cancelled = false;
       calls.clear();
     }
   }
