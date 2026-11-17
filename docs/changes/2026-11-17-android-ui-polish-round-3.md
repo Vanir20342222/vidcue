@@ -1,7 +1,7 @@
 # Android UI: Library overview, radio shelves and review fixes (M9)
 
 - **Date:** 2026-11-17
-- **PR:** <!-- add once the PR exists -->
+- **PR:** #171
 - **Milestone:** M9
 - **Platforms:** Android
 - **Status:** unit verified; rendered off-device (Robolectric) for review
