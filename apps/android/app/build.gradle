@@ -48,6 +48,9 @@ android {
     kotlinOptions { jvmTarget = '17' }
     sourceSets { main { jniLibs.srcDirs = [rootProject.file('../../target/android-jni')]; assets.srcDirs = ['src/main/assets',rootProject.file('../../target/android-assets')] }; androidTest { assets.srcDirs = [rootProject.file('../../target/android-test-assets'),rootProject.file('../../vendor/yt-dlp-rs/vendor/ejs'),rootProject.file('../../vendor/yt-dlp-rs/tests/fixtures/youtube/challenges')] } }
     packaging { jniLibs { useLegacyPackaging false } }
+    // `-Pscreens` renders the screen tour (ScreenTourTest) with the app's resources. Off by
+    // default, so the normal unit suite and CI keep their resource-free setup.
+    testOptions { unitTests { includeAndroidResources = project.hasProperty('screens') } }
     signingConfigs {
         if (signingReady) {
             release {

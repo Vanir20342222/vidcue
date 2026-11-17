@@ -16,6 +16,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -43,8 +45,20 @@ internal fun AppToolbar(
 ) {
     val feed by vm.feeds[tab].collectAsState()
     val subpage = tab in 0..3 && SubPages.isSubpage(feed.request) && vm.canGoBack(tab)
+    // On a collection page the title row carries the top of the header's wash, so the colour
+    // runs from the top edge instead of starting under a dark bar.
+    val washed =
+        subpage && SubPages.collectionId(feed.request) != null && PageChrome.headerTitleShown.value &&
+            PageChrome.headerTint.value != Color.Unspecified
+    val barColor by
+        androidx.compose.animation.animateColorAsState(
+            if (washed) PageChrome.headerTint.value else Color.Transparent,
+            LocalMotion.current.fade(200),
+            label = "toolbar-wash",
+        )
     Row(
         Modifier.fillMaxWidth()
+            .background(barColor)
             .testTag("app-toolbar")
             .heightIn(min = 56.dp)
             .padding(start = 8.dp, end = 4.dp),
@@ -85,18 +99,29 @@ internal fun AppToolbar(
                         modifier = Modifier.size(44.dp),
                     )
                     Spacer(Modifier.width(2.dp))
-                    PageTitle("Vidcue")
+                    // The wordmark is a brand mark, not a page title: smaller, so content leads.
+                    Text(
+                        "Vidcue",
+                        Modifier.semantics { heading() },
+                        style = MaterialTheme.typography.titleLarge.copy(fontSize = androidx.compose.ui.unit.TextUnit(21f, androidx.compose.ui.unit.TextUnitType.Sp)),
+                    )
                 }
             else -> PageTitle(destinationTitle(tab), Modifier.padding(start = 8.dp).weight(1f))
         }
-        if (tab in 1..3)
+        // Library: "+" downloads from a link (the page's own search is in its list).
+        if (tab == 0 && !subpage)
+            MediaIconButton(Glyph.Plus, "Download a video or playlist from a link", "add-download") {
+                PageChrome.libraryAdd.intValue++
+            }
+        // A page opened from another (playlist, album, channel) keeps its bar to back and title.
+        if (tab in 1..3 && !subpage)
             MediaIconButton(
                 Glyph.Search,
                 if (tab == 3) "Search stations" else "Search",
                 "search-button",
                 onSearch,
             )
-        if (showYou) YouButton(connected, onYou)
+        if (showYou && !subpage) YouButton(connected, onYou)
     }
 }
 
@@ -157,7 +182,7 @@ internal object SearchRequests {
      */
     private const val TOPIC_PARAMS = "CAMSBAgDEAE%3D"
     /** "All" is the week's most viewed videos on YouTube (an empty query). */
-    val topics = listOf("All", "Music", "Gaming", "News", "Sports", "Podcasts", "Cooking", "Science", "Comedy")
+    val topics = listOf("All", "Music videos", "Gaming", "News", "Sports", "Podcasts", "Cooking", "Science", "Comedy")
 
     fun topic(name: String): JSONObject =
         JSONObject()
@@ -243,4 +268,23 @@ internal object SearchRequests {
 internal object PageChrome {
     /** Whether a collection header's own title is on screen. */
     val headerTitleShown = androidx.compose.runtime.mutableStateOf(false)
+
+    /** The colour at the top of a collection header's wash; the title row continues it. */
+    val headerTint = androidx.compose.runtime.mutableStateOf(Color.Unspecified)
+
+    /** Taps on Library's "+" (download from a link); the Library page handles each once. */
+    val libraryAdd = androidx.compose.runtime.mutableIntStateOf(0)
+    var libraryAddHandled = 0
+}
+
+/**
+ * Where the playing item was started, for the player's header ("Playing from playlist" over
+ * the playlist's name). Set when something plays from a page; null when unknown.
+ */
+internal object PlaybackSource {
+    val current = androidx.compose.runtime.mutableStateOf<Pair<String, String>?>(null)
+
+    fun set(caption: String, title: String) {
+        current.value = if (title.isBlank()) null else caption to title
+    }
 }

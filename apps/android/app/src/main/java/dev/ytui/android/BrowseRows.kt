@@ -3,6 +3,8 @@ package dev.ytui.android
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
@@ -26,6 +28,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -75,11 +78,17 @@ internal fun SongRow(
     onMenu: () -> Unit,
     modifier: Modifier = Modifier,
     number: Int? = null,
+    /** Quick picks leave the length out so titles have room. */
+    showDuration: Boolean = true,
+    /** Search results mix kinds, so each row says what it is ("Song · Nova Lane"). */
+    showKind: Boolean = false,
+    /** Quick picks drop the ⋮ (press and hold opens the menu) so it does not crowd the next column. */
+    showMenu: Boolean = true,
 ) {
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp)
+            .heightIn(min = 56.dp)
             .clip(MediaTokens.medium)
             .combinedClickable(
                 onClickLabel = "Play",
@@ -87,7 +96,7 @@ internal fun SongRow(
                 onLongClick = onMenu,
                 onClick = onPlay,
             )
-            .padding(start = 4.dp, top = 4.dp, bottom = 4.dp)
+            .padding(vertical = 2.dp)
             .testTag("media-card-${media.key}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -105,7 +114,8 @@ internal fun SongRow(
         else
             Box(Modifier.size(52.dp).clip(MediaTokens.small)) {
                 Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.small)
-                if (current)
+                // Bars only while it plays; paused, the accent title marks the current song.
+                if (current && playing)
                     Box(
                         Modifier.matchParentSize().background(MediaTokens.videoScrim.copy(alpha = 0.45f)),
                         contentAlignment = Alignment.Center,
@@ -123,7 +133,7 @@ internal fun SongRow(
             )
             val details =
                 listOf(
-                        if (media.kind == "song" || media.kind == "video") "" else kindLabel(media.kind),
+                        if (!showKind && (media.kind == "song" || media.kind == "video")) "" else kindLabel(media.kind).ifBlank { "Video" },
                         if (showCreator) cleanByline(media.creator) else "",
                     )
                     .filter { it.isNotBlank() }
@@ -137,14 +147,15 @@ internal fun SongRow(
                     overflow = TextOverflow.Ellipsis,
                 )
         }
-        durationOf(media).takeIf { it.isNotBlank() }?.let {
+        durationOf(media).takeIf { showDuration && it.isNotBlank() }?.let {
             Text(
                 it,
-                style = MaterialTheme.typography.bodySmall,
+                // Tabular figures, so lengths line up down the list.
+                style = MaterialTheme.typography.bodySmall.copy(fontFeatureSettings = "tnum"),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+        if (showMenu) MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
     }
 }
 
@@ -166,6 +177,7 @@ internal fun CompactMediaRow(
     inset: Dp = MediaTokens.textInset,
     /** Music results: small square or round art at the start, as in music apps. */
     music: Boolean = false,
+    showKind: Boolean = true,
 ) {
     val person = media.kind == "artist" || media.kind == "channel"
     val square = media.audio || media.kind == "album" || (media.kind == "playlist" && media.musicSource)
@@ -179,14 +191,14 @@ internal fun CompactMediaRow(
                 onLongClick = onMenu,
                 onClick = onPlay,
             )
-            .padding(start = inset, top = 6.dp, bottom = 6.dp)
+            .padding(start = inset, top = if (music) 4.dp else 6.dp, bottom = if (music) 4.dp else 6.dp)
             .testTag("media-card-${media.key}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         val width =
             when {
-                music && (person || square) -> 56.dp
+                music && (person || square) -> 52.dp
                 music -> 100.dp
                 else -> minOf(176.dp, LocalConfiguration.current.screenWidthDp.dp * 0.42f)
             }
@@ -216,11 +228,30 @@ internal fun CompactMediaRow(
             )
             val creator = if (mobile.optBoolean("show_channel", true)) media.creator else ""
             // Music bylines often start with the kind already ("Album • Fleetwood Mac").
-            val kind = kindLabel(media.kind).takeIf { media.collection || media.audio }.orEmpty()
+            // The kind is left out where the page already says it: stations on Radio, albums
+            // under an "Albums" heading.
+            val kind = kindLabel(media.kind).takeIf { showKind && (media.collection || media.audio) && media.kind != "station" }.orEmpty()
             val byline =
                 cleanByline(creator, keepKind = true).split(" · ").filter { it.isNotEmpty() && !it.equals(kind, true) }
-            val details = (listOf(kind) + byline).filter { it.isNotBlank() }.joinToString(" · ")
-            if (details.isNotBlank())
+            // Stations say they are live, then their genre unless the name already says it.
+            val genre =
+                if (media.kind == "station") byline.filterNot { media.title.contains(it, ignoreCase = true) }
+                else byline
+            val details = (listOf(kind) + genre).filter { it.isNotBlank() }.joinToString(" · ")
+            if (media.kind == "station" && media.live)
+                Text(
+                    androidx.compose.ui.text.buildAnnotatedString {
+                        withStyle(androidx.compose.ui.text.SpanStyle(color = MediaTokens.live, fontWeight = FontWeight.SemiBold)) {
+                            append("● LIVE")
+                        }
+                        if (details.isNotBlank()) append(" · $details")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            else if (details.isNotBlank())
                 Text(
                     details,
                     style = MaterialTheme.typography.bodySmall,
@@ -245,8 +276,10 @@ internal fun ShelfHeading(
     actionGlyph: Glyph? = Glyph.Play,
     onAction: () -> Unit = {},
 ) {
+    // One height for every section heading, with or without an action, so the gap under each
+    // heading is the same.
     Row(
-        modifier.fillMaxWidth().padding(start = inset, end = if (inset > 0.dp) 8.dp else 0.dp, top = 4.dp),
+        modifier.fillMaxWidth().padding(start = inset, end = if (inset > 0.dp) inset else 0.dp, top = 8.dp).heightIn(min = 32.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -256,14 +289,31 @@ internal fun ShelfHeading(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (action != null)
-            Pill(
-                action,
-                if (actionTag.isNotEmpty()) Modifier.testTag(actionTag) else Modifier,
-                PillStyle.Quiet,
-                glyph = actionGlyph,
-                onClick = onAction,
-            )
+        if (action != null) {
+            // A compact outlined button, as YouTube Music's "Play all": quieter than the heading.
+            val colors = MaterialTheme.colorScheme
+            // 32dp tall in the layout; its 48dp touch area overflows into the gaps around it.
+            Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
+            Row(
+                (if (actionTag.isNotEmpty()) Modifier.testTag(actionTag) else Modifier)
+                    .requiredHeight(48.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    Modifier.height(32.dp)
+                        .clip(MediaTokens.pill)
+                        .border(1.dp, colors.outline, MediaTokens.pill)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAction)
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    actionGlyph?.let { MediaIcon(it, Modifier.size(16.dp), colors.onBackground) }
+                    Text(action, style = MaterialTheme.typography.labelLarge, color = colors.onBackground)
+                }
+            }
+            }
+        }
     }
 }
 
@@ -285,11 +335,11 @@ internal fun QuickPicksShelf(
 ) {
     val rows = minOf(4, cards.size).coerceAtLeast(1)
     // The next page shows its covers and the start of its titles, so it reads as more to swipe to.
-    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp - inset - 72.dp).coerceAtMost(420.dp)
+    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp - inset - 48.dp).coerceAtMost(420.dp)
     LazyHorizontalGrid(
         GridCells.Fixed(rows),
         modifier.fillMaxWidth().height(64.dp * rows + 4.dp * (rows - 1)),
-        contentPadding = PaddingValues(horizontal = (inset - 4.dp).coerceAtLeast(0.dp)),
+        contentPadding = PaddingValues(horizontal = inset),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -303,6 +353,8 @@ internal fun QuickPicksShelf(
                 current && playing,
                 onPlay = { onPlay(media) },
                 onMenu = { onMenu(media) },
+                showDuration = false,
+                showMenu = false,
                 modifier = Modifier.width(columnWidth),
             )
         }
@@ -416,6 +468,7 @@ internal fun CollectionHeader(
     thumbnails: Boolean,
     inset: Dp = MediaTokens.textInset,
     modifier: Modifier = Modifier,
+    onMore: (MediaCard) -> Unit = {},
 ) {
     val id = SubPages.collectionId(feed.request) ?: return
     val opened = vm.collectionCard(id)
@@ -426,8 +479,12 @@ internal fun CollectionHeader(
     val playable = feed.cards.filter { !it.collection && !it.live && it.url.isNotBlank() }
     val background = MaterialTheme.colorScheme.background
     val tint = rememberArtworkTint(cover, background, thumbnails)
+    // The title row above continues the wash's top colour (see ambientGlow), so there is no seam.
+    val top = androidx.compose.ui.graphics.lerp(background, tint, 0.85f * 0.8f)
+    androidx.compose.runtime.SideEffect { PageChrome.headerTint.value = top }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PageChrome.headerTint.value = Color.Unspecified } }
     // Text and buttons line up with the covers in the rows below.
-    val textStart = if (inset == 0.dp) 20.dp else MediaTokens.textInset
+    val textStart = MediaTokens.textInset
     Column(
         modifier
             .fillMaxWidth()
@@ -443,7 +500,7 @@ internal fun CollectionHeader(
                     }
                 else Modifier
             )
-            .ambientGlow(tint, background, 0.8f, softTop = true)
+            .ambientGlow(tint, background, 0.8f)
             .padding(top = 8.dp, bottom = 4.dp)
             .testTag("collection-header"),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -454,7 +511,7 @@ internal fun CollectionHeader(
             val coverModifier =
                 when {
                     person -> Modifier.size(148.dp).clip(CircleShape)
-                    music -> Modifier.size(200.dp).clip(MediaTokens.medium)
+                    music -> Modifier.size(232.dp).clip(MediaTokens.medium)
                     else -> Modifier.fillMaxWidth(0.72f).aspectRatio(16f / 9f).clip(MediaTokens.medium)
                 }
             // The cover measures itself; the grid's cell width does not apply to a header.
@@ -507,7 +564,9 @@ internal fun CollectionHeader(
                 )
         }
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = textStart),
+            // Bare icon buttons have 12dp around their glyph; pull the row back so icons sit on the gutter.
+            // The glyph, not its 48dp touch area, starts on the 16dp gutter.
+            Modifier.fillMaxWidth().padding(start = textStart - 15.dp, end = textStart),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -516,37 +575,41 @@ internal fun CollectionHeader(
                     Glyph.Download,
                     "Download ${opened.title}",
                     Modifier.testTag("collection-download"),
-                    container = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                 ) {
                     DownloadFlight.launch(opened, null)
                     vm.play(opened, download = true)
                 }
             if (opened != null)
                 RoundIconButton(
-                    Glyph.Save,
-                    "Save ${opened.title}",
+                    Glyph.AddCircle,
+                    "Save ${opened.title} to Library",
                     Modifier.testTag("collection-save"),
-                    container = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                 ) {
                     vm.save(opened)
                 }
+            if (opened != null) MediaIconButton(Glyph.More, "More options for ${opened.title}", "collection-more") { onMore(opened) }
             Spacer(Modifier.weight(1f))
             if (playable.size > 1)
                 RoundIconButton(
                     Glyph.Shuffle,
                     "Shuffle play",
                     Modifier.testTag("collection-shuffle"),
-                    container = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
                 ) {
+                    PlaybackSource.set("Playing from ${kindLabel(kind).lowercase()}", title)
                     vm.playAll(playable.shuffled())
                 }
             if (playable.isNotEmpty())
-                Pill(
-                    "Play",
+                // A round accent play button, as Spotify's: the page's one primary action.
+                RoundIconButton(
+                    Glyph.Play,
+                    "Play ${title}",
                     Modifier.testTag("collection-play"),
-                    PillStyle.Primary,
-                    glyph = Glyph.Play,
+                    size = 56.dp,
+                    iconSize = 28.dp,
+                    container = MaterialTheme.colorScheme.primary,
+                    tint = MaterialTheme.colorScheme.onPrimary,
                 ) {
+                    PlaybackSource.set("Playing from ${kindLabel(kind).lowercase()}", title)
                     vm.playAll(playable)
                 }
         }
@@ -626,9 +689,6 @@ internal fun TypingSuggestions(
         state = rememberLazyListState(),
         contentPadding = PaddingValues(vertical = 4.dp),
     ) {
-        item {
-            SuggestionRow(Glyph.Search, "Search for “$needle”", Modifier.testTag("suggestion-submit")) { onPick(needle) }
-        }
         items(matches.size) { index ->
             val (text, searched) = matches[index]
             SuggestionRow(if (searched) Glyph.History else Glyph.Search, text, fill = { onFill(text) }) { onPick(text) }
@@ -688,3 +748,45 @@ internal fun songShelfHeight(rows: Int): Dp = 64.dp * rows + 4.dp * (rows - 1)
 
 /** Text style weight for numbers in the header line; kept here so rows and header agree. */
 internal val CountWeight = FontWeight.Medium
+
+/**
+ * The best match of a music search, larger than the rows under it: a round artist picture (or a
+ * square cover), the name, and what it is.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+internal fun TopResultCard(
+    media: MediaCard,
+    thumbnails: Boolean,
+    inset: Dp,
+    onOpen: () -> Unit,
+    onMenu: () -> Unit,
+) {
+    val person = media.kind == "artist" || media.kind == "channel"
+    val shape = if (person) CircleShape else MediaTokens.medium
+    Row(
+        Modifier.fillMaxWidth()
+            .padding(horizontal = inset)
+            .clip(MediaTokens.card)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .combinedClickable(onClickLabel = "Open", onLongClickLabel = "More options", onLongClick = onMenu, onClick = onOpen)
+            .padding(16.dp)
+            .testTag("top-result"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        androidx.compose.runtime.CompositionLocalProvider(LocalArtworkPixels provides 0) {
+            Artwork(media, Modifier.size(88.dp).clip(shape), thumbnails, shape = shape)
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                cleanByline(media.creator, keepKind = true).ifBlank { kindLabel(media.kind) },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}

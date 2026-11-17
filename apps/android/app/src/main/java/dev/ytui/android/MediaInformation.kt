@@ -125,12 +125,18 @@ internal fun relativeUploadDate(date: String, today: java.time.LocalDate = java.
 }
 
 @Composable
-internal fun MediaInformation(media: JSONObject, settings: JSONObject) {
-    val text = mediaInformation(media, settings)
+internal fun MediaInformation(
+    media: JSONObject,
+    settings: JSONObject,
+    /** Shown first on the same line, as YouTube does: "Channel · 240K views · 6 days ago". */
+    lead: String = "",
+    leadModifier: Modifier = Modifier,
+) {
+    val text = listOf(lead, mediaInformation(media, settings)).filter { it.isNotBlank() }.joinToString(" · ")
     if (text.isNotBlank())
         Text(
             text,
-            Modifier.testTag("video-information"),
+            (if (lead.isNotBlank()) leadModifier else Modifier).testTag("video-information"),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
@@ -140,8 +146,13 @@ internal fun MediaInformation(media: JSONObject, settings: JSONObject) {
 
 /** Shared by feed, shelf and wide search cards so each setting has the same effect. */
 @Composable
-internal fun CardInformation(media: JSONObject, settings: JSONObject) {
-    MediaInformation(media, settings)
+internal fun CardInformation(
+    media: JSONObject,
+    settings: JSONObject,
+    lead: String = "",
+    leadModifier: Modifier = Modifier,
+) {
+    MediaInformation(media, settings, lead, leadModifier)
     for ((key, field) in listOf("show_description" to "description", "show_section" to "section")) {
         val text = media.optString(field).takeUnless { it == "null" }.orEmpty()
         if (settings.optBoolean(key) && text.isNotBlank())
