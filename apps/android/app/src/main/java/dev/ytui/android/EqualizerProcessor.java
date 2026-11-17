@@ -31,6 +31,6 @@ public final class EqualizerProcessor extends BaseAudioProcessor {
   @Override
   protected void onFlush() {
     // A seek or new stream must not ring with the previous position's filter memory.
-    NativeBridge.equalizerReset();
+    if (EngineStartup.current.isReady()) NativeBridge.equalizerReset();
   }
 }

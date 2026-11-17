@@ -62,6 +62,7 @@ internal object RustRpc {
                         android.os.SystemClock.elapsedRealtime() - queuedAt,
                     )
                     try {
+                        EngineStartup.current.await()
                         val reply = JSONObject(NativeBridge.request(payload))
                         if (!reply.optBoolean("ok"))
                             throw RpcError(
@@ -93,7 +94,7 @@ internal object RustRpc {
             }
         continuation.invokeOnCancellation {
             StartupTimings.ended(timing, "cancelled", android.os.SystemClock.elapsedRealtime())
-            NativeBridge.cancel(id)
+            if (EngineStartup.current.isReady()) NativeBridge.cancel(id)
             future.cancel(true)
             // Cancelled queued requests must not consume admission capacity while
             // older native calls finish; the latest tap still needs a slot.
@@ -123,6 +124,7 @@ internal data class UpNextState(
 /** Treated as immutable: media JSON is copied (`copyJson`) before any change. */
 @androidx.compose.runtime.Immutable
 internal data class MediaCard(val value: JSONObject) {
+    val estimatedBytes: Int by lazy { MediaSizeEstimates.bytes(value) }
     /** Artwork-only metadata, including a public cover URL when YouTube omitted one. */
     val artwork: JSONObject by lazy {
         val fallback =
@@ -352,6 +354,7 @@ internal class YtuiViewModel(
         RustRpc.objectCall("browse", "tab" to index, "request" to request, "offset" to offset)
     },
     clock: () -> Long = android.os.SystemClock::elapsedRealtime,
+    private val pageDispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val readHistory: suspend () -> List<MediaCard> = {
         RustRpc.arrayCall("history_list").objects().map(::MediaCard)
     },
@@ -365,7 +368,9 @@ internal class YtuiViewModel(
     // Tab 4 (Movies) has its own page and never loads a feed; its slot keeps tab-indexed state
     // (back history, search, scroll) in bounds.
     val feeds = Array(5) { MutableStateFlow(FeedState()) }
-    private val history = Array(5) { ArrayDeque<FeedState>() }
+    private val history = Array(5) { PageHistory<FeedState>(12, 2 * 1024 * 1024) { page ->
+        page.cards.sumOf { it.estimatedBytes.toLong() }
+    } }
     private val feedJobs = arrayOfNulls<Job>(5)
 
     private data class FeedKey(val tab: Int, val request: String, val network: Long)
@@ -374,10 +379,14 @@ internal class YtuiViewModel(
         FeedPageCache<FeedKey, JSONObject>(
             viewModelScope,
             clock,
-            { it.toString().length * 2 },
+            { page ->
+                page.optJSONArray("items")?.objects()?.forEach { MediaSizeEstimates.bytes(it) }
+                page.toString().length * 2
+            },
             maxEntries = 64,
             maxBytes = 8 * 1024 * 1024,
             retainMs = 30 * 60_000L,
+            sizingDispatcher = pageDispatcher,
         )
     private var categoryJob: Job? = null
     private val categoryPreloader = FeedPagePreloader(feedPages)
@@ -473,9 +482,9 @@ internal class YtuiViewModel(
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
-        val engineError = EngineStartup.current.error()
         viewModelScope.launch {
             runCatching {
+                    withContext(Dispatchers.IO) { EngineStartup.current.await() }
                     mobile.value = withContext(Dispatchers.IO) { MobileSettings.snapshot() }
                     config.value = RustRpc.objectCall("settings")
                     palette.value = RustRpc.objectCall("theme", "dark" to dark)
@@ -486,7 +495,7 @@ internal class YtuiViewModel(
                         .takeUnless { it.isBlank() || it == "null" }
                         ?.let { status.value = it }
                 }
-                .onFailure { status.value = engineError ?: it.message ?: "Could not load settings" }
+                .onFailure { status.value = EngineStartup.current.error() ?: it.message ?: "Could not load settings" }
             EngineStartup.current.claimNotice()?.let { actionError.value = it }
             ready.value = true
             loadFeedIfNeeded(tab.value)
@@ -688,12 +697,6 @@ internal class YtuiViewModel(
                 previous.request.toString() != request.toString()
         ) {
             history[index].addLast(previous.copy(loading = false))
-            while (
-                history[index].size > 12 ||
-                    history[index].sumOf {
-                        it.cards.sumOf { card -> card.value.toString().length * 2 }
-                    } > 2 * 1024 * 1024
-            ) history[index].removeFirst()
         }
         val generation = previous.generation + 1
         val cached = if (cacheable) feedPages.peek(cacheKey, allowStale = true) else null
@@ -729,6 +732,14 @@ internal class YtuiViewModel(
                     val page = if (cacheable) feedPages.load(cacheKey, fetch) else fetch()
                     if (feeds[index].value.generation != generation) return@launch
                     if (epoch != accountEpoch) return@launch
+                    if (network != NetworkSettings.revision.get()) {
+                        navigate(index, request, append, remember = false)
+                        return@launch
+                    }
+                    withContext(pageDispatcher) {
+                        page.optJSONArray("items")?.objects()?.forEach { MediaSizeEstimates.bytes(it) }
+                    }
+                    if (feeds[index].value.generation != generation || epoch != accountEpoch) return@launch
                     if (network != NetworkSettings.revision.get()) {
                         navigate(index, request, append, remember = false)
                         return@launch

@@ -11,6 +11,7 @@ internal class FeedPageCache<K, V>(
     private val maxEntries: Int = 12,
     private val maxBytes: Int = 2 * 1024 * 1024,
     private val retainMs: Long = ttlMs,
+    private val sizingDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) {
     private data class Entry<V>(val value: V, val expires: Long, val bytes: Int)
 
@@ -53,8 +54,8 @@ internal class FeedPageCache<K, V>(
                 try {
                     val value = fetch()
                     currentCoroutineContext().ensureActive()
+                    val size = withContext(sizingDispatcher) { sizeOf(value) }
                     if (started == epoch) {
-                        val size = sizeOf(value)
                         if (size <= maxBytes) {
                             entries.remove(key)?.let { bytes -= it.bytes }
                             entries[key] = Entry(value, clock() + ttlMs, size)

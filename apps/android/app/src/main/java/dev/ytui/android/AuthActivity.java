@@ -42,9 +42,15 @@ public final class AuthActivity extends ComponentActivity {
     if (state == null) {
       ComposeHost.resetAuth();
       AuthUi.reset(false);
-      NativeBridge.beginAccountChange();
+      EngineStartup.current.whenFinished(() -> MediaBridge.main.post(() -> {
+        if (!isFinishing() && !isDestroyed() && EngineStartup.current.isReady())
+          NativeBridge.beginAccountChange();
+      }));
     } else AuthUi.showWeb(state.getBoolean("auth-web"));
-    if (!AuthUi.motionKnown()) restoreMotionSetting();
+    if (!AuthUi.motionKnown()) OfflineStore.IO.execute(() -> {
+      try { EngineStartup.current.await(); restoreMotionSetting(); }
+      catch (Exception ignored) { }
+    });
     web = new WebView(this);
     web.getSettings().setJavaScriptEnabled(true);
     web.getSettings().setDomStorageEnabled(true);
@@ -129,6 +135,7 @@ public final class AuthActivity extends ComponentActivity {
 
   /** Leaves the native account card for the provider's own sign-in page. */
   void beginWeb() {
+    if (!EngineStartup.current.isReady()) return;
     if (ComposeHost.authBusy()) return;
     ComposeHost.authMessage("");
     if (!loaded) load();
@@ -148,6 +155,7 @@ public final class AuthActivity extends ComponentActivity {
   }
 
   void useSession() {
+    if (!EngineStartup.current.isReady()) return;
     if (ComposeHost.authBusy()) return;
     String header = CookieManager.getInstance().getCookie("https://www.youtube.com");
     if (header == null || header.isEmpty()) {

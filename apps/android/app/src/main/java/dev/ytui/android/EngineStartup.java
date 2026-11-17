@@ -11,12 +11,25 @@ final class EngineStartup {
   static final int LIMIT = 240;
 
   private volatile String error;
+  private final java.util.concurrent.CompletableFuture<Void> ready = new java.util.concurrent.CompletableFuture<>();
+
+  /** Only blocking workers may wait; activity creation never waits on this gate. */
+  void await() throws Exception {
+    ready.get();
+    if (error != null) throw new IllegalStateException(error);
+  }
   private final AtomicBoolean announced = new AtomicBoolean();
 
   /** Records the value {@code NativeBridge.init} returned; empty or null means it started. */
-  void record(String raw) {
+  synchronized void record(String raw) {
+    if (ready.isDone()) return;
     error = message(raw);
+    ready.complete(null);
   }
+
+  void whenFinished(Runnable action) { ready.thenRun(action); }
+
+  boolean isReady() { return ready.isDone() && error == null; }
 
   /** The user-facing start error, or null when the engine started. */
   String error() {

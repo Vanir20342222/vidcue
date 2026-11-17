@@ -22,6 +22,16 @@ class WatchedRecommendationsTest {
         MediaCard(json("id" to id, "url" to url, "kind" to "video"))
 
     @Test
+    fun copiedMediaHasItsOwnSizeEstimate() {
+        val original = json("title" to "small")
+        val before = MediaSizeEstimates.bytes(original)
+        val edited = original.copyJson().put("title", "x".repeat(100_000))
+        assertEquals(before, MediaSizeEstimates.bytes(original))
+        assertTrue(MediaSizeEstimates.bytes(edited) > before)
+        assertEquals(edited.toString().length * 2, MediaCard(edited).estimatedBytes)
+    }
+
+    @Test
     fun urlVariantsMatchEvenWithoutIdsAndOnlyDiscoveryFeedsHideThem() {
         val watched = card("", "https://music.youtube.com/watch?v=abcdefghijk&list=example")
         for (url in listOf(
@@ -54,7 +64,7 @@ class WatchedRecommendationsTest {
         val repeated = card("abcdefghijk")
         val unseen = card("lmnopqrstuv")
         var recorded = emptyList<MediaCard>()
-        val model = YtuiViewModel(readHistory = { recorded }, browsePage = { _, _, _ ->
+        val model = YtuiViewModel(pageDispatcher = dispatcher, readHistory = { recorded }, browsePage = { _, _, _ ->
             json("items" to JSONArray(listOf(repeated.value, unseen.value)), "continuation" to "next")
         })
         val store = ViewModelStore().apply { put("recommendations", model) }

@@ -56,6 +56,9 @@ pub struct ImageCache {
     memory: Arc<Mutex<Memory>>,
     flights: Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
     writes: Arc<AtomicUsize>,
+    maintenance: Arc<tokio::sync::Semaphore>,
+    #[cfg(test)]
+    writer_gate: Option<Arc<(Mutex<bool>, std::sync::Condvar)>>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct CacheStats {
@@ -76,6 +79,7 @@ impl ImageCache {
         // Wait for current fetch/write operations and prevent new writes while
         // clearing. The semaphore is shared by every clone of this cache.
         let _permit = self.permits.acquire_many(4).await?;
+        let _maintenance = self.maintenance.acquire_many(2).await?;
         let dir = self.dir.clone();
         let mut stats = tokio::task::spawn_blocking(move || {
             let mut stats = CacheStats::default();
@@ -122,6 +126,17 @@ impl ImageCache {
             memory: Arc::new(Mutex::new(Memory::default())),
             flights: Arc::new(Mutex::new(HashMap::new())),
             writes: Arc::new(AtomicUsize::new(0)),
+            maintenance: Arc::new(tokio::sync::Semaphore::new(2)),
+            #[cfg(test)]
+            writer_gate: None,
+        }
+    }
+    /// Keep cache/maintenance ownership across proxy changes. Old clients can
+    /// still have writes in flight, so a later Clear must drain those too.
+    pub fn with_client(&self, client: reqwest::Client) -> Self {
+        Self {
+            client,
+            ..self.clone()
         }
     }
     pub async fn load(&self, url: &str) -> Result<image::DynamicImage> {
@@ -215,20 +230,37 @@ impl ImageCache {
         let image = decode(bytes, width, height).await?;
         // Displaying a valid image must not depend on an optional disk cache.
         self.memory.lock().unwrap().insert(key, image.clone());
-        let saved = image.clone();
-        let _ = tokio::task::spawn_blocking(move || {
-            let mut bytes = Cursor::new(Vec::new());
-            saved.write_to(&mut bytes, image::ImageFormat::Png)?;
-            atomic_write(&path, bytes.get_ref())
-        })
-        .await;
-        // A directory scan on every cache hit made navigating large feeds expensive.
-        if self
-            .writes
-            .fetch_add(1, Ordering::Relaxed)
-            .is_multiple_of(32)
-        {
-            let _ = self.prune().await;
+        // Optional persistence is bounded independently of fetch/decode. When busy,
+        // retain the memory hit and skip disk caching rather than queueing bitmaps.
+        if let Ok(permit) = self.maintenance.clone().try_acquire_owned() {
+            let saved = image.clone();
+            let cache = self.clone();
+            #[cfg(test)]
+            let gate = self.writer_gate.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                let _ = tokio::task::spawn_blocking(move || {
+                    #[cfg(test)]
+                    if let Some(gate) = gate {
+                        let (lock, wake) = &*gate;
+                        let mut open = lock.lock().unwrap();
+                        while !*open {
+                            open = wake.wait(open).unwrap();
+                        }
+                    }
+                    let mut bytes = Cursor::new(Vec::new());
+                    saved.write_to(&mut bytes, image::ImageFormat::Png)?;
+                    atomic_write(&path, bytes.get_ref())
+                })
+                .await;
+                if cache
+                    .writes
+                    .fetch_add(1, Ordering::Relaxed)
+                    .is_multiple_of(32)
+                {
+                    let _ = cache.prune().await;
+                }
+            });
         }
         Ok(image)
     }
@@ -330,6 +362,35 @@ pub fn thumbnail_url(media: &vidcue_core::Media, width: u32, height: u32) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn blocked_persistence_does_not_block_display_and_clear_drains_old_writes() {
+        let (base, server) = crate::test_http::serve(|_| {
+            let mut bytes = Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(16, 16)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .unwrap();
+            (200, String::new(), bytes.into_inner())
+        })
+        .await;
+        let temp = tempfile::tempdir().unwrap();
+        let gate = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let mut cache = ImageCache::new(crate::http_client(None).unwrap(), temp.path().into());
+        cache.writer_gate = Some(gate.clone());
+        let loaded =
+            tokio::time::timeout(std::time::Duration::from_secs(2), cache.load(&base)).await;
+        // Always release the writer, including when the display assertion fails.
+        let c = cache.with_client(crate::http_client(None).unwrap());
+        let clear = tokio::spawn(async move { c.inspect(true).await });
+        tokio::task::yield_now().await;
+        assert!(!clear.is_finished());
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        assert_eq!(loaded.unwrap().unwrap().width(), 16);
+        clear.await.unwrap().unwrap();
+        assert_eq!(cache.inspect(false).await.unwrap().files, 0);
+        assert_eq!(cache.inspect(false).await.unwrap().memory_images, 0);
+        server.abort();
+    }
     #[tokio::test]
     async fn cache_inspection_and_clear_preserve_foreign_files_and_symlinks() {
         let temp = tempfile::tempdir().unwrap();
@@ -443,6 +504,7 @@ mod sized_tests {
         assert_eq!(count.load(Ordering::SeqCst), 1);
         server.abort();
         let _ = server.await;
+        cache.inspect(false).await.unwrap();
         drop(cache);
         let cache = ImageCache::new(client, temp.path().into());
         let cached = cache.load_sized(&url, 320, 180).await.unwrap();

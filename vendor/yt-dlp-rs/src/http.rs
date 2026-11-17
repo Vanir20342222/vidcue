@@ -62,6 +62,12 @@ impl TransportConfig {
         let mut builder = self
             .proxy
             .apply(builder)?
+            // Shared with byte-range downloaders, which validate Content-Encoding.
+            // Feature unification must not silently decode/hide an encoded media body.
+            // Extractor requests already explicitly select identity encoding.
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
             .connect_timeout(connect)
             .timeout(operation);
         if self.insecure {
@@ -75,6 +81,20 @@ impl TransportConfig {
         }
         Ok(builder)
     }
+}
+
+/// Bound decoded text too: reqwest may transparently decompress the response.
+pub(crate) fn bounded_text(reader: impl std::io::Read, limit: u64) -> Result<String> {
+    use std::io::Read;
+    let mut body = Vec::new();
+    reader
+        .take(limit + 1)
+        .read_to_end(&mut body)
+        .map_err(Error::ExtractionRead)?;
+    if body.len() as u64 > limit {
+        return Err(Error::Reported("Service text exceeds memory budget".into()));
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 fn error(message: &str) -> Error {
@@ -242,6 +262,53 @@ impl HttpOptions {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn media_transport_preserves_encoded_range_headers_and_bytes() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            while !bytes.ends_with(b"\r\n\r\n") {
+                let mut chunk = [0; 512];
+                let count = socket.read(&mut chunk).unwrap();
+                assert!(count > 0 && bytes.len() + count <= 4096);
+                bytes.extend_from_slice(&chunk[..count]);
+            }
+            let request = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+            assert!(request.contains("accept-encoding: identity"));
+            assert!(request.contains("range: bytes=0-2"));
+            socket.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 3\r\nContent-Encoding: gzip\r\nContent-Range: bytes 0-2/3\r\nConnection: close\r\n\r\nraw").unwrap();
+        });
+        let client = super::TransportConfig::default()
+            .apply(reqwest::blocking::Client::builder().no_proxy())
+            .unwrap()
+            .build()
+            .unwrap();
+        let response = client
+            .get(format!("http://{address}/"))
+            .header("Range", "bytes=0-2")
+            .header("Accept-Encoding", "identity")
+            .send()
+            .unwrap();
+        assert_eq!(response.headers()["Content-Encoding"], "gzip");
+        assert_eq!(response.bytes().unwrap().as_ref(), b"raw");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn decoded_text_budget_rejects_one_byte_over_limit() {
+        assert_eq!(
+            super::bounded_text(std::io::Cursor::new(b"abcd"), 4).unwrap(),
+            "abcd"
+        );
+        assert!(super::bounded_text(std::io::Cursor::new(b"abcde"), 4).is_err());
+    }
+
     use super::*;
 
     #[test]

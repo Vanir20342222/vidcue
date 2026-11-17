@@ -306,7 +306,7 @@ fn call_api(
             },
             error => error,
         })?;
-    let text = response.text().map_err(Error::Http)?;
+    let text = crate::http::bounded_text(response, 16 * 1024 * 1024)?;
     serde_json::from_str(&text).map_err(|error| {
         Error::Reported(format!(
             "[{extractor}] {item_id}: Failed to parse JSON  (caused by {error})"
@@ -321,7 +321,7 @@ fn iframe_player_url(client: &Client, video_id: &str) -> Option<String> {
     crate::screen::screen(&format!("[youtube] {video_id}: Downloading iframe API JS"));
     let url = Url::parse("https://www.youtube.com/iframe_api").ok()?;
     let page = match super::super::direct::request(client, &url, None)
-        .and_then(|response| response.text().map_err(Error::Http))
+        .and_then(|response| crate::http::bounded_text(response, 16 * 1024 * 1024))
     {
         Ok(page) => page,
         Err(error) => {

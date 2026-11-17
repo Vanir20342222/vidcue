@@ -44,19 +44,14 @@ public final class MediaBridge {
   static void attach(Context ctx) {
     context = (android.app.Application) ctx.getApplicationContext();
     main.postDelayed(ScriptRuntime::warm, 800);
-    main.post(
-        () -> {
-          try {
-            OfflineStore.manager();
-          } catch (Exception error) {
-            event("error", "Offline library could not be restored");
-          }
-        });
+  }
+
+  static void initializeNetwork() throws Exception {
+    android.os.Trace.beginSection("Vidcue.platformNetwork");
     try {
       NetworkSettings.apply(
           new JSONObject(NativeBridge.request("{\"op\":\"settings\"}")).getJSONObject("data"));
-    } catch (Exception ignored) {
-    }
+    } finally { android.os.Trace.endSection(); }
     PlaybackHttp.warm();
   }
 
@@ -133,6 +128,13 @@ public final class MediaBridge {
   }
 
   public static void execute(String raw) {
+    if (!EngineStartup.current.isReady()) {
+      EngineStartup.current.whenFinished(() -> {
+        if (EngineStartup.current.error() == null) execute(raw);
+        else event("error", EngineStartup.current.error());
+      });
+      return;
+    }
     main.post(
         () -> {
           try {

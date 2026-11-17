@@ -656,6 +656,9 @@ async fn redirect_drops_origin_headers_and_relative_playlists_use_final_location
 #[tokio::test]
 async fn encrypted_ranged_offline_bundle_is_complete_local_and_never_overwrites() {
     let (base, server) = test_http::serve_request(|request| {
+        if request.to_lowercase().contains("range: bytes=") {
+            assert!(request.to_lowercase().contains("accept-encoding: identity"));
+        }
         let target = request.lines().next().unwrap().split_whitespace().nth(1).unwrap();
         match target {
             "/list.m3u8" => ok("#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:7\n#EXT-X-KEY:METHOD=AES-128,URI=\"/key?token=synthetic\",IV=0x00000000000000000000000000000001\n#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"4@0\"\n#EXTINF:2,\n#EXT-X-BYTERANGE:4@4\nmedia.mp4\n#EXTINF:2,\n#EXT-X-BYTERANGE:4\nmedia.mp4\n#EXT-X-ENDLIST\n"),

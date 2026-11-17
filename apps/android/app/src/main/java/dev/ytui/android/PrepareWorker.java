@@ -300,6 +300,7 @@ public final class PrepareWorker extends Worker {
   private JSONObject call(JSONObject request) throws Exception {
     activeRequest = System.nanoTime() & Long.MAX_VALUE;
     request.put("request_id", activeRequest);
+    EngineStartup.current.await();
     return new JSONObject(NativeBridge.request(request.toString()));
   }
 

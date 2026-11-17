@@ -22,6 +22,8 @@ import org.robolectric.annotation.Implements
 class FeedStartupTest {
     @Test
     fun tabSelectedWhileSettingsLoadIsFetchedWhenInitializationFinishes() = runBlocking {
+        // The application normally publishes this after native/proxy initialization.
+        EngineStartup.current.record("")
         val dispatcher = StandardTestDispatcher()
         Dispatchers.setMain(dispatcher)
         val previousContext = MediaBridge.context

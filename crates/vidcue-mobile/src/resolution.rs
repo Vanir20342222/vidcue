@@ -28,12 +28,23 @@ struct Entry {
     touched: Instant,
     bytes: usize,
 }
-#[derive(Default)]
 pub(crate) struct Resolver {
     epoch: AtomicU64,
+    retained: Arc<tokio::sync::Semaphore>,
     entries: Mutex<HashMap<Key, Entry>>,
     flights: Mutex<HashMap<Key, Weak<tokio::sync::Mutex<()>>>>,
     client: Mutex<VecDeque<(Key, Arc<yt_dlp_rs::YoutubeDl>)>>,
+}
+impl Default for Resolver {
+    fn default() -> Self {
+        Self {
+            epoch: AtomicU64::new(0),
+            retained: Arc::new(tokio::sync::Semaphore::new(4)),
+            entries: Mutex::default(),
+            flights: Mutex::default(),
+            client: Mutex::default(),
+        }
+    }
 }
 impl Resolver {
     pub fn epoch(&self) -> u64 {
@@ -104,10 +115,10 @@ impl Resolver {
         }))
     }
     pub async fn get_or_resolve(
-        &self,
+        self: &Arc<Self>,
         key: Key,
         fresh: bool,
-        load: impl Future<Output = Result<Value>>,
+        load: impl Future<Output = Result<Value>> + Send + 'static,
     ) -> Result<Value> {
         if !fresh && let Some(value) = self.cached(&key, "ready", 0)? {
             return Ok(value);
@@ -124,7 +135,30 @@ impl Resolver {
             }
         };
         let waiting = Instant::now();
-        let _guard = flight.lock().await;
+        let guard = flight.lock_owned().await;
+        // Acquire before detaching: abandoned distinct keys cannot accumulate tasks
+        // waiting for extraction slots. Same-key waiters remain cancellable above.
+        let permit = self
+            .retained
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| anyhow::anyhow!("Playback preparation busy"))?;
+        let resolver = self.clone();
+        tokio::spawn(async move {
+            let _guard = guard;
+            let _permit = permit;
+            resolver.finish(key, fresh, waiting, load).await
+        })
+        .await?
+    }
+
+    async fn finish(
+        &self,
+        key: Key,
+        fresh: bool,
+        waiting: Instant,
+        load: impl Future<Output = Result<Value>>,
+    ) -> Result<Value> {
         let waited = waiting.elapsed().as_millis() as u64;
         if !fresh && let Some(value) = self.cached(&key, "joined", waited)? {
             return Ok(value);
@@ -230,6 +264,40 @@ mod tests {
             audio_language: None,
         }
     }
+    #[tokio::test]
+    async fn cancelled_waiter_retains_started_extraction_for_foreground() {
+        let cache = Arc::new(Resolver::default());
+        let started = Arc::new(tokio::sync::Notify::new());
+        let (release, released) = std::sync::mpsc::channel();
+        let calls = Arc::new(AtomicU64::new(0));
+        let (c, s, r, n) = (cache.clone(), started.clone(), released, calls.clone());
+        let waiter = tokio::spawn(async move {
+            c.get_or_resolve(key(), false, async move {
+                n.fetch_add(1, Ordering::SeqCst);
+                tokio::task::spawn_blocking(move || {
+                    s.notify_one();
+                    r.recv().unwrap();
+                })
+                .await
+                .unwrap();
+                Ok(json!({"url":"https://cdn.test/media"}))
+            })
+            .await
+        });
+        started.notified().await;
+        waiter.abort();
+        let _ = waiter.await;
+        release.send(()).unwrap();
+        let n = calls.clone();
+        cache
+            .get_or_resolve(key(), false, async move {
+                n.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({"url":"https://cdn.test/duplicate"}))
+            })
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
     #[test]
     fn leases_respect_both_stream_expirations_and_live_exclusion() {
         assert_eq!(
@@ -254,12 +322,15 @@ mod tests {
     }
     #[tokio::test]
     async fn concurrent_resolution_deduplicates_and_scope_or_fresh_requests_do_not_reuse() {
-        let cache = Resolver::default();
-        let count = AtomicU64::new(0);
-        let load = || async {
-            count.fetch_add(1, Ordering::SeqCst);
-            tokio::task::yield_now().await;
-            Ok(json!({"url":"https://cdn.test/media"}))
+        let cache = Arc::new(Resolver::default());
+        let count = Arc::new(AtomicU64::new(0));
+        let load = || {
+            let count = count.clone();
+            async move {
+                count.fetch_add(1, Ordering::SeqCst);
+                tokio::task::yield_now().await;
+                Ok(json!({"url":"https://cdn.test/media"}))
+            }
         };
         let (a, b) = tokio::join!(
             cache.get_or_resolve(key(), false, load()),
@@ -292,10 +363,11 @@ mod tests {
     }
     #[tokio::test]
     async fn invalidation_during_extraction_never_caches_or_returns_old_session_streams() {
-        let cache = Resolver::default();
+        let cache = Arc::new(Resolver::default());
+        let c = cache.clone();
         let result = cache
-            .get_or_resolve(key(), false, async {
-                cache.clear();
+            .get_or_resolve(key(), false, async move {
+                c.clear();
                 Ok(json!({"url":"https://cdn.test/private"}))
             })
             .await;
@@ -304,7 +376,7 @@ mod tests {
     }
     #[tokio::test]
     async fn completed_lease_never_waits_for_an_unrelated_flight_holder() {
-        let cache = Resolver::default();
+        let cache = Arc::new(Resolver::default());
         cache
             .get_or_resolve(key(), false, async {
                 Ok(json!({"url":"https://cdn.test/media", "resolution_extract_ms":12000}))
@@ -334,7 +406,7 @@ mod tests {
 
     #[test]
     fn alternating_audio_and_video_clients_reuses_connections_with_bounded_scopes() {
-        let cache = Resolver::default();
+        let cache = Arc::new(Resolver::default());
         let created = AtomicU64::new(0);
         let create = || {
             created.fetch_add(1, Ordering::Relaxed);

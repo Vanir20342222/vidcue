@@ -153,6 +153,7 @@ final class StorageLocations {
    * when none of its downloads has one yet.
    */
   static Uri playlistFolder(String playlistId) throws Exception {
+    EngineStartup.current.await();
     JSONArray playlists =
         new JSONArray(
             NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));

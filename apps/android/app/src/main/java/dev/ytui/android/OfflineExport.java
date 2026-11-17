@@ -74,6 +74,7 @@ public final class OfflineExport extends Worker {
    */
   static PlaylistSave playlist(String id) {
     try {
+      EngineStartup.current.await();
       JSONArray playlists =
           new JSONArray(
               NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));
