@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -23,7 +24,7 @@ import androidx.compose.ui.unit.dp
 /** Online Library sections and the feed each one loads (on tab 0). */
 internal val LIBRARY_FEEDS =
     linkedMapOf(
-        "Your playlists" to "Playlists",
+        "YouTube playlists" to "Playlists",
         "Liked" to "Liked",
         "Watch later" to "WatchLater",
         "Saved" to "Favorites",
@@ -31,7 +32,7 @@ internal val LIBRARY_FEEDS =
 
 /** Offline sections and the name the offline page uses for each. */
 private val OFFLINE_SECTIONS =
-    linkedMapOf("Downloads" to "Offline", "Offline playlists" to "Playlists", "Transfers" to "Transfers")
+    linkedMapOf("Downloads" to "Offline", "Playlists" to "Playlists", "Transfers" to "Transfers")
 
 /**
  * Everything that is yours, in one place: downloads, offline playlists, transfers, and (signed
@@ -45,7 +46,15 @@ internal fun LibraryPage(
     /** The shared feed page for the online sections, with this page's chips in its header. */
     feedPage: @Composable (chips: @Composable () -> Unit) -> Unit,
 ) {
-    var section by rememberSaveable { mutableStateOf("Downloads") }
+    // Opens on what has something in it: Downloads, else History when there is any.
+    val initialDownloads = vm.downloads.collectAsState().value
+    val initialHistory = vm.recent.collectAsState().value
+    var section by rememberSaveable {
+        mutableStateOf(
+            if (initialDownloads.none { it.optString("state") == "Complete" } && initialHistory.isNotEmpty()) "History"
+            else "Downloads"
+        )
+    }
     val account by vm.account.collectAsState()
     val connected = account.optBoolean("connected")
     val downloads by vm.downloads.collectAsState()
@@ -53,12 +62,17 @@ internal fun LibraryPage(
     val sections =
         buildList {
             add("Downloads")
-            add("Offline playlists")
+            add("Playlists")
             if (transfers > 0 || section == "Transfers") add("Transfers")
-            if (connected) addAll(listOf("Your playlists", "Liked", "Watch later"))
+            if (connected) addAll(listOf("YouTube playlists", "Liked", "Watch later"))
             add("Saved")
             add("History")
         }
+    // "+" in the title row opens the download dialog, which lives in Downloads.
+    val addRequests = PageChrome.libraryAdd.intValue
+    LaunchedEffect(addRequests) {
+        if (addRequests > PageChrome.libraryAddHandled && OFFLINE_SECTIONS[section] == null) section = "Downloads"
+    }
     // Signing out leaves an account-only section; return to Downloads.
     LaunchedEffect(connected) { if (section !in sections) section = "Downloads" }
     LaunchedEffect(section) {
@@ -70,7 +84,8 @@ internal fun LibraryPage(
     }
     val chips: @Composable () -> Unit = {
         FadingLazyRow(
-            Modifier.fillMaxWidth().testTag("library-sections"),
+            // Same place as the chips on Home, Music and Radio.
+            Modifier.fillMaxWidth().padding(top = 4.dp).testTag("library-sections"),
             contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {

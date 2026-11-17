@@ -45,6 +45,14 @@ internal fun OfflineLibrary(
     val config by vm.config.collectAsState()
     val playerOpen by vm.playerOpen.collectAsState()
     var add by remember { mutableStateOf(false) }
+    // "+" in the title row asks to download from a link; each tap opens the dialog once.
+    val addRequests = PageChrome.libraryAdd.intValue
+    LaunchedEffect(addRequests) {
+        if (addRequests > PageChrome.libraryAddHandled) {
+            PageChrome.libraryAddHandled = addRequests
+            add = true
+        }
+    }
     var newPlaylist by remember { mutableStateOf(false) }
     var addTo by remember { mutableStateOf<List<JSONObject>?>(null) }
     var selecting by rememberSaveable { mutableStateOf(false) }
@@ -175,26 +183,19 @@ internal fun OfflineLibrary(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Short labels so both actions share one line on a phone; the download icon and the
-            // spoken description say what "From a link" does.
-            Pill(
-                "From a link",
-                Modifier.testTag("add-download").semantics {
-                    contentDescription = "Download a video or playlist from a link"
-                },
-                glyph = Glyph.Download,
-            ) {
-                add = true
-            }
-            Pill(
-                "New playlist",
-                Modifier.testTag("create-offline-playlist").semantics {
-                    contentDescription = "Create offline playlist"
-                },
-                glyph = Glyph.Plus,
-            ) {
-                playlistItems = emptyList()
-                newPlaylist = true
+            // A playlist is made where playlists are listed.
+            if (section == "Playlists") {
+                Pill(
+                    "New playlist",
+                    Modifier.testTag("create-offline-playlist").semantics {
+                        contentDescription = "Create offline playlist"
+                    },
+                    glyph = Glyph.Plus,
+                    style = PillStyle.Tonal,
+                ) {
+                    playlistItems = emptyList()
+                    newPlaylist = true
+                }
             }
             if (section == "Offline" && available.isNotEmpty()) {
                 Pill(
@@ -238,16 +239,6 @@ internal fun OfflineLibrary(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        }
-                    if (available.isEmpty())
-                        item {
-                            EmptyMediaState(
-                                Glyph.Download,
-                                "No downloads yet",
-                                "Choose Download on any song, video or playlist to play it without a connection.",
-                            ) {
-                                Action("Browse music", "offline-browse-music") { vm.chooseTab(2) }
-                            }
                         }
                     items(shown, key = { it.optString("id") }) { item ->
                         val media = MediaCard(item.getJSONObject("media"))
@@ -438,6 +429,21 @@ internal fun OfflineLibrary(
                 }
             }
         }
+        // Empty Downloads: centred in the space between the header and the player, outside the
+        // list so it never slides under the header.
+        if (section == "Offline" && available.isEmpty())
+            Box(
+                Modifier.fillMaxSize().padding(top = headerSpace, bottom = LocalBottomOverlay.current),
+                contentAlignment = Alignment.Center,
+            ) {
+                EmptyMediaState(
+                    Glyph.Download,
+                    "No downloads yet",
+                    "Tap Download on any song, video or playlist to watch or listen offline.",
+                ) {
+                    Action("Find music to download", "offline-browse-music") { vm.chooseTab(2) }
+                }
+            }
     OfflineSelectionActions(
         visible = selecting && section == "Offline",
         enabled = selectedItems.isNotEmpty(),

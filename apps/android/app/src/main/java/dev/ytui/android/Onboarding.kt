@@ -224,7 +224,8 @@ internal fun Onboarding(vm: YtuiViewModel, dark: Boolean, onSetupDone: () -> Uni
                     }
                 }
         ) {
-            TopBar(step, background, onBack = { step = OnboardingSteps.previous(step) }, onFinish)
+            val signedIn = vm.account.collectAsState().value.optBoolean("connected")
+            TopBar(step, background, onBack = { step = OnboardingSteps.previous(step) }, onFinish, signedIn)
             AnimatedContent(
                 targetState = step,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -265,7 +266,7 @@ private fun colorTween(target: Color, reduced: Boolean) =
 // ---------------------------------------------------------------- chrome
 
 @Composable
-private fun TopBar(step: Int, background: Color, onBack: () -> Unit, onFinish: () -> Unit) {
+private fun TopBar(step: Int, background: Color, onBack: () -> Unit, onFinish: () -> Unit, signedIn: Boolean) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -273,10 +274,13 @@ private fun TopBar(step: Int, background: Color, onBack: () -> Unit, onFinish: (
         Box(Modifier.width(72.dp), contentAlignment = Alignment.CenterStart) {
             if (step > 0) MediaIconButton(Glyph.Back, "Back", "onboarding-back", onBack)
         }
-        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { StepDots(step) }
-        Box(Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
+        Spacer(Modifier.weight(1f))
+        // The way out is always in the same corner: Skip, and on the account page "Maybe later".
+        Box(contentAlignment = Alignment.CenterEnd) {
             if (OnboardingSteps.showSkip(step))
                 QuietAction("Skip", Modifier.testTag("onboarding-skip"), action = onFinish)
+            else if (!signedIn)
+                QuietAction("Skip", Modifier.testTag("onboarding-finish"), action = onFinish)
         }
     }
 }
@@ -307,7 +311,7 @@ private fun StepDots(step: Int) {
                     when {
                         index == step -> colors.onBackground
                         index < step -> colors.onSurfaceVariant
-                        else -> colors.outlineVariant
+                        else -> colors.onSurfaceVariant.copy(alpha = 0.45f)
                     },
                     reduced,
                 )
@@ -320,10 +324,15 @@ private fun StepDots(step: Int) {
 private fun BottomBar(step: Int, vm: YtuiViewModel, onNext: () -> Unit, onFinish: () -> Unit) {
     val account by vm.account.collectAsState()
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(
-            Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
-            contentAlignment = Alignment.Center,
+        Column(
+            Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
+            // Progress sits with the button that moves it on, at the same height on every page:
+            // the button area keeps room for the account page's two actions.
+            StepDots(step)
+            Box(Modifier.fillMaxWidth().heightIn(min = 100.dp), contentAlignment = Alignment.TopCenter) {
             when {
                 // The last page is the account. Not signed in: Sign in takes the main button's
                 // place, and finishing without it is the quiet choice under it.
@@ -342,13 +351,17 @@ private fun BottomBar(step: Int, vm: YtuiViewModel, onNext: () -> Unit, onFinish
                             vm.actionError.value = null
                             vm.effect("login")
                         }
-                        QuietAction("Maybe later", Modifier.testTag("onboarding-finish"), action = onFinish)
+                        QuietAction("Other ways to sign in", Modifier.testTag("onboarding-import")) {
+                            vm.actionError.value = null
+                            vm.effect("pick", "kind" to "cookies")
+                        }
                     }
                 OnboardingSteps.isLast(step) ->
                     Pill("Start watching", Modifier.testTag("onboarding-finish"), PillStyle.Primary, fill = true, onClick = onFinish)
                 step == OnboardingSteps.WELCOME ->
                     Pill("Get started", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
                 else -> Pill("Continue", Modifier.testTag("onboarding-next"), PillStyle.Primary, fill = true, onClick = onNext)
+            }
             }
         }
     }
@@ -424,8 +437,8 @@ private fun PageColumn(
                     .widthIn(max = 560.dp)
                     .fillMaxWidth()
                     .padding(
-                        start = 24.dp,
-                        end = 24.dp,
+                        start = 16.dp,
+                        end = 16.dp,
                         top = if (centred) 16.dp else (minimum * 0.08f).coerceIn(16.dp, 72.dp),
                         bottom = 16.dp,
                     ),
@@ -462,7 +475,7 @@ private fun PageTitle(title: String, body: String, center: Boolean = false, firs
         Staggered(firstIndex + 1) {
             Text(
                 body,
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = align,
             )
@@ -643,9 +656,14 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     // System and the app's own two themes first; the rest are one tap away.
     val main = choices.filter { it == "system" || it.startsWith("vidcue") }
     var moreThemes by rememberSaveable { mutableStateOf(selected !in main) }
-    PageColumn {
+    // Centred like the other setup pages.
+    PageColumn(horizontal = Alignment.CenterHorizontally) {
         PageBadge(Glyph.Palette)
-        PageTitle("Look and feel", "Pick a colour theme. It applies right away and you can change it any time in Settings.")
+        PageTitle(
+            "Look and feel",
+            "Pick a colour theme. It applies right away and you can change it any time in Settings.",
+            center = true,
+        )
         if (!editable)
             Text(
                 if (ready) "Your settings could not be loaded, so they are left unchanged. Choose a theme later in Settings."
@@ -655,24 +673,35 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         Staggered(3, Modifier.fillMaxWidth()) {
-            FlowRow(
-                Modifier.fillMaxWidth().selectableGroup(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for (name in if (moreThemes) choices else main)
-                    ThemeChip(name, name == selected, editable, palettes.optJSONObject(name)) {
-                        vm.updateConfig(dark) { it.put("theme", name) }
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                // The app's own three themes as equal cards with a preview swatch; the rest, once
+                // asked for, as chips.
+                Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (name in main)
+                        ThemeCard(name, name == selected, editable, palettes.optJSONObject(name), Modifier.weight(1f)) {
+                            vm.updateConfig(dark) { it.put("theme", name) }
+                        }
+                }
+                if (moreThemes)
+                    FlowRow(
+                        Modifier.fillMaxWidth().selectableGroup(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        for (name in choices - main.toSet())
+                            ThemeChip(name, name == selected, editable, palettes.optJSONObject(name)) {
+                                vm.updateConfig(dark) { it.put("theme", name) }
+                            }
                     }
-                if (!moreThemes && choices.size > main.size)
-                    MediaChip("More themes", modifier = Modifier.testTag("onboarding-more-themes")) { moreThemes = true }
+                else if (choices.size > main.size)
+                    QuietAction("More themes", Modifier.testTag("onboarding-more-themes")) { moreThemes = true }
             }
         }
         Staggered(4, Modifier.fillMaxWidth()) {
             SettingSwitchRow(
                 Glyph.Speed,
                 "Reduce motion",
-                "Fewer animations and still visualisers",
+                "Fewer animations; visualisers stay still",
                 config.optBoolean("reduced_motion"),
                 "onboarding-reduce-motion",
                 enabled = editable,
@@ -680,6 +709,35 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 vm.updateConfig(dark) { it.put("reduced_motion", value) }
             }
         }
+    }
+}
+
+@Composable
+private fun ThemeCard(
+    name: String,
+    selected: Boolean,
+    enabled: Boolean,
+    palette: org.json.JSONObject?,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val reduced = LocalReducedMotion.current
+    val edge by colorTween(if (selected) colors.primary else colors.outlineVariant, reduced)
+    Column(
+        modifier
+            .clip(MediaTokens.card)
+            .background(colors.surfaceContainer)
+            .border(BorderStroke(if (selected) 2.dp else 1.dp, edge), MediaTokens.card)
+            .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .padding(vertical = 14.dp, horizontal = 8.dp)
+            .testTag("onboarding-theme-$name"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (palette != null) PaletteSwatch(palette, Modifier.size(width = 52.dp, height = 34.dp))
+        else MediaIcon(Glyph.Palette, Modifier.size(34.dp), colors.onSurfaceVariant)
+        Text(themeLabel(name), style = MaterialTheme.typography.labelLarge, maxLines = 1)
     }
 }
 
@@ -743,13 +801,31 @@ private fun AccountPage(vm: YtuiViewModel) {
     // The sign-in activity closes back to this page; the flow updates by itself.
     val account by vm.account.collectAsState()
     val connected = account.optBoolean("connected")
-    PageColumn {
+    // Centred like the welcome page, with what signing in brings instead of an empty middle.
+    PageColumn(horizontal = Alignment.CenterHorizontally) {
         PageBadge(Glyph.Account)
         PageTitle(
-            "Your account",
-            "Signing in is optional. It unlocks your subscriptions, playlists and music library. " +
-                "Your session stays encrypted on this device.",
+            "Bring your library",
+            "Optional. Sign in to bring what you already follow; you stay signed in only on this device.",
+            center = true,
         )
+        if (!connected)
+            Staggered(3, Modifier.widthIn(max = 320.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    for ((glyph, text) in
+                        listOf(
+                            Glyph.Home to "Subscriptions and a personal Home",
+                            Glyph.Library to "Playlists, likes and Watch later",
+                            Glyph.Music to "Your music library and history",
+                        )) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Box(
+                                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainer),
+                                contentAlignment = Alignment.Center,
+                            ) { MediaIcon(glyph, Modifier.size(20.dp), MaterialTheme.colorScheme.primary) }
+                            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                }
+            }
         Staggered(3, Modifier.fillMaxWidth()) {
             AnimatedContent(
                 connected,
@@ -780,15 +856,6 @@ private fun AccountPage(vm: YtuiViewModel) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                    }
-                } else {
-                    // Sign in is the page's main button, in the same place as Continue on the
-                    // pages before. Importing a session from another browser is the other way.
-                    // Pulled back by the quiet button's inner padding so its text lines up with the
-                    // paragraph above.
-                    QuietAction("Other ways to sign in", Modifier.offset(x = (-14).dp).testTag("onboarding-import")) {
-                        vm.actionError.value = null
-                        vm.effect("pick", "kind" to "cookies")
                     }
                 }
             }

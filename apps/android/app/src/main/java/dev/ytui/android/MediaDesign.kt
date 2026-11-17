@@ -91,6 +91,10 @@ internal object MediaTokens {
     /** Inputs are soft rectangles, so single and multi-line fields match. */
     val fieldShape = RoundedCornerShape(16.dp)
     val videoInk = Color.White
+    /** The logo's pink end (#FF4D8D), the accent of Vidcue Dark. */
+    val brandAccentDark = Color(0xffff4d8d)
+    /** A deeper pink with readable contrast on Vidcue Light's pale background. */
+    val brandAccentLight = Color(0xffd6336c)
     val videoScrim = Color.Black.copy(alpha = 0.72f)
     /** Flat backing behind the native video transports: 3:1 for white glyphs over white video. */
     val videoChromeDisc = Color(0x8C0B0D10)
@@ -172,6 +176,10 @@ internal enum class Glyph {
     Shuffle,
     Repeat,
     Link,
+    /** Save to Library: a plus in a circle, as music apps mark "add". */
+    AddCircle,
+    /** Android's share mark: three dots joined by two lines. */
+    Share,
     Palette,
     Info,
     Up,
@@ -578,14 +586,28 @@ internal fun MediaIcon(
                     }
                 }
                 Glyph.Shuffle -> {
-                    outline(3f to 5f, 6f to 5f, 17f to 19f, 21f to 19f)
-                    outline(3f to 19f, 6f to 19f, 17f to 5f, 21f to 5f)
-                    outline(18f to 2f, 21f to 5f, 18f to 8f)
-                    outline(18f to 16f, 21f to 19f, 18f to 22f)
+                    // Material's shuffle: one straight arrow, and a second line broken where it
+                    // crosses, so it never reads as an "X" at small sizes.
+                    line(4f, 20f, 20f, 4f)
+                    outline(14.5f to 4f, 20f to 4f, 20f to 9.5f)
+                    line(4f, 4f, 9.5f, 9.5f)
+                    line(14.5f, 14.5f, 20f, 20f)
+                    outline(20f to 14.5f, 20f to 20f, 14.5f to 20f)
                 }
                 Glyph.Repeat -> {
                     outline(4f to 10f, 4f to 5f, 20f to 5f, 17f to 2f)
                     outline(20f to 14f, 20f to 19f, 4f to 19f, 7f to 22f)
+                }
+                Glyph.AddCircle -> {
+                    drawCircle(tint, 9f, Offset(12f, 12f), style = Stroke(1.8f))
+                    line(12f, 8f, 12f, 16f)
+                    line(8f, 12f, 16f, 12f)
+                }
+                Glyph.Share -> {
+                    line(16f, 6.5f, 8f, 11f)
+                    line(8f, 13f, 16f, 17.5f)
+                    for ((x, y) in listOf(17f to 5.5f, 6.5f to 12f, 17f to 18.5f))
+                        drawCircle(tint, 2.6f, Offset(x, y), style = Stroke(1.8f))
                 }
                 Glyph.Link -> {
                     // Two interlocking chain links.
@@ -678,9 +700,9 @@ internal fun MediaChip(
     // tag is 36dp inside a 48dp touch target.
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
-    // The selected chip is the accent itself (as Spotify's green), clearly apart from the rest;
-    // unselected chips keep full-contrast text so they never look disabled.
-    val selectedFill = colors.primary
+    // The selected chip is the page's ink (white on dark, as YouTube's), so it never reads as
+    // one of the accent-coloured action buttons; unselected chips keep full-contrast text.
+    val selectedFill = colors.onBackground
     val container by
         animateColorAsState(
             if (selected) selectedFill else colors.surfaceContainer,
@@ -689,7 +711,7 @@ internal fun MediaChip(
         )
     val ink by
         animateColorAsState(
-            if (selected) colors.onPrimary else colors.onSurface,
+            if (selected) colors.background else colors.onSurface,
             motion.fade(220),
             label = "chip-ink",
         )
@@ -709,14 +731,19 @@ internal fun MediaChip(
     ) {
         CompositionLocalProvider(LocalContentColor provides ink) {
             Box(
-                Modifier.heightIn(min = 36.dp)
+                Modifier.heightIn(min = 32.dp)
                     .clip(MediaTokens.chip)
                     .background(container)
                     .indication(source, SoftIndication)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(label, style = MaterialTheme.typography.labelLarge, color = ink, maxLines = 1)
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Medium),
+                    color = ink,
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -724,7 +751,9 @@ internal fun MediaChip(
 
 @Composable
 internal fun MediaIconButton(glyph: Glyph, label: String, tag: String = "", action: () -> Unit) {
-    val secondary = glyph == Glyph.Shuffle || glyph == Glyph.Repeat
+    // Overflow dots and modes are secondary: grey and a size down, so lists don't grow a column
+    // of bright dots beside their titles.
+    val secondary = glyph == Glyph.Shuffle || glyph == Glyph.Repeat || glyph == Glyph.More
     RoundIconButton(
         glyph,
         label,
@@ -750,7 +779,8 @@ internal fun MediaModeButton(
     val tint by
         animateColorAsState(
             if (checked) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
+            // Off is a quieter white, not the disabled-looking grey.
+            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
             motion.fade(200),
             label = "mode-tint",
         )
@@ -833,7 +863,7 @@ internal fun EmptyMediaState(
         Spacer(Modifier.height(4.dp))
         Text(
             title,
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.titleLarge,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
         Text(

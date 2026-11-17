@@ -309,9 +309,9 @@ class CatalogUiTest {
                 .onNodeWithTag("artwork-${cards[0].key}", useUnmergedTree = true)
                 .fetchSemanticsNode()
                 .boundsInRoot
-        // Feed video art sits inside a 12dp side margin with rounded corners, like shelf cards.
+        // Feed video art sits inside the 16dp page margin with rounded corners, like shelf cards.
         val margin =
-            12f * InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+            16f * InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
         Assert.assertEquals("Video art keeps the side margin", pane.left + margin, cover.left, 2f)
         // Home cells are at least 280 dp with 8 dp gaps: one column on a phone, two on a 753 dp
         // portrait Galaxy Tab S9. Each cover spans its column inside the margins.
@@ -492,6 +492,8 @@ class CatalogUiTest {
     @Test
     fun offlinePlaylistsUseEditableNativeFieldsAndRealRustPersistence() {
         compose.onNodeWithTag("tab-0").performClick()
+        // New playlist is offered on the Playlists section of Library.
+        compose.onNodeWithTag("library-Playlists").performClick()
         compose.onNodeWithTag("create-offline-playlist").performClick()
         val title = "UI fixture " + java.util.UUID.randomUUID().toString().take(8)
         compose.onNodeWithTag("offline-playlist-name").performTextInput(title)

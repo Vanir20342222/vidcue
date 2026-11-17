@@ -327,9 +327,8 @@ internal fun FocusedPlayer(
                         !media.optBoolean("live") &&
                         !player.preview
                 Row(
+                    // No box behind the actions: on the artwork's colour a grey card looked pasted on.
                     Modifier.fillMaxWidth()
-                        .clip(MediaTokens.card)
-                        .background(LocalContentColor.current.copy(alpha = 0.07f))
                         // Equal cells edge to edge: the first and last line up with the title.
                         .padding(vertical = 2.dp)
                         .testTag("player-actions"),
@@ -357,7 +356,7 @@ internal fun FocusedPlayer(
                     }
                     val shareUrl = media?.optString("url").orEmpty()
                     if (shareUrl.startsWith("http"))
-                        PlayerAction(Glyph.Link, "Share", "Share link", "player-share", true, modifier = cell) {
+                        PlayerAction(Glyph.Share, "Share", "Share link", "player-share", true, modifier = cell) {
                             val send =
                                 Intent(Intent.ACTION_SEND)
                                     .setType("text/plain")
@@ -382,15 +381,17 @@ internal fun FocusedPlayer(
                             modifier = cell,
                             action = onSleep,
                         )
-                    PlayerAction(
-                        Glyph.More,
-                        "More",
-                        "Playback options",
-                        "player-options",
-                        true,
-                        modifier = cell,
-                        action = onMore,
-                    )
+                    // Music has More in the header (Panel actions); the video player keeps it here.
+                    if (player.video)
+                        PlayerAction(
+                            Glyph.More,
+                            "More",
+                            "Playback options",
+                            "player-options",
+                            true,
+                            modifier = cell,
+                            action = onMore,
+                        )
                 }
             }
             Column(
@@ -444,21 +445,33 @@ internal fun FocusedPlayer(
                 } else {
                 Column(
                     Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (landscape) 4.dp else if (player.video) 8.dp else 2.dp),
                 ) {
                     // Music keeps one line (long titles scroll) so the controls below never move
                     // when the next track has a longer or not-yet-known title.
+                    // Music: Save sits at the end of the title row, where music apps keep their
+                    // "add to library" action.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         (if (player.video) player.title
                         else MusicTitles.clean(player.title, player.media?.optString("creator").orEmpty())).ifBlank { " " },
-                        if (player.video) Modifier
-                        else Modifier.fillMaxWidth().fadingMarquee(),
+                        if (player.video) Modifier.weight(1f)
+                        else Modifier.weight(1f).fadingMarquee(),
                         style =
                             if (player.video) MaterialTheme.typography.titleLarge
                             else MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                         maxLines = if (player.video) 2 else 1,
                         overflow = if (player.video) TextOverflow.Ellipsis else TextOverflow.Clip,
                     )
+                    val saveable = player.media?.takeUnless { player.video || it.optBoolean("live") }
+                    // The 48dp target overflows the row instead of pushing the artist line down.
+                    if (saveable != null)
+                        Box(Modifier.size(48.dp, 30.dp), contentAlignment = Alignment.Center) {
+                            Box(Modifier.requiredSize(48.dp)) {
+                                MediaIconButton(Glyph.AddCircle, "Save to Library", "player-save") { vm.save(MediaCard(saveable)) }
+                            }
+                        }
+                    }
                     // Video: views and age under the title, then the channel row (watch-page
                     // order). Music keeps the artist directly under the title.
                     if (player.video) player.media?.let { MediaInformation(it, mobile) }
@@ -517,10 +530,11 @@ internal fun FocusedPlayer(
                         PlayerSeek(vm, player)
                     }
                 if (!player.video)
+                    // Shuffle and repeat glyphs line up with the ends of the seek line above.
                     Row(
-                        Modifier.fillMaxWidth(),
+                        Modifier.fillMaxWidth().bleedHorizontally(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         MediaModeButton(
                             Glyph.Shuffle,
@@ -689,8 +703,11 @@ internal fun FocusedPlayer(
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
             }
         else
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Art(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
+            // Cover and controls are centred together, so the cover sits close to its title and
+            // spare height is shared above and below the block.
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
+                // Same 16dp edges as the title, seek line and actions under it.
+                Art(Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
                 Controls(Modifier.fillMaxWidth().padding(bottom = 12.dp))
             }
     }
@@ -878,7 +895,7 @@ internal fun PlayerAction(
             else MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
             Text(
                 label,
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                 color = if (active) accent else LocalContentColor.current.copy(alpha = 0.86f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -934,7 +951,7 @@ internal fun PlayDisc(playing: Boolean, modifier: Modifier = Modifier, size: and
 /** Previous/next: larger glyphs than toolbar icons, the same soft press. */
 @Composable
 internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = Modifier, action: () -> Unit) =
-    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 30.dp, action = action)
+    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 36.dp, action = action)
 
 @Composable
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
@@ -1018,7 +1035,7 @@ internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {
             // elapsed on the left and the full length on the right, as music apps show them.
             Row(Modifier.fillMaxWidth().offset(y = (-10).dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 val numbers =
-                    MaterialTheme.typography.labelMedium.merge(
+                    MaterialTheme.typography.bodySmall.merge(
                         androidx.compose.ui.text.TextStyle(fontFeatureSettings = "tnum")
                     )
                 Text(time(drag ?: player.position), style = numbers, color = MaterialTheme.colorScheme.onSurfaceVariant)

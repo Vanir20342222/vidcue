@@ -139,8 +139,8 @@ internal object YtuiType {
                 TextStyle(
                     fontFamily = display,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 26.sp,
-                    lineHeight = 31.sp,
+                    fontSize = 24.sp,
+                    lineHeight = 29.sp,
                     letterSpacing = (-0.3).sp,
                 ),
             headlineSmall =
@@ -176,7 +176,7 @@ internal object YtuiType {
                 ),
             bodyLarge = TextStyle(fontFamily = text, fontSize = 16.sp, lineHeight = 23.sp),
             bodyMedium = TextStyle(fontFamily = text, fontSize = 14.sp, lineHeight = 20.sp),
-            bodySmall = TextStyle(fontFamily = text, fontSize = 13.sp, lineHeight = 18.sp),
+            bodySmall = TextStyle(fontFamily = text, fontSize = 12.5.sp, lineHeight = 17.sp),
             labelLarge =
                 TextStyle(
                     fontFamily = text,

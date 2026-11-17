@@ -44,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
@@ -218,7 +219,11 @@ internal fun JSONObject.color(key: String, fallback: Color, neutralPreset: Boole
             "background" -> return MediaTokens.neutralBackground
             "surface" -> return MediaTokens.neutralSurface
             "text" -> return MediaTokens.neutralText
+            "accent" -> return MediaTokens.brandAccentDark
         }
+    // The app's own themes take their accent from the logo (owner's choice, 2026-11-16); the
+    // shared palettes, and so the desktop app, keep theirs.
+    if (neutralPreset && optString("name") == "vidcue-light" && key == "accent") return MediaTokens.brandAccentLight
     val rgb = optJSONArray(key) ?: return fallback
     return Color(android.graphics.Color.rgb(rgb.optInt(0), rgb.optInt(1), rgb.optInt(2)))
 }
@@ -586,14 +591,21 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                         // The page fades out behind the player and navigation, so
                                         // nothing shows through between and beside them.
                                         .drawBehind {
+                                            // From 24dp above the mini player down: the page fades
+                                            // out above it and is fully covered beside and under it.
                                             val page = colors.background
+                                            val lead = 24.dp.toPx()
                                             drawRect(
                                                 androidx.compose.ui.graphics.Brush.verticalGradient(
                                                     0f to page.copy(alpha = 0f),
-                                                    0.28f to page.copy(alpha = 0.94f),
                                                     1f to page,
-                                                )
+                                                    startY = -lead,
+                                                    endY = 4.dp.toPx(),
+                                                ),
+                                                topLeft = Offset(0f, -lead),
+                                                size = androidx.compose.ui.geometry.Size(size.width, lead + 4.dp.toPx()),
                                             )
+                                            drawRect(page, topLeft = Offset(0f, 4.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, size.height - 4.dp.toPx()))
                                         }
                                         .testTag("bottom-dock")
                                 ) {
@@ -622,16 +634,27 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 background,
                                 !videoPlayer && config.optBoolean("thumbnails", true),
                             )
+                        val source by PlaybackSource.current
                         Panel(
-                            "Now playing",
+                            source?.second ?: "Now playing",
                             { vm.playerOpen.value = false },
+                            caption = source?.first,
                             full = true,
                             showHeader = !videoPlayer,
+                            balanceTitle = videoPlayer,
                             scroll = false,
                             swipeToClose = mobile.gesture("gesture_swipe_dismiss"),
                             enterFromBottom = true,
                             backdrop =
                                 if (videoPlayer) Modifier else Modifier.ambientGlow(glow, background),
+                            // Music: playback options sit at the header's right, balancing the
+                            // close chevron; the video player keeps them in its own controls.
+                            actions = {
+                                if (!videoPlayer)
+                                    MediaIconButton(Glyph.More, "Playback options", "player-options") {
+                                        dialog = "player-options"
+                                    }
+                            },
                         ) {
                             FocusedPlayer(
                                 vm,
@@ -814,6 +837,10 @@ internal fun Panel(
     headerBack: (() -> Unit)? = null,
     headerBackTag: String = "",
     showHeader: Boolean = true,
+    /** A small line above the title ("PLAYING FROM PLAYLIST"). */
+    caption: String? = null,
+    /** A full-screen header reserves the right slot to centre its title; off when it has actions. */
+    balanceTitle: Boolean = full,
     backdrop: Modifier = Modifier,
     enterFromBottom: Boolean = false,
     actions: @Composable RowScope.() -> Unit = {},
@@ -873,17 +900,30 @@ internal fun Panel(
                             if (headerBack != null) headerBackTag else "panel-close",
                             action = headerBack ?: dismiss,
                         )
-                    Text(
-                        title,
+                    Column(
                         Modifier.weight(1f).padding(horizontal = 8.dp),
-                        style =
-                            if (full) MaterialTheme.typography.titleMedium
-                            else if (page) MaterialTheme.typography.headlineSmall
-                            else MaterialTheme.typography.titleLarge,
-                        textAlign = if (full) TextAlign.Center else TextAlign.Start,
-                    )
+                        horizontalAlignment = if (full) Alignment.CenterHorizontally else Alignment.Start,
+                    ) {
+                        if (caption != null)
+                            Text(
+                                caption.uppercase(),
+                                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.sp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        Text(
+                            title,
+                            style =
+                                if (full) MaterialTheme.typography.titleMedium
+                                else if (page) MaterialTheme.typography.headlineSmall
+                                else MaterialTheme.typography.titleLarge,
+                            textAlign = if (full) TextAlign.Center else TextAlign.Start,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     actions()
-                    if (full) Spacer(Modifier.size(48.dp))
+                    if (full && balanceTitle) Spacer(Modifier.size(48.dp))
                     // Sub-pages go back one level; only the top page and sheets close.
                     if (!full && !page) SheetClose(dismiss)
                 }
@@ -1132,7 +1172,8 @@ private fun BrowsePane(
     // Pages opened from another page (playlists, albums, channels) get a header; lists of results
     // and library feeds read as rows.
     val collectionPage = SubPages.collectionId(feed.request) != null
-    val compactList = tab == 0 || (tab != 3 && (searchResults || (collectionPage && tab == 1)))
+    // Radio is a list of stations (cover, name, genre), dense like a music app's radio list.
+    val compactList = tab == 0 || tab == 3 || searchResults || (collectionPage && tab == 1)
     val numberedTracks =
         collectionPage && vm.collectionCard(SubPages.collectionId(feed.request)!!)?.kind == "album"
     // Side inset of full-width rows: Music and Radio grids already pad their content.
@@ -1210,6 +1251,44 @@ private fun BrowsePane(
     val playingNow by
         remember(vm) { vm.player.map { it.playing }.distinctUntilChanged() }.collectAsState(false)
     val cardsByKey = remember(feed.cards) { feed.cards.associateBy { it.key } }
+    // Remembers where a song was started from, for the player's "Playing from" header.
+    fun playFrom(media: MediaCard, section: String = "") {
+        when {
+            collectionPage ->
+                vm.collectionCard(SubPages.collectionId(feed.request)!!).let { card ->
+                    PlaybackSource.set("Playing from ${card?.kind ?: "playlist"}", card?.title ?: feed.title)
+                }
+            searchResults -> PlaybackSource.set("Playing from search", SearchRequests.query(feed.request).orEmpty())
+            section.isNotBlank() -> PlaybackSource.set("Playing from", section)
+            else -> PlaybackSource.current.value = null
+        }
+        vm.play(media)
+    }
+    // Music search, All: grouped as music apps do it (top artist, then songs, albums, playlists,
+    // videos), each group under its heading. Filtered results stay one plain list.
+    val searchGroups =
+        remember(feed.cards, feed.request, tab, searchResults) {
+            if (tab != 2 || !searchResults || SearchRequests.filter(feed.request) != "All") null
+            else {
+                val order = listOf("artist", "channel", "song", "album", "playlist", "video")
+                val sorted = feed.cards.sortedBy { order.indexOf(it.kind).let { i -> if (i < 0) order.size else i } }
+                val headings = HashMap<String, String>()
+                var previous = ""
+                for (card in sorted) {
+                    val group =
+                        when (card.kind) {
+                            "artist", "channel" -> if (previous.isEmpty()) "Top result" else "Artists"
+                            "song" -> "Songs"
+                            "album" -> "Albums"
+                            "playlist" -> "Playlists"
+                            else -> "Videos"
+                        }
+                    if (group != previous) headings[card.key] = group
+                    previous = group
+                }
+                sorted to headings
+            }
+        }
     // Provider sections ("Quick picks", "Listen again") become titled shelves once a feed has
     // at least two of them; search results and single-section feeds stay a grid.
     val shelves =
@@ -1333,18 +1412,20 @@ private fun BrowsePane(
                 },
         ) {
             val fixedColumns = tab in 2..3 && LocalConfiguration.current.screenWidthDp < 600
+            // Radio: three stations a row on phones, so a screen shows a useful number of them.
+            val phoneColumns = 2
             val minCell = if (tab in 2..3) 164.dp else 280.dp
             val sidePadding = if (tab in 2..3) 16.dp else 0.dp
             val cellGap = if (tab in 2..3) 12.dp else 8.dp
             // Cover width in pixels, as the grid lays its cells out; covers use it instead of
             // measuring themselves.
             val cellPixels =
-                remember(gridWidth, fixedColumns, minCell, density) {
+                remember(gridWidth, fixedColumns, phoneColumns, minCell, density) {
                     with(density) {
                         val available = gridWidth - 2 * sidePadding.roundToPx()
                         val gap = cellGap.roundToPx()
                         val count =
-                            if (fixedColumns) 2
+                            if (fixedColumns) phoneColumns
                             else maxOf(1, (available + gap) / (minCell.roundToPx() + gap))
                         if (gridWidth <= 0) 0 else ((available - gap * (count - 1)) / count).coerceAtLeast(1)
                     }
@@ -1358,7 +1439,7 @@ private fun BrowsePane(
             ) {
             LazyVerticalGrid(
                 columns =
-                    if (fixedColumns) GridCells.Fixed(2)
+                    if (fixedColumns) GridCells.Fixed(phoneColumns)
                     else GridCells.Adaptive(minCell),
                 modifier =
                     Modifier.fillMaxSize()
@@ -1392,7 +1473,8 @@ private fun BrowsePane(
                     PaddingValues(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
-                        top = 4.dp + headerSpace,
+                        // A collection's wash starts right under the title row it continues.
+                        top = (if (collectionPage) 0.dp else 4.dp) + headerSpace,
                         bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
@@ -1401,14 +1483,22 @@ private fun BrowsePane(
                     Arrangement.spacedBy(
                         when {
                             compactList || collectionPage -> 4.dp
-                            tab in 2..3 -> 20.dp
-                            else -> 28.dp
+                            tab in 2..3 -> 16.dp
+                            else -> 20.dp
                         }
                     ),
             ) {
                 if (collectionPage)
                     item(span = { GridItemSpan(maxLineSpan) }, key = "collection-header", contentType = "collection-header") {
-                        CollectionHeader(vm, feed, tab, thumbnails, inset = sideInset, modifier = Modifier.padding(bottom = 12.dp))
+                        CollectionHeader(
+                            vm,
+                            feed,
+                            tab,
+                            thumbnails,
+                            inset = sideInset,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                            onMore = { openCardMenu(it, true) },
+                        )
                     }
                 if (resumeVideo != null)
                     item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
@@ -1498,11 +1588,11 @@ private fun BrowsePane(
                                         mobile.optBoolean("show_channel", true),
                                         playingUrl,
                                         playingNow,
-                                        onPlay = { vm.play(it) },
+                                        onPlay = { playFrom(it, section) },
                                         onMenu = { openCardMenu(it, true) },
                                         // In a padded grid (Music, Radio) shelves still scroll to
                                         // the screen edges; their first item keeps its place.
-                                        inset = if (tab in 2..3) 20.dp else sideInset,
+                                        inset = if (tab in 2..3) 16.dp else sideInset,
                                         modifier = if (tab in 2..3) Modifier.bleedHorizontally(16.dp) else Modifier,
                                     )
                                 }
@@ -1539,7 +1629,7 @@ private fun BrowsePane(
                         }
                     }
                 else items(
-                    feed.cards,
+                    searchGroups?.first ?: feed.cards,
                     key = { it.key },
                     span = {
                         GridItemSpan(
@@ -1555,8 +1645,14 @@ private fun BrowsePane(
                         }
                     },
                 ) { media ->
+                    val groupHeading = searchGroups?.second?.get(media.key)
+                    Column {
+                    if (groupHeading != null)
+                        ShelfHeading(groupHeading, Modifier.padding(bottom = 4.dp), inset = sideInset)
+                    if (groupHeading == "Top result")
+                        TopResultCard(media, thumbnails, inset = sideInset, onOpen = { vm.play(media) }, onMenu = { openCardMenu(media, true) })
                     // Scroll state is read in image effects, without recomposing every card.
-                    run {
+                    else run {
                         Box(
                             Modifier.then(
                                     // Cached categories display at once, without card entrances.
@@ -1581,8 +1677,10 @@ private fun BrowsePane(
                                         mobile.optBoolean("show_channel", true),
                                         current,
                                         current && playingNow,
-                                        onPlay = { vm.play(media) },
+                                        onPlay = { playFrom(media) },
                                         onMenu = { openCardMenu(media, true) },
+                                        // Under a "Songs" heading the kind would repeat itself.
+                                        showKind = searchResults && searchGroups == null,
                                         number =
                                             if (numberedTracks) (cardIndex[media.key] ?: 0) + 1 else null,
                                     )
@@ -1595,10 +1693,11 @@ private fun BrowsePane(
                                         mobile,
                                         current,
                                         current && playingNow,
-                                        onPlay = { vm.play(media) },
+                                        onPlay = { playFrom(media) },
                                         onMenu = { openCardMenu(media, media.audio || media.kind == "album") },
                                         inset = sideInset,
-                                        music = tab == 2,
+                                        music = tab in 2..3,
+                                        showKind = searchGroups == null,
                                     )
                                 }
                             else
@@ -1607,6 +1706,7 @@ private fun BrowsePane(
                                     current && playingNow, openMenu = openCardMenu,
                                 )
                         }
+                    }
                     }
                 }
                 if (feed.loading && feed.cards.isEmpty() && feed.error == null)
@@ -1714,11 +1814,29 @@ private fun BrowsePane(
         val loneSource = tab == 2 && feed.request == "Home" && feed.categories.isEmpty()
         val showChips =
             !searchMode && !subpage && !loneSource && (chips != null || tab in 1..3 || feed.categories.isNotEmpty())
+        val headerPage = MaterialTheme.colorScheme.background
         Column(
             Modifier.fillMaxWidth()
                 .onSizeChanged { headerHeight = it.height }
                 .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
-                .background(MaterialTheme.colorScheme.background)
+                .background(headerPage)
+                // Content scrolling up under the header fades out instead of being cut mid-line.
+                .drawWithContent {
+                    drawContent()
+                    // Nothing to fade from when the header is empty (a pushed page without chips),
+                    // and nothing to fade until the list has scrolled under the header.
+                    if (size.height < 1f || !grid.canScrollBackward) return@drawWithContent
+                    val fade = 20.dp.toPx()
+                    drawRect(
+                        androidx.compose.ui.graphics.Brush.verticalGradient(
+                            listOf(headerPage, headerPage.copy(alpha = 0f)),
+                            startY = size.height,
+                            endY = size.height + fade,
+                        ),
+                        topLeft = Offset(0f, size.height),
+                        size = androidx.compose.ui.geometry.Size(size.width, fade),
+                    )
+                }
                 .padding(bottom = if (searchMode || showChips) 12.dp else 0.dp)
                 .testTag("browse-header"),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1835,7 +1953,7 @@ private fun BrowsePane(
                         }
                     }
                 if (tab == 3) {
-                    items(listOf("Featured" to "Cliamp", "Saved" to "Favorites")) { (label, request) ->
+                    items(listOf("Featured" to "Cliamp", "My stations" to "Favorites")) { (label, request) ->
                         MediaChip(
                             label,
                             selected = feed.request == request,
@@ -1845,7 +1963,7 @@ private fun BrowsePane(
                         }
                     }
                     item {
-                        MediaChip("Countries and genres", modifier = Modifier.testTag("feeds-button")) { onFeeds() }
+                        MediaChip("Browse", modifier = Modifier.testTag("feeds-button")) { onFeeds() }
                     }
                 }
                 if (homeTopic == null) items(feed.categories) { category ->
@@ -2017,7 +2135,7 @@ private fun MediaRow(
     val openMenu = { openMenu(media, square) }
     Column(
         Modifier.fillMaxWidth()
-            .padding(horizontal = if (bleed) 12.dp else 0.dp)
+            .padding(horizontal = if (bleed) MediaTokens.textInset else 0.dp)
             .testTag("media-card-${media.key}")
     ) {
         Box(
@@ -2038,7 +2156,8 @@ private fun MediaRow(
                 shape = artShape,
             )
             if (media.live || !square)
-                MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
+                // Every radio station is live; a badge on each says nothing.
+                if (tab != 3) MediaDurationBadge(media, mobile, Modifier.align(Alignment.BottomEnd))
             // Only the playing card composes its bars; an AnimatedVisibility per card kept a
             // transition alive in every cell of the grid.
             if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
@@ -2076,7 +2195,7 @@ private fun MediaRow(
                 Text(
                     media.title,
                     style = MaterialTheme.typography.titleSmall,
-                    maxLines = 2,
+                    maxLines = if (tab == 3) 1 else 2,
                     overflow = TextOverflow.Ellipsis,
                     color =
                         if (current)
@@ -2086,27 +2205,42 @@ private fun MediaRow(
                             )
                         else Color.Unspecified,
                 )
-                if (mobile.optBoolean("show_channel", true))
+                // Feed videos put the channel and the counts on one line, as YouTube does.
+                val oneLine = !square && !shelf && !media.collection && media.kind == "video"
+                if (mobile.optBoolean("show_channel", true) && !oneLine)
                     Text(
                         // Stations named after their genre ("Lofi" by "Lofi") say what kind
                         // of item they are instead of repeating the title.
-                        media.creator.takeUnless { it.trim().equals(media.title.trim(), true) }.orEmpty().ifBlank {
+                        // Stations: "Live · Jazz", one pattern for every station.
+                        media.creator
+                            .takeUnless { it.trim().equals(media.title.trim(), true) }
+                            .orEmpty()
+                            .ifBlank {
                             if (media.collection) media.kind.replaceFirstChar(Char::titlecase)
-                            else if (tab == 3)
-                                media.value.optString("description").takeUnless { it.isBlank() || it == "null" }
-                                    ?: "Live radio"
+                            else if (tab == 3) "Live radio"
                             else "YouTube"
                         },
                         Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
-                        maxLines = 1,
+                        // Shelf cards have room for a second line of artists.
+                        maxLines = if (shelf) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                CardInformation(media.value, mobile)
+                if (oneLine)
+                    CardInformation(
+                        media.value,
+                        mobile,
+                        lead = if (mobile.optBoolean("show_channel", true)) media.creator else "",
+                        leadModifier = Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
+                    )
+                else CardInformation(media.value, mobile)
             }
             // Small shelf cards give the title the room; their menu opens on press and hold.
-            if (!shelf) MediaCardActions(media, openMenu)
+            // Small shelf cards and radio stations give the title the room; their menu opens on
+            // press and hold.
+            // Lifted so the dots line up with the first title line, as YouTube places them.
+            if (!shelf && tab != 3) Box(Modifier.offset(y = (-10).dp)) { MediaCardActions(media, openMenu) }
         }
     }
 }

@@ -3,6 +3,7 @@ package dev.ytui.android
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -135,33 +136,13 @@ internal fun AccountButton(connected: Boolean, open: () -> Unit) {
 
 /**
  * The phone navigation bar (tablets use [TabletSidebar]): each destination has its icon and a short label, as every major
- * media app does. A soft highlight slides between destinations with a stretch: the leading edge
- * arrives first and the trailing edge follows, so the move reads as one gesture.
+ * media app does. The selected one has Material's indicator pill behind its icon.
  */
 @Composable
 internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean = false) {
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     val shown = destinations(showMovies)
-    val position = shown.indexOfFirst { it.first == tab }.coerceAtLeast(0)
-    // Edges of the highlight, in cells; animated separately for the stretch.
-    val lead = remember { Animatable(position.toFloat()) }
-    val trail = remember { Animatable(position.toFloat()) }
-    LaunchedEffect(position, motion) {
-        val target = position.toFloat()
-        if (!motion.animate) {
-            lead.snapTo(target)
-            trail.snapTo(target)
-            return@LaunchedEffect
-        }
-        val forward = target > (lead.value + trail.value) / 2
-        val quick = spring<Float>(0.82f, Spring.StiffnessMedium * 1.6f)
-        val slow = spring<Float>(0.9f, Spring.StiffnessMediumLow * 1.4f)
-        kotlinx.coroutines.coroutineScope {
-            launch { (if (forward) lead else trail).animateTo(target, quick) }
-            launch { (if (forward) trail else lead).animateTo(target, slow) }
-        }
-    }
     val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.08f)
 
     @Composable
@@ -192,20 +173,26 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
                 .semantics { contentDescription = title }
                 .testTag("tab-$index"),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
         ) {
-            MediaIcon(
-                glyph,
-                Modifier.size(24.dp)
-                    .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
-                    .pressScale(source, 0.9f)
-                    .graphicsLayer {
-                        scaleX = bounce.value
-                        scaleY = bounce.value
-                    },
-                tint,
-                filled = selected,
-            )
+            // Material's indicator: a 56×32dp pill centred behind the icon, opening sideways.
+            val indicator by animateDpAsState(if (selected) 56.dp else 24.dp, motion.spring(), label = "nav-indicator")
+            Box(Modifier.size(56.dp, 32.dp), contentAlignment = Alignment.Center) {
+                if (selected)
+                    Box(Modifier.size(indicator, 32.dp).clip(MediaTokens.pill).background(highlight))
+                MediaIcon(
+                    glyph,
+                    Modifier.size(24.dp)
+                        .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
+                        .pressScale(source, 0.9f)
+                        .graphicsLayer {
+                            scaleX = bounce.value
+                            scaleY = bounce.value
+                        },
+                    tint,
+                    filled = selected,
+                )
+            }
             Text(
                 title,
                 // The tab itself carries the name; the visible label is not read twice.
@@ -220,15 +207,13 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
 
     // Phones: a full-width bar in the page colour, as in the major media apps. The page
     // fades into it from above, and the mini player floats over that fade.
-    BoxWithConstraints(Modifier.fillMaxWidth().background(colors.background).padding(horizontal = 8.dp)) {
-        val cell = maxWidth / shown.size
+    Box(Modifier.fillMaxWidth().background(colors.background).padding(horizontal = 8.dp)) {
         Box(
             Modifier.fillMaxWidth()
                 .height(64.dp)
                 .selectableGroup()
                 .testTag("bottom-navigation")
         ) {
-            Highlight(lead.value, trail.value, cell, highlight)
             Row(Modifier.fillMaxSize()) {
                 shown.forEach { (index, title, glyph) ->
                     Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
@@ -238,20 +223,6 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
     }
 }
 
-@Composable
-private fun BoxScope.Highlight(lead: Float, trail: Float, cell: Dp, color: Color) {
-    val start = minOf(lead, trail)
-    val span = abs(lead - trail) + 1f
-    val inset = 6.dp
-    Box(
-        Modifier.offset(x = cell * start)
-            .width(cell * span)
-            .fillMaxHeight()
-            .padding(inset)
-            .clip(MediaTokens.pill)
-            .background(color)
-    )
-}
 
 /**
  * Floating mini player above the dock. Its card takes on the artwork's colour, so what is playing
@@ -348,7 +319,8 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
     CompositionLocalProvider(LocalContentColor provides ink) {
         Box(
             Modifier.fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp)
+                // The page's 16dp gutter, so the card lines up with the content above it.
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
                 .graphicsLayer {
                     val lift = (1f - appear.value) * 28.dp.toPx()
                     translationX = sideways.value
@@ -463,9 +435,10 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
             // On the flat part of the bottom edge: inset by the corner radius.
             if (player.duration > 0)
                 Canvas(
+                    // Inside the card: in from its sides and up from its lower edge.
                     Modifier.align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
+                        .padding(start = 12.dp, end = 12.dp, bottom = 5.dp)
                         .height(2.dp)
                 ) {
                     drawLine(
