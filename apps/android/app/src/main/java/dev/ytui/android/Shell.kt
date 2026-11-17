@@ -143,7 +143,8 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     val shown = destinations(showMovies)
-    val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.08f)
+    // Clear enough to read at a glance, as YouTube Music's indicator.
+    val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.16f else 0.10f)
 
     @Composable
     fun Cell(index: Int, title: String, glyph: Glyph, modifier: Modifier) {
@@ -364,8 +365,8 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                         }
                     },
                 )
-                .shadow(14.dp, MediaTokens.card, ambientColor = Color.Black, spotColor = Color.Black)
-                .clip(MediaTokens.card)
+                .shadow(14.dp, MediaTokens.miniPlayer, ambientColor = Color.Black, spotColor = Color.Black)
+                .clip(MediaTokens.miniPlayer)
                 .background(card)
                 .clickable(onClickLabel = "Open player", role = Role.Button) {
                     vm.playerOpen.value = true
@@ -373,15 +374,16 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                 .testTag("mini-player")
         ) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 8.dp, bottom = 9.dp),
+                // 56dp tall, as Spotify's mini player.
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Artwork(
                     media,
-                    Modifier.size(46.dp).sharedCover(media.key, !LocalPlayerExpanded.current).clip(MediaTokens.medium),
+                    Modifier.size(40.dp).sharedCover(media.key, !LocalPlayerExpanded.current).clip(MediaTokens.small),
                     config.optBoolean("thumbnails", true),
-                    shape = MediaTokens.medium,
+                    shape = MediaTokens.small,
                 )
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(
@@ -435,14 +437,15 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
             // On the flat part of the bottom edge: inset by the corner radius.
             if (player.duration > 0)
                 Canvas(
-                    // Inside the card: in from its sides and up from its lower edge.
+                    // Along the card's lower edge, in from its sides, as Spotify's mini player.
                     Modifier.align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 12.dp, bottom = 5.dp)
+                        // Starts under the cover's edge and ends as far from the card's end.
+                        .padding(start = 8.dp, end = 8.dp, bottom = 2.dp)
                         .height(2.dp)
                 ) {
                     drawLine(
-                        ink.copy(alpha = 0.16f),
+                        ink.copy(alpha = 0.25f),
                         Offset(0f, size.height / 2),
                         Offset(size.width, size.height / 2),
                         size.height,

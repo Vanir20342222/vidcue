@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -93,6 +94,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -275,12 +277,11 @@ private fun TopBar(step: Int, background: Color, onBack: () -> Unit, onFinish: (
             if (step > 0) MediaIconButton(Glyph.Back, "Back", "onboarding-back", onBack)
         }
         Spacer(Modifier.weight(1f))
-        // The way out is always in the same corner: Skip, and on the account page "Maybe later".
+        // The way out is always in the same corner; on the account page it is "Not now" under
+        // the sign-in button instead.
         Box(contentAlignment = Alignment.CenterEnd) {
             if (OnboardingSteps.showSkip(step))
                 QuietAction("Skip", Modifier.testTag("onboarding-skip"), action = onFinish)
-            else if (!signedIn)
-                QuietAction("Skip", Modifier.testTag("onboarding-finish"), action = onFinish)
         }
     }
 }
@@ -332,28 +333,22 @@ private fun BottomBar(step: Int, vm: YtuiViewModel, onNext: () -> Unit, onFinish
             // Progress sits with the button that moves it on, at the same height on every page:
             // the button area keeps room for the account page's two actions.
             StepDots(step)
-            Box(Modifier.fillMaxWidth().heightIn(min = 100.dp), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.fillMaxWidth().padding(bottom = 8.dp), contentAlignment = Alignment.TopCenter) {
             when {
                 // The last page is the account. Not signed in: Sign in takes the main button's
                 // place, and finishing without it is the quiet choice under it.
                 OnboardingSteps.isLast(step) && !account.optBoolean("connected") ->
-                    Column(
-                        Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
+                    // Side by side, so the footer keeps one button's height on every step.
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Pill("Not now", Modifier.weight(1f).testTag("onboarding-finish"), PillStyle.Tonal, fill = true, onClick = onFinish)
                         Pill(
-                            "Sign in to YouTube",
-                            Modifier.testTag("onboarding-sign-in"),
+                            "Sign in",
+                            Modifier.weight(1f).testTag("onboarding-sign-in"),
                             PillStyle.Primary,
                             fill = true,
                         ) {
                             vm.actionError.value = null
                             vm.effect("login")
-                        }
-                        QuietAction("Other ways to sign in", Modifier.testTag("onboarding-import")) {
-                            vm.actionError.value = null
-                            vm.effect("pick", "kind" to "cookies")
                         }
                     }
                 OnboardingSteps.isLast(step) ->
@@ -404,11 +399,11 @@ private fun Staggered(index: Int, modifier: Modifier = Modifier, content: @Compo
 @Composable
 private fun PageColumn(
     horizontal: Alignment.Horizontal = Alignment.Start,
+    centred: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val minimum = maxHeight
-        val centred = horizontal == Alignment.CenterHorizontally
         val scroll = rememberScrollState()
         Column(
             Modifier.fillMaxSize()
@@ -439,7 +434,7 @@ private fun PageColumn(
                     .padding(
                         start = 16.dp,
                         end = 16.dp,
-                        top = if (centred) 16.dp else (minimum * 0.08f).coerceIn(16.dp, 72.dp),
+                        top = if (centred) 16.dp else (minimum * 0.16f).coerceIn(24.dp, 140.dp),
                         bottom = 16.dp,
                     ),
                 horizontalAlignment = horizontal,
@@ -479,20 +474,6 @@ private fun PageTitle(title: String, body: String, center: Boolean = false, firs
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = align,
             )
-        }
-    }
-}
-
-/** Small tinted badge shown above a page title. */
-@Composable
-private fun PageBadge(glyph: Glyph) {
-    val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
-    Staggered(0) {
-        Box(
-            Modifier.size(56.dp).background(brand.copy(alpha = 0.16f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            MediaIcon(glyph, Modifier.size(28.dp), brand)
         }
     }
 }
@@ -550,8 +531,8 @@ private fun WelcomePage(background: Color) {
                 }
             }
         } else {
-            PageColumn(Alignment.CenterHorizontally) {
-                WelcomeHero(background, 240.dp)
+            PageColumn(Alignment.CenterHorizontally, centred = true) {
+                WelcomeHero(background, 132.dp)
                 WelcomeText(center = true)
             }
         }
@@ -601,7 +582,9 @@ private fun WelcomeHero(background: Color, size: Dp) {
             androidx.compose.ui.res.painterResource(R.drawable.ic_vidcue_launcher_foreground),
             contentDescription = null,
             modifier =
-                Modifier.size(size * 0.62f).graphicsLayer {
+                // The launcher foreground has a wide safe margin; draw it larger than its box so
+                // the visible mark sits close to the title.
+                Modifier.requiredSize(size * 1.25f).graphicsLayer {
                     scaleX = pop.value
                     scaleY = pop.value
                     alpha = ((pop.value - 0.4f) / 0.6f).coerceIn(0f, 1f)
@@ -613,12 +596,7 @@ private fun WelcomeHero(background: Color, size: Dp) {
 /** Three soft rings expanding outward; a still halo when motion is reduced. */
 @Composable
 private fun PulseRings(color: Color, reduced: Boolean) {
-    if (reduced) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawCircle(color.copy(alpha = 0.12f), size.minDimension * 0.36f, style = Stroke(2.dp.toPx()))
-        }
-        return
-    }
+    if (reduced) return
     val transition = rememberInfiniteTransition(label = "rings")
     val phase by
         transition.animateFloat(
@@ -657,8 +635,7 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
     val main = choices.filter { it == "system" || it.startsWith("vidcue") }
     var moreThemes by rememberSaveable { mutableStateOf(selected !in main) }
     // Centred like the other setup pages.
-    PageColumn(horizontal = Alignment.CenterHorizontally) {
-        PageBadge(Glyph.Palette)
+    PageColumn(horizontal = Alignment.CenterHorizontally, centred = true) {
         PageTitle(
             "Look and feel",
             "Pick a colour theme. It applies right away and you can change it any time in Settings.",
@@ -677,10 +654,19 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
                 // The app's own three themes as equal cards with a preview swatch; the rest, once
                 // asked for, as chips.
                 Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (name in main)
-                        ThemeCard(name, name == selected, editable, palettes.optJSONObject(name), Modifier.weight(1f)) {
+                    for (name in main) {
+                        // System follows the device, so its preview is half dark, half light.
+                        val preview =
+                            if (name == "system" && palettes.optJSONObject(name)?.has("dark") != true &&
+                                palettes.has("vidcue-dark") && palettes.has("vidcue-light"))
+                                org.json.JSONObject()
+                                    .put("dark", palettes.optJSONObject("vidcue-dark"))
+                                    .put("light", palettes.optJSONObject("vidcue-light"))
+                            else palettes.optJSONObject(name)
+                        ThemeCard(name, name == selected, editable, preview, Modifier.weight(1f)) {
                             vm.updateConfig(dark) { it.put("theme", name) }
                         }
+                    }
                 }
                 if (moreThemes)
                     FlowRow(
@@ -699,9 +685,9 @@ private fun LookPage(vm: YtuiViewModel, dark: Boolean) {
         }
         Staggered(4, Modifier.fillMaxWidth()) {
             SettingSwitchRow(
-                Glyph.Speed,
+                Glyph.Motion,
                 "Reduce motion",
-                "Fewer animations; visualisers stay still",
+                "Fewer animations and effects",
                 config.optBoolean("reduced_motion"),
                 "onboarding-reduce-motion",
                 enabled = editable,
@@ -724,20 +710,34 @@ private fun ThemeCard(
     val colors = MaterialTheme.colorScheme
     val reduced = LocalReducedMotion.current
     val edge by colorTween(if (selected) colors.primary else colors.outlineVariant, reduced)
-    Column(
+    Box(
         modifier
             .clip(MediaTokens.card)
             .background(colors.surfaceContainer)
             .border(BorderStroke(if (selected) 2.dp else 1.dp, edge), MediaTokens.card)
             .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
-            .padding(vertical = 14.dp, horizontal = 8.dp)
-            .testTag("onboarding-theme-$name"),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .testTag("onboarding-theme-$name")
     ) {
-        if (palette != null) PaletteSwatch(palette, Modifier.size(width = 52.dp, height = 34.dp))
-        else MediaIcon(Glyph.Palette, Modifier.size(34.dp), colors.onSurfaceVariant)
-        Text(themeLabel(name), style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        Column(
+            Modifier.fillMaxWidth().padding(top = 22.dp, bottom = 14.dp, start = 4.dp, end = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (palette != null) PaletteSwatch(palette, Modifier.size(width = 56.dp, height = 36.dp))
+            else MediaIcon(Glyph.Palette, Modifier.size(36.dp), colors.onSurfaceVariant)
+            // Here the app's own themes need no "Vidcue" in front: System, Dark, Light.
+            Text(
+                themeLabel(name).removePrefix("Vidcue ").replaceFirstChar(Char::titlecase),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (selected)
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(7.dp).size(16.dp).background(colors.primary, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) { MediaIcon(Glyph.Check, Modifier.size(11.dp), colors.onPrimary) }
     }
 }
 
@@ -802,29 +802,46 @@ private fun AccountPage(vm: YtuiViewModel) {
     val account by vm.account.collectAsState()
     val connected = account.optBoolean("connected")
     // Centred like the welcome page, with what signing in brings instead of an empty middle.
-    PageColumn(horizontal = Alignment.CenterHorizontally) {
-        PageBadge(Glyph.Account)
+    PageColumn(horizontal = Alignment.CenterHorizontally, centred = true) {
         PageTitle(
-            "Bring your library",
-            "Optional. Sign in to bring what you already follow; you stay signed in only on this device.",
+            "Sign in to see your library",
+            "Optional. Your sign-in stays on this device.",
             center = true,
         )
+        val brand = mediaBrand(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.background)
         if (!connected)
-            Staggered(3, Modifier.widthIn(max = 320.dp)) {
+            // A centred block, its rows left-aligned inside it, under the centred title.
+            Staggered(3) {
                 Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     for ((glyph, text) in
                         listOf(
                             Glyph.Home to "Subscriptions and a personal Home",
-                            Glyph.Library to "Playlists, likes and Watch later",
+                            Glyph.Playlist to "Playlists, likes and Watch later",
                             Glyph.Music to "Your music library and history",
                         )) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             Box(
-                                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainer),
+                                Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceContainerHigh),
                                 contentAlignment = Alignment.Center,
-                            ) { MediaIcon(glyph, Modifier.size(20.dp), MaterialTheme.colorScheme.primary) }
-                            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ) { MediaIcon(glyph, Modifier.size(20.dp), brand) }
+                            Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                         }
                 }
+            }
+        if (!connected)
+            // Other ways in sit under the list, so the footer stays one button high.
+            Staggered(4) {
+                Text(
+                    "Other ways to sign in",
+                    Modifier.clip(MediaTokens.pill)
+                        .clickable(role = Role.Button) {
+                            vm.actionError.value = null
+                            vm.effect("pick", "kind" to "cookies")
+                        }
+                        .padding(horizontal = 12.dp, vertical = 12.dp)
+                        .testTag("onboarding-import"),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = brand,
+                )
             }
         Staggered(3, Modifier.fillMaxWidth()) {
             AnimatedContent(

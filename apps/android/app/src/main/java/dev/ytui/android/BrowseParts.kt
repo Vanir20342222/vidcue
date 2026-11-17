@@ -105,7 +105,7 @@ internal fun SearchField(
         decorationBox = { inner ->
             Row(
                 Modifier.fillMaxWidth()
-                    .heightIn(min = 52.dp)
+                    .heightIn(min = 48.dp)
                     .clip(MediaTokens.fieldShape)
                     .background(fill)
                     .border(1.5.dp, edge, MediaTokens.fieldShape)

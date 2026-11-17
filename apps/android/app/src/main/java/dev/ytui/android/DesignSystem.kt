@@ -476,7 +476,8 @@ internal fun MediaSwitch(checked: Boolean, enabled: Boolean = true, modifier: Mo
     val off = lerp(colors.background, colors.onBackground, 0.2f)
     val accent = colors.primary
     val thumbOff = lerp(colors.background, colors.onBackground, 0.78f)
-    val thumbOn = mediaOnAccent(accent)
+    // A white thumb on mid-tone accents (as Android's own switch); dark only on light accents.
+    val thumbOn = if (accent.luminance() < 0.5f) Color.White else mediaOnAccent(accent)
     Canvas(modifier.size(width = 48.dp, height = 28.dp).graphicsLayer { alpha = if (enabled) 1f else 0.4f }) {
         val radius = size.height / 2
         drawRoundRect(lerp(off, accent, position), cornerRadius = CornerRadius(radius))

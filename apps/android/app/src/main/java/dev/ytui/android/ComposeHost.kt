@@ -1273,7 +1273,9 @@ private fun BrowsePane(
                 val order = listOf("artist", "channel", "song", "album", "playlist", "video")
                 val sorted = feed.cards.sortedBy { order.indexOf(it.kind).let { i -> if (i < 0) order.size else i } }
                 val headings = HashMap<String, String>()
+                val shown = ArrayList<MediaCard>()
                 var previous = ""
+                var inGroup = 0
                 for (card in sorted) {
                     val group =
                         when (card.kind) {
@@ -1283,11 +1285,24 @@ private fun BrowsePane(
                             "playlist" -> "Playlists"
                             else -> "Videos"
                         }
-                    if (group != previous) headings[card.key] = group
+                    if (group != previous) {
+                        headings[card.key] = group
+                        inGroup = 0
+                    }
                     previous = group
+                    // A few of each kind, so albums and playlists show without a long scroll;
+                    // "Show all" on the heading opens that kind's own results.
+                    if (inGroup++ < 4) shown += card
                 }
-                sorted to headings
+                shown to headings
             }
+        }
+    // Featured radio opens with large tiles of the first stations, then the rest as a list, as
+    // radio apps do; saved stations and searches stay one list.
+    val radioFeatured =
+        remember(feed.cards, tab, feed.request) {
+            if (tab == 3 && feed.request == "Cliamp" && feed.cards.size >= 8) feed.cards.take(6) to feed.cards.drop(6)
+            else null
         }
     // Provider sections ("Quick picks", "Listen again") become titled shelves once a feed has
     // at least two of them; search results and single-section feeds stay a grid.
@@ -1304,6 +1319,11 @@ private fun BrowsePane(
                     ?.entries
                     ?.map { it.key to it.value }
         }
+    // "Show all" on a Music shelf of albums or playlists opens it as a grid on the same page;
+    // back returns to the shelves.
+    var openShelf by rememberSaveable(tab, feed.request.toString()) { mutableStateOf<String?>(null) }
+    BackHandler(enabled = openShelf != null) { openShelf = null }
+    LaunchedEffect(openShelf) { if (grid.firstVisibleItemIndex > 0) grid.scrollToItem(0) }
     LaunchedEffect(grid, feed.cards, focused) {
         if (!focused)
             snapshotFlow {
@@ -1474,7 +1494,7 @@ private fun BrowsePane(
                         start = if (tab in 2..3) 16.dp else 0.dp,
                         end = if (tab in 2..3) 16.dp else 0.dp,
                         // A collection's wash starts right under the title row it continues.
-                        top = (if (collectionPage) 0.dp else 4.dp) + headerSpace,
+                        top = headerSpace,
                         bottom = 24.dp + LocalBottomOverlay.current,
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
@@ -1482,6 +1502,8 @@ private fun BrowsePane(
                 verticalArrangement =
                     Arrangement.spacedBy(
                         when {
+                            // Music rows are 64dp each with no gap, as in music apps.
+                            (compactList || collectionPage) && tab in 2..3 -> 0.dp
                             compactList || collectionPage -> 4.dp
                             tab in 2..3 -> 16.dp
                             else -> 20.dp
@@ -1554,8 +1576,33 @@ private fun BrowsePane(
                             )
                         }
                     }
+                if (radioFeatured != null)
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "radio-featured", contentType = "radio-featured") {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ShelfHeading("Popular now", inset = sideInset)
+                            LazyRow(
+                                Modifier.fillMaxWidth().bleedHorizontally(16.dp).testTag("radio-featured"),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(radioFeatured.first, key = { it.key }) { media ->
+                                    val current = media.url.isNotBlank() && media.url == playingUrl
+                                    StationTile(
+                                        media,
+                                        thumbnails,
+                                        current,
+                                        current && playingNow,
+                                        onPlay = { playFrom(media, "Popular now") },
+                                        onMenu = { openCardMenu(media, true) },
+                                        Modifier.width(152.dp),
+                                    )
+                                }
+                            }
+                            ShelfHeading("Discover more", Modifier.padding(top = 8.dp), inset = sideInset)
+                        }
+                    }
                 if (shelves != null)
-                    for ((section, cards) in shelves) {
+                    for ((section, cards) in shelves.filter { openShelf == null || it.first == openShelf }) {
                         val heading = section.ifBlank { "More for you" }
                         // Albums and playlists open as their own pages, so a shelf of only
                         // collections or live entries has nothing to play in order.
@@ -1565,17 +1612,37 @@ private fun BrowsePane(
                             key = "shelf-head:$section",
                             contentType = "shelf-head",
                         ) {
+                            val songs = cards.all { it.isSongRow(tab) }
+                            val showAll = tab == 2 && !songs && cards.size > 2
                             ShelfHeading(
                                 heading,
                                 Modifier.testTag("shelf-$section"),
                                 inset = sideInset,
-                                action = if (canPlayAll) "Play all" else null,
-                                actionTag = "shelf-play-all-$section",
+                                action =
+                                    when {
+                                        canPlayAll -> "Play all"
+                                        showAll && openShelf == section -> "Show less"
+                                        showAll -> "Show all"
+                                        else -> null
+                                    },
+                                actionTag = if (canPlayAll) "shelf-play-all-$section" else "shelf-show-all-$section",
+                                actionGlyph = if (canPlayAll) Glyph.Play else null,
                             ) {
-                                vm.playAll(cards)
+                                if (canPlayAll) vm.playAll(cards)
+                                else openShelf = if (openShelf == section) null else section
                             }
                         }
-                        item(
+                        if (openShelf == section && cards.none { it.isSongRow(tab) })
+                            items(cards, key = { "open:${it.key}" }, contentType = { "media-card" }) { media ->
+                                Box(Modifier.pressFeedback()) {
+                                    val current = media.url.isNotBlank() && media.url == playingUrl
+                                    MediaRow(
+                                        vm, media, tab, thumbnails, mobile, current,
+                                        current && playingNow, openMenu = openCardMenu,
+                                    )
+                                }
+                            }
+                        else item(
                             span = { GridItemSpan(maxLineSpan) },
                             key = "shelf:$section",
                             contentType = if (cards.all { it.isSongRow(tab) }) "song-shelf" else "shelf",
@@ -1629,7 +1696,7 @@ private fun BrowsePane(
                         }
                     }
                 else items(
-                    searchGroups?.first ?: feed.cards,
+                    searchGroups?.first ?: radioFeatured?.second ?: feed.cards,
                     key = { it.key },
                     span = {
                         GridItemSpan(
@@ -1648,7 +1715,22 @@ private fun BrowsePane(
                     val groupHeading = searchGroups?.second?.get(media.key)
                     Column {
                     if (groupHeading != null)
-                        ShelfHeading(groupHeading, Modifier.padding(bottom = 4.dp), inset = sideInset)
+                        ShelfHeading(
+                            groupHeading,
+                            Modifier.padding(bottom = 4.dp),
+                            inset = sideInset,
+                            // Only where the group was cut short; a lone album needs no "Show all".
+                            action =
+                                "Show all".takeIf {
+                                    groupHeading in SearchRequests.filters(tab) &&
+                                        feed.cards.count { c -> searchGroupOf(c.kind) == groupHeading } > 4
+                                },
+                            actionTag = "search-show-all-$groupHeading",
+                            actionGlyph = null,
+                        ) {
+                            val text = SearchRequests.query(feed.request) ?: query
+                            vm.navigate(request = SearchRequests.request(tab, text, groupHeading), remember = false)
+                        }
                     if (groupHeading == "Top result")
                         TopResultCard(media, thumbnails, inset = sideInset, onOpen = { vm.play(media) }, onMenu = { openCardMenu(media, true) })
                     // Scroll state is read in image effects, without recomposing every card.
@@ -1681,6 +1763,8 @@ private fun BrowsePane(
                                         onMenu = { openCardMenu(media, true) },
                                         // Under a "Songs" heading the kind would repeat itself.
                                         showKind = searchResults && searchGroups == null,
+                                        // Lengths only on album pages, as music apps on phones.
+                                        showDuration = numberedTracks,
                                         number =
                                             if (numberedTracks) (cardIndex[media.key] ?: 0) + 1 else null,
                                     )
@@ -1849,7 +1933,8 @@ private fun BrowsePane(
                     .padding(horizontal = 8.dp)
                     .widthIn(max = 720.dp)
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
+                    // The same 56dp bar as page titles, so the field's centre line matches theirs.
+                    .heightIn(min = 56.dp)
                     .testTag("search-row"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -2221,8 +2306,8 @@ private fun MediaRow(
                             else "YouTube"
                         },
                         Modifier.opensChannel(media.creator, media.channelId) { vm.openChannel(it) },
-                        // Shelf cards have room for a second line of artists.
-                        maxLines = if (shelf) 2 else 1,
+                        // One line, as music apps do: a wrapped "and / more" leaves an orphan.
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2236,11 +2321,10 @@ private fun MediaRow(
                     )
                 else CardInformation(media.value, mobile)
             }
-            // Small shelf cards give the title the room; their menu opens on press and hold.
             // Small shelf cards and radio stations give the title the room; their menu opens on
             // press and hold.
             // Lifted so the dots line up with the first title line, as YouTube places them.
-            if (!shelf && tab != 3) Box(Modifier.offset(y = (-10).dp)) { MediaCardActions(media, openMenu) }
+            if (!shelf && tab != 3) Box(Modifier.offset(x = 12.dp, y = (-10).dp)) { MediaCardActions(media, openMenu) }
         }
     }
 }

@@ -96,14 +96,19 @@ internal fun AppToolbar(
                     Image(
                         painterResource(R.drawable.ic_vidcue_launcher_foreground),
                         contentDescription = null,
-                        modifier = Modifier.size(44.dp),
+                        modifier = Modifier.size(40.dp),
                     )
                     Spacer(Modifier.width(2.dp))
                     // The wordmark is a brand mark, not a page title: smaller, so content leads.
                     Text(
                         "Vidcue",
                         Modifier.semantics { heading() },
-                        style = MaterialTheme.typography.titleLarge.copy(fontSize = androidx.compose.ui.unit.TextUnit(21f, androidx.compose.ui.unit.TextUnitType.Sp)),
+                        style =
+                            MaterialTheme.typography.titleLarge.copy(
+                                fontSize = androidx.compose.ui.unit.TextUnit(19f, androidx.compose.ui.unit.TextUnitType.Sp),
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                letterSpacing = androidx.compose.ui.unit.TextUnit(-0.3f, androidx.compose.ui.unit.TextUnitType.Sp),
+                            ),
                     )
                 }
             else -> PageTitle(destinationTitle(tab), Modifier.padding(start = 8.dp).weight(1f))

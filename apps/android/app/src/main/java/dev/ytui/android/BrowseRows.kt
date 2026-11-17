@@ -82,13 +82,12 @@ internal fun SongRow(
     showDuration: Boolean = true,
     /** Search results mix kinds, so each row says what it is ("Song · Nova Lane"). */
     showKind: Boolean = false,
-    /** Quick picks drop the ⋮ (press and hold opens the menu) so it does not crowd the next column. */
     showMenu: Boolean = true,
 ) {
     Row(
         modifier
             .fillMaxWidth()
-            .heightIn(min = 56.dp)
+            .heightIn(min = 64.dp)
             .clip(MediaTokens.medium)
             .combinedClickable(
                 onClickLabel = "Play",
@@ -96,7 +95,7 @@ internal fun SongRow(
                 onLongClick = onMenu,
                 onClick = onPlay,
             )
-            .padding(vertical = 2.dp)
+            .padding(vertical = 6.dp)
             .testTag("media-card-${media.key}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -114,8 +113,9 @@ internal fun SongRow(
         else
             Box(Modifier.size(52.dp).clip(MediaTokens.small)) {
                 Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.small)
-                // Bars only while it plays; paused, the accent title marks the current song.
-                if (current && playing)
+                // The current song carries bars on its cover, still while paused, so it is marked
+                // by more than the accent title's colour.
+                if (current)
                     Box(
                         Modifier.matchParentSize().background(MediaTokens.videoScrim.copy(alpha = 0.45f)),
                         contentAlignment = Alignment.Center,
@@ -155,7 +155,11 @@ internal fun SongRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (showMenu) MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+        // The dots, not their touch area, sit on the 16dp gutter: the same line as the header's icons.
+        if (showMenu)
+            Box(Modifier.offset(x = 12.dp)) {
+                MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+            }
     }
 }
 
@@ -191,7 +195,7 @@ internal fun CompactMediaRow(
                 onLongClick = onMenu,
                 onClick = onPlay,
             )
-            .padding(start = inset, top = if (music) 4.dp else 6.dp, bottom = if (music) 4.dp else 6.dp)
+            .padding(start = inset, top = 6.dp, bottom = 6.dp)
             .testTag("media-card-${media.key}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -232,26 +236,13 @@ internal fun CompactMediaRow(
             // under an "Albums" heading.
             val kind = kindLabel(media.kind).takeIf { showKind && (media.collection || media.audio) && media.kind != "station" }.orEmpty()
             val byline =
-                cleanByline(creator, keepKind = true).split(" · ").filter { it.isNotEmpty() && !it.equals(kind, true) }
-            // Stations say they are live, then their genre unless the name already says it.
-            val genre =
-                if (media.kind == "station") byline.filterNot { media.title.contains(it, ignoreCase = true) }
-                else byline
-            val details = (listOf(kind) + genre).filter { it.isNotBlank() }.joinToString(" · ")
-            if (media.kind == "station" && media.live)
-                Text(
-                    androidx.compose.ui.text.buildAnnotatedString {
-                        withStyle(androidx.compose.ui.text.SpanStyle(color = MediaTokens.live, fontWeight = FontWeight.SemiBold)) {
-                            append("● LIVE")
-                        }
-                        if (details.isNotBlank()) append(" · $details")
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            else if (details.isNotBlank())
+                cleanByline(creator, keepKind = true).split(" · ")
+                    .filter { it.isNotEmpty() && !it.equals(kindLabel(media.kind), true) }
+            // Every station is live, so rows say what it plays and where from instead.
+            val details =
+                if (media.kind == "station") stationDetails(media)
+                else (listOf(kind) + byline).filter { it.isNotBlank() }.joinToString(" · ")
+            if (details.isNotBlank())
                 Text(
                     details,
                     style = MaterialTheme.typography.bodySmall,
@@ -261,7 +252,69 @@ internal fun CompactMediaRow(
                 )
             if (!media.collection) CardInformation(media.value, mobile)
         }
-        MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+        Box(Modifier.offset(x = 12.dp)) {
+            MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+        }
+    }
+}
+
+/**
+ * A station's genre and country ("Jazz · Germany"): its first tag that the name does not already
+ * say, then its country.
+ */
+internal fun stationDetails(media: MediaCard): String {
+    val genre =
+        media.value.optString("description")
+            .split(',')
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() && !media.title.contains(it, ignoreCase = true) }
+            ?.split(' ')
+            ?.joinToString(" ") { w -> w.replaceFirstChar(Char::titlecase) }
+            .orEmpty()
+    val country = cleanByline(media.creator).takeIf { !media.title.contains(it, ignoreCase = true) }.orEmpty()
+    return listOf(genre, country).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+}
+
+/**
+ * Large station tiles for the top of Radio: square cover, name, then genre and country, the
+ * same size as Music's shelf cards. A tap plays.
+ */
+@Composable
+internal fun StationTile(
+    media: MediaCard,
+    thumbnails: Boolean,
+    current: Boolean,
+    playing: Boolean,
+    onPlay: () -> Unit,
+    onMenu: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .combinedClickable(onClickLabel = "Play", onLongClickLabel = "More options", onLongClick = onMenu, onClick = onPlay)
+            .testTag("station-tile-${media.key}"),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
+            Artwork(media, Modifier.fillMaxSize().clip(MediaTokens.medium), thumbnails, shape = MediaTokens.medium)
+            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart).padding(8.dp))
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                media.displayTitle,
+                style = MaterialTheme.typography.titleSmall,
+                color = playingInk(current),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                stationDetails(media),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -299,17 +352,19 @@ internal fun ShelfHeading(
                     .requiredHeight(48.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                // A quiet text action, as Spotify's "Show all": lighter than the heading. Its
+                // text, not its touch area, ends on the gutter.
                 Row(
                     Modifier.height(32.dp)
+                        .offset(x = 8.dp)
                         .clip(MediaTokens.pill)
-                        .border(1.dp, colors.outline, MediaTokens.pill)
                         .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAction)
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    actionGlyph?.let { MediaIcon(it, Modifier.size(16.dp), colors.onBackground) }
-                    Text(action, style = MaterialTheme.typography.labelLarge, color = colors.onBackground)
+                    actionGlyph?.let { MediaIcon(it, Modifier.size(16.dp), colors.onSurfaceVariant) }
+                    Text(action, style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
                 }
             }
             }
@@ -335,13 +390,12 @@ internal fun QuickPicksShelf(
 ) {
     val rows = minOf(4, cards.size).coerceAtLeast(1)
     // The next page shows its covers and the start of its titles, so it reads as more to swipe to.
-    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp - inset - 48.dp).coerceAtMost(420.dp)
+    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.8f).coerceAtMost(420.dp)
     LazyHorizontalGrid(
         GridCells.Fixed(rows),
-        modifier.fillMaxWidth().height(64.dp * rows + 4.dp * (rows - 1)),
+        modifier.fillMaxWidth().height(64.dp * rows),
         contentPadding = PaddingValues(horizontal = inset),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         items(cards, key = { it.key }) { media ->
             val current = media.url.isNotBlank() && media.url == playingUrl
@@ -354,7 +408,6 @@ internal fun QuickPicksShelf(
                 onPlay = { onPlay(media) },
                 onMenu = { onMenu(media) },
                 showDuration = false,
-                showMenu = false,
                 modifier = Modifier.width(columnWidth),
             )
         }
@@ -550,8 +603,21 @@ internal fun CollectionHeader(
                     playable.size == 1 -> "1 ${if (tab == 2) "song" else "video"}"
                     else -> "${playable.size} ${if (tab == 2) "songs" else "videos"}"
                 }
+            // Who made it on its own line, then what it is, how many and how long, as Spotify.
+            val creator = cleanByline(opened?.creator.orEmpty()).takeUnless { person }.orEmpty()
+            if (creator.isNotBlank())
+                Text(
+                    creator,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            val length =
+                if (feed.continuation == null && playable.isNotEmpty() && playable.all { it.value.optDouble("duration", 0.0) > 0 })
+                    totalLength(playable.sumOf { it.value.optDouble("duration", 0.0) }.toLong())
+                else ""
             val line =
-                listOf(kindLabel(kind), opened?.creator.orEmpty().takeUnless { person }.orEmpty(), count)
+                listOf(kindLabel(kind), count, length)
                     .filter { it.isNotBlank() }
                     // A non-breaking space keeps each "·" with the word before it.
                     .joinToString("\u00A0· ")
@@ -560,7 +626,8 @@ internal fun CollectionHeader(
                     line,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
         }
         Row(
@@ -572,7 +639,7 @@ internal fun CollectionHeader(
         ) {
             if (opened != null && !person && !opened.live)
                 RoundIconButton(
-                    Glyph.Download,
+                    Glyph.DownloadCircle,
                     "Download ${opened.title}",
                     Modifier.testTag("collection-download"),
                 ) {
@@ -587,7 +654,7 @@ internal fun CollectionHeader(
                 ) {
                     vm.save(opened)
                 }
-            if (opened != null) MediaIconButton(Glyph.More, "More options for ${opened.title}", "collection-more") { onMore(opened) }
+            if (opened != null) MediaIconButton(Glyph.MoreHorizontal, "More options for ${opened.title}", "collection-more") { onMore(opened) }
             Spacer(Modifier.weight(1f))
             if (playable.size > 1)
                 RoundIconButton(
@@ -614,6 +681,14 @@ internal fun CollectionHeader(
                 }
         }
     }
+}
+
+/** A collection's running time, as music apps write it: "48 min", "1 hr 12 min". */
+internal fun totalLength(seconds: Long): String {
+    val minutes = ((seconds + 30) / 60).coerceAtLeast(1)
+    return if (minutes < 60) "$minutes min"
+    else if (minutes % 60 == 0L) "${minutes / 60} hr"
+    else "${minutes / 60} hr ${minutes % 60} min"
 }
 
 /**
@@ -790,3 +865,13 @@ internal fun TopResultCard(
         }
     }
 }
+
+/** The music search group a result kind is listed under on "All". */
+internal fun searchGroupOf(kind: String): String =
+    when (kind) {
+        "artist", "channel" -> "Artists"
+        "song" -> "Songs"
+        "album" -> "Albums"
+        "playlist" -> "Playlists"
+        else -> "Videos"
+    }
