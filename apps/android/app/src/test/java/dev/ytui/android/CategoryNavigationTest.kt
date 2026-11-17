@@ -80,9 +80,11 @@ class CategoryNavigationTest {
 
     @Test
     fun lateReplyCannotReplaceTheMostRecentlySelectedCategory() = checkNavigation {
+        val sizing = StandardTestDispatcher()
         val response = CompletableDeferred<JSONObject>()
         val model =
             YtuiViewModel(
+                pageDispatcher = sizing,
                 browsePage = { _, target, _ ->
                     if (target.toString() == request("A").toString()) response.await()
                     else page("B")
@@ -92,12 +94,52 @@ class CategoryNavigationTest {
         try {
             model.navigate(request = request("A"))
             model.navigate(request = request("B"))
+            sizing.scheduler.runCurrent()
             settled(model)
             response.complete(page("A"))
             yield()
+            // Provider completion is not cache publication: decoded page sizing
+            // runs separately. Advance that stage before asserting a cached tap.
+            sizing.scheduler.runCurrent()
             assertEquals("B", model.feeds[1].value.cards.single().title)
             model.navigate(request = request("A"))
             assertEquals("A", model.feeds[1].value.cards.single().title)
+            assertFalse(model.feeds[1].value.loading)
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
+    fun tapDuringPageSizingJoinsPendingCategoryWithoutAnotherBrowse() = checkNavigation {
+        val sizing = StandardTestDispatcher()
+        val response = CompletableDeferred<JSONObject>()
+        var firstCategoryCalls = 0
+        val model = YtuiViewModel(
+            pageDispatcher = sizing,
+            browsePage = { _, target, _ ->
+                if (target.toString() == request("A").toString()) {
+                    firstCategoryCalls++
+                    response.await()
+                } else page("B")
+            },
+        )
+        val store = ViewModelStore().apply { put("categories", model) }
+        try {
+            model.navigate(request = request("A"))
+            model.navigate(request = request("B"))
+            sizing.scheduler.runCurrent()
+            settled(model)
+            response.complete(page("A"))
+            // Deliberately hold A's sizing stage after its network reply arrived.
+            assertEquals("B", model.feeds[1].value.cards.single().title)
+            model.navigate(request = request("A"))
+            assertTrue(model.feeds[1].value.loading)
+            assertEquals(1, firstCategoryCalls)
+            sizing.scheduler.runCurrent()
+            settled(model)
+            assertEquals("A", model.feeds[1].value.cards.single().title)
+            assertEquals(1, firstCategoryCalls)
             assertFalse(model.feeds[1].value.loading)
         } finally {
             store.clear()
