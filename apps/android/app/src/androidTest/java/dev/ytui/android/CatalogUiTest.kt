@@ -439,6 +439,8 @@ class CatalogUiTest {
         }
         compose.onNodeWithTag("tab-0").performClick()
         settleUi()
+        // Library opens on its overview; selection lives in Downloads.
+        compose.onNodeWithTag("library-Offline").performClick()
         scenario.onActivity {
             ViewModelProvider(it)[YtuiViewModel::class.java].downloads.value = copies
         }

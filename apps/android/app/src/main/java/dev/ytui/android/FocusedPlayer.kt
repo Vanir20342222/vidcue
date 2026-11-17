@@ -329,16 +329,22 @@ internal fun FocusedPlayer(
                 Row(
                     // No box behind the actions: on the artwork's colour a grey card looked pasted on.
                     Modifier.fillMaxWidth()
-                        // Equal cells edge to edge: the first and last line up with the title.
+                        // Music: icons on the same five columns as shuffle, previous, play, next
+                        // and repeat above (48dp cells pulled out 8dp, like that row).
+                        .then(if (player.video) Modifier else Modifier.bleedHorizontally(8.dp))
                         .padding(vertical = 2.dp)
                         .testTag("player-actions"),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    horizontalArrangement = if (player.video) Arrangement.SpaceEvenly else Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val cell = Modifier.weight(1f)
-                    PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = true, modifier = cell, action = onQueue)
+                    val cell = if (player.video) Modifier.weight(1f) else Modifier.width(48.dp)
+                    val iconOnly = !player.video
+                    val sleepLeft = rememberSleepLeft(player)
+                    PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = true, modifier = cell, iconOnly = iconOnly, action = onQueue)
                     if (!player.video)
-                        PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = true, modifier = cell, action = onLyrics)
+                        PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = true, modifier = cell, iconOnly = true, action = onLyrics)
+                    // The play button's column stays empty, so the four sit under the controls.
+                    if (!player.video && sleepLeft <= 0) Spacer(Modifier.width(48.dp))
                     if (canSave && media != null) {
                         var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
                         PlayerAction(
@@ -348,6 +354,7 @@ internal fun FocusedPlayer(
                             "player-download",
                             true,
                             modifier = cell.trackCentre { saveCentre = it },
+                            iconOnly = iconOnly,
                         ) {
                             val card = MediaCard(media)
                             DownloadFlight.launch(card, saveCentre)
@@ -356,7 +363,7 @@ internal fun FocusedPlayer(
                     }
                     val shareUrl = media?.optString("url").orEmpty()
                     if (shareUrl.startsWith("http"))
-                        PlayerAction(Glyph.Share, "Share", "Share link", "player-share", true, modifier = cell) {
+                        PlayerAction(Glyph.Share, "Share", "Share link", "player-share", true, modifier = cell, iconOnly = iconOnly) {
                             val send =
                                 Intent(Intent.ACTION_SEND)
                                     .setType("text/plain")
@@ -369,7 +376,6 @@ internal fun FocusedPlayer(
                                 )
                             }
                         }
-                    val sleepLeft = rememberSleepLeft(player)
                     if (sleepLeft > 0)
                         PlayerAction(
                             Glyph.Sleep,
@@ -379,6 +385,7 @@ internal fun FocusedPlayer(
                             active = true,
                             countdown = sleepFraction(player, sleepLeft),
                             modifier = cell,
+                            iconOnly = iconOnly,
                             action = onSleep,
                         )
                     // Music has More in the header (Panel actions); the video player keeps it here.
@@ -466,7 +473,7 @@ internal fun FocusedPlayer(
                     val saveable = player.media?.takeUnless { player.video || it.optBoolean("live") }
                     // The 48dp target overflows the row instead of pushing the artist line down.
                     if (saveable != null)
-                        Box(Modifier.size(48.dp, 30.dp), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(48.dp, 30.dp).offset(x = 8.dp), contentAlignment = Alignment.Center) {
                             Box(Modifier.requiredSize(48.dp)) {
                                 MediaIconButton(Glyph.AddCircle, "Save to Library", "player-save") { vm.save(MediaCard(saveable)) }
                             }
@@ -526,13 +533,14 @@ internal fun FocusedPlayer(
                 if (!player.video)
                     // Fixed height: a track change (no duration yet) or a live station must not
                     // shrink this slot and shift the title above it.
-                    Box(Modifier.fillMaxWidth().height(72.dp), contentAlignment = Alignment.CenterStart) {
+                    Box(Modifier.fillMaxWidth().height(60.dp), contentAlignment = Alignment.CenterStart) {
                         PlayerSeek(vm, player)
                     }
                 if (!player.video)
-                    // Shuffle and repeat glyphs line up with the ends of the seek line above.
+                    // Shuffle and repeat sit on the same vertical lines as the header's down arrow
+                    // and ⋮ and the Save button, as Spotify lines its edge icons up.
                     Row(
-                        Modifier.fillMaxWidth().bleedHorizontally(14.dp),
+                        Modifier.fillMaxWidth().bleedHorizontally(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
@@ -703,12 +711,12 @@ internal fun FocusedPlayer(
                 Controls(Modifier.weight(1f).align(Alignment.CenterVertically))
             }
         else
-            // Cover and controls are centred together, so the cover sits close to its title and
-            // spare height is shared above and below the block.
-            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterVertically)) {
+            // As Spotify: the cover under the header, the controls down by the thumb, and the
+            // spare height between them, so no empty band is left at the bottom.
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(20.dp)) {
                 // Same 16dp edges as the title, seek line and actions under it.
-                Art(Modifier.weight(1f, fill = false).fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp))
-                Controls(Modifier.fillMaxWidth().padding(bottom = 12.dp))
+                Art(Modifier.weight(1f).fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp))
+                Controls(Modifier.fillMaxWidth().padding(bottom = 8.dp))
             }
     }
 }
@@ -872,6 +880,8 @@ internal fun PlayerAction(
     /** Remaining share of a running timer; draws a draining clock ring around the icon. */
     countdown: Float? = null,
     modifier: Modifier = Modifier,
+    /** Music's row: icons only, as Spotify's player; the description stays the accessible name. */
+    iconOnly: Boolean = false,
     action: () -> Unit,
 ) {
     val source = remember { MutableInteractionSource() }
@@ -882,9 +892,9 @@ internal fun PlayerAction(
         Column(
             modifier.testTag(tag)
                 .pressScale(source, 0.9f)
-                .widthIn(min = 56.dp)
-                .heightIn(min = 60.dp)
-                .clip(MediaTokens.medium)
+                .widthIn(min = if (iconOnly) 48.dp else 56.dp)
+                .heightIn(min = if (iconOnly) 48.dp else 60.dp)
+                .clip(if (iconOnly) CircleShape else MediaTokens.medium)
                 .clickable(source, SoftIndication, role = Role.Button, onClick = action)
                 .clearAndSetSemantics { contentDescription = description }
                 .padding(horizontal = 2.dp, vertical = 6.dp),
@@ -893,7 +903,7 @@ internal fun PlayerAction(
         ) {
             if (countdown != null) CountdownRing(glyph, countdown, accent)
             else MediaIcon(glyph, Modifier.size(22.dp), if (active) accent else LocalContentColor.current, filled = active)
-            Text(
+            if (!iconOnly) Text(
                 label,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                 color = if (active) accent else LocalContentColor.current.copy(alpha = 0.86f),
@@ -944,14 +954,14 @@ internal fun PlayDisc(playing: Boolean, modifier: Modifier = Modifier, size: and
             .semantics { contentDescription = if (playing) "Pause" else "Play" },
         contentAlignment = Alignment.Center,
     ) {
-        PlayPauseIcon(playing, Modifier.size(size * 0.42f), MaterialTheme.colorScheme.background)
+        PlayPauseIcon(playing, Modifier.size(size * 0.5f), MaterialTheme.colorScheme.background)
     }
 }
 
 /** Previous/next: larger glyphs than toolbar icons, the same soft press. */
 @Composable
 internal fun TransportButton(glyph: Glyph, label: String, modifier: Modifier = Modifier, action: () -> Unit) =
-    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 36.dp, action = action)
+    RoundIconButton(glyph, label, modifier, size = 60.dp, iconSize = 32.dp, action = action)
 
 @Composable
 internal fun PlayerSeek(vm: YtuiViewModel, player: PlayerState) {

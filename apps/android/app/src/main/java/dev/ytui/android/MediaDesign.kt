@@ -71,6 +71,8 @@ internal object MediaTokens {
     val medium = RoundedCornerShape(12.dp)
     /** Feed artwork: a softer radius than controls, so pictures read as objects. */
     val card = RoundedCornerShape(16.dp)
+    /** The mini player: a little tighter than cards, so its progress line can run along its edge. */
+    val miniPlayer = RoundedCornerShape(12.dp)
     /** Portrait watch-page video: flush with the top edge, rounded where it meets the page. */
     val cardBottom = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val chip = RoundedCornerShape(12.dp)
@@ -178,6 +180,12 @@ internal enum class Glyph {
     Link,
     /** Save to Library: a plus in a circle, as music apps mark "add". */
     AddCircle,
+    MoreHorizontal,
+    /** A list with a note: playlists, apart from the Library tab's own mark. */
+    Playlist,
+    /** A dot trailing motion lines: animation settings. */
+    Motion,
+    DownloadCircle,
     /** Android's share mark: three dots joined by two lines. */
     Share,
     Palette,
@@ -389,6 +397,21 @@ internal fun MediaIcon(
                     line(3f, 19f, 21f, 19f)
                 }
                 Glyph.More -> for (y in listOf(5f, 12f, 19f)) drawCircle(tint, 1.7f, Offset(12f, y))
+                Glyph.Playlist -> {
+                    line(3f, 6f, 15f, 6f)
+                    line(3f, 11f, 15f, 11f)
+                    line(3f, 16f, 10f, 16f)
+                    drawCircle(tint, 2.6f, Offset(15.5f, 17.5f), style = Stroke(1.8f))
+                    line(18.1f, 17.5f, 18.1f, 6f)
+                    line(18.1f, 6f, 21f, 7.5f)
+                }
+                Glyph.Motion -> {
+                    drawCircle(tint, 4.5f, Offset(16f, 12f), style = Stroke(1.8f))
+                    line(3f, 8f, 9f, 8f)
+                    line(2f, 12f, 9f, 12f)
+                    line(3f, 16f, 9f, 16f)
+                }
+                Glyph.MoreHorizontal -> for (x in listOf(5f, 12f, 19f)) drawCircle(tint, 1.9f, Offset(x, 12f))
                 Glyph.ArrowRight -> {
                     outline(14f to 5f, 21f to 12f, 14f to 19f)
                     line(3f, 12f, 21f, 12f)
@@ -597,6 +620,12 @@ internal fun MediaIcon(
                 Glyph.Repeat -> {
                     outline(4f to 10f, 4f to 5f, 20f to 5f, 17f to 2f)
                     outline(20f to 14f, 20f to 19f, 4f to 19f, 7f to 22f)
+                }
+                Glyph.DownloadCircle -> {
+                    // Download in a ring, matching AddCircle on the same row.
+                    drawCircle(tint, 9f, Offset(12f, 12f), style = Stroke(1.8f))
+                    line(12f, 7.5f, 12f, 15.5f)
+                    outline(8.5f to 12.5f, 12f to 16f, 15.5f to 12.5f)
                 }
                 Glyph.AddCircle -> {
                     drawCircle(tint, 9f, Offset(12f, 12f), style = Stroke(1.8f))

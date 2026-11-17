@@ -441,7 +441,7 @@ internal fun OfflineLibrary(
                     "No downloads yet",
                     "Tap Download on any song, video or playlist to watch or listen offline.",
                 ) {
-                    Action("Find music to download", "offline-browse-music") { vm.chooseTab(2) }
+                    Action("Find something to download", "offline-browse-music") { vm.chooseTab(2) }
                 }
             }
     OfflineSelectionActions(

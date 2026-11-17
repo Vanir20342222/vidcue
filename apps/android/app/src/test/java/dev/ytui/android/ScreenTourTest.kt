@@ -96,6 +96,7 @@ class ScreenTourTest {
                     .put("title", playing.getString("title"))
                     .put("media", playing)
                     .put("playing", false) // playing runs tickers that keep the looper busy
+                    .put("shuffle", true)
                     .put("position", 47.0)
                     .put("duration", playing.getDouble("duration")),
             )
@@ -139,11 +140,11 @@ class ScreenTourTest {
             view.draw(Canvas(bitmap))
             File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         }
-        /** Taps the main button: centred, 92dp above the bottom edge (under the step dots). */
+        /** Taps the main button: centred, 48dp above the bottom edge (under the step dots). */
         fun tapMain() {
             val view = activity.window.decorView
             val x = view.width / 2f
-            val y = view.height - 92f * view.resources.displayMetrics.density
+            val y = view.height - 48f * view.resources.displayMetrics.density
             val time = android.os.SystemClock.uptimeMillis()
             view.dispatchTouchEvent(android.view.MotionEvent.obtain(time, time, android.view.MotionEvent.ACTION_DOWN, x, y, 0))
             view.dispatchTouchEvent(android.view.MotionEvent.obtain(time, time + 50, android.view.MotionEvent.ACTION_UP, x, y, 0))
@@ -315,9 +316,9 @@ class TourNative {
 
         private fun station(i: Int) =
             JSONObject()
-                .put("title", listOf("Lofi Study", "Jazz Lounge", "Synthwave", "Classical Morning", "Ambient Drift", "Indie Pop")[i % 6])
-                .put("creator", listOf("Lofi", "Jazz", "Electronic", "Classical", "Ambient", "Pop")[i % 6])
-                .put("description", "Around the clock")
+                .put("title", listOf("Lofi Study", "Jazz Lounge", "Synthwave FM", "Classical Morning", "Ambient Drift", "Indie Pop", "City Talk", "Tokyo Hits", "Night Drive", "Coastal FM", "Blue Hour", "Deep Focus")[i % 12])
+                .put("creator", listOf("Germany", "France", "The Netherlands", "Austria", "Iceland", "Sweden", "Canada", "Japan")[i % 8])
+                .put("description", listOf("lofi,chill", "jazz,lounge", "electronic,synthwave", "classical", "ambient,drone", "indie,pop", "news,talk", "j-pop")[i % 8])
                 .put("url", "https://radio.example.invalid/$i")
                 .put("kind", "station")
                 .put("live", true)
@@ -345,7 +346,7 @@ class TourNative {
                 tab == 2 && r?.has("Collection") == true -> (0 until 14).forEach { items.put(song(it + 2)) }
                 tab == 2 && (r?.has("Search") == true || r?.has("MusicSearch") == true) -> {
                     items.put(JSONObject().put("title", "Nova Lane").put("creator", "Artist • 1.2M subscribers").put("url", "https://music.youtube.com/channel/UCnova").put("kind", "artist").put("thumbnail", "art:artist"))
-                    (0 until 6).forEach { items.put(song(it).put("creator", "Song • Nova Lane • ${2 + it}:1$it")) }
+                    (0 until 6).forEach { items.put(song(it).let { s -> s.put("creator", "Song • ${s.optString("creator")} • ${2 + it}:1$it") }) }
                     items.put(collection(1, "album", "").put("creator", "Album • Nova Lane"))
                 }
                 tab == 2 -> {
@@ -353,7 +354,7 @@ class TourNative {
                     (0 until 6).forEach { items.put(collection(it, "playlist", "Mixed for you")) }
                     (0 until 6).forEach { items.put(collection(it + 3, "album", "New releases")) }
                 }
-                tab == 3 -> (0 until 8).forEach { items.put(station(it)) }
+                tab == 3 -> (0 until 12).forEach { items.put(station(it)) }
             }
             val page = JSONObject().put("items", items).put("title", "Sample")
             // Music Home carries mood chips, as YouTube Music's does.
