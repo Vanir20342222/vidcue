@@ -718,7 +718,7 @@ private fun MovieSheet(
     val download = downloads[pick.key]
     val transfer = transfers[pick.key]
 
-    fun check(all: Boolean, then: ((Int) -> Unit)? = null) {
+    fun checkAllSources() {
         if (checking) return
         checking = true
         checkError = ""
@@ -726,10 +726,9 @@ private fun MovieSheet(
         resolveJob?.cancel()
         resolveJob = scope.launch {
             try {
-                val (chosen, result) = checkSources(pick.sources, all)
+                val (chosen, result) = checkSources(pick.sources, all = true)
                 attempts = result
                 if (chosen == null) checkError = "No source delivered video. Check your connection, then try again."
-                else then?.invoke(chosen)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -803,18 +802,18 @@ private fun MovieSheet(
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 for (feature in title.features) Tag(feature)
             }
-        // Streams the pick: Cinecat titles resolve first; catalog titles check sources in order.
+        // Catalog entries already have playable URLs. The player handles source failover.
         val stream: () -> Unit = {
             if (title.cinecat)
                 resolve { sources ->
                     pauseAppPlayback(vm)
                     MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, sources)
                 }
-            else
-                check(all = false) { chosen ->
-                    pauseAppPlayback(vm)
-                    MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, movieFailoverOrder(pick.sources, chosen))
-                }
+            else {
+                val sources = movieFailoverOrder(pick.sources, attempts.firstOrNull { it.ok }?.index)
+                pauseAppPlayback(vm)
+                MoviePlayerActivity.stream(context, pick.key, pick.displayTitle, sources)
+            }
         }
         // One full-width primary action (offline copy first), then the secondary actions.
         if (download != null)
@@ -885,7 +884,7 @@ private fun MovieSheet(
         }
         if (title.cinecat)
             CinecatProviders(cinecatReports, checking) { checkCinecatAll() }
-        else SourceList(pick.sources, attempts, checking) { check(all = true) }
+        else SourceList(pick.sources, attempts, checking) { checkAllSources() }
     }
 }
 
