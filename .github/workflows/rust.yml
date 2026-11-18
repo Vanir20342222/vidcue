@@ -33,7 +33,7 @@ jobs:
   lint:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -53,7 +53,7 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +80,7 @@ jobs:
   media:
     needs: changes
     if: needs.changes.outputs.run == 'true'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
@@ -122,7 +122,7 @@ jobs:
         run: cargo test -p vidcue-services --locked real_mpv_http_proxy_ -- --ignored
   release-build:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4

@@ -96,7 +96,7 @@ jobs:
   apk:
     needs: changes
     if: needs.changes.outputs.run == 'true' && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-    runs-on: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'pull_request_target' || github.event_name == 'merge_group') && '["ubuntu-24.04"]' || '["self-hosted","Linux","X64","devbox"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
       # Keep app and instrumentation Gradle invocations on the same build marker.
