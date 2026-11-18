@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.items as listItems
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,6 +28,8 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -182,6 +185,8 @@ internal fun CompactMediaRow(
     /** Music results: small square or round art at the start, as in music apps. */
     music: Boolean = false,
     showKind: Boolean = true,
+    /** Stations: a trailing save button, so Radio's "Saved" can be filled from the list. */
+    onSave: (() -> Unit)? = null,
 ) {
     val person = media.kind == "artist" || media.kind == "channel"
     val square = media.audio || media.kind == "album" || (media.kind == "playlist" && media.musicSource)
@@ -238,9 +243,9 @@ internal fun CompactMediaRow(
             val byline =
                 cleanByline(creator, keepKind = true).split(" · ")
                     .filter { it.isNotEmpty() && !it.equals(kindLabel(media.kind), true) }
-            // Every station is live, so rows say what it plays and where from instead.
+            // Every station is live, so rows say what it plays instead.
             val details =
-                if (media.kind == "station") stationDetails(media)
+                if (media.kind == "station") stationGenre(media)
                 else (listOf(kind) + byline).filter { it.isNotBlank() }.joinToString(" · ")
             if (details.isNotBlank())
                 Text(
@@ -252,9 +257,23 @@ internal fun CompactMediaRow(
                 )
             if (!media.collection) CardInformation(media.value, mobile)
         }
-        Box(Modifier.offset(x = 12.dp)) {
-            MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
-        }
+        // Stations open their menu on press and hold, like Quick picks, and keep a save button.
+        if (media.kind == "station" && onSave != null)
+            Box(Modifier.offset(x = 12.dp)) {
+                // Grey and a size down, as the ⋮ in other lists: quieter than the names.
+                RoundIconButton(
+                    Glyph.AddCircle,
+                    "Save ${media.title}",
+                    Modifier.testTag("station-save-${media.key}"),
+                    iconSize = 20.dp,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+                    action = onSave,
+                )
+            }
+        else if (media.kind != "station")
+            Box(Modifier.offset(x = 12.dp)) {
+                MediaIconButton(Glyph.More, "More options for ${media.title}", "media-menu-${media.key}", onMenu)
+            }
     }
 }
 
@@ -274,6 +293,13 @@ internal fun stationDetails(media: MediaCard): String {
     val country = cleanByline(media.creator).takeIf { !media.title.contains(it, ignoreCase = true) }.orEmpty()
     return listOf(genre, country).filter { it.isNotBlank() }.distinct().joinToString(" · ")
 }
+
+/** Large covers in a row (Jump back in, Featured stations): two whole and a slice of a third. */
+@Composable
+internal fun heroCoverSize(): Dp = ((LocalConfiguration.current.screenWidthDp.dp - 16.dp) / 2.25f).coerceAtMost(148.dp)
+
+/** One word for a station row: its genre, else its country. */
+internal fun stationGenre(media: MediaCard): String = stationDetails(media).substringBefore(" · ")
 
 /**
  * Large station tiles for the top of Radio: square cover, name, then genre and country, the
@@ -295,30 +321,31 @@ internal fun StationTile(
             .testTag("station-tile-${media.key}"),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(1f)) {
-            Artwork(media, Modifier.fillMaxSize().clip(MediaTokens.medium), thumbnails, shape = MediaTokens.medium)
-            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart).padding(8.dp))
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(MediaTokens.medium)) {
+            Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.medium)
+            // The name on the cover over a soft shade, the same as Music's large covers.
+            Box(
+                Modifier.fillMaxSize().background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0.45f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.6f),
+                    )
+                )
+            )
             Text(
                 media.displayTitle,
-                style = MaterialTheme.typography.titleSmall,
-                color = playingInk(current),
-                maxLines = 1,
+                Modifier.align(Alignment.BottomStart).padding(10.dp),
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                color = if (current) mediaReadableText(MaterialTheme.colorScheme.primary, Color.Black) else Color.White,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                stationDetails(media),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart).padding(8.dp))
         }
     }
 }
 
-/** Section title with an optional labelled action at its end ("Play all"). */
+/** Section title with an optional action at its end: › for "Show all", ▶ for "Play all". */
 @Composable
 internal fun ShelfHeading(
     title: String,
@@ -343,30 +370,37 @@ internal fun ShelfHeading(
             overflow = TextOverflow.Ellipsis,
         )
         if (action != null) {
-            // A compact outlined button, as YouTube Music's "Play all": quieter than the heading.
+            // Icons instead of words, as YouTube Music's chevron: › opens the section, a round
+            // play button plays it. The action's words stay its accessible name.
             val colors = MaterialTheme.colorScheme
-            // 32dp tall in the layout; its 48dp touch area overflows into the gaps around it.
-            Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
-            Row(
-                (if (actionTag.isNotEmpty()) Modifier.testTag(actionTag) else Modifier)
-                    .requiredHeight(48.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // A quiet text action, as Spotify's "Show all": lighter than the heading. Its
-                // text, not its touch area, ends on the gutter.
-                Row(
-                    Modifier.height(32.dp)
-                        .offset(x = 8.dp)
-                        .clip(MediaTokens.pill)
-                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onAction)
-                        .padding(horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    actionGlyph?.let { MediaIcon(it, Modifier.size(16.dp), colors.onSurfaceVariant) }
-                    Text(action, style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+            val glyph =
+                when {
+                    action == "Show less" -> Glyph.Up
+                    actionGlyph == Glyph.Play -> Glyph.Play
+                    else -> Glyph.Forward
                 }
-            }
+            val play = glyph == Glyph.Play
+            // 32dp tall in the layout; its 48dp touch area overflows into the gaps around it. The
+            // glyph, not the touch area, ends on the gutter.
+            Box(Modifier.height(32.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    (if (actionTag.isNotEmpty()) Modifier.testTag(actionTag) else Modifier)
+                        .offset(x = if (play) 4.dp else 12.dp)
+                        .requiredSize(48.dp)
+                        .clip(CircleShape)
+                        .clickable(role = androidx.compose.ui.semantics.Role.Button, onClickLabel = action, onClick = onAction)
+                        .semantics { contentDescription = action },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (play)
+                        Box(
+                            Modifier.size(36.dp).background(colors.onBackground.copy(alpha = 0.12f), CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            MediaIcon(Glyph.Play, Modifier.size(18.dp), colors.onBackground)
+                        }
+                    else MediaIcon(glyph, Modifier.size(24.dp), colors.onBackground)
+                }
             }
         }
     }
@@ -390,7 +424,9 @@ internal fun QuickPicksShelf(
 ) {
     val rows = minOf(4, cards.size).coerceAtLeast(1)
     // The next page shows its covers and the start of its titles, so it reads as more to swipe to.
-    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.8f).coerceAtMost(420.dp)
+    // The next column peeks in with its cover and the start of its title, so it reads as more
+    // to swipe to rather than a second cover on the same row.
+    val columnWidth = (LocalConfiguration.current.screenWidthDp.dp * 0.82f).coerceAtMost(420.dp)
     LazyHorizontalGrid(
         GridCells.Fixed(rows),
         modifier.fillMaxWidth().height(64.dp * rows),
@@ -408,6 +444,8 @@ internal fun QuickPicksShelf(
                 onPlay = { onPlay(media) },
                 onMenu = { onMenu(media) },
                 showDuration = false,
+                // Press and hold opens the menu; a column of ⋮ beside the next column was clutter.
+                showMenu = false,
                 modifier = Modifier.width(columnWidth),
             )
         }
@@ -415,8 +453,8 @@ internal fun QuickPicksShelf(
 }
 
 /**
- * "Jump back in": up to six recent items as compact two-column tiles, the quickest way back to
- * what you were listening to.
+ * "Jump back in": up to six recent covers in a grid, the quickest way back to what you were
+ * listening to.
  */
 @Composable
 internal fun RecentTiles(
@@ -427,38 +465,46 @@ internal fun RecentTiles(
     onPlay: (MediaCard) -> Unit,
 ) {
     Column(
-        Modifier.fillMaxWidth().testTag("recent-tiles"),
+        Modifier.fillMaxWidth().padding(top = 8.dp).testTag("recent-tiles").semantics { contentDescription = title },
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        ShelfHeading(title, inset = inset)
-        Column(
-            Modifier.padding(horizontal = inset),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+        // No heading: the first row of what you played explains itself.
+        // Large covers only, in a row that runs off the edge, as YouTube Music's speed dial: the
+        // art is the label (each cover's name is its accessible label).
+        androidx.compose.foundation.lazy.LazyRow(
+            Modifier.fillMaxWidth().bleedHorizontally(if (inset == 0.dp) 16.dp else 0.dp),
+            contentPadding = PaddingValues(horizontal = if (inset == 0.dp) 16.dp else inset),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            for (pair in cards.take(6).chunked(2))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    for (media in pair)
-                        Row(
-                            Modifier.weight(1f)
-                                .height(56.dp)
-                                .clip(MediaTokens.small)
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                .combinedClickable(onClickLabel = "Play", onClick = { onPlay(media) })
-                                .testTag("recent-${media.key}"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Artwork(media, Modifier.size(56.dp), thumbnails, shape = MediaTokens.small)
-                            Text(
-                                media.displayTitle,
-                                Modifier.weight(1f).padding(end = 8.dp),
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
+            listItems(cards.take(12), key = { it.key }) { media ->
+                Box(
+                    // Two whole covers and a slice of a third on any phone width.
+                    Modifier.size(heroCoverSize())
+                        .clip(MediaTokens.medium)
+                        .combinedClickable(onClickLabel = "Play", onClick = { onPlay(media) })
+                        .semantics { contentDescription = media.displayTitle }
+                        .testTag("recent-${media.key}")
+                ) {
+                    Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.medium)
+                    // The name on the cover, over a soft shade, as YouTube Music names its tiles.
+                    Box(
+                        Modifier.fillMaxSize().background(
+                            androidx.compose.ui.graphics.Brush.verticalGradient(
+                                0.45f to Color.Transparent,
+                                1f to Color.Black.copy(alpha = 0.6f),
                             )
-                        }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
+                        )
+                    )
+                    Text(
+                        media.displayTitle,
+                        Modifier.align(Alignment.BottomStart).padding(10.dp).clearAndSetSemantics {},
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
+            }
         }
     }
 }
@@ -564,7 +610,18 @@ internal fun CollectionHeader(
             val coverModifier =
                 when {
                     person -> Modifier.size(148.dp).clip(CircleShape)
-                    music -> Modifier.size(232.dp).clip(MediaTokens.medium)
+                    // 256 dp, smaller on narrow phones so the first songs stay in view.
+                    // 72% of the width, at most 256 dp and 30% of the height, so the first songs stay
+                    // in view on short phones. (A width cap after fillMaxWidth had no effect.)
+                    music ->
+                        Modifier.size(
+                            minOf(
+                                LocalConfiguration.current.screenWidthDp.dp * 0.72f,
+                                256.dp,
+                                LocalConfiguration.current.screenHeightDp.dp * 0.3f,
+                            )
+                        )
+                            .clip(MediaTokens.medium)
                     else -> Modifier.fillMaxWidth(0.72f).aspectRatio(16f / 9f).clip(MediaTokens.medium)
                 }
             // The cover measures itself; the grid's cell width does not apply to a header.
@@ -577,9 +634,10 @@ internal fun CollectionHeader(
                 )
             }
         }
+        // Centred under the centred cover, as YouTube Music's playlist pages.
         Column(
             Modifier.fillMaxWidth().padding(horizontal = textStart),
-            horizontalAlignment = Alignment.Start,
+            horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             // The toolbar shows the name only once this title has scrolled away.
@@ -593,6 +651,7 @@ internal fun CollectionHeader(
                     PageChrome.headerTitleShown.value = it.boundsInWindow().height > 8f
                 },
                 style = MaterialTheme.typography.headlineSmall,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -603,21 +662,17 @@ internal fun CollectionHeader(
                     playable.size == 1 -> "1 ${if (tab == 2) "song" else "video"}"
                     else -> "${playable.size} ${if (tab == 2) "songs" else "videos"}"
                 }
-            // Who made it on its own line, then what it is, how many and how long, as Spotify.
-            val creator = cleanByline(opened?.creator.orEmpty()).takeUnless { person }.orEmpty()
-            if (creator.isNotBlank())
-                Text(
-                    creator,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            // One line under the title: who made it and how long it runs (else how many).
+            // "Nova Lane, Mira Sol and more": the "and more" adds nothing next to the song list.
+            val creator =
+                cleanByline(opened?.creator.orEmpty()).takeUnless { person }.orEmpty()
+                    .removeSuffix(" and more").removeSuffix(" & more")
             val length =
                 if (feed.continuation == null && playable.isNotEmpty() && playable.all { it.value.optDouble("duration", 0.0) > 0 })
                     totalLength(playable.sumOf { it.value.optDouble("duration", 0.0) }.toLong())
                 else ""
             val line =
-                listOf(kindLabel(kind), count, length)
+                listOf(creator, length.ifBlank { count })
                     .filter { it.isNotBlank() }
                     // A non-breaking space keeps each "·" with the word before it.
                     .joinToString("\u00A0· ")
@@ -673,8 +728,9 @@ internal fun CollectionHeader(
                     Modifier.testTag("collection-play"),
                     size = 56.dp,
                     iconSize = 28.dp,
-                    container = MaterialTheme.colorScheme.primary,
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    // White with a dark glyph, the same as the player's: pink marks state only.
+                    container = MaterialTheme.colorScheme.onBackground,
+                    tint = MaterialTheme.colorScheme.background,
                 ) {
                     PlaybackSource.set("Playing from ${kindLabel(kind).lowercase()}", title)
                     vm.playAll(playable)
@@ -836,26 +892,33 @@ internal fun TopResultCard(
     inset: Dp,
     onOpen: () -> Unit,
     onMenu: () -> Unit,
+    /** Plays the songs found with this artist, from the round button at the card's end. */
+    onPlay: (() -> Unit)? = null,
 ) {
     val person = media.kind == "artist" || media.kind == "channel"
     val shape = if (person) CircleShape else MediaTokens.medium
+    // The card takes on its picture's colour over the page's wash, as YouTube Music's top result.
+    val base = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
+    val tint = rememberArtworkTint(media, base, thumbnails)
     Row(
         Modifier.fillMaxWidth()
             .padding(horizontal = inset)
             .clip(MediaTokens.card)
-            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .background(base)
+            .background(tint.copy(alpha = 0.22f))
             .combinedClickable(onClickLabel = "Open", onLongClickLabel = "More options", onLongClick = onMenu, onClick = onOpen)
-            .padding(16.dp)
+            .padding(12.dp)
             .testTag("top-result"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         androidx.compose.runtime.CompositionLocalProvider(LocalArtworkPixels provides 0) {
-            Artwork(media, Modifier.size(88.dp).clip(shape), thumbnails, shape = shape)
+            Artwork(media, Modifier.size(72.dp).clip(shape), thumbnails, shape = shape)
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(media.title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(
+            // A round picture already says "artist".
+            if (!person) Text(
                 cleanByline(media.creator, keepKind = true).ifBlank { kindLabel(media.kind) },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -863,6 +926,18 @@ internal fun TopResultCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        // An icon, not words, as YouTube Music's top-result play.
+        if (onPlay != null)
+            RoundIconButton(
+                Glyph.Play,
+                "Play songs by ${media.title}",
+                Modifier.testTag("top-result-play"),
+                size = 48.dp,
+                iconSize = 22.dp,
+                container = MaterialTheme.colorScheme.onBackground,
+                tint = MaterialTheme.colorScheme.background,
+                action = onPlay,
+            )
     }
 }
 

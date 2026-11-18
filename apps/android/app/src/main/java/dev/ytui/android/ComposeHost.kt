@@ -68,6 +68,8 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -448,6 +450,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                 if (!onboarding) BoxWithConstraints(
                     Modifier.fillMaxSize()
                         .background(background)
+                        // Home, Music and Radio: the colour wash across the top, under the status
+                        // bar too (see PageChrome.washColors).
+                        .onGloballyPositioned { PageChrome.washTop.floatValue = it.positionInWindow().y }
+                        .drawBehind {
+                            PageChrome.washColors.value?.let { drawTopWash(it, PageChrome.washFade.floatValue, 0f) }
+                        }
                         // The video panel is opaque. Keep browse state/artwork
                         // attached, but skip drawing the covered content.
                         .graphicsLayer {
@@ -588,24 +596,27 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                     Modifier.align(Alignment.BottomCenter)
                                         .fillMaxWidth()
                                         .onSizeChanged { dockHeight = it.height }
-                                        // The page fades out behind the player and navigation, so
-                                        // nothing shows through between and beside them.
+                                        // The page fades out behind the floating player and dock:
+                                        // from 32dp above them to nearly the page colour beside
+                                        // them, so they float without a band of their own.
                                         .drawBehind {
-                                            // From 24dp above the mini player down: the page fades
-                                            // out above it and is fully covered beside and under it.
                                             val page = colors.background
-                                            val lead = 24.dp.toPx()
+                                            val lead = 40.dp.toPx()
                                             drawRect(
                                                 androidx.compose.ui.graphics.Brush.verticalGradient(
+                                                    // Eased: barely there at first, solid by the mini
+                                                    // player's top, so nothing shows beside the bars.
                                                     0f to page.copy(alpha = 0f),
+                                                    (lead * 0.5f) / (lead + size.height) to page.copy(alpha = 0.35f),
+                                                    (lead * 0.8f) / (lead + size.height) to page.copy(alpha = 0.8f),
+                                                    lead / (lead + size.height) to page,
                                                     1f to page,
                                                     startY = -lead,
-                                                    endY = 4.dp.toPx(),
+                                                    endY = size.height,
                                                 ),
                                                 topLeft = Offset(0f, -lead),
-                                                size = androidx.compose.ui.geometry.Size(size.width, lead + 4.dp.toPx()),
+                                                size = androidx.compose.ui.geometry.Size(size.width, lead + size.height),
                                             )
-                                            drawRect(page, topLeft = Offset(0f, 4.dp.toPx()), size = androidx.compose.ui.geometry.Size(size.width, size.height - 4.dp.toPx()))
                                         }
                                         .testTag("bottom-dock")
                                 ) {
@@ -638,7 +649,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         Panel(
                             source?.second ?: "Now playing",
                             { vm.playerOpen.value = false },
-                            caption = source?.first,
+                            // The playlist's name alone: no "PLAYING FROM …" overline.
+                            caption = null,
                             full = true,
                             showHeader = !videoPlayer,
                             balanceTitle = videoPlayer,
@@ -646,7 +658,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                             swipeToClose = mobile.gesture("gesture_swipe_dismiss"),
                             enterFromBottom = true,
                             backdrop =
-                                if (videoPlayer) Modifier else Modifier.ambientGlow(glow, background),
+                                // The cover's colour stays behind the whole player, as YouTube Music's.
+                                if (videoPlayer) Modifier else Modifier.ambientGlow(glow, background, floor = 0.35f),
                             // Music: playback options sit at the header's right, balancing the
                             // close chevron; the video player keeps them in its own controls.
                             actions = {
@@ -820,7 +833,8 @@ internal fun Action(label: String, tag: String = "", enabled: Boolean = true, ac
     Pill(
         label,
         if (tag.isNotEmpty()) Modifier.testTag(tag) else Modifier,
-        PillStyle.Primary,
+        // The page's ink (white on dark), as YouTube Music's buttons: pink marks state only.
+        PillStyle.Inverse,
         enabled,
         onClick = action,
     )
@@ -913,10 +927,12 @@ internal fun Panel(
                             )
                         Text(
                             title,
+                            // The full-screen player's "where from" stays quiet under the song.
                             style =
-                                if (full) MaterialTheme.typography.titleMedium
+                                if (full) MaterialTheme.typography.labelLarge
                                 else if (page) MaterialTheme.typography.headlineSmall
                                 else MaterialTheme.typography.titleLarge,
+                            color = if (full) MaterialTheme.colorScheme.onSurfaceVariant else Color.Unspecified,
                             textAlign = if (full) TextAlign.Center else TextAlign.Start,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1186,11 +1202,12 @@ private fun BrowsePane(
             feed.cards.isEmpty() && feed.error == null)
             vm.navigate(1, SearchRequests.topic(SearchRequests.topics.first()), remember = false)
     }
+    // A page that failed shows only its error, not shortcuts above a "didn't load" message.
     val resumeVideo =
-        if (tab == 1 && atHome) history.firstOrNull { it.kind == "video" && !it.live && it.url.isNotBlank() }
+        if (tab == 1 && atHome && feed.error == null) history.firstOrNull { it.kind == "video" && !it.live && it.url.isNotBlank() }
         else null
     val recentSongs =
-        if (tab == 2 && atHome) history.filter { it.audio && it.url.isNotBlank() }.distinctBy { it.key }.take(6)
+        if (tab == 2 && atHome && feed.error == null) history.filter { it.audio && it.url.isNotBlank() }.distinctBy { it.key }.take(6)
         else emptyList()
     val leadItems =
         (if (resumeVideo != null) 1 else 0) +
@@ -1218,8 +1235,13 @@ private fun BrowsePane(
     // The search bar and filters move with the scroll: they slide up as the feed scrolls down
     // and come back with any upward scroll. They float over the grid and only their layer moves,
     // so hiding them never re-measures the grid mid-scroll.
-    var headerHeight by remember { mutableIntStateOf(0) }
+    // The header floats over the grid and is measured after it. A new page starts from the
+    // last header's height instead of zero, so its first frame does not place the list under
+    // the header and then jump.
+    var headerHeight by remember { mutableIntStateOf(PageChrome.lastHeaderHeight) }
     val headerOffset = remember(tab) { mutableFloatStateOf(0f) }
+    // How far the page has been scrolled by touch, for the top wash to fade out with it.
+    val washScrolled = remember(tab) { mutableFloatStateOf(0f) }
     val headerScroll =
         remember(headerOffset) {
             object : NestedScrollConnection {
@@ -1230,8 +1252,56 @@ private fun BrowsePane(
                             (headerOffset.floatValue - dy).coerceIn(0f, headerHeight.toFloat())
                     return Offset.Zero
                 }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    washScrolled.floatValue = (washScrolled.floatValue - consumed.y).coerceAtLeast(0f)
+                    return Offset.Zero
+                }
             }
         }
+    // YouTube Music's colour wash across the top of Home, Music and Radio, taken from the first
+    // covers on the page. It fades as the page scrolls; pushed pages and search have none.
+    val washed =
+        tab in 1..3 && !library && (!searchMode || (searchResults && !searchActive)) &&
+            !SubPages.isSubpage(feed.request)
+    val washBase = MaterialTheme.colorScheme.primary
+    // From the first covers on screen: "Jump back in" or the resume card when they lead the page.
+    val washLeft =
+        rememberArtworkTint(
+            (recentSongs.firstOrNull() ?: resumeVideo ?: feed.cards.firstOrNull())?.takeIf { washed },
+            washBase,
+            thumbnails,
+        )
+    // Without covers (loading, a failed or empty page) a quiet wash from the accent keeps the
+    // top the same shape, so colour does not pop in when the page fills.
+    val noCovers = feed.cards.isEmpty()
+    // The wash fades between colours (a page filling in, another category) instead of jumping.
+    // A second cover further along gives the wash a second colour, as YouTube Music's glow.
+    val washSecondCover =
+        rememberArtworkTint(
+            feed.cards.getOrNull(minOf(3, feed.cards.size - 1).coerceAtLeast(0))?.takeIf { washed && feed.cards.size > 1 },
+            washLeft,
+            thumbnails,
+        )
+    val washTarget = if (noCovers) fallbackWash(washBase) else washTone(washLeft) to washTone(washSecondCover)
+    val washFirst by animateColorAsState(washTarget.first, motion.fade(400), label = "wash-first")
+    val washSecond by animateColorAsState(washTarget.second, motion.fade(400), label = "wash-second")
+    // Reduced motion: the new colour at once, without waiting on an animation frame.
+    val washNow = if (motion.animate) washFirst to washSecond else washTarget
+    SideEffect { PageChrome.washColors.value = if (washed) washNow else null }
+    DisposableEffect(Unit) { onDispose { PageChrome.washColors.value = null } }
+    LaunchedEffect(grid, washed, noCovers) {
+        val span = with(density) { 280.dp.toPx() }
+        snapshotFlow {
+                when {
+                    !grid.canScrollBackward -> 0f.also { washScrolled.floatValue = 0f }
+                    grid.firstVisibleItemIndex > 6 -> 1f
+                    else -> washScrolled.floatValue / span
+                }
+            }
+            // Pages without covers keep a quieter wash.
+            .collect { PageChrome.washFade.floatValue = maxOf(it.coerceIn(0f, 1f), if (noCovers) 0.4f else 0f) }
+    }
     LaunchedEffect(searchActive, feed.request) { headerOffset.floatValue = 0f }
     LaunchedEffect(scrollToTop) {
         headerOffset.floatValue = 0f
@@ -1399,6 +1469,18 @@ private fun BrowsePane(
         }
     }
     val headerSpace = with(density) { headerHeight.toDp() }
+    // Empty and error messages start at the same height on every page, whatever the header
+    // above them holds (chips or none).
+    // Search hides the page title above this pane, so its messages start that much lower.
+    val emptyStateTop = (110.dp + (if (searchMode) 56.dp else 0.dp) - headerSpace).coerceAtLeast(8.dp)
+    val rowGap =
+        when {
+            // Music rows are 64dp each with no gap, as in music apps.
+            (compactList || collectionPage) && tab in 2..3 -> 0.dp
+            compactList || collectionPage -> 4.dp
+            tab in 2..3 -> 16.dp
+            else -> 20.dp
+        }
     Box(Modifier.fillMaxSize().clipToBounds().testTag("browse-pane")) {
         // Pull to refresh reuses the overflow menu's "Refresh feed" request.
         var refreshing by remember { mutableStateOf(false) }
@@ -1499,16 +1581,7 @@ private fun BrowsePane(
                     ),
                 horizontalArrangement = Arrangement.spacedBy(if (tab in 2..3) 12.dp else 8.dp),
                 // Lists of rows sit close together, as in music apps; cards and shelves breathe.
-                verticalArrangement =
-                    Arrangement.spacedBy(
-                        when {
-                            // Music rows are 64dp each with no gap, as in music apps.
-                            (compactList || collectionPage) && tab in 2..3 -> 0.dp
-                            compactList || collectionPage -> 4.dp
-                            tab in 2..3 -> 16.dp
-                            else -> 20.dp
-                        }
-                    ),
+                verticalArrangement = Arrangement.spacedBy(rowGap),
             ) {
                 if (collectionPage)
                     item(span = { GridItemSpan(maxLineSpan) }, key = "collection-header", contentType = "collection-header") {
@@ -1548,7 +1621,7 @@ private fun BrowsePane(
                         val needsAccount =
                             feed.errorCode in listOf("auth_required", "consent_required")
                         EmptyMediaState(
-                            if (needsAccount) Glyph.Account else Glyph.Info,
+                            if (needsAccount) Glyph.Account else Glyph.Offline,
                             if (needsAccount) "Sign in to see this" else "This page didn't load",
                             // The engine's account messages point at menus by name; on this
                             // screen the button below is the way there.
@@ -1556,6 +1629,8 @@ private fun BrowsePane(
                                 "Sign in to YouTube, or import a session from another browser, " +
                                     "to open this page."
                             else feed.error!!,
+                            // Lower on the page, not pinned under the header.
+                            Modifier.padding(top = emptyStateTop),
                         ) {
                             FlowRow(
                                 horizontalArrangement =
@@ -1567,19 +1642,18 @@ private fun BrowsePane(
                                         onAccount()
                                     }
                                     QuietAction("Try again") { vm.retryFeed() }
-                                } else Action("Try again") { vm.retryFeed() }
+                                } else {
+                                    Action("Try again") { vm.retryFeed() }
+                                    // Offline is when downloads matter.
+                                    Pill("Downloads", style = PillStyle.Tonal, glyph = Glyph.Download) { vm.chooseTab(0) }
+                                }
                             }
-                            Text(
-                                "You can still search or open a video link.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
                         }
                     }
                 if (radioFeatured != null)
                     item(span = { GridItemSpan(maxLineSpan) }, key = "radio-featured", contentType = "radio-featured") {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ShelfHeading("Popular now", inset = sideInset)
+                            // "Featured" in the chip above already names this row.
                             LazyRow(
                                 Modifier.fillMaxWidth().bleedHorizontally(16.dp).testTag("radio-featured"),
                                 contentPadding = PaddingValues(horizontal = 16.dp),
@@ -1594,11 +1668,14 @@ private fun BrowsePane(
                                         current && playingNow,
                                         onPlay = { playFrom(media, "Popular now") },
                                         onMenu = { openCardMenu(media, true) },
-                                        Modifier.width(152.dp),
+                                        // The same size as Music's "Jump back in" covers: two
+                                        // whole and a slice of the third, so it reads as a row to swipe.
+                                        Modifier.width(heroCoverSize()),
                                     )
                                 }
                             }
-                            ShelfHeading("Discover more", Modifier.padding(top = 8.dp), inset = sideInset)
+                            // The rest follow without a heading of their own, a section's gap below.
+                            Spacer(Modifier.height(12.dp))
                         }
                     }
                 if (shelves != null)
@@ -1670,7 +1747,8 @@ private fun BrowsePane(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(cards, key = { it.key }, contentType = { "shelf-card" }) { media ->
-                                    val shelfWidth = if (tab == 1) 272.dp else 152.dp
+                                    // Large covers, as YouTube Music's shelves: two and a peek on a phone.
+                                    val shelfWidth = if (tab == 1) 272.dp else 176.dp
                                     CompositionLocalProvider(
                                         LocalArtworkPixels provides with(density) { shelfWidth.roundToPx() }
                                     ) {
@@ -1714,7 +1792,8 @@ private fun BrowsePane(
                 ) { media ->
                     val groupHeading = searchGroups?.second?.get(media.key)
                     Column {
-                    if (groupHeading != null)
+                    // The top result needs no heading: a card alone at the top says it.
+                    if (groupHeading != null && groupHeading != "Top result")
                         ShelfHeading(
                             groupHeading,
                             Modifier.padding(bottom = 4.dp),
@@ -1732,7 +1811,20 @@ private fun BrowsePane(
                             vm.navigate(request = SearchRequests.request(tab, text, groupHeading), remember = false)
                         }
                     if (groupHeading == "Top result")
-                        TopResultCard(media, thumbnails, inset = sideInset, onOpen = { vm.play(media) }, onMenu = { openCardMenu(media, true) })
+                        TopResultCard(
+                            media,
+                            thumbnails,
+                            inset = sideInset,
+                            onOpen = { vm.play(media) },
+                            onMenu = { openCardMenu(media, true) },
+                            onPlay =
+                                feed.cards.filter { it.kind == "song" && it.url.isNotBlank() }.takeIf { it.isNotEmpty() }?.let { songs ->
+                                    {
+                                        PlaybackSource.set("Playing from search", SearchRequests.query(feed.request).orEmpty())
+                                        vm.playAll(songs)
+                                    }
+                                },
+                        )
                     // Scroll state is read in image effects, without recomposing every card.
                     else run {
                         Box(
@@ -1779,6 +1871,7 @@ private fun BrowsePane(
                                         current && playingNow,
                                         onPlay = { playFrom(media) },
                                         onMenu = { openCardMenu(media, media.audio || media.kind == "album") },
+                                        onSave = if (media.kind == "station") ({ vm.save(media) }) else null,
                                         inset = sideInset,
                                         music = tab in 2..3,
                                         showKind = searchGroups == null,
@@ -1816,19 +1909,27 @@ private fun BrowsePane(
                             QuickStart(onTopic = { vm.navigate(1, SearchRequests.topic(it), remember = false) }, onSignIn = onAccount)
                         else
                         EmptyMediaState(
-                            if (tab == 2) Glyph.Music
+                            if (searchResults) Glyph.Search
+                            else if (tab == 2) Glyph.Music
                             else if (tab == 3) Glyph.Radio
                             else if (tab == 0) Glyph.Library else Glyph.Search,
-                            if (searchResults) "No results" else "Nothing here yet",
-                            if (searchResults) "Try different words, or another filter."
+                            when {
+                                searchResults -> "No results"
+                                tab == 3 && feed.request == "Favorites" -> "No saved stations"
+                                else -> "Nothing here yet"
+                            },
+                            // The title and the button say enough for search and saved stations.
+                            if (searchResults || (tab == 3 && feed.request == "Favorites")) ""
                             else feed.notice
                                 ?: when (tab) {
                                     3 -> "Search for a station, or browse by country or genre."
                                     0 -> "What you save, like or add to a playlist appears here."
                                     else -> "Search for something to watch, or sign in for a Home made for you."
                                 },
+                            Modifier.padding(top = emptyStateTop),
                         ) {
-                            if (tab == 3) Action("Browse stations") { onFeeds() }
+                            // The sheet it opens is "Browse stations"; the button matches the chip above.
+                            if (tab == 3) Action("Browse") { onFeeds() }
                             else if (tab != 0 && !searchResults) Action("Search") { onSearchFocus(true) }
                         }
                     }
@@ -1893,17 +1994,33 @@ private fun BrowsePane(
         }
         // Chips belong to top-level pages; a playlist or channel page has its own header.
         val subpage = SubPages.isSubpage(feed.request)
-        val filters = if (searchResults) SearchRequests.filters(tab) else emptyList()
+        // No results on "All": nothing for the filters to narrow, so they stay hidden.
+        val nothingFound =
+            searchResults && !feed.loading && feed.error == null && feed.cards.isEmpty() &&
+                SearchRequests.filter(feed.request) == "All"
+        val filters = if (searchResults && !nothingFound) SearchRequests.filters(tab) else emptyList()
         // A lone "For you" chip on For you itself chooses nothing (signed out, no categories).
         val loneSource = tab == 2 && feed.request == "Home" && feed.categories.isEmpty()
         val showChips =
             !searchMode && !subpage && !loneSource && (chips != null || tab in 1..3 || feed.categories.isNotEmpty())
         val headerPage = MaterialTheme.colorScheme.background
+        var headerTop by remember { mutableFloatStateOf(0f) }
         Column(
             Modifier.fillMaxWidth()
-                .onSizeChanged { headerHeight = it.height }
+                .onSizeChanged {
+                    headerHeight = it.height
+                    if (it.height > 0) PageChrome.lastHeaderHeight = it.height
+                }
+                .onGloballyPositioned { headerTop = it.positionInWindow().y }
                 .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
-                .background(headerPage)
+                // The page colour with the same top wash as the page behind, so there is no seam.
+                .drawBehind {
+                    drawRect(headerPage)
+                    val shift = if (searchActive) 0f else headerOffset.floatValue
+                    PageChrome.washColors.value?.let {
+                        drawTopWash(it, PageChrome.washFade.floatValue, headerTop - shift - PageChrome.washTop.floatValue)
+                    }
+                }
                 // Content scrolling up under the header fades out instead of being cut mid-line.
                 .drawWithContent {
                     drawContent()
@@ -1911,9 +2028,21 @@ private fun BrowsePane(
                     // and nothing to fade until the list has scrolled under the header.
                     if (size.height < 1f || !grid.canScrollBackward) return@drawWithContent
                     val fade = 20.dp.toPx()
+                    val shift = if (searchActive) 0f else headerOffset.floatValue
+                    val edge =
+                        washedColour(
+                            headerPage,
+                            PageChrome.washColors.value,
+                            PageChrome.washFade.floatValue,
+                            size.width,
+                            size.width / 2f,
+                            size.height,
+                            headerTop - shift - PageChrome.washTop.floatValue,
+                            WASH_REACH.toPx(),
+                        )
                     drawRect(
                         androidx.compose.ui.graphics.Brush.verticalGradient(
-                            listOf(headerPage, headerPage.copy(alpha = 0f)),
+                            listOf(edge, edge.copy(alpha = 0f)),
                             startY = size.height,
                             endY = size.height + fade,
                         ),
@@ -2014,7 +2143,8 @@ private fun BrowsePane(
                     items(SearchRequests.topics) { topic ->
                         MediaChip(
                             topic,
-                            selected = homeTopic == topic,
+                            // While the first page loads (request still "Home"), "All" is the one shown.
+                            selected = homeTopic == topic || (homeTopic == null && feed.request == "Home" && topic == SearchRequests.topics.first()),
                             modifier = Modifier.testTag("topic-$topic"),
                         ) {
                             vm.navigate(1, SearchRequests.topic(topic), remember = false)
@@ -2038,7 +2168,8 @@ private fun BrowsePane(
                         }
                     }
                 if (tab == 3) {
-                    items(listOf("Featured" to "Cliamp", "My stations" to "Favorites")) { (label, request) ->
+                    // "Saved", as the Library tile that opens the same saved items.
+                    items(listOf("Featured" to "Cliamp", "Saved" to "Favorites")) { (label, request) ->
                         MediaChip(
                             label,
                             selected = feed.request == request,
@@ -2246,6 +2377,16 @@ private fun MediaRow(
             // Only the playing card composes its bars; an AnimatedVisibility per card kept a
             // transition alive in every cell of the grid.
             if (current) PlayingBars(playing, Modifier.align(Alignment.TopStart))
+            // Music's albums and mixes: a small play mark in the corner, as YouTube Music's,
+            // so a card reads as playable without a caption.
+            else if (shelf && tab == 2 && media.collection)
+                Box(
+                    Modifier.align(Alignment.TopStart).padding(8.dp).size(24.dp)
+                        .background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MediaIcon(Glyph.Play, Modifier.size(12.dp), Color.White)
+                }
         }
         Row(
             Modifier.fillMaxWidth().padding(top = 10.dp),
@@ -2292,7 +2433,9 @@ private fun MediaRow(
                 )
                 // Feed videos put the channel and the counts on one line, as YouTube does.
                 val oneLine = !square && !shelf && !media.collection && media.kind == "video"
-                if (mobile.optBoolean("show_channel", true) && !oneLine)
+                // Music's mixes and albums carry their title alone; who is in them is one tap away.
+                val titleOnly = shelf && tab == 2 && media.collection
+                if (mobile.optBoolean("show_channel", true) && !oneLine && !titleOnly)
                     Text(
                         // Stations named after their genre ("Lofi" by "Lofi") say what kind
                         // of item they are instead of repeating the title.

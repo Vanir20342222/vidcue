@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
@@ -72,7 +73,7 @@ internal object MediaTokens {
     /** Feed artwork: a softer radius than controls, so pictures read as objects. */
     val card = RoundedCornerShape(16.dp)
     /** The mini player: a little tighter than cards, so its progress line can run along its edge. */
-    val miniPlayer = RoundedCornerShape(12.dp)
+    val miniPlayer = RoundedCornerShape(16.dp)
     /** Portrait watch-page video: flush with the top edge, rounded where it meets the page. */
     val cardBottom = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
     val chip = RoundedCornerShape(12.dp)
@@ -181,6 +182,8 @@ internal enum class Glyph {
     /** Save to Library: a plus in a circle, as music apps mark "add". */
     AddCircle,
     MoreHorizontal,
+    /** Wi-Fi with a stroke through it: a page that could not reach the network. */
+    Offline,
     /** A list with a note: playlists, apart from the Library tab's own mark. */
     Playlist,
     /** A dot trailing motion lines: animation settings. */
@@ -379,15 +382,14 @@ internal fun MediaIcon(
                     drawCircle(tint, 3f, Offset(12f, 12f), style = Stroke(1.8f))
                 }
                 Glyph.Library -> {
-                    // Two upright spines and one leaning against them.
-                    if (filled) {
-                        drawRoundRect(tint, Offset(3.5f, 4f), Size(3.6f, 16.5f), CornerRadius(1f))
-                        drawRoundRect(tint, Offset(9f, 4f), Size(3.6f, 16.5f), CornerRadius(1f))
-                    } else {
-                        line(5.3f, 4.5f, 5.3f, 20f)
-                        line(10.8f, 4.5f, 10.8f, 20f)
+                    // Two upright books and one leaning against them, drawn as books (outlined
+                    // spines), so the mark does not read as typed characters ("||\").
+                    val book = if (filled) Fill else Stroke(1.7f)
+                    drawRoundRect(tint, Offset(3.2f, 4f), Size(4.4f, 16.5f), CornerRadius(1.2f), style = book)
+                    drawRoundRect(tint, Offset(9.2f, 4f), Size(4.4f, 16.5f), CornerRadius(1.2f), style = book)
+                    rotate(-18f, Offset(17.4f, 20.5f)) {
+                        drawRoundRect(tint, Offset(15.2f, 4.5f), Size(4.4f, 16f), CornerRadius(1.2f), style = book)
                     }
-                    drawLine(tint, Offset(15f, 5f), Offset(20f, 19.6f), if (filled) 3.6f else 1.8f, StrokeCap.Round)
                 }
                 Glyph.PlayNext -> {
                     // A list with a play mark on its first line: "play this next".
@@ -410,6 +412,12 @@ internal fun MediaIcon(
                     line(3f, 8f, 9f, 8f)
                     line(2f, 12f, 9f, 12f)
                     line(3f, 16f, 9f, 16f)
+                }
+                Glyph.Offline -> {
+                    drawArc(tint, 205f, 130f, false, Offset(2.5f, 5f), Size(19f, 19f), style = Stroke(1.8f, cap = StrokeCap.Round))
+                    drawArc(tint, 210f, 120f, false, Offset(6.5f, 9f), Size(11f, 11f), style = Stroke(1.8f, cap = StrokeCap.Round))
+                    drawCircle(tint, 1.6f, Offset(12f, 18.5f))
+                    line(4f, 3.5f, 20f, 20.5f)
                 }
                 Glyph.MoreHorizontal -> for (x in listOf(5f, 12f, 19f)) drawCircle(tint, 1.9f, Offset(x, 12f))
                 Glyph.ArrowRight -> {
@@ -455,26 +463,31 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Lyrics -> {
-                    // Lines of words beside an eighth note: the head is a ring like the other
-                    // outlined glyphs, the stem rises from its right edge and the flag curves.
-                    line(3f, 6f, 12f, 6f)
-                    line(3f, 11f, 12f, 11f)
-                    line(3f, 16f, 9f, 16f)
-                    drawCircle(
-                        tint,
-                        2.5f,
-                        Offset(15.5f, 17.5f),
-                        style = if (filled) Fill else Stroke(1.8f),
-                    )
+                    // Words in a speech bubble: sung lines, apart from the playlist mark.
                     drawPath(
                         Path().apply {
-                            moveTo(18f, 17.5f)
+                            moveTo(6f, 4f)
                             lineTo(18f, 4f)
-                            cubicTo(18f, 6.5f, 21f, 6.8f, 21f, 9.5f)
+                            quadraticTo(21f, 4f, 21f, 7f)
+                            lineTo(21f, 14f)
+                            quadraticTo(21f, 17f, 18f, 17f)
+                            lineTo(10f, 17f)
+                            lineTo(6f, 21f)
+                            lineTo(6f, 17f)
+                            quadraticTo(3f, 17f, 3f, 14f)
+                            lineTo(3f, 7f)
+                            quadraticTo(3f, 4f, 6f, 4f)
+                            close()
                         },
                         tint,
-                        style = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                        style = if (filled) Fill else Stroke(1.8f, join = StrokeJoin.Round),
                     )
+                    // Two quote marks: sung words, not a comment thread.
+                    val ink = if (filled) Color.Black.copy(alpha = 0.6f) else tint
+                    for (x in listOf(8.6f, 13.6f)) {
+                        drawCircle(ink, 1.6f, Offset(x, 9.6f))
+                        drawLine(ink, Offset(x + 1.4f, 9.8f), Offset(x - 0.4f, 13.2f), 1.5f, StrokeCap.Round)
+                    }
                 }
                 Glyph.Save ->
                     outline(6f to 3f, 18f to 3f, 18f to 21f, 12f to 17f, 6f to 21f, closed = true)
@@ -734,7 +747,9 @@ internal fun MediaChip(
     val selectedFill = colors.onBackground
     val container by
         animateColorAsState(
-            if (selected) selectedFill else colors.surfaceContainer,
+            // Unselected chips are translucent, as YouTube Music's, so the top wash shows through.
+            if (selected) selectedFill
+            else colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.06f),
             motion.fade(220),
             label = "chip-fill",
         )
@@ -895,7 +910,8 @@ internal fun EmptyMediaState(
             style = MaterialTheme.typography.titleLarge,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
-        Text(
+        // Optional: a title and its action can be enough.
+        if (detail.isNotBlank()) Text(
             detail,
             Modifier.widthIn(max = 360.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1255,7 +1271,7 @@ internal fun Modifier.opensChannel(
  * Fades a sideways-scrolling row out at whichever end has more to show, so a chip cut by the
  * screen edge reads as "more this way", not as clipped.
  */
-internal fun Modifier.fadingEdges(state: androidx.compose.foundation.lazy.LazyListState, width: Dp = 24.dp): Modifier =
+internal fun Modifier.fadingEdges(state: androidx.compose.foundation.lazy.LazyListState, width: Dp = 36.dp): Modifier =
     this.graphicsLayer { compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen }
         .drawWithContent {
             drawContent()

@@ -373,6 +373,8 @@ internal enum class PillStyle {
     Quiet,
     /** Text only in the error colour. */
     Destructive,
+    /** The page's ink (white on dark), for a main action that is not a playing state. */
+    Inverse,
 }
 
 /** Shared pill button. Keeps a 48dp touch height; the visible pill can be shorter. */
@@ -391,13 +393,16 @@ internal fun Pill(
         when (style) {
             // The one main action on a screen carries the theme's accent.
             PillStyle.Primary -> colors.primary
-            PillStyle.Tonal -> colors.surfaceContainerHigh
+            // Translucent, as chips and tiles: it sits on a wash or a sheet without a grey hole.
+            PillStyle.Tonal -> colors.onSurface.copy(alpha = 0.12f)
+            PillStyle.Inverse -> colors.onBackground
             else -> MediaTokens.transparent
         }
     val ink =
         when (style) {
             PillStyle.Primary -> colors.onPrimary
             PillStyle.Destructive -> colors.error
+            PillStyle.Inverse -> colors.background
             else -> colors.onSurface
         }
     val source = remember { MutableInteractionSource() }
@@ -409,7 +414,7 @@ internal fun Pill(
                 .then(if (fill) Modifier.fillMaxWidth() else Modifier)
                 .clip(MediaTokens.pill)
                 .background(
-                    if (enabled || style != PillStyle.Primary) container
+                    if (enabled || (style != PillStyle.Primary && style != PillStyle.Inverse)) container
                     else container.copy(alpha = 0.28f)
                 )
                 .clickable(
@@ -778,16 +783,8 @@ internal fun MediaProgressBar(
 internal fun GlyphBadge(glyph: Glyph, size: Dp = 64.dp, tint: Color = MaterialTheme.colorScheme.onSurface) {
     Box(
         Modifier.size(size)
-            .background(
-                Brush.linearGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.surfaceContainerHigh,
-                        MaterialTheme.colorScheme.surfaceContainer,
-                    )
-                ),
-                CircleShape,
-            )
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape),
+            // Translucent, as chips and tiles, so it sits on the top wash without a grey blot.
+            .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.1f), CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         MediaIcon(glyph, Modifier.size(size * 0.42f), tint)
@@ -877,6 +874,8 @@ internal fun Modifier.ambientGlow(
     strength: Float = 1f,
     /** Rise from the page colour at the top too, so a plain bar above meets it without a seam. */
     softTop: Boolean = false,
+    /** How much of the tint is left at the bottom edge (0: none). */
+    floor: Float = 0f,
 ): Modifier =
     drawWithContent {
         drawRect(background)
@@ -891,8 +890,8 @@ internal fun Modifier.ambientGlow(
             else
                 Brush.verticalGradient(
                     0f to lerp(background, tint, 0.85f * strength),
-                    0.55f to lerp(background, tint, 0.32f * strength),
-                    1f to background,
+                    0.55f to lerp(background, tint, maxOf(0.32f, floor) * strength),
+                    1f to lerp(background, tint, floor * strength),
                 )
         )
         drawContent()

@@ -456,6 +456,8 @@ class NativeUiTest {
                 compose.onNodeWithContentDescription("Leave search").performClick()
                 chipBounds(listOf("source-Home", "category-All", "category-Discover"))
                 compose.onNodeWithTag("tab-0").performClick()
+                // The overview has tiles instead of chips; a section shows the chip row.
+                compose.onNodeWithTag("library-entry-Downloads").performClick()
                 chipBounds(listOf("library-Offline", "library-Playlists", "library-Favorites", "library-History"))
             }
         } finally {

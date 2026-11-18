@@ -78,7 +78,8 @@ internal fun SearchField(
         )
     val fill by
         animateColorAsState(
-            if (focused) colors.surfaceContainerHigh else colors.surfaceContainer,
+            // Translucent like the chips, so the top wash runs through the field.
+            colors.onBackground.copy(alpha = if (focused) 0.14f else 0.10f),
             motion.fade(180),
             label = "search-fill",
         )
@@ -145,17 +146,17 @@ internal fun FeedSkeleton(square: Boolean, modifier: Modifier = Modifier) {
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = if (square) 0.dp else 0.dp)
+            // Videos sit on the page's 16 dp gutter with rounded corners, as the cards that replace them.
+            .padding(horizontal = if (square) 0.dp else 16.dp)
             .semantics { contentDescription = "Loading…" },
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
             Modifier.fillMaxWidth()
                 .aspectRatio(if (square) 1f else 16f / 9f)
-                .shimmer(if (square) MediaTokens.medium else RoundedCornerShape(0.dp))
+                .shimmer(MediaTokens.medium)
         )
         Row(
-            Modifier.padding(horizontal = if (square) 0.dp else 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (!square) Box(Modifier.size(36.dp).shimmer(CircleShape))
