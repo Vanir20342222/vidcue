@@ -60,6 +60,7 @@ class CategoryNavigationTest {
         try {
             model.navigate(request = request("A"))
             settled(model)
+            val prepared = model.feeds[1].value.cards.single()
             model.navigate(request = request("B"))
             settled(model)
             val before = calls
@@ -68,6 +69,7 @@ class CategoryNavigationTest {
             model.navigate(request = request("A"))
             // No yield or Compose idle: these must already hold in the tap's call stack.
             assertFalse(model.feeds[1].value.loading)
+            assertSame(prepared, model.feeds[1].value.cards.single())
             assertEquals(request("A").toString(), model.feeds[1].value.cards.single().title)
             assertTrue(model.feeds[1].value.instantContent)
             model.navigate(request = request("A"))

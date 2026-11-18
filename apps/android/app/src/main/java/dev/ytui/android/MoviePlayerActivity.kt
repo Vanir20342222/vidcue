@@ -62,10 +62,14 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import java.io.File
 import java.util.Locale
@@ -117,9 +121,37 @@ class MoviePlayerActivity : ComponentActivity() {
         }
         // Seek steps follow the same setting as the YouTube player's buttons and double taps.
         val step = MobileSettings.integer("seek_seconds") * 1000L
+        val upstream = DefaultDataSource.Factory(this, httpFactory)
+        val archiveFiles = sources.filter { it.kind == "file" && it.headers.isEmpty() &&
+            it.url.startsWith("https://archive.org/download/") }.map { Uri.parse(it.url) }.toSet()
+        val dataSources = if (archiveFiles.isEmpty()) upstream else DataSource.Factory {
+            ArchiveMovieDataSource(upstream.createDataSource(), archiveFiles)
+        }
+        val source = sources.singleOrNull()
+        val cachePublicFile = offline == null && source != null && archiveFiles.size == 1 &&
+            source.subtitles.isEmpty() && MovieCatalog.titles.any { it.sources.contains(source) }
+        val playbackDataSources = if (cachePublicFile) DataSource.Factory {
+            CacheDataSource.Factory()
+                .setCache(PlaybackCache.cache())
+                .setCacheKeyFactory { spec -> "movie-file:" + spec.uri }
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+                .setUpstreamDataSourceFactory(dataSources)
+                .createDataSource()
+        } else dataSources
+        val factory = DefaultMediaSourceFactory(playbackDataSources)
+        if (sources.size > 1) {
+            factory.setLoadErrorHandlingPolicy(object : DefaultLoadErrorHandlingPolicy() {
+                override fun getRetryDelayMsFor(info: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+                    // A missing source can fail over immediately; keep Media3 retries for transient errors.
+                    if (sourceIndex.intValue < sources.lastIndex &&
+                        DownloadPolicy.responseCode(info.exception) in setOf(404, 410)) return C.TIME_UNSET
+                    return super.getRetryDelayMsFor(info)
+                }
+            })
+        }
         val exo =
             ExoPlayer.Builder(this)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, httpFactory)))
+                .setMediaSourceFactory(factory)
                 .setSeekBackIncrementMs(step)
                 .setSeekForwardIncrementMs(step)
                 .build()
@@ -414,6 +446,7 @@ private fun MovieOverlay(
                 }
             }
         player.addListener(listener)
+        player.playerError?.let(listener::onPlayerError)
         onDispose { player.removeListener(listener) }
     }
     // Save the position every five seconds of playback for Resume.

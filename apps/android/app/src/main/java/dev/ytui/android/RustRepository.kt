@@ -375,14 +375,44 @@ internal class YtuiViewModel(
 
     private data class FeedKey(val tab: Int, val request: String, val network: Long)
 
+    private data class PreparedFeedPage(
+        val title: String?,
+        val cards: List<MediaCard>,
+        val categories: List<JSONObject>,
+        val continuation: String?,
+        val notice: String?,
+        val estimatedBytes: Int,
+    )
+
+    private suspend fun prepareFeedPage(
+        index: Int,
+        request: Any,
+        offset: Int,
+        cacheable: Boolean,
+    ): PreparedFeedPage {
+        val raw = browsePage(index, request, offset)
+        return withContext(pageDispatcher) {
+            val items = raw.optJSONArray("items")?.objects().orEmpty()
+            // Size each card here, off the main thread, so later queue/history accounting
+            // finds the estimate cached instead of serializing the card again.
+            items.forEach { MediaSizeEstimates.bytes(it) }
+            val cards = items.map(::MediaCard)
+            PreparedFeedPage(
+                title = if (raw.has("title")) raw.optString("title") else null,
+                cards = cards.distinctBy { it.key },
+                categories = raw.optJSONArray("categories")?.objects().orEmpty(),
+                continuation = raw.optString("continuation").takeUnless { it.isBlank() || it == "null" },
+                notice = raw.optString("notice").takeUnless { it.isBlank() || it == "null" },
+                estimatedBytes = if (cacheable) raw.toString().length * 2 else 0,
+            )
+        }
+    }
+
     private val feedPages =
-        FeedPageCache<FeedKey, JSONObject>(
+        FeedPageCache<FeedKey, PreparedFeedPage>(
             viewModelScope,
             clock,
-            { page ->
-                page.optJSONArray("items")?.objects()?.forEach { MediaSizeEstimates.bytes(it) }
-                page.toString().length * 2
-            },
+            PreparedFeedPage::estimatedBytes,
             maxEntries = 64,
             maxBytes = 8 * 1024 * 1024,
             retainMs = 30 * 60_000L,
@@ -726,20 +756,12 @@ internal class YtuiViewModel(
         feedJobs[index] =
             viewModelScope.launch {
                 try {
-                    val fetch: suspend () -> JSONObject = {
-                        browsePage(index, request, if (append) previous.cards.size else 0)
+                    val fetch: suspend () -> PreparedFeedPage = {
+                        prepareFeedPage(index, request, if (append) previous.cards.size else 0, cacheable)
                     }
                     val page = if (cacheable) feedPages.load(cacheKey, fetch) else fetch()
                     if (feeds[index].value.generation != generation) return@launch
                     if (epoch != accountEpoch) return@launch
-                    if (network != NetworkSettings.revision.get()) {
-                        navigate(index, request, append, remember = false)
-                        return@launch
-                    }
-                    withContext(pageDispatcher) {
-                        page.optJSONArray("items")?.objects()?.forEach { MediaSizeEstimates.bytes(it) }
-                    }
-                    if (feeds[index].value.generation != generation || epoch != accountEpoch) return@launch
                     if (network != NetworkSettings.revision.get()) {
                         navigate(index, request, append, remember = false)
                         return@launch
@@ -798,30 +820,27 @@ internal class YtuiViewModel(
     }
 
     private fun pageState(
-        page: JSONObject,
+        page: PreparedFeedPage,
         state: FeedState,
         previous: FeedState,
         categoryNavigation: Boolean,
         append: Boolean = false,
     ): FeedState {
-        val incoming = page.optJSONArray("items")?.objects()?.map(::MediaCard) ?: emptyList()
+        val cards =
+            if (append) (previous.cards + page.cards).distinctBy { it.key } else page.cards
         return WatchedRecommendations.filter(
             state.copy(
                 request = if (append) previous.request else state.request,
-                title = page.optString("title", previous.title),
-                cards =
-                    (if (append) previous.cards + incoming else incoming)
-                        .distinctBy { it.key }
-                        .takeLast(2000),
+                title = page.title ?: previous.title,
+                cards = cards.takeLast(2000),
                 categories =
                     if (append) previous.categories
                     else
-                        (page.optJSONArray("categories")?.objects() ?: emptyList()).ifEmpty {
+                        page.categories.ifEmpty {
                             if (categoryNavigation) previous.categories else emptyList()
                         },
-                continuation =
-                    page.optString("continuation").takeUnless { it.isBlank() || it == "null" },
-                notice = page.optString("notice").takeUnless { it.isBlank() || it == "null" },
+                continuation = page.continuation,
+                notice = page.notice,
                 loading = false,
             ),
             recent.value,
@@ -870,7 +889,7 @@ internal class YtuiViewModel(
                             epoch == accountEpoch &&
                             network == NetworkSettings.revision.get()
                     },
-                    fetch = { (target, request) -> browsePage(target, request, 0) },
+                    fetch = { (target, request) -> prepareFeedPage(target, request, 0, cacheable = true) },
                 )
             }
     }
