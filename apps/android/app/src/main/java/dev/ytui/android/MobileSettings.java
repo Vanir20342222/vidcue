@@ -21,8 +21,6 @@ final class MobileSettings {
           "gestures",
           "background_playback",
           "show_channel",
-          "show_views",
-          "show_upload_date",
           "show_duration",
           "auto_save_folders",
           "animate_cards",
@@ -38,6 +36,9 @@ final class MobileSettings {
     for (String key :
         new String[] {
           "preload_mobile",
+          // View counts and upload dates are off by default: cards stay lean (the channel).
+          "show_views",
+          "show_upload_date",
           "show_description",
           "show_section",
           "show_likes",

@@ -329,8 +329,8 @@ internal fun FocusedPlayer(
                 Row(
                     // No box behind the actions: on the artwork's colour a grey card looked pasted on.
                     Modifier.fillMaxWidth()
-                        // Music: icons on the same five columns as shuffle, previous, play, next
-                        // and repeat above (48dp cells pulled out 8dp, like that row).
+                        // Music: icons evenly spaced, the outer two under shuffle and repeat
+                        // (48dp cells pulled out 8dp, like that row).
                         .then(if (player.video) Modifier else Modifier.bleedHorizontally(8.dp))
                         .padding(vertical = 2.dp)
                         .testTag("player-actions"),
@@ -343,8 +343,6 @@ internal fun FocusedPlayer(
                     PlayerAction(Glyph.UpNext, "Queue", "Playback queue", compact = true, modifier = cell, iconOnly = iconOnly, action = onQueue)
                     if (!player.video)
                         PlayerAction(Glyph.Lyrics, "Lyrics", "Lyrics", compact = true, modifier = cell, iconOnly = true, action = onLyrics)
-                    // The play button's column stays empty, so the four sit under the controls.
-                    if (!player.video && sleepLeft <= 0) Spacer(Modifier.width(48.dp))
                     if (canSave && media != null) {
                         var saveCentre by remember { mutableStateOf<androidx.compose.ui.geometry.Offset?>(null) }
                         PlayerAction(

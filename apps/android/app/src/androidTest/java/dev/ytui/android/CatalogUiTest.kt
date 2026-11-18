@@ -439,8 +439,8 @@ class CatalogUiTest {
         }
         compose.onNodeWithTag("tab-0").performClick()
         settleUi()
-        // Library opens on its overview; selection lives in Downloads.
-        compose.onNodeWithTag("library-Offline").performClick()
+        // Library opens on its overview (tiles, no chip row); selection lives in Downloads.
+        compose.onNodeWithTag("library-entry-Downloads").performClick()
         scenario.onActivity {
             ViewModelProvider(it)[YtuiViewModel::class.java].downloads.value = copies
         }
@@ -494,8 +494,8 @@ class CatalogUiTest {
     @Test
     fun offlinePlaylistsUseEditableNativeFieldsAndRealRustPersistence() {
         compose.onNodeWithTag("tab-0").performClick()
-        // New playlist is offered on the Playlists section of Library.
-        compose.onNodeWithTag("library-Playlists").performClick()
+        // New playlist is offered on the Playlists section of Library, opened from its overview tile.
+        compose.onNodeWithTag("library-entry-Playlists").performClick()
         compose.onNodeWithTag("create-offline-playlist").performClick()
         val title = "UI fixture " + java.util.UUID.randomUUID().toString().take(8)
         compose.onNodeWithTag("offline-playlist-name").performTextInput(title)

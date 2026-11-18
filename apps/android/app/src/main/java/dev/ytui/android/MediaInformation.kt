@@ -8,14 +8,16 @@ import org.json.JSONObject
 
 internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
     val details = mutableListOf<String>()
-    if (settings.optBoolean("show_views", true)) {
+    // Off unless chosen in Card details: cards stay lean (channel and age).
+    if (settings.optBoolean("show_views", false)) {
         val count = media.optLong("view_count", -1)
         val views =
             if (count >= 0) "${compactCount(count)} ${if (count == 1L) "view" else "views"}"
             else media.optString("views_text").takeUnless { it == "null" }?.let(::compactViewsText) ?: ""
         if (views.isNotBlank()) details += views
     }
-    if (settings.optBoolean("show_upload_date", true)) {
+    // Off unless chosen in Card details, as the view count: cards stay lean (channel only).
+    if (settings.optBoolean("show_upload_date", false)) {
         val date = media.optString("upload_date").takeIf { it.matches(UPLOAD_DATE) }
         val text =
             date?.let(::relativeUploadDate)
@@ -46,7 +48,12 @@ internal fun withMediaInformation(card: JSONObject, details: JSONObject): JSONOb
 
 /** Card preferences only control browsing. The watch page always exposes known details. */
 internal fun playerInformation(media: JSONObject): String =
-    mediaInformation(media, JSONObject().put("show_likes", true)).let { counts ->
+    // The player shows every available detail, whatever the card settings (whose views and
+    // dates are off by default).
+    mediaInformation(
+        media,
+        JSONObject().put("show_views", true).put("show_upload_date", true).put("show_likes", true),
+    ).let { counts ->
         listOf(counts, mediaLength(media)).filter { it.isNotBlank() }.joinToString(" · ")
     }
 

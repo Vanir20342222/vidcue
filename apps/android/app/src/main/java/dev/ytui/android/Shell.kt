@@ -135,16 +135,18 @@ internal fun AccountButton(connected: Boolean, open: () -> Unit) {
 }
 
 /**
- * The phone navigation bar (tablets use [TabletSidebar]): each destination has its icon and a short label, as every major
- * media app does. The selected one has Material's indicator pill behind its icon.
+ * The phone navigation (tablets use [TabletSidebar]): a dock floating over the page, icons only.
+ * The selected tab is a filled white icon, the others grey outlines, as Spotify's. Each page's
+ * title names where you are, and every tab keeps its name for TalkBack.
  */
 @Composable
 internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean = false) {
     val motion = LocalMotion.current
     val colors = MaterialTheme.colorScheme
     val shown = destinations(showMovies)
-    // Clear enough to read at a glance, as YouTube Music's indicator.
-    val highlight = colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.16f else 0.10f)
+    val dark = colors.background.luminance() < 0.4f
+    // A raised dark grey on dark themes; white with its shadow on light ones.
+    val dock = if (dark) androidx.compose.ui.graphics.lerp(colors.background, colors.onBackground, 0.10f) else colors.background
 
     @Composable
     fun Cell(index: Int, title: String, glyph: Glyph, modifier: Modifier) {
@@ -152,7 +154,8 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
         val source = remember(index) { MutableInteractionSource() }
         val tint by
             animateColorAsState(
-                if (selected) colors.onBackground else colors.onSurfaceVariant,
+                // Unselected icons a step quieter, so the filled white one stands out.
+                if (selected) colors.onBackground else colors.onSurfaceVariant.copy(alpha = 0.75f),
                 motion.fade(200),
                 label = "nav-icon",
             )
@@ -174,16 +177,12 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
                 .semantics { contentDescription = title }
                 .testTag("tab-$index"),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically),
+            verticalArrangement = Arrangement.Center,
         ) {
-            // Material's indicator: a 56×32dp pill centred behind the icon, opening sideways.
-            val indicator by animateDpAsState(if (selected) 56.dp else 24.dp, motion.spring(), label = "nav-indicator")
-            Box(Modifier.size(56.dp, 32.dp), contentAlignment = Alignment.Center) {
-                if (selected)
-                    Box(Modifier.size(indicator, 32.dp).clip(MediaTokens.pill).background(highlight))
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                 MediaIcon(
                     glyph,
-                    Modifier.size(24.dp)
+                    Modifier.size(26.dp)
                         .then(if (index == 0) Modifier.trackCentre { DownloadFlight.target = it } else Modifier)
                         .pressScale(source, 0.9f)
                         .graphicsLayer {
@@ -194,31 +193,26 @@ internal fun AppNavigation(tab: Int, choose: (Int) -> Unit, showMovies: Boolean 
                     filled = selected,
                 )
             }
-            Text(
-                title,
-                // The tab itself carries the name; the visible label is not read twice.
-                Modifier.clearAndSetSemantics {},
-                style = MaterialTheme.typography.labelSmall,
-                color = tint,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 
-    // Phones: a full-width bar in the page colour, as in the major media apps. The page
-    // fades into it from above, and the mini player floats over that fade.
-    Box(Modifier.fillMaxWidth().background(colors.background).padding(horizontal = 8.dp)) {
-        Box(
+    // On the page's 16dp gutter like the mini player above it, 12dp off the bottom edge; the
+    // page fades out behind both (see the bottom dock in ComposeHost).
+    Box(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 12.dp)) {
+        Row(
             Modifier.fillMaxWidth()
-                .height(64.dp)
+                .height(56.dp)
+                // The mini player's 16dp corners, so the two read as a pair.
+                .shadow(14.dp, MediaTokens.miniPlayer, ambientColor = Color.Black, spotColor = Color.Black)
+                .clip(MediaTokens.miniPlayer)
+                .background(dock)
+                .border(1.dp, colors.onBackground.copy(alpha = if (dark) 0.07f else 0.06f), MediaTokens.miniPlayer)
                 .selectableGroup()
-                .testTag("bottom-navigation")
+                .testTag("bottom-navigation"),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(Modifier.fillMaxSize()) {
-                shown.forEach { (index, title, glyph) ->
-                    Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
-                }
+            shown.forEach { (index, title, glyph) ->
+                Cell(index, title, glyph, Modifier.weight(1f).fillMaxHeight())
             }
         }
     }
@@ -321,7 +315,8 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
         Box(
             Modifier.fillMaxWidth()
                 // The page's 16dp gutter, so the card lines up with the content above it.
-                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
+                // 8 dp above the dock (with the dock's own 0 dp top), so the two read as a pair, not one block.
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
                 .graphicsLayer {
                     val lift = (1f - appear.value) * 28.dp.toPx()
                     translationX = sideways.value
@@ -375,7 +370,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
         ) {
             Row(
                 // 56dp tall, as Spotify's mini player.
-                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 7.dp, bottom = 9.dp),
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -441,7 +436,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
                     Modifier.align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         // Starts under the cover's edge and ends as far from the card's end.
-                        .padding(start = 8.dp, end = 8.dp, bottom = 2.dp)
+                        .padding(start = 12.dp, end = 12.dp, bottom = 2.dp)
                         .height(2.dp)
                 ) {
                     drawLine(

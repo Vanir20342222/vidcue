@@ -42,8 +42,42 @@ class ScreenTourTest {
     @Test
     fun phoneScreens() {
         assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
-        org.robolectric.shadows.ShadowLog.stream = System.out
-        val dir = out!!.apply { mkdirs() }
+        tour(out!!.apply { mkdirs() })
+    }
+
+    /** The same tour on a 320 dp phone: nothing may clip or scroll sideways. */
+    @Test
+    @Config(qualifiers = "w320dp-h640dp-xhdpi")
+    fun phoneScreensNarrow() {
+        assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
+        tour(File(out!!, "w320").apply { mkdirs() })
+    }
+
+    /** The same tour on a German device: the English UI keeps English numbers. */
+    @Test
+    @Config(qualifiers = "de-rDE-w360dp-h800dp-xhdpi")
+    fun phoneScreensGerman() {
+        assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
+        tour(File(out!!, "de").apply { mkdirs() })
+    }
+
+    /** The same tour on an 11-inch tablet in landscape (Galaxy Tab S9 size): the sidebar layout. */
+    @Test
+    @Config(qualifiers = "w1280dp-h800dp-land-xhdpi")
+    fun tabletScreens() {
+        assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
+        tour(File(out!!, "tablet").apply { mkdirs() }, tablet = true)
+    }
+
+    /** The same tablet held upright: narrower than the sidebar layout, so it gets the dock. */
+    @Test
+    @Config(qualifiers = "w800dp-h1280dp-port-xhdpi")
+    fun tabletScreensPortrait() {
+        assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
+        tour(File(out!!, "tablet-port").apply { mkdirs() })
+    }
+
+    private fun tour(dir: File, tablet: Boolean = false) {
         // Setup is done, so the app opens on Home and loads feeds as it does for a user.
         OnboardingStore.complete(org.robolectric.RuntimeEnvironment.getApplication())
         val intent =
@@ -72,9 +106,18 @@ class ScreenTourTest {
                 (0..3).joinToString { "t$it=${vm.feeds[it].value.cards.size}${if (vm.feeds[it].value.loading) "L" else ""} scroll=${vm.feeds[it].value.scrollIndex}" }
             ).append('\n')
             val view = activity.window.decorView
+            // Robolectric lays the window out only when it is drawn: draw once, let the frame's
+            // state changes (a header that grew) recompose, then capture.
+            view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+            settle(600)
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            // The visible text runs, for the per-screen text budget (text whose semantics are
+            // cleared, such as names drawn on covers, is not counted).
+            val texts = visibleTexts(view)
+            File(dir, "$name.txt").writeText("${texts.size}\n" + texts.joinToString("\n"))
+            File(dir, "text-counts.txt").appendText("$name ${texts.size}\n")
             log.append("  captured in ${System.currentTimeMillis() - started}ms at ${System.currentTimeMillis()}\n")
             File(dir, "log.txt").writeText(log.toString())
         }
@@ -83,6 +126,21 @@ class ScreenTourTest {
         vm.chooseTab(2)
         settle(2500)
         shot("05-music")
+        // Tapping the selected tab again returns a page to its top: shows whether the first
+        // capture started scrolled. (Tablets have a sidebar instead of the bottom dock.)
+        if (!tablet) run {
+            val view = activity.window.decorView
+            val density = view.resources.displayMetrics.density
+            val x = 16f * density + (view.width - 32f * density) * 3f / 8f
+            val y = view.height - 40f * density
+            val time = android.os.SystemClock.uptimeMillis()
+            view.dispatchTouchEvent(android.view.MotionEvent.obtain(time, time, android.view.MotionEvent.ACTION_DOWN, x, y, 0))
+            view.dispatchTouchEvent(android.view.MotionEvent.obtain(time, time + 50, android.view.MotionEvent.ACTION_UP, x, y, 0))
+        }
+        if (!tablet) {
+            settle(2000)
+            shot("05b-music-top")
+        }
         // Opened from its card, as a user does, so the page knows the playlist's name and owner.
         vm.play(MediaCard(TourNative.collection(0, "playlist", "")))
         settle(9000)
@@ -136,6 +194,10 @@ class ScreenTourTest {
         fun shot(name: String) {
             settle(2000)
             val view = activity.window.decorView
+            // Robolectric lays the window out only when it is drawn: draw once, let the frame's
+            // state changes (a header that grew) recompose, then capture.
+            view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+            settle(600)
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
             File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -159,6 +221,65 @@ class ScreenTourTest {
         shot("03-account")
         controller.pause().stop().destroy()
     }
+
+    /**
+     * States other than "signed out with content": loading, a feed that failed (as when offline),
+     * empty saved stations and search results, and a Library with nothing played yet.
+     */
+    @Test
+    fun stateScreens() {
+        assumeTrue("Set VIDCUE_SCREENS to render the screen tour", out != null)
+        val dir = File(out!!, "states").apply { mkdirs() }
+        OnboardingStore.complete(org.robolectric.RuntimeEnvironment.getApplication())
+        val intent = Intent(Intent.ACTION_MAIN).setClassName("dev.ytui.android", RustActivity::class.java.name)
+        TourNative.mode = "loading"
+        val controller = Robolectric.buildActivity(RustActivity::class.java, intent).setup()
+        val activity = controller.get()
+        activity.window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xff0f0f0f.toInt()))
+        val vm = ViewModelProvider(activity)[YtuiViewModel::class.java]
+        fun settle(ms: Long) {
+            val end = System.currentTimeMillis() + ms
+            while (System.currentTimeMillis() < end) {
+                shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(16))
+                Thread.sleep(4)
+            }
+        }
+        fun shot(name: String) {
+            val view = activity.window.decorView
+            // Robolectric lays the window out only when it is drawn: draw once, let the frame's
+            // state changes (a header that grew) recompose, then capture.
+            view.draw(Canvas(Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)))
+            settle(600)
+            val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+            view.draw(Canvas(bitmap))
+            File(dir, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val texts = visibleTexts(view)
+            File(dir, "$name.txt").writeText("${texts.size}\n" + texts.joinToString("\n"))
+        }
+        try {
+            settle(2500)
+            shot("s1-home-loading")
+            TourNative.mode = "error"
+            vm.chooseTab(2)
+            settle(4000)
+            shot("s2-music-error")
+            TourNative.mode = "empty"
+            vm.chooseTab(3)
+            vm.navigate(3, "Favorites", remember = false)
+            settle(3000)
+            shot("s3-radio-saved-empty")
+            vm.chooseTab(2)
+            vm.navigate(2, SearchRequests.request(2, "zzzz"), remember = true)
+            settle(3000)
+            shot("s4-search-empty")
+            vm.chooseTab(0)
+            settle(3000)
+            shot("s5-library-empty")
+        } finally {
+            TourNative.mode = ""
+            controller.pause().stop().destroy()
+        }
+    }
 }
 
 /**
@@ -171,6 +292,8 @@ private fun preloadArtwork() {
         ArtworkCache::class.java.getDeclaredField(name).apply { isAccessible = true }.get(ArtworkCache)
             as android.util.LruCache<String, Bitmap>
     val memory = lru("memory")
+    // The tour preloads every cover at once; a device's cache holds what is on screen.
+    memory.resize(96 * 1024 * 1024)
     val recent = lru("recentByItem")
     fun bitmap(card: JSONObject, pixels: Int): Bitmap {
         val data = TourNative.thumbnail(card.toString(), pixels)
@@ -179,7 +302,12 @@ private fun preloadArtwork() {
     for (card in TourNative.allCards()) {
         val media = MediaCard(card)
         val wide = media.kind == "video"
-        memory.put("${media.key}:${media.artworkSource}:${if (wide) 768 else 320}", bitmap(card, if (wide) 768 else 320))
+        // Albums and playlists show in large shelf cards (176dp); songs and stations smaller.
+        val size = if (wide) 768 else if (media.collection) 480 else 320
+        memory.put("${media.key}:${media.artworkSource}:$size", bitmap(card, size))
+        // The playing song also fills the full-screen player's cover.
+        if (card.optString("url") == TourNative.song(1).optString("url"))
+            memory.put("${media.key}:${media.artworkSource}:1024", bitmap(card, 1024))
         recent.put(media.key, bitmap(card, if (wide) 320 else 240))
     }
 }
@@ -197,6 +325,9 @@ class TourApplication : Application() {
 class TourNative {
     companion object {
         val seen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+        /** "" for content; "loading" holds pages back, "error" fails them, "empty" returns none. */
+        @Volatile @JvmStatic var mode = ""
 
         @JvmStatic @Implementation fun __staticInitializer__() {}
 
@@ -228,6 +359,18 @@ class TourNative {
             val request = JSONObject(payload)
             val op = request.optString("op")
             seen += op
+            if (op == "browse" && mode == "loading") Thread.sleep(8000)
+            if (op == "browse" && mode == "error")
+                return JSONObject()
+                    .put("ok", false)
+                    .put("code", "network")
+                    .put("error", "Could not reach YouTube. Check the connection and try again.")
+                    .toString()
+            if (mode == "empty" && (op == "browse" || op == "history_list"))
+                return JSONObject()
+                    .put("ok", true)
+                    .put("data", if (op == "browse") JSONObject().put("items", JSONArray()) else JSONArray())
+                    .toString()
             val data: Any =
                 when (op) {
                     "theme" -> palette()
@@ -253,7 +396,9 @@ class TourNative {
                         page(request.optInt("tab"), request.opt("request")).also {
                             seen += "browse ${request.optInt("tab")} ${request.opt("request")} -> ${it.getJSONArray("items").length()}"
                         }
-                    "history_list", "queue_list", "downloads", "offline_list", "search_history" -> JSONArray()
+                    // Someone who has listened a little: Library and Music show what they played.
+                    "history_list" -> JSONArray(history().map { it.toString() }.map(::JSONObject))
+                    "queue_list", "downloads", "offline_list", "search_history" -> JSONArray()
                     else -> JSONObject()
                 }
             return JSONObject().put("ok", true).put("data", data).toString()
@@ -324,9 +469,12 @@ class TourNative {
                 .put("live", true)
                 .put("thumbnail", "art:station$i")
 
+        /** Played earlier; not on the sample pages, so no page drops them as watched. */
+        fun history(): List<JSONObject> = (30 until 36).map { song(it).put("audio", true) }
+
         /** Every card the tour shows, for preloading covers. */
         fun allCards(): List<JSONObject> =
-            listOf(
+            history() + listOf(
                     page(1, SearchRequests.topic("All")),
                     page(2, "Home"),
                     page(2, JSONObject().put("Collection", "x")),
@@ -402,4 +550,26 @@ class TourNative {
 
         private fun hsv(h: Float, s: Float, v: Float): Int = android.graphics.Color.HSVToColor(floatArrayOf(h, s, v))
     }
+}
+
+/** Text on screen in the Compose tree under [root]: one entry per text run inside the window. */
+private fun visibleTexts(root: android.view.View): List<String> {
+    fun find(v: android.view.View): androidx.compose.ui.platform.ViewRootForTest? =
+        v as? androidx.compose.ui.platform.ViewRootForTest
+            ?: (v as? android.view.ViewGroup)?.let { g -> (0 until g.childCount).firstNotNullOfOrNull { find(g.getChildAt(it)) } }
+    val owner = find(root)?.semanticsOwner ?: return emptyList()
+    val window = androidx.compose.ui.geometry.Rect(0f, 0f, root.width.toFloat(), root.height.toFloat())
+    val out = ArrayList<String>()
+    fun walk(node: androidx.compose.ui.semantics.SemanticsNode) {
+        val bounds = node.boundsInRoot
+        val key = androidx.compose.ui.semantics.SemanticsProperties.Text
+        val text: List<androidx.compose.ui.text.AnnotatedString>? = if (key in node.config) node.config[key] else null
+        if (text != null && bounds.height > 1f && bounds.overlaps(window))
+            text.map { it.text }.filter { it.isNotBlank() }.forEach(out::add)
+        node.children.forEach(::walk)
+    }
+    // The merged tree, as TalkBack reads it: content hidden behind the open player or drawn on
+    // covers with cleared semantics is left out; each line of a merged row still counts once.
+    walk(owner.rootSemanticsNode)
+    return out
 }

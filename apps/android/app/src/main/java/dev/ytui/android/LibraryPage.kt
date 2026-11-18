@@ -4,6 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -117,7 +123,7 @@ internal fun LibraryPage(
                 chips = chips,
             )
         section == "History" -> HistoryPage(vm, chips)
-        section == "All" -> LibraryOverview(vm, connected, chips, onOpen = { section = it }, onAccount = onAccount)
+        section == "All" -> LibraryOverview(vm, connected, onOpen = { section = it })
         else -> feedPage(chips)
     }
 }
@@ -131,9 +137,7 @@ internal fun LibraryPage(
 private fun LibraryOverview(
     vm: YtuiViewModel,
     connected: Boolean,
-    chips: @Composable () -> Unit,
     onOpen: (String) -> Unit,
-    onAccount: () -> Unit,
 ) {
     val downloads by vm.downloads.collectAsState()
     val history by vm.recent.collectAsState()
@@ -143,73 +147,73 @@ private fun LibraryOverview(
     val thumbnails = config.optBoolean("thumbnails", true)
     val complete = downloads.count { it.optString("state") == "Complete" && it.optJSONObject("media") != null }
     LaunchedEffect(Unit) { vm.loadHistory() }
-    fun items(n: Int) = if (n == 1) "1 item" else "$n items"
+    // The rows are the way into each section, so the overview has no chip row repeating them;
+    // inside a section the chips (with "All") lead back.
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    // YouTube Music's colour wash, from what you played last (else the accent).
+    val base = androidx.compose.material3.MaterialTheme.colorScheme.primary
+    val left = rememberArtworkTint(history.firstOrNull(), base, thumbnails)
+    // Nothing played yet: the same quiet wash as every other empty page.
+    val second = rememberArtworkTint(history.getOrNull(1), left, thumbnails)
+    androidx.compose.runtime.SideEffect {
+        PageChrome.washColors.value = if (history.isEmpty()) fallbackWash(base) else washTone(left) to washTone(second)
+    }
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { PageChrome.washColors.value = null } }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    LaunchedEffect(list) {
+        val span = with(density) { 280.dp.toPx() }
+        androidx.compose.runtime.snapshotFlow {
+                maxOf(
+                    if (list.firstVisibleItemIndex > 0) 1f else list.firstVisibleItemScrollOffset / span,
+                    if (history.isEmpty()) 0.4f else 0f,
+                )
+            }
+            .collect { PageChrome.washFade.floatValue = it.coerceIn(0f, 1f) }
+    }
     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        chips()
         LazyColumn(
             Modifier.fillMaxSize().testTag("library-overview"),
+            state = list,
             contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp + LocalBottomOverlay.current),
         ) {
-            // Signed out: one card at the top, set apart from your own collections.
-            if (!connected)
-                item(key = "sign-in") {
-                    androidx.compose.foundation.layout.Row(
-                        Modifier.fillMaxWidth()
-                            .padding(start = MediaTokens.textInset, end = MediaTokens.textInset, bottom = 12.dp)
-                            .clip(MediaTokens.card)
-                            .background(androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainer)
-                            .padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp)
-                            .testTag("library-sign-in-card"),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            androidx.compose.material3.Text(
-                                "Your YouTube library",
-                                style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                            )
-                            androidx.compose.material3.Text(
-                                "Sign in for your playlists, likes and Watch later.",
-                                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Pill("Sign in", Modifier.testTag("library-sign-in"), PillStyle.Primary, onClick = onAccount)
+            // Each collection as a coloured tile, two to a row, with what it holds in its corner.
+            val tiles =
+                buildList {
+                    add(LibraryTile(Glyph.Download, "Downloads", complete, Color(0xFF23A383)))
+                    add(LibraryTile(Glyph.Playlist, "Playlists", playlists.size, Color(0xFF7B5CD6)))
+                    if (connected) {
+                        add(LibraryTile(Glyph.Library, "YouTube playlists", 0, Color(0xFFD9483B)))
+                        add(LibraryTile(Glyph.Save, "Liked", 0, Color(0xFFE0568F)))
+                        add(LibraryTile(Glyph.UpNext, "Watch later", 0, Color(0xFFD99A2B)))
+                    }
+                    add(LibraryTile(Glyph.Save, "Saved", 0, Color(0xFFD6336C)))
+                    // History is "Recently played" below (its › opens the full list), so the same
+                    // three tiles show whether or not anything was played.
+                }
+            // Three fit one row (icon over name); otherwise two to a row.
+            val perRow = if (tiles.size == 3) 3 else 2
+            items(tiles.chunked(perRow), key = { row -> "tiles:" + row.first().title }) { row ->
+                androidx.compose.foundation.layout.Row(
+                    Modifier.fillMaxWidth().padding(start = MediaTokens.textInset, end = MediaTokens.textInset, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    for (tile in row) LibraryTileCard(tile, Modifier.weight(1f), stacked = perRow == 3) { onOpen(tile.title) }
+                    repeat(perRow - row.size) { androidx.compose.foundation.layout.Spacer(Modifier.weight(1f)) }
+                }
+            }
+            // Nothing played or saved yet: one way to start, no explanation needed.
+            if (history.isEmpty() && complete == 0 && playlists.isEmpty())
+                item(key = "start") {
+                    // The same empty state as every other page.
+                    EmptyMediaState(Glyph.Library, "Nothing yet", "", Modifier.padding(top = 8.dp)) {
+                        Action("Find music", "library-browse") { vm.chooseTab(2) }
                     }
                 }
-            item(key = "downloads") {
-                LibraryEntry(Glyph.Download, "Downloads", if (complete > 0) items(complete) else "Nothing downloaded yet") {
-                    onOpen("Downloads")
-                }
-            }
-            if (playlists.isEmpty())
-                item(key = "new-playlist") {
-                    LibraryEntry(Glyph.Playlist, "Playlists", "No playlists yet") { onOpen("Playlists") }
-                }
-            else
-                items(playlists, key = { "playlist:" + it.optString("id") }) { playlist ->
-                    LibraryEntry(
-                        Glyph.Playlist,
-                        playlist.optString("title"),
-                        "Playlist · " + items(playlist.optJSONArray("items")?.length() ?: 0),
-                    ) {
-                        onOpen("Playlists")
-                    }
-                }
-            if (connected) {
-                item(key = "yt-playlists") { LibraryEntry(Glyph.Library, "YouTube playlists", "From your account") { onOpen("YouTube playlists") } }
-                item(key = "liked") { LibraryEntry(Glyph.Save, "Liked", "Videos and songs you liked") { onOpen("Liked") } }
-                item(key = "watch-later") { LibraryEntry(Glyph.UpNext, "Watch later", "Saved on YouTube to watch later") { onOpen("Watch later") } }
-            }
-            item(key = "saved") { LibraryEntry(Glyph.Save, "Saved", "Nothing saved yet") { onOpen("Saved") } }
-            item(key = "history") {
-                LibraryEntry(Glyph.History, "History", if (history.isEmpty()) "Nothing played yet" else items(history.size)) { onOpen("History") }
-            }
             if (history.isNotEmpty()) {
                 item(key = "recent-head") {
                     ShelfHeading(
                         "Recently played",
-                        Modifier.padding(top = 16.dp, bottom = 4.dp),
+                        Modifier.padding(top = 8.dp, bottom = 12.dp),
                         action = "Show all",
                         actionTag = "library-recent-all",
                         actionGlyph = null,
@@ -217,15 +221,39 @@ private fun LibraryOverview(
                         onOpen("History")
                     }
                 }
-                items(history.take(6), key = { "recent:" + it.key }) { media ->
-                    androidx.compose.foundation.layout.Box(Modifier.padding(horizontal = MediaTokens.textInset)) {
-                        MediaListRow(
-                            media.title,
-                            if (mobile.optBoolean("show_channel", true)) media.creator else "",
-                            artwork = { Artwork(media, it, thumbnails) },
-                            square = media.audio,
-                            onClick = { vm.play(media, resume = true) },
-                        )
+                item(key = "recent") {
+                    // Two rows that page sideways, so what you played fills the screen.
+                    androidx.compose.foundation.lazy.grid.LazyHorizontalGrid(
+                        androidx.compose.foundation.lazy.grid.GridCells.Fixed(if (history.size > 3) 2 else 1),
+                        Modifier.fillMaxWidth()
+                            .height(if (history.size > 3) 336.dp else 162.dp)
+                            .testTag("library-recent"),
+                        contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        gridItems(history.take(16), key = { it.key }) { media ->
+                            Column(
+                                Modifier.width(132.dp)
+                                    .clip(MediaTokens.medium)
+                                    .clickable(onClickLabel = "Play") { vm.play(media, resume = true) },
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Artwork(
+                                    media,
+                                    Modifier.fillMaxWidth().aspectRatio(if (media.audio || media.kind == "song") 1f else 16f / 9f)
+                                        .clip(MediaTokens.medium),
+                                    thumbnails,
+                                    shape = MediaTokens.medium,
+                                )
+                                androidx.compose.material3.Text(
+                                    media.displayTitle,
+                                    style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -233,41 +261,57 @@ private fun LibraryOverview(
     }
 }
 
-/** One collection on the Library overview: a 52dp tile with its mark, its name and what it holds. */
+/** A Library collection: its mark, its name, how many things are in it, and its colour. */
+private data class LibraryTile(val glyph: Glyph, val title: String, val count: Int, val hue: Color)
+
 @Composable
-private fun LibraryEntry(glyph: Glyph, title: String, detail: String, accent: Boolean = false, onClick: () -> Unit) {
+private fun LibraryTileCard(tile: LibraryTile, modifier: Modifier, stacked: Boolean = false, onClick: () -> Unit) {
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
-    androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth()
-            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
-            .padding(horizontal = MediaTokens.textInset, vertical = 6.dp)
-            .testTag("library-entry-$title"),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        androidx.compose.foundation.layout.Box(
-            Modifier.size(52.dp)
-                .clip(MediaTokens.small)
-                .background(if (accent) colors.primary.copy(alpha = 0.18f) else colors.surfaceContainerHigh),
-            contentAlignment = androidx.compose.ui.Alignment.Center,
+    val dark = colors.background.luminance() < 0.4f
+    // Translucent like the chips, so the wash shows through.
+    val icon = colors.onSurface.copy(alpha = 0.9f)
+    if (stacked) {
+        Column(
+            modifier.height(72.dp)
+                .clip(MediaTokens.card)
+                .background(colors.onBackground.copy(alpha = if (dark) 0.08f else 0.05f))
+                .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+                // Narrow side padding, so "Downloads" fits a third of a 320 dp phone.
+                .padding(horizontal = 2.dp, vertical = 10.dp)
+                .testTag("library-entry-${tile.title}"),
+            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp, androidx.compose.ui.Alignment.CenterVertically),
         ) {
-            MediaIcon(glyph, Modifier.size(24.dp), if (accent) colors.primary else colors.onSurface)
-        }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            MediaIcon(tile.glyph, Modifier.size(24.dp), icon)
             androidx.compose.material3.Text(
-                title,
-                style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
-            androidx.compose.material3.Text(
-                detail,
-                style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
+                tile.title,
+                style = androidx.compose.material3.MaterialTheme.typography.labelLarge,
+                color = colors.onSurface,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
             )
         }
+        return
+    }
+    androidx.compose.foundation.layout.Row(
+        modifier.height(56.dp)
+            .clip(MediaTokens.card)
+            .background(colors.onBackground.copy(alpha = if (dark) 0.08f else 0.05f))
+            .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onClick)
+            // Tight enough that "Downloads" fits a tile on a 320 dp phone.
+            .padding(horizontal = 12.dp)
+            .testTag("library-entry-${tile.title}"),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        MediaIcon(tile.glyph, Modifier.size(24.dp), icon)
+        androidx.compose.material3.Text(
+            tile.title,
+            style = androidx.compose.material3.MaterialTheme.typography.titleSmall,
+            color = colors.onSurface,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
     }
 }
 
