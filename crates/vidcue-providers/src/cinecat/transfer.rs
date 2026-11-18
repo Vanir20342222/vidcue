@@ -524,7 +524,7 @@ impl Backend {
         )
         .await?;
         ensure!(!cancel.is_cancelled(), "Cancelled");
-        // persist_noclobber semantics for directories on Linux, using renameat2.
+        // Atomic no-clobber directory publication on Linux and Android.
         publish(staging.path(), &options.output)?;
         receipt.entrypoint = options.output.join(entrypoint);
         receipt.subtitle_files = subtitle_files
@@ -797,12 +797,13 @@ fn subtitle_extension(bytes: &[u8]) -> Result<&'static str> {
     bail!("Subtitle is not supported UTF-8 SRT/WebVTT (compressed/HTML responses rejected)")
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn publish(from: &Path, to: &Path) -> Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let from = std::ffi::CString::new(from.as_os_str().as_bytes())?;
     let to = std::ffi::CString::new(to.as_os_str().as_bytes())?;
     // SAFETY: both C strings live through the syscall; RENAME_NOREPLACE prevents clobber races.
+    #[cfg(target_os = "linux")]
     let result = unsafe {
         libc::renameat2(
             libc::AT_FDCWD,
@@ -812,6 +813,20 @@ fn publish(from: &Path, to: &Path) -> Result<()> {
             libc::RENAME_NOREPLACE,
         )
     };
+    // Android's libc renameat2 wrapper requires API 30; the app supports API 26.
+    // Call the kernel directly so older bionic versions need no newer libc symbol.
+    // SAFETY: valid C strings live through the call, and the arguments match renameat2.
+    #[cfg(target_os = "android")]
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE as libc::c_uint,
+        )
+    };
     if result != 0 {
         return Err(std::io::Error::last_os_error())
             .context("Cannot publish offline bundle without overwriting");
@@ -819,8 +834,114 @@ fn publish(from: &Path, to: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 fn publish(_from: &Path, _to: &Path) -> Result<()> {
     // Do not silently replace a destination on platforms without this guarantee.
-    bail!("Atomic offline-bundle publication currently requires Linux")
+    bail!("Atomic offline-bundle publication currently requires Linux or Android")
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "android")))]
+mod publication_tests {
+    use super::publish;
+    use std::fs;
+
+    #[test]
+    fn publication_moves_the_complete_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let staging = root.path().join("staging");
+        let output = root.path().join("映画 bundle");
+        fs::create_dir_all(staging.join("video")).unwrap();
+        fs::write(staging.join("video/segment.ts"), b"complete").unwrap();
+        publish(&staging, &output).unwrap();
+        assert!(!staging.exists());
+        assert_eq!(
+            fs::read(output.join("video/segment.ts")).unwrap(),
+            b"complete"
+        );
+    }
+
+    #[test]
+    fn publication_rejects_late_destination_collisions() {
+        use std::os::unix::fs::symlink;
+
+        // These destinations can appear after the downloader's initial exists check.
+        // Plain rename would replace an empty directory; exists() misses dangling links.
+        for kind in ["empty-directory", "directory", "file", "dangling-symlink"] {
+            let root = tempfile::tempdir().unwrap();
+            let staging = root.path().join("staging");
+            let output = root.path().join("output");
+            fs::create_dir(&staging).unwrap();
+            fs::write(staging.join("new"), b"new").unwrap();
+            match kind {
+                "empty-directory" => fs::create_dir(&output).unwrap(),
+                "directory" => {
+                    fs::create_dir(&output).unwrap();
+                    fs::write(output.join("original"), b"original").unwrap();
+                }
+                "file" => fs::write(&output, b"original").unwrap(),
+                _ => symlink("missing-target", &output).unwrap(),
+            }
+            let error = publish(&staging, &output).unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+                    .raw_os_error(),
+                Some(libc::EEXIST),
+                "{kind}: {error:#}"
+            );
+            assert_eq!(fs::read(staging.join("new")).unwrap(), b"new");
+            match kind {
+                "empty-directory" => assert_eq!(fs::read_dir(&output).unwrap().count(), 0),
+                "directory" => {
+                    assert_eq!(fs::read(output.join("original")).unwrap(), b"original");
+                    assert!(!output.join("new").exists());
+                }
+                "file" => assert_eq!(fs::read(&output).unwrap(), b"original"),
+                _ => assert_eq!(
+                    fs::read_link(&output).unwrap(),
+                    std::path::Path::new("missing-target")
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_publication_has_one_winner_and_preserves_the_loser() {
+        let root = tempfile::tempdir().unwrap();
+        let output = root.path().join("output");
+        let barrier = std::sync::Barrier::new(2);
+        let staging = [root.path().join("first"), root.path().join("second")];
+        for (index, path) in staging.iter().enumerate() {
+            fs::create_dir(path).unwrap();
+            fs::write(path.join("owner"), index.to_string()).unwrap();
+        }
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = staging
+                .iter()
+                .map(|path| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        publish(path, &output)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        let winner = results.iter().position(|result| result.is_ok()).unwrap();
+        assert_eq!(
+            fs::read_to_string(output.join("owner")).unwrap(),
+            winner.to_string()
+        );
+        assert!(!staging[winner].exists());
+        let loser = 1 - winner;
+        assert_eq!(
+            fs::read_to_string(staging[loser].join("owner")).unwrap(),
+            loser.to_string()
+        );
+    }
 }
