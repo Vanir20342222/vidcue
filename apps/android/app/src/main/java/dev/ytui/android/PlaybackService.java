@@ -812,10 +812,40 @@ public final class PlaybackService extends MediaSessionService {
     return session;
   }
 
+  private final java.util.ArrayDeque<Runnable> startupCommands = new java.util.ArrayDeque<>();
+  private boolean startupWaiting;
+
   @Override
   public int onStartCommand(Intent intent, int flags, int id) {
     if (intent == null) {
       stopSelf(id);
+      return START_NOT_STICKY;
+    }
+    if (!EngineStartup.current.isReady() || startupWaiting) {
+      // A process-cold startForegroundService still has its OS deadline while
+      // initialization runs. Retain the same session token through handoff.
+      if ("play".equals(intent.getAction()))
+        startForeground(NotificationIds.PLAYBACK,
+            new android.app.Notification.Builder(this, "ytui-playback")
+                .setSmallIcon(R.drawable.ic_vidcue_notification)
+                .setContentTitle("Preparing playback")
+                .setStyle(new android.app.Notification.MediaStyle().setMediaSession(session.getPlatformToken()))
+                .setOnlyAlertOnce(true).build());
+      startupCommands.addLast(() -> {
+        if (EngineStartup.current.isReady()) onStartCommand(intent, flags, id);
+        else {
+          stopForeground(STOP_FOREGROUND_REMOVE);
+          stopSelf(id);
+        }
+      });
+      if (!startupWaiting) {
+        startupWaiting = true;
+        EngineStartup.current.whenFinished(() -> MediaBridge.main.post(() -> {
+          if (current != this) { startupCommands.clear(); return; }
+          startupWaiting = false;
+          while (!startupCommands.isEmpty()) startupCommands.removeFirst().run();
+        }));
+      }
       return START_NOT_STICKY;
     }
     lastStartId = id;
@@ -1185,7 +1215,7 @@ public final class PlaybackService extends MediaSessionService {
       JSONObject started = new JSONObject(currentRequest.toString());
       JSONObject acceptedRequest = currentRequest;
       String contextId = contextId();
-      NativeBridge.activateContext(contextId);
+      if (EngineStartup.current.isReady()) NativeBridge.activateContext(contextId);
       String queuedUrl = pendingQueueUrl;
       pendingQueueUrl = "";
       currentRequest.remove("queued");
@@ -1442,6 +1472,7 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   static JSONObject rpc(JSONObject data) throws Exception {
+    EngineStartup.current.await();
     JSONObject response = new JSONObject(NativeBridge.request(data.toString()));
     if (!response.optBoolean("ok")) throw new Exception(response.optString("error"));
     return response.optJSONObject("data") == null
@@ -1450,6 +1481,7 @@ public final class PlaybackService extends MediaSessionService {
   }
 
   static JSONArray rpcArray(JSONObject data) throws Exception {
+    EngineStartup.current.await();
     JSONObject response = new JSONObject(NativeBridge.request(data.toString()));
     if (!response.optBoolean("ok")) throw new Exception(response.optString("error"));
     return response.getJSONArray("data");
@@ -2159,7 +2191,7 @@ public final class PlaybackService extends MediaSessionService {
       currentRequest.put("context_id", token).put("context", descriptor);
       activeContext = token;
       contextReady = false;
-      NativeBridge.activateContext(token);
+      if (EngineStartup.current.isReady()) NativeBridge.activateContext(token);
       prepareContext(descriptor);
       return true;
     } catch (JSONException impossible) {
@@ -2199,7 +2231,7 @@ public final class PlaybackService extends MediaSessionService {
     PlaybackRecovery.clear();
     generation++;
     streamRefreshing = false;
-    NativeBridge.activateContext("");
+    if (EngineStartup.current.isReady()) NativeBridge.activateContext("");
     cancelContextJobs();
     PlaybackCache.cancel();
     activeContext = "";
@@ -2221,7 +2253,7 @@ public final class PlaybackService extends MediaSessionService {
   void cancelContextJobs() {
     Long[] jobs = contextJobs.toArray(new Long[0]);
     contextJobs.removeAll(Arrays.asList(jobs));
-    for (long id : jobs) NativeBridge.cancel(id);
+    for (long id : jobs) if (EngineStartup.current.isReady()) NativeBridge.cancel(id);
   }
 
   /** Store the current item's resume position (history on, not a preview or live stream). */
@@ -2443,7 +2475,7 @@ public final class PlaybackService extends MediaSessionService {
     positions.shutdown();
     checkpoint(true);
     initialized = false;
-    NativeBridge.activateContext("");
+    if (EngineStartup.current.isReady()) NativeBridge.activateContext("");
     cancelContextJobs();
     PlaybackCache.cancel();
     current = null;

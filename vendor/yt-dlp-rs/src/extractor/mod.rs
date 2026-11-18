@@ -594,11 +594,17 @@ fn download_json_with(
         }
         error => error,
     };
-    let mut response = direct::request_with_headers(client, url, None, headers).map_err(wrap)?;
+    let response = direct::request_with_headers(client, url, None, headers).map_err(wrap)?;
     let mut body = Vec::new();
     response
+        .take(16 * 1024 * 1024 + 1)
         .read_to_end(&mut body)
         .map_err(crate::Error::ExtractionRead)?;
+    if body.len() > 16 * 1024 * 1024 {
+        return Err(crate::Error::Reported(
+            "Service text exceeds memory budget".into(),
+        ));
+    }
     let text = transform(&String::from_utf8_lossy(&body))?;
     serde_json::from_str(&text).map_err(|error| {
         crate::Error::Reported(format!(
@@ -691,7 +697,6 @@ fn download_webpage_handle_quiet(
     extractor: &'static str,
     id: &str,
 ) -> Result<(String, Url)> {
-    use std::io::Read;
     let wrap = |error: crate::Error| match error {
         crate::Error::Http(_) | crate::Error::HttpRetryAfter { .. } => {
             crate::Error::ExtractorRequest {
@@ -703,15 +708,13 @@ fn download_webpage_handle_quiet(
         }
         error => error,
     };
-    let mut response = direct::request(client, url, None).map_err(wrap)?;
+    let response = direct::request(client, url, None).map_err(wrap)?;
     let page_url = response.url().clone();
-    let mut body = Vec::new();
-    response
-        .read_to_end(&mut body)
-        .map_err(crate::Error::ExtractionRead)?;
+    let text = crate::http::bounded_text(response, 8 * 1024 * 1024)?;
+    let body = text.as_bytes();
     crate::screen::expect_page(id, None, None);
-    crate::screen::page_read(&page_url, &body)?;
-    Ok((String::from_utf8_lossy(&body).into_owned(), page_url))
+    crate::screen::page_read(&page_url, body)?;
+    Ok((text, page_url))
 }
 
 /// Upstream `_download_xml(url, video_id)`: `[EXTRACTOR] ID: Downloading
@@ -747,11 +750,17 @@ pub(crate) fn download_xml_note(
         }
         error => error,
     };
-    let mut response = direct::request(client, url, None).map_err(wrap)?;
+    let response = direct::request(client, url, None).map_err(wrap)?;
     let mut body = Vec::new();
     response
+        .take(16 * 1024 * 1024 + 1)
         .read_to_end(&mut body)
         .map_err(crate::Error::ExtractionRead)?;
+    if body.len() > 16 * 1024 * 1024 {
+        return Err(crate::Error::Reported(
+            "Service text exceeds memory budget".into(),
+        ));
+    }
     let text = String::from_utf8(body).map_err(|_| {
         crate::Error::Reported(format!(
             "[{extractor}] {id}: Failed to parse XML (not UTF-8)"

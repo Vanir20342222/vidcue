@@ -6,12 +6,12 @@ import androidx.media3.database.StandaloneDatabaseProvider;
 import androidx.media3.datasource.*;
 import androidx.media3.datasource.cache.*;
 import androidx.media3.exoplayer.offline.*;
-import java.util.concurrent.Executors;
 import org.json.*;
 
 @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
 public final class OfflineStore {
-  static final java.util.concurrent.ExecutorService IO = Executors.newFixedThreadPool(3);
+  private static final OfflineExecutors EXECUTORS = new OfflineExecutors();
+  static final java.util.concurrent.ExecutorService IO = EXECUTORS.metadata;
   static SimpleCache cache;
   static DownloadManager manager;
   static volatile boolean dirty = true, libraryVisible;
@@ -61,13 +61,26 @@ public final class OfflineStore {
     return now != null && now.state == stored.state ? now : stored;
   }
 
+  private static StandaloneDatabaseProvider database;
+
+  static synchronized void prepareStorage() {
+    if (cache != null) return;
+    android.os.Trace.beginSection("Vidcue.offlineStorage");
+    try {
+      Context ctx = MediaBridge.context;
+      database = new StandaloneDatabaseProvider(ctx);
+      cache = new SimpleCache(new java.io.File(ctx.getFilesDir(), "offline"),
+          new NoOpCacheEvictor(), database);
+    } finally { android.os.Trace.endSection(); }
+  }
+
   static synchronized DownloadManager manager() {
     if (manager == null) {
+      if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper())
+        throw new IllegalStateException("Offline library is still opening");
       Context ctx = MediaBridge.context;
-      StandaloneDatabaseProvider db = new StandaloneDatabaseProvider(ctx);
-      cache =
-          new SimpleCache(
-              new java.io.File(ctx.getFilesDir(), "offline"), new NoOpCacheEvictor(), db);
+      prepareStorage();
+      StandaloneDatabaseProvider db = database;
       DownloaderFactory factory =
           request -> {
             JSONObject data;
@@ -92,7 +105,7 @@ public final class OfflineStore {
                         // Bounded CDN chunks avoid YouTube's playback-rate pacing of a
                         // single open-ended progressive request.
                         .setUpstreamDataSourceFactory(ChunkedRangeDataSource.factory(http)),
-                    IO)
+                    EXECUTORS.transfers)
                 .createDownloader(request);
           };
       manager = new DownloadManager(ctx, new DefaultDownloadIndex(db), factory);
@@ -132,7 +145,10 @@ public final class OfflineStore {
       manager.setMaxParallelDownloads(MobileSettings.integer("download_parallel"));
       applyNetworkRequirement();
       manager.setMinRetryCount(0);
-      manager.resumeDownloads();
+      manager.pauseDownloads();
+      EngineStartup.current.whenFinished(() -> MediaBridge.main.post(() -> {
+        if (EngineStartup.current.isReady()) manager.resumeDownloads();
+      }));
       watchProgress();
     }
     return manager;

@@ -17,7 +17,7 @@ serde_json = "1"
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "socks"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "socks", "http2", "gzip", "brotli", "deflate"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 url = "2"
 tempfile = "3"

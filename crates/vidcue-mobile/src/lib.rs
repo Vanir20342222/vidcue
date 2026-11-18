@@ -249,8 +249,8 @@ impl Engine {
                                 .with_cache(self.cache.join("radio"));
                     }
                     if proxy_changed {
-                        *self.images.lock().expect("images") =
-                            ImageCache::new(client, self.cache.join("images"));
+                        let mut images = self.images.lock().expect("images");
+                        *images = images.with_client(client);
                     }
                 }
                 equalizer::configure(&config);
@@ -1167,23 +1167,23 @@ impl Engine {
         let client_key = key.clone();
         let adaptive = quality == "auto" && !audio;
         let fresh = r["fresh"].as_bool().unwrap_or(false);
+        let radio = self.radio.lock().expect("radio").clone();
+        let cookies = self.session.lock().expect("session").clone();
+        let visitor = self
+            .browser
+            .lock()
+            .expect("browser")
+            .playback_visitor(audio);
+        let pool = self.resolver.clone();
         let mut value = self
             .resolver
-            .get_or_resolve(key, fresh, async {
+            .get_or_resolve(key, fresh, async move {
                 if !vidcue_core::youtube_host(url.host_str().unwrap_or_default()) {
-                    let radio = self.radio.lock().expect("radio").clone();
                     let resolved = radio.resolve_playlist(url.as_str()).await?;
                     return Ok(
                         json!({"url":resolved,"headers":{},"audio_url":null,"live":media.live}),
                     );
                 }
-                let cookies = self.session.lock().expect("session").clone();
-                let visitor = self
-                    .browser
-                    .lock()
-                    .expect("browser")
-                    .playback_visitor(audio);
-                let pool = self.resolver.clone();
                 let slot_at = std::time::Instant::now();
                 let permit = extractor_slots().acquire_owned().await?;
                 let slot_ms = slot_at.elapsed().as_millis() as u64;

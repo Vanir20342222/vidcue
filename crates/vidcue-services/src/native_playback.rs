@@ -96,6 +96,7 @@ pub(super) fn resolve(
         let mut request = http
             .get(url)
             .header(reqwest::header::RANGE, "bytes=0-0")
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
             .timeout(remaining.min(std::time::Duration::from_secs(5)));
         for (name, value) in headers {
             request = request.header(name, value);

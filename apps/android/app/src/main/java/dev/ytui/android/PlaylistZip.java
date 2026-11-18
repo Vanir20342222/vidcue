@@ -28,6 +28,7 @@ final class PlaylistZip {
 
   /** The stored offline playlist with [id]. */
   static JSONObject find(String id) throws Exception {
+    EngineStartup.current.await();
     JSONArray playlists =
         new JSONArray(
             NativeBridge.request(new JSONObject().put("op", "offline_playlists").toString()));

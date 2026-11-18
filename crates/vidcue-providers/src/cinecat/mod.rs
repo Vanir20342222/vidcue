@@ -176,6 +176,11 @@ impl Backend {
         ensure!((1..=8).contains(&concurrency), "Concurrency must be 1–8");
         let client = Client::builder()
             .user_agent("Vidcue-Cinecat/0.1")
+            // This client also reads byte-addressed media. Preserve encoded bytes
+            // and Content-Encoding so range/integrity checks remain meaningful.
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
             .connect_timeout(Duration::from_secs(10))
             .read_timeout(Duration::from_secs(20))
             .pool_idle_timeout(Duration::from_secs(60))
@@ -516,7 +521,9 @@ impl Backend {
                     .checked_add(length)
                     .and_then(|n| n.checked_sub(1))
                     .context("Invalid byte range")?;
-                request = request.header("Range", format!("bytes={offset}-{end}"));
+                request = request
+                    .header("Range", format!("bytes={offset}-{end}"))
+                    .header(reqwest::header::ACCEPT_ENCODING, "identity");
             }
             let response = tokio::select! {
                 _ = cancel.cancelled() => bail!("Cancelled"),

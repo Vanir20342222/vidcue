@@ -175,3 +175,75 @@ mod proxy_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod compression_tests {
+    use super::*;
+    #[tokio::test]
+    async fn gzip_is_decoded_before_text_limit_and_malformed_data_fails() {
+        let (base, server) = test_http::serve_request(move |request| {
+            let headers = request.to_ascii_lowercase();
+            assert!(headers.contains("cookie: fixture=synthetic"));
+            assert!(headers.contains("authorization: synthetic"));
+            assert!(headers.contains("gzip"));
+            let body = if request.starts_with("GET /bad ") {
+                b"invalid gzip".to_vec()
+            } else {
+                vec![
+                    31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 237, 193, 1, 13, 0, 0, 0, 194, 160, 218,
+                    143, 111, 15, 7, 20, 0, 0, 0, 240, 110, 193, 119, 16, 62, 0, 16, 0, 0,
+                ]
+            };
+            (200, "Content-Encoding: gzip\r\n".into(), body)
+        })
+        .await;
+        let client = http_client(None).unwrap();
+        let response = client
+            .get(&base)
+            .header("Cookie", "fixture=synthetic")
+            .header("Authorization", "synthetic")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            browse::limited_text(response, 4096).await.unwrap().len(),
+            4096
+        );
+        let response = client
+            .get(&base)
+            .header("Cookie", "fixture=synthetic")
+            .header("Authorization", "synthetic")
+            .send()
+            .await
+            .unwrap();
+        assert!(browse::limited_text(response, 1024).await.is_err());
+        let response = client
+            .get(format!("{base}/bad"))
+            .header("Cookie", "fixture=synthetic")
+            .header("Authorization", "synthetic")
+            .send()
+            .await
+            .unwrap();
+        assert!(browse::limited_text(response, 4096).await.is_err());
+        server.abort();
+    }
+    #[tokio::test]
+    async fn range_requests_do_not_advertise_compression_or_change_bytes() {
+        let (base, server) = test_http::serve_request(|request| {
+            assert!(request.to_lowercase().contains("range: bytes=1-3"));
+            assert!(request.to_lowercase().contains("accept-encoding: identity"));
+            (206, "Content-Range: bytes 1-3/5\r\n".into(), vec![1, 2, 3])
+        })
+        .await;
+        let response = http_client(None)
+            .unwrap()
+            .get(base)
+            .header(reqwest::header::RANGE, "bytes=1-3")
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.bytes().await.unwrap().as_ref(), &[1, 2, 3]);
+        server.abort();
+    }
+}
