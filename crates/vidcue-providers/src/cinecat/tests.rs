@@ -31,6 +31,25 @@ fn ok(body: impl Into<Vec<u8>>) -> (u16, String, Vec<u8>) {
     (200, String::new(), body.into())
 }
 
+async fn serve_aphrodite(
+    handler: impl Fn(&str) -> (u16, String, Vec<u8>) + Send + 'static,
+) -> (String, tokio::task::JoinHandle<()>) {
+    test_http::serve_request(move |request| {
+        if let Some(response) = super::aphrodite::fixture_response(request) {
+            return ok(response);
+        }
+        let target = request
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap();
+        handler(target)
+    })
+    .await
+}
+
 #[tokio::test]
 async fn zcdn_backup_origins_validate_and_complete_the_web_failover_order() {
     let (base, server) =
@@ -119,7 +138,7 @@ async fn failover_verification_rejects_error_video_and_falls_back_to_backup() {
     use sha2::{Digest, Sha256};
     let blocked = b"synthetic encoded network error card";
     let hash = hex::encode(Sha256::digest(blocked));
-    let (base, server) = test_http::serve(move |path| match path {
+    let (base, server) = serve_aphrodite(move |path| match path {
         "/cdn?tmdb=438631&type=movie" => ok(json!({"ready":true,"url":"/z-list.m3u8"}).to_string()),
         "/content/movie/438631" => {
             ok(json!({"found":true,"type":"hls","url":"/a-list.m3u8"}).to_string())
@@ -171,7 +190,7 @@ async fn failover_verification_rejects_error_video_and_falls_back_to_backup() {
 
 #[tokio::test]
 async fn failover_order_is_explicit_validated_and_wins_over_defaults() {
-    let (base, server) = test_http::serve(|path| match path {
+    let (base, server) = serve_aphrodite(|path| match path {
         "/cdn?tmdb=45745&type=movie" => ok(json!({"ready":true,"url":"/z-list.m3u8"}).to_string()),
         "/content/movie/45745" => {
             ok(json!({"found":true,"type":"hls","url":"/a-list.m3u8"}).to_string())
@@ -276,7 +295,7 @@ async fn browser_zcdn_contract_resolves_ready_movie_and_reports_queued_work() {
 
 #[tokio::test]
 async fn browser_aphrodite_contract_uses_tv_episode_path_and_detects_no_content() {
-    let (base, server) = test_http::serve(|path| match path {
+    let (base, server) = serve_aphrodite(|path| match path {
         "/content/tv/1396/1/1" => {
             ok(json!({"found":true,"type":"hls","url":"/episode/master.m3u8"}).to_string())
         }
@@ -303,6 +322,8 @@ async fn browser_aphrodite_contract_uses_tv_episode_path_and_detects_no_content(
         )
         .await
         .unwrap();
+    // Session credentials authenticate only the descriptor request.
+    assert_eq!(resolved.streams[0].headers.len(), 2);
     assert_eq!(resolved.streams[0].url.path(), "/episode/master.m3u8");
     assert_eq!(
         resolved.streams[0]
@@ -325,6 +346,31 @@ async fn browser_aphrodite_contract_uses_tv_episode_path_and_detects_no_content(
             .is_err()
     );
     server.abort();
+}
+
+#[tokio::test]
+async fn aphrodite_failed_sessions_never_request_unsigned_content() {
+    for (status, body) in [
+        (401, "{}"),
+        (429, "{}"),
+        (200, "{}"),
+        (200, r#"{"d":"000000"}"#),
+    ] {
+        let (base, server) = test_http::serve_request(move |request| {
+            assert!(request.starts_with("POST /content/index "));
+            (status, String::new(), body.as_bytes().to_vec())
+        })
+        .await;
+        let web = WebSources::new(Url::parse(&base).unwrap(), Url::parse(&base).unwrap()).unwrap();
+        assert!(
+            backend(&base)
+                .with_web_sources(web)
+                .resolve("aphrodite", &media(), &CancellationToken::new())
+                .await
+                .is_err()
+        );
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -1149,7 +1195,7 @@ async fn live_web_provider_response_is_hls_without_browser_state() {
         .unwrap()
         .with_web_sources(
             WebSources::new(
-                Url::parse("https://zcdn2.2wwlgkfo-31a.workers.dev").unwrap(),
+                Url::parse("https://zcdn2.c3204a347-edge.workers.dev").unwrap(),
                 Url::parse("https://cdn.hls.lol").unwrap(),
             )
             .unwrap(),

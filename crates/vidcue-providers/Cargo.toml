@@ -24,3 +24,4 @@ httpdate = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 libc = "0.2"
 uuid.workspace = true
+ring = "0.17.14"
