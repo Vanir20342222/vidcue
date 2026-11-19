@@ -654,9 +654,6 @@ internal fun FocusedPlayer(
                             motion.spring(),
                             label = "cover-rest",
                         )
-                    // The paused size is a real layout size, not a layer scale: the cover is a shared
-                    // element, which is placed without its parents' layer scale, so a scaled-down
-                    // parent drew it towards the bottom right.
                     Visualizer(
                         player,
                         config,
