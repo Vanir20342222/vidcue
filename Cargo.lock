@@ -6864,6 +6864,7 @@ dependencies = [
  "image",
  "libc",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha1",

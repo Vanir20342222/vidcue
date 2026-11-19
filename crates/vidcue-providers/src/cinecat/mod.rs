@@ -2,6 +2,7 @@
 //!
 //! Resolved URLs are short lived capabilities: do not log or persist them in reports.
 //! Native web adapters implement observed public HTTP contracts without executing site code.
+mod aphrodite;
 mod hls;
 mod transfer;
 mod web;

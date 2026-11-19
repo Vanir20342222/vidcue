@@ -22,21 +22,21 @@ struct Cli {
     api_only: bool,
     #[arg(
         long,
-        default_value = "https://zcdn2.2wwlgkfo-31a.workers.dev",
+        default_value = "https://zcdn2.c3204a347-edge.workers.dev",
         global = true,
         help = "Primary ZCDN origin (provider name 'zcdn')"
     )]
     zcdn: Url,
     #[arg(
         long,
-        default_value = "https://zcdn1.2wwlgkfo-31a.workers.dev",
+        default_value = "https://zcdn1.c3204a347-edge.workers.dev",
         global = true,
         help = "Independent backup ZCDN origin (provider name 'zcdn1')"
     )]
     zcdn1: Url,
     #[arg(
         long,
-        default_value = "https://zcdn3.2wwlgkfo-31a.workers.dev",
+        default_value = "https://zcdn3.c3204a347-edge.workers.dev",
         global = true,
         help = "Independent backup ZCDN origin (provider name 'zcdn3')"
     )]

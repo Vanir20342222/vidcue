@@ -163,8 +163,13 @@ impl Backend {
             };
             sources.aphrodite.join(&path)?
         };
+        let request_headers = if provider == "aphrodite" {
+            self.aphrodite_headers(origin, url.path(), cancel).await?
+        } else {
+            reqwest::header::HeaderMap::new()
+        };
         let bytes = self
-            .bytes(&url, &reqwest::header::HeaderMap::new(), JSON_LIMIT, cancel)
+            .bytes(&url, &request_headers, JSON_LIMIT, cancel)
             .await?;
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("Invalid web provider response"))?;

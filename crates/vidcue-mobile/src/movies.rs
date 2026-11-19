@@ -27,9 +27,9 @@ const PROBE_SAMPLES: usize = 2;
 /// The Cinecat sources API: the same defaults the standalone CLI ships, so resolution behaves
 /// identically to `vidcue-cinecat` on this network (ZCDN web adapters first, then the API list).
 const CINECAT_API: &str = "https://edge.cinecat.eu";
-const ZCDN_PRIMARY: &str = "https://zcdn2.2wwlgkfo-31a.workers.dev";
-const ZCDN_BACKUP_1: &str = "https://zcdn1.2wwlgkfo-31a.workers.dev";
-const ZCDN_BACKUP_3: &str = "https://zcdn3.2wwlgkfo-31a.workers.dev";
+const ZCDN_PRIMARY: &str = "https://zcdn2.c3204a347-edge.workers.dev";
+const ZCDN_BACKUP_1: &str = "https://zcdn1.c3204a347-edge.workers.dev";
+const ZCDN_BACKUP_3: &str = "https://zcdn3.c3204a347-edge.workers.dev";
 const APHRODITE_CDN: &str = "https://cdn.hls.lol";
 
 #[derive(Deserialize)]
