@@ -71,13 +71,10 @@ establishes a live-service, physical-device or stable-release claim.
      jobs once. Do not change the code or the workflow.
    - **A startup timing budget.** These are advisory on PRs and enforced nightly. A PR failure
      with a budget message means something hung: treat it as your change.
-2. **Stop after two failed attempts on the same job.** Post one PR comment with the failing job,
-   the log excerpt that matters, what you tried and what you suspect, then end your turn and tell
-   the owner. Do not keep pushing.
-3. A conflict with `main`: merge `origin/main` once. If the conflict is mechanical (adjacent
+2. A conflict with `main`: merge `origin/main` once. If the conflict is mechanical (adjacent
    edits, imports, a doc), resolve it and say what you did. If both sides changed the behaviour of
    the same function, stop and ask the owner which wins.
-4. Never: push an empty commit or close and reopen to re-trigger CI, change a workflow to skip a
+3. Never: push an empty commit or close and reopen to re-trigger CI, change a workflow to skip a
    job, or resolve someone else's PR conflicts.
 
 ## 7. Opening the PR
