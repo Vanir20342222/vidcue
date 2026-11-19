@@ -1522,6 +1522,14 @@ class CatalogUiTest {
                     android.os.SystemClock.sleep(16)
                 }
             }
+            fun assertPlayerCoverDrawn() {
+                val image = compose.onNodeWithTag("music-visualizer").captureToImage()
+                val pixel = image.toPixelMap()[image.width / 2, image.height / 4]
+                Assert.assertTrue(
+                    "Expected the warm fixture cover to be painted over the player surface",
+                    pixel.red > 0.55f && pixel.red > pixel.green * 1.15f,
+                )
+            }
             val started = android.os.SystemClock.elapsedRealtime()
             val stages = mutableListOf<JSONObject>()
             fun mark(name: String) {
@@ -1536,6 +1544,7 @@ class CatalogUiTest {
             compose.onNodeWithTag("mini-player").performClick()
             frames(400)
             compose.onNodeWithTag("focused-player").assertIsDisplayed()
+            assertPlayerCoverDrawn()
             mark("swipe to minimize")
             compose.onNodeWithTag("panel-header").performTouchInput {
                 swipe(center, center + androidx.compose.ui.geometry.Offset(0f, height * 3f), 300)
@@ -1545,6 +1554,7 @@ class CatalogUiTest {
             mark("expand player again")
             compose.onNodeWithTag("mini-player").performClick()
             frames(400)
+            assertPlayerCoverDrawn()
             mark("minimize by chevron")
             compose.onNodeWithContentDescription("Minimize player").performClick()
             frames(400)

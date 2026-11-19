@@ -236,7 +236,7 @@ internal fun time(seconds: Float): String {
     else "%d:%02d".format(value / 60, value % 60)
 }
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.animation.ExperimentalSharedTransitionApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     val dark = isSystemInDarkTheme()
@@ -438,11 +438,6 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
             LocalIndication provides SoftIndication,
             LocalRippleConfiguration provides null,
         ) {
-            androidx.compose.animation.SharedTransitionLayout(Modifier.fillMaxSize()) {
-            CompositionLocalProvider(
-                LocalSharedScope provides this,
-                LocalPlayerExpanded provides (playerOpen && !videoPlayer),
-            ) {
             Box(Modifier.fillMaxSize()) {
                 // While setup is shown the app beneath is not composed at all, so neither
                 // touch, keyboard focus, TalkBack nor a notification-opened player can reach
@@ -821,8 +816,6 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         onboarding = false
                     }
                 }
-            }
-            }
             }
         }
     }
@@ -2292,8 +2285,9 @@ private fun BoxScope.ArtworkBody(media: MediaCard, pixels: Int, enabled: Boolean
             remember(media.key, source, pixels, enabled) {
                 Animatable(if (shown != null || !motion.animate) 1f else 0f)
             }
-        LaunchedEffect(reveal, bitmap, motion) {
-            if (bitmap != null && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
+        val hasVisibleCover = shown != null
+        LaunchedEffect(reveal, hasVisibleCover, motion) {
+            if (hasVisibleCover && reveal.value < 1f) reveal.animateTo(1f, motion.fade(180))
         }
         // Keep a quiet, fixed-size surface underneath the fade instead of removing the icon
         // and briefly exposing a different background as soon as the image arrives.
@@ -3168,7 +3162,7 @@ internal fun Visualizer(player: PlayerState, config: JSONObject, modifier: Modif
         if (style == "classic")
             Artwork(
                 media,
-                Modifier.fillMaxSize().align(Alignment.Center).sharedCover(media.key, LocalPlayerExpanded.current),
+                Modifier.fillMaxSize().align(Alignment.Center),
                 config.optBoolean("thumbnails", true),
                 shape = RoundedCornerShape(cornerRadius),
             )

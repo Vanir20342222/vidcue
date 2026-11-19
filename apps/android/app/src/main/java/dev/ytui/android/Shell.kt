@@ -376,7 +376,7 @@ private fun PlayerDockCard(vm: YtuiViewModel, player: PlayerState) {
             ) {
                 Artwork(
                     media,
-                    Modifier.size(40.dp).sharedCover(media.key, !LocalPlayerExpanded.current).clip(MediaTokens.small),
+                    Modifier.size(40.dp).clip(MediaTokens.small),
                     config.optBoolean("thumbnails", true),
                     shape = MediaTokens.small,
                 )
@@ -569,31 +569,4 @@ internal object GestureTips {
     fun done(context: android.content.Context, name: String) = prefs(context).edit().putBoolean(name, true).apply()
 
     fun reset(context: android.content.Context) = prefs(context).edit().clear().apply()
-}
-
-@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
-internal val LocalSharedScope =
-    staticCompositionLocalOf<androidx.compose.animation.SharedTransitionScope?> { null }
-
-/** True while the music player covers the app (the cover then belongs to the full player). */
-internal val LocalPlayerExpanded = compositionLocalOf { false }
-
-/**
- * The playing cover is one object: it flies between the mini player and the full player instead
- * of one fading out while another fades in. Each side says when it owns the cover.
- */
-@OptIn(androidx.compose.animation.ExperimentalSharedTransitionApi::class)
-@Composable
-internal fun Modifier.sharedCover(key: String, visible: Boolean): Modifier {
-    val shared = LocalSharedScope.current ?: return this
-    if (!LocalMotion.current.animate) return this
-    return with(shared) {
-        // One shared cover for whatever is playing. A per-track key made every Next create a new
-        // pair between the hidden mini player and the open player, which flew or mis-placed the
-        // new cover instead of simply showing it.
-        this@sharedCover.sharedElementWithCallerManagedVisibility(
-            rememberSharedContentState("cover:now-playing"),
-            visible,
-        )
-    }
 }
