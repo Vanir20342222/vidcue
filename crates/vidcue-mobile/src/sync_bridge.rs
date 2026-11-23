@@ -175,7 +175,7 @@ pub(crate) struct Inner {
     connection: Mutex<Option<Connection>>,
     sync_task: Mutex<Option<JoinHandle<()>>>,
     key_task: Mutex<Option<JoinHandle<()>>>,
-    trigger: Notify,
+    trigger: Arc<Notify>,
     urgent: AtomicBool,
     lazy: AtomicBool,
     foreground: Mutex<Foreground>,
@@ -223,7 +223,7 @@ impl SyncHandle {
             connection: Mutex::new(None),
             sync_task: Mutex::new(None),
             key_task: Mutex::new(None),
-            trigger: Notify::new(),
+            trigger: Arc::new(Notify::new()),
             urgent: AtomicBool::new(false),
             lazy: AtomicBool::new(false),
             foreground: Mutex::new(Foreground::default()),
@@ -521,7 +521,7 @@ impl Inner {
             return;
         };
         let inner = self.clone();
-        *slot = Some(crate::runtime().spawn(sync_loop(inner, owner)));
+        *slot = Some(crate::runtime().spawn(sync_loop(Arc::downgrade(&inner), owner)));
     }
 
     /// One sync run with the engine's library; emits status and key events.
@@ -565,8 +565,9 @@ impl Inner {
             &session.token,
             session.device_id,
         )?);
-        let pump = crate::runtime().spawn(event_pump(self.clone(), client.subscribe()));
-        let watch = crate::runtime().spawn(state_watch(self.clone(), client.state()));
+        // Background tasks hold weak references, so dropping the engine ends them.
+        let pump = crate::runtime().spawn(event_pump(Arc::downgrade(self), client.subscribe()));
+        let watch = crate::runtime().spawn(state_watch(Arc::downgrade(self), client.state()));
         *connection = Some(Connection {
             client,
             tasks: vec![pump, watch],
@@ -665,8 +666,8 @@ impl Inner {
         }
         jam.room = Some(room);
         jam.last_seek = None;
-        let sampler = crate::runtime().spawn(clock_sampler(self.clone()));
-        let pinger = crate::runtime().spawn(jam_pinger(self.clone(), room));
+        let sampler = crate::runtime().spawn(clock_sampler(Arc::downgrade(self)));
+        let pinger = crate::runtime().spawn(jam_pinger(Arc::downgrade(self), room));
         jam.tasks = vec![sampler, pinger];
     }
 
@@ -682,10 +683,11 @@ impl Inner {
         if slot.as_ref().is_some_and(|t| !t.is_finished()) {
             return;
         }
-        let inner = self.clone();
+        let weak = Arc::downgrade(self);
         *slot = Some(crate::runtime().spawn(async move {
             // Poll every 5 s until granted or expired (15 min); `key_granted` wakes it.
             loop {
+                let Some(inner) = weak.upgrade() else { return };
                 let Some(engine) = inner.engine() else { return };
                 if engine.relay_id().is_none() {
                     inner.emit_status();
@@ -708,15 +710,18 @@ impl Inner {
                         }
                     }
                 }
+                drop((inner, engine));
                 tokio::time::sleep(KEY_POLL).await;
             }
         }));
     }
 }
 
-async fn sync_loop(inner: Arc<Inner>, owner: Weak<Engine>) {
+async fn sync_loop(weak: Weak<Inner>, owner: Weak<Engine>) {
     let mut failures = 0u32;
     loop {
+        let Some(inner) = weak.upgrade() else { return };
+        let notify = inner.trigger.clone();
         let now = vidcue_sync::now_ms();
         let retry = inner.engine().and_then(|e| e.next_retry());
         let mut wait = retry.map(|at| Duration::from_millis((at - now).max(0) as u64));
@@ -724,15 +729,17 @@ async fn sync_loop(inner: Arc<Inner>, owner: Weak<Engine>) {
             let backoff = vidcue_sync::outbox::backoff(failures - 1);
             wait = Some(wait.map_or(backoff, |w| w.max(backoff)));
         }
+        drop(inner);
         tokio::select! {
-            _ = inner.trigger.notified() => {
+            _ = notify.notified() => {
+                let Some(inner) = weak.upgrade() else { return };
                 if !inner.urgent.swap(false, Ordering::SeqCst) {
                     debounce(&inner).await;
                 }
             }
             _ = tokio::time::sleep(wait.unwrap_or(Duration::from_secs(24 * 3600))) => {}
         }
-        let Some(engine) = owner.upgrade() else {
+        let (Some(inner), Some(engine)) = (weak.upgrade(), owner.upgrade()) else {
             return;
         };
         if inner.engine().is_none_or(|e| e.is_signed_out()) {
@@ -770,11 +777,12 @@ async fn debounce(inner: &Inner) {
     inner.lazy.store(false, Ordering::SeqCst);
 }
 
-async fn state_watch(inner: Arc<Inner>, mut state: tokio::sync::watch::Receiver<WsState>) {
+async fn state_watch(weak: Weak<Inner>, mut state: tokio::sync::watch::Receiver<WsState>) {
     loop {
         if state.changed().await.is_err() {
             return;
         }
+        let Some(inner) = weak.upgrade() else { return };
         let current = *state.borrow();
         match current {
             WsState::SignedOut => {
@@ -791,9 +799,11 @@ async fn state_watch(inner: Arc<Inner>, mut state: tokio::sync::watch::Receiver<
     }
 }
 
-async fn event_pump(inner: Arc<Inner>, mut events: tokio::sync::broadcast::Receiver<ServerEvent>) {
+async fn event_pump(weak: Weak<Inner>, mut events: tokio::sync::broadcast::Receiver<ServerEvent>) {
     loop {
-        match events.recv().await {
+        let received = events.recv().await;
+        let Some(inner) = weak.upgrade() else { return };
+        match received {
             Ok(event) => on_event(&inner, event),
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => inner.trigger(true),
             Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
@@ -969,19 +979,24 @@ async fn sample_clock(inner: &Arc<Inner>, count: usize) {
     }
 }
 
-async fn clock_sampler(inner: Arc<Inner>) {
-    sample_clock(&inner, vidcue_sync::clock::JOIN_SAMPLES).await;
+async fn clock_sampler(weak: Weak<Inner>) {
+    let mut samples = vidcue_sync::clock::JOIN_SAMPLES;
     loop {
+        let Some(inner) = weak.upgrade() else { return };
+        sample_clock(&inner, samples).await;
+        drop(inner);
+        samples = vidcue_sync::clock::RESAMPLES;
         tokio::time::sleep(Duration::from_millis(vidcue_sync::clock::RESAMPLE_EVERY_MS)).await;
-        sample_clock(&inner, vidcue_sync::clock::RESAMPLES).await;
     }
 }
 
-async fn jam_pinger(inner: Arc<Inner>, room: Uuid) {
+async fn jam_pinger(weak: Weak<Inner>, room: Uuid) {
     loop {
+        let Some(inner) = weak.upgrade() else { return };
         if let Some(client) = inner.realtime() {
             client.send(&ClientMessage::JamPing { room_id: room });
         }
+        drop(inner);
         tokio::time::sleep(JAM_PING).await;
     }
 }
