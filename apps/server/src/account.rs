@@ -119,7 +119,7 @@ pub async fn user_id(db: &Pool, username: &str) -> anyhow::Result<Option<Uuid>> 
         .get()
         .await?
         .query_opt(
-            "SELECT id FROM users WHERE username = $1 AND active",
+            "SELECT id FROM users WHERE username = $1 AND active AND disabled_at IS NULL",
             &[&name],
         )
         .await?
@@ -297,22 +297,31 @@ async fn admin_reset(
         return Err(ApiError::forbidden());
     }
     reauth(&state, &device, &body.password, Some(&body.code)).await?;
-    let exists: bool = state
+    let disabled: Option<bool> = state
         .0
         .db
         .get()
         .await?
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND active)",
+        .query_opt(
+            "SELECT disabled_at IS NOT NULL FROM users WHERE id = $1 AND active",
             &[&id],
         )
         .await?
-        .get(0);
-    if !exists {
-        return Err(ApiError(
-            axum::http::StatusCode::NOT_FOUND,
-            "No such user".into(),
-        ));
+        .map(|r| r.get(0));
+    match disabled {
+        None => {
+            return Err(ApiError(
+                axum::http::StatusCode::NOT_FOUND,
+                "No such user".into(),
+            ));
+        }
+        Some(true) => {
+            return Err(ApiError(
+                axum::http::StatusCode::CONFLICT,
+                "Enable the user first".into(),
+            ));
+        }
+        Some(false) => {}
     }
     let (url, expires) =
         create_reset_link(&state.0.db, &state.0.public_url, id, state.now()).await?;

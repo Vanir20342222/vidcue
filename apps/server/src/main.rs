@@ -1,11 +1,15 @@
 //! Self-hosted Vidcue backend: accounts, device pairing, recovery and sync.
 
 mod account;
+mod admin_web;
 mod api;
 mod auth;
 mod db;
+mod health;
 mod keys;
+mod recs;
 mod secrets;
+mod stats;
 mod sync;
 #[cfg(test)]
 mod tests;

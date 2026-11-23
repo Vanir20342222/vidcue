@@ -7374,6 +7374,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "argon2",
+ "async-trait",
  "axum",
  "clap",
  "data-encoding",
@@ -7382,6 +7383,7 @@ dependencies = [
  "http-body-util",
  "qrcode",
  "rand 0.8.8",
+ "reqwest",
  "serde",
  "serde_json",
  "sha1",
@@ -7393,6 +7395,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vidcue-core",
+ "vidcue-providers",
 ]
 
 [[package]]

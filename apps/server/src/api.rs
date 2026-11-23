@@ -265,7 +265,7 @@ pub struct Device {
 
 const DEVICE_LOOKUP: &str = "UPDATE devices d SET last_seen = CASE WHEN d.last_seen < $2::BIGINT - 60000 THEN $2::BIGINT ELSE d.last_seen END
      FROM users u
-     WHERE {WHERE} AND d.revoked_at IS NULL AND d.last_seen > $2::BIGINT - $3::BIGINT AND u.id = d.user_id AND u.active
+     WHERE {WHERE} AND d.revoked_at IS NULL AND d.last_seen > $2::BIGINT - $3::BIGINT AND u.id = d.user_id AND u.active AND u.disabled_at IS NULL
      RETURNING d.id, d.user_id, u.username, u.is_admin";
 
 async fn find_device(
@@ -318,6 +318,10 @@ impl FromRequestParts<AppState> for Device {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
+        .merge(crate::health::routes())
+        .merge(crate::stats::routes())
+        .merge(crate::recs::routes())
+        .merge(crate::admin_web::routes())
         .route(
             "/join",
             get(|| async { crate::web::page_response(crate::web::join_page()) }),
@@ -744,7 +748,7 @@ async fn login(
         .get()
         .await?
         .query_opt(
-            "SELECT id, password_hash FROM users WHERE username = $1 AND active",
+            "SELECT id, password_hash FROM users WHERE username = $1 AND active AND disabled_at IS NULL",
             &[&username],
         )
         .await?;
@@ -1210,11 +1214,11 @@ async fn admin_users(State(state): State<AppState>, device: Device) -> ApiResult
         .get()
         .await?
         .query(
-            "SELECT u.id, u.username, u.is_admin, u.created_at,
+            "SELECT u.id, u.username, u.is_admin, u.created_at, u.disabled_at,
                     COUNT(d.id) FILTER (WHERE d.revoked_at IS NULL) AS devices,
                     MAX(d.last_seen) AS last_seen
              FROM users u LEFT JOIN devices d ON d.user_id = u.id
-             WHERE u.active GROUP BY u.id ORDER BY u.created_at",
+             WHERE u.active GROUP BY u.id, u.disabled_at ORDER BY u.created_at",
             &[],
         )
         .await?;
@@ -1228,6 +1232,7 @@ async fn admin_users(State(state): State<AppState>, device: Device) -> ApiResult
                 "created_at": r.get::<_, i64>("created_at"),
                 "devices": r.get::<_, i64>("devices"),
                 "last_seen": r.get::<_, Option<i64>>("last_seen"),
+                "disabled": r.get::<_, Option<i64>>("disabled_at").is_some(),
             })
         })
         .collect();
@@ -1248,6 +1253,9 @@ pub fn spawn_maintenance(state: AppState) {
 }
 
 pub async fn maintenance(db: &Pool, now: i64) -> anyhow::Result<()> {
+    crate::health::maintenance(db, now).await?;
+    crate::recs::maintenance(db, now).await?;
+    crate::admin_web::maintenance(db, now).await?;
     let day = 24 * 3_600_000;
     let client = db.get().await?;
     client

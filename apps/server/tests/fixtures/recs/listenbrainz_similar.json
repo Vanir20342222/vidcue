@@ -1,0 +1,7 @@
+[
+  {"artist_mbid": "10adbe5e-a2c0-4bf3-8249-2b4cbf6e6ca8", "name": "Massive Attack", "comment": "", "type": "Group", "gender": null, "score": 410, "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"},
+  {"artist_mbid": "8ed2e0b3-aa4c-4e13-bec3-dc7393ed4d6b", "name": "Thom Yorke", "comment": "", "type": "Person", "gender": "Male", "score": 2120, "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"},
+  {"artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11", "name": "Portishead", "comment": "", "type": "Group", "gender": null, "score": 980, "reference_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"},
+  {"artist_mbid": "not-a-uuid", "name": "Broken Row", "score": 5000},
+  {"artist_mbid": "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1", "name": "   ", "score": 3000}
+]
