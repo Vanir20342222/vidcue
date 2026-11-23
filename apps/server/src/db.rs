@@ -26,6 +26,11 @@ const MIGRATIONS: &[(i32, &str, &str)] = &[
         "social_realtime",
         include_str!("../migrations/0004_social_realtime.sql"),
     ),
+    (
+        5,
+        "personal",
+        include_str!("../migrations/0005_personal.sql"),
+    ),
 ];
 
 pub fn connect(url: &str) -> anyhow::Result<Pool> {

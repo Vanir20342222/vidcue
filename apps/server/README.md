@@ -147,3 +147,50 @@ VIDCUE_TEST_DATABASE_URL=postgres://user:pass@127.0.0.1/vidcue_test cargo test -
 ```
 
 It drops and recreates the `public` schema of that database.
+
+## API (B5)
+
+Contract: [docs/backend/PROTOCOL.md](../../docs/backend/PROTOCOL.md) §1 and §6.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/features` | No auth. `{features: [health, stats, recs, admin_web], recs_available}` |
+| `POST /api/health/reports` `{reports: [{kind, category, client_version, platform, at, duration_ms?}]}` | Sanitized playback outcomes only: fixed `kind`/`category`/`platform` lists, no other fields. At most 100 per request, each checked on its own (`{accepted, rejected}`); 2000 accepted per user per 24 h; 30 uploads per device per hour; kept 90 days |
+| `GET /api/health/summary?days=7` | Own reports: totals and ok rates per kind, top problem categories, start time p50/p90, per UTC day (1 to 90 days) |
+| `GET /api/stats?from=&to=&tz_offset_min=` | Period stats from the user's synced `history` (at most 366 days; plays under 5 s ignored; days and hours in the given offset) |
+| `GET /api/stats/wrapped?year=&tz_offset_min=` | Yearly review, cached per user and year (refreshed after 6 h, final once computed a week after the year ended). Statistics computations: 60 per user per 10 min |
+| `GET`/`PUT /api/recs/settings` `{enabled?, music?}` | Recommendations are off until the user turns them on; turning them off deletes the feed |
+| `GET /api/recs` | `{enabled, built_at, building, items: [{media, reason, source}]}`; starts a background build when the feed is older than 6 h |
+| `POST /api/recs/refresh` | 202; one build per user per 30 min (429) |
+| `GET /api/admin/users/{id}/devices` | Admin: a user's devices (never tokens) |
+| `POST /api/admin/users/{id}/devices/revoke` `{password, device_id\|null}` | Admin: revoke one device (and the devices it paired) or all |
+| `POST /api/admin/users/{id}/disable`, `.../enable` `{password}` | Admin: a disabled user cannot sign in or use any token; their devices, pairings, resets, key requests and admin sessions are removed. Not yourself, never the last enabled admin |
+| `GET /api/admin/health?days=7` | Admin: health over all users plus `users_reporting` and `by_version` |
+| `GET /admin` | Web admin page (below) |
+
+**Recommendations** come from the user's followed channels (newest uploads), items
+related to recently finished plays, and songs by artists similar to the user's top
+artists (MusicBrainz + ListenBrainz Labs). The server uses public YouTube pages without
+any session and never sees provider cookies. Upstream answers are cached and shared
+(`recs_cache`, at most 50 000 rows); each upstream gets at most one request per second,
+10 s timeout, 2 MiB answers, and all users together at most `VIDCUE_RECS_FETCH_PER_HOUR`
+requests. A build that runs out of budget stores what it has.
+
+| Variable | Meaning |
+| --- | --- |
+| `VIDCUE_RECS` | `on` (default) or `off`: off answers 404 on `/api/recs*` |
+| `VIDCUE_RECS_MUSIC` | `on` (default) or `off`: MusicBrainz/ListenBrainz lookups |
+| `VIDCUE_RECS_FETCH_PER_HOUR` | Upstream requests per hour over all users (default 120) |
+
+**Web admin page** (`/admin`): server-rendered forms, no JavaScript. Sign in with
+username, password and code (same throttles as the app, counted separately). Only
+enabled admins get in; anyone else sees the same error as a wrong password. The
+session cookie is `HttpOnly; Secure; SameSite=Strict; Path=/admin`; the session ends
+after 30 idle minutes or 8 hours, at most 3 per admin, and the server stores only its
+SHA-256. Every action form carries a per-session CSRF token and the password (reset
+links also a code); posts with a foreign `Origin` or a `Sec-Fetch-Site` other than
+`same-origin` are refused. The CSP allows only the page's own stylesheet (by hash) and
+form posts to itself. The page shows users, a one-time invite or reset link with its QR
+code, and the 7-day health table; it never shows device tokens, authenticator secrets
+or recovery codes. Behind a reverse proxy, `/admin` needs `VIDCUE_PUBLIC_URL` to be the
+exact public origin.

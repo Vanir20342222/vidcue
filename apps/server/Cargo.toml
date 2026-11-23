@@ -32,6 +32,9 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 clap = { version = "4", features = ["derive", "env"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+vidcue-providers = { path = "../../crates/vidcue-providers" }
+reqwest = { workspace = true, features = ["rustls-tls"] }
+async-trait = "0.1"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

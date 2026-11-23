@@ -1055,3 +1055,5 @@ async fn recovery_reset_key_relay_and_library_sync() {
     let (_, pulled) = c.get("/api/sync/pull?since=0", Some(&token)).await;
     assert_eq!(pulled["changes"].as_array().unwrap().len(), 6);
 }
+
+mod personal;
