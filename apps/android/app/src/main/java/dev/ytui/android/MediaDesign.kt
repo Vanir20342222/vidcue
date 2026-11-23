@@ -213,6 +213,16 @@ internal enum class Glyph {
     PlayNext,
     /** Up-left arrow: put a suggestion into the search field to edit it. */
     FillQuery,
+    /** A monitor with a phone in front: this account's other devices. */
+    Devices,
+    /** Two heads and shoulders: friends. */
+    People,
+    /** A note between sound waves: a Jam, listening together. */
+    Jam,
+    /** A tray: things friends sent. */
+    Inbox,
+    /** A key: the account's end-to-end key. */
+    Key,
 }
 
 @Composable
@@ -725,6 +735,44 @@ internal fun MediaIcon(
                         tint,
                         style = Stroke(1.8f, cap = StrokeCap.Round),
                     )
+                }
+                Glyph.Devices -> {
+                    // Monitor on a stand, a phone in front of its lower left corner.
+                    drawRoundRect(tint, Offset(7f, 4f), Size(14f, 10f), CornerRadius(1.5f), style = Stroke(1.8f))
+                    line(14f, 14f, 14f, 18f)
+                    line(11.5f, 18.5f, 16.5f, 18.5f)
+                    drawRoundRect(cutout, Offset(2f, 9f), Size(8f, 12f), CornerRadius(1.8f))
+                    drawRoundRect(
+                        tint,
+                        Offset(3f, 10f),
+                        Size(6f, 10.5f),
+                        CornerRadius(1.5f),
+                        style = if (filled) Fill else Stroke(1.8f),
+                    )
+                }
+                Glyph.People -> {
+                    drawCircle(tint, 2.6f, Offset(16.5f, 8f), style = Stroke(1.6f))
+                    drawArc(tint, 200f, 140f, false, Offset(12f, 12f), Size(9f, 8f), style = Stroke(1.6f, cap = StrokeCap.Round))
+                    drawCircle(cutout, 4.4f, Offset(9f, 8.5f))
+                    drawCircle(tint, 3.2f, Offset(9f, 8.5f), style = if (filled) Fill else Stroke(1.8f))
+                    drawArc(tint, 195f, 150f, false, Offset(3f, 13.5f), Size(12f, 10f), style = Stroke(1.8f, cap = StrokeCap.Round))
+                }
+                Glyph.Jam -> {
+                    drawCircle(tint, 2.4f, Offset(10.6f, 16.6f))
+                    line(13f, 16.6f, 13f, 6f)
+                    line(13f, 6f, 16.5f, 8f)
+                    drawArc(tint, 120f, 120f, false, Offset(3f, 7f), Size(6f, 10f), style = Stroke(1.6f, cap = StrokeCap.Round))
+                    drawArc(tint, -60f, 120f, false, Offset(16f, 7f), Size(6f, 10f), style = Stroke(1.6f, cap = StrokeCap.Round))
+                }
+                Glyph.Inbox -> {
+                    drawRoundRect(tint, Offset(3f, 5f), Size(18f, 14f), CornerRadius(2.5f), style = Stroke(1.8f))
+                    outline(3f to 13f, 8f to 13f, 9.5f to 15.5f, 14.5f to 15.5f, 16f to 13f, 21f to 13f)
+                }
+                Glyph.Key -> {
+                    drawCircle(tint, 3.8f, Offset(7.5f, 12f), style = if (filled) Fill else Stroke(1.8f))
+                    line(11.3f, 12f, 21f, 12f)
+                    line(17f, 12f, 17f, 15f)
+                    line(20f, 12f, 20f, 14.5f)
                 }
             }
         }

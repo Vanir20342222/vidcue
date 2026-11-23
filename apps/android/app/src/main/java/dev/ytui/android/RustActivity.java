@@ -70,6 +70,12 @@ public final class RustActivity extends ComponentActivity {
   }
 
   @Override
+  protected void onStart() {
+    super.onStart();
+    SyncLifecycle.foreground(true);
+  }
+
+  @Override
   protected void onResume() {
     super.onResume();
     MediaBridge.uiVisible = true;
@@ -87,6 +93,7 @@ public final class RustActivity extends ComponentActivity {
         PlaybackService.current.pauseForBackground();
         PlaybackService.current.releaseIdle();
       }
+      SyncLifecycle.foreground(false);
     }
     super.onStop();
   }
@@ -119,6 +126,17 @@ public final class RustActivity extends ComponentActivity {
         restoredIntent || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
     restoredIntent = false;
     if (replayed) return;
+    android.net.Uri data = intent.getData();
+    if (Intent.ACTION_VIEW.equals(intent.getAction())
+        && data != null
+        && "vidcue".equals(data.getScheme())
+        && "pair".equals(data.getHost())) {
+      // The link can carry the account key in its fragment: hand it to the confirm sheet and
+      // drop it from the activity's retained intent.
+      MediaBridge.event("sync_pair_link", data.toString());
+      setIntent(new Intent(Intent.ACTION_MAIN));
+      return;
+    }
     String shared = null;
     if (Intent.ACTION_SEND.equals(intent.getAction())) {
       CharSequence text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT);
