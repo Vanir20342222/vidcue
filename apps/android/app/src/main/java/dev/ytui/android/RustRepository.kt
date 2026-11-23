@@ -444,6 +444,8 @@ internal class YtuiViewModel(
     }
     val account = MutableStateFlow(JSONObject())
     val player = MutableStateFlow(PlayerState())
+    /** Account sync, friends, Jam and the other server features (docs/backend/PROTOCOL.md §9). */
+    val sync = SyncController(this, viewModelScope)
     val downloads = MutableStateFlow<List<JSONObject>>(emptyList())
     val offlinePlaylists = MutableStateFlow<List<JSONObject>>(emptyList())
     val queue = MutableStateFlow<List<MediaCard>>(emptyList())
@@ -579,6 +581,7 @@ internal class YtuiViewModel(
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
                     }
+                    sync.onPlayer(player.value)
                     // A refreshed feed can need the same details even while playback is paused.
                     player.value.media?.let { media ->
                         val details = watchDetails.value?.takeIf { found ->
@@ -595,6 +598,7 @@ internal class YtuiViewModel(
                     }
                 }
                 value.optJSONArray("events")?.objects()?.forEach { event ->
+                    if (sync.onEvent(event)) return@forEach
                     val text = event.optString("text")
                     when (event.optString("kind")) {
                         "storage_updated" -> {

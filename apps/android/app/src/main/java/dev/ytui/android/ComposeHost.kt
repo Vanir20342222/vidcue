@@ -721,6 +721,7 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 onDone = { dialog = "" },
                                 onOutput = { dialog = "output" },
                             )
+                            SyncPlayerEntries(vm) { dialog = "" }
                         }
                     "settings" ->
                         SettingsPanel(
@@ -782,6 +783,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                                 )
                             }
                         }
+                }
+                if (!onboarding) {
+                    SyncSheetHost(vm)
+                    PairConfirmSheet(vm)
+                    KeyRequestSheet(vm)
+                    if (!fullscreen) JamInviteBanner(vm)
                 }
                 if (!onboarding && !fullscreen)
                     DownloadFlightHost(
@@ -1190,6 +1197,7 @@ private fun BrowsePane(
     val sideInset = if (tab in 2..3) 0.dp else MediaTokens.textInset
     val homeTopic = if (tab == 1) SearchRequests.topicName(feed.request) else null
     val atHome = (feed.request == "Home" || homeTopic != null) && !searchResults
+    val showRecs = tab == 1 && atHome && recsShown(vm)
     // Signed out, YouTube's Home is empty: show what is popular this week instead of an empty page.
     LaunchedEffect(tab, connected, feed.request, feed.loading, feed.cards.isEmpty(), feed.generation) {
         if (tab == 1 && !connected && feed.request == "Home" && !feed.loading && feed.generation > 0L &&
@@ -1607,6 +1615,8 @@ private fun BrowsePane(
                             RecentTiles("Jump back in", recentSongs, thumbnails, inset = sideInset) { vm.play(it) }
                         }
                     }
+                if (showRecs)
+                    item(span = { GridItemSpan(maxLineSpan) }, key = "recs", contentType = "recs") { RecsShelf(vm, sideInset) }
                 val pageNotice = feed.notice
                 if (pageNotice != null && !noticeInEmptyState)
                     item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2551,6 +2561,7 @@ private fun MediaCardMenu(
         ValueRow("Save to Library", glyph = Glyph.Save, chevron = false) {
             execute { vm.save(media) }
         }
+        SyncCardActions(vm, media, close)
         if (media.value.optString("tracks_url").let { it.isNotBlank() && it != "null" })
             ValueRow("Browse tracks", glyph = Glyph.Music) { execute { vm.tracks(media) } }
     }
@@ -3316,6 +3327,7 @@ private fun SettingsPanel(
             }
             for ((group, rows) in
                 listOf(
+                    "Vidcue" to listOf(Triple("Vidcue", Glyph.Account, "Sync, friends, Jam")),
                     "Look and feel" to
                         listOf(
                             Triple("Appearance", Glyph.Palette, "Theme, player style, motion"),
@@ -3368,6 +3380,7 @@ private fun SettingsPanel(
         }
         @Composable
         fun CategoryContent() {
+        if (shown == "Vidcue") SyncPanel(vm)
         if (shown == "Appearance")
             SettingGroup("Appearance", "Colour, artwork and motion", showTitle = false) {
                 Box {
