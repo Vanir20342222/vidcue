@@ -1622,7 +1622,8 @@ internal class YtuiViewModel(
     }
 
     private suspend fun refreshWatchHistory() {
-        recent.value = readHistory()
+        // History lists key their rows by card key; a repeated entry would crash them.
+        recent.value = readHistory().distinctBy { it.key }
         // Filter at presentation time, including raw cache hits and restored navigation.
         // Keep cached provider pages intact so clearing history can show them again.
         for (feed in feeds) feed.value = WatchedRecommendations.filter(feed.value, recent.value)

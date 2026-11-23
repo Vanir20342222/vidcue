@@ -396,7 +396,10 @@ impl Browser {
         // YouTube can return an identical ranked list even for a fresh request.
         // Shuffle only Home's cards, leaving pagination and category endpoints intact.
         page.items.sort_by_cached_key(|_| uuid::Uuid::new_v4());
-        let mut previous = self.home_first.lock().expect("home order");
+        let mut previous = self
+            .home_first
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let first = &mut previous[usize::from(music)];
         if page.items.len() > 1 && page.items.first().map(|item| &item.id) == first.as_ref() {
             page.items.rotate_left(1);
@@ -1935,7 +1938,7 @@ mod request_tests {
                 r#"ytcfg.set({"INNERTUBE_CLIENT_VERSION":"fixture"});"#.into()
             } else {
                 seen.lock()
-                    .unwrap()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push(request.split_once("\r\n\r\n").unwrap().1.into());
                 json!({
                     "metadata":{"channelMetadataRenderer":{"title":"Synthetic Channel"}},
@@ -1974,7 +1977,9 @@ mod request_tests {
             .fetch(false, &BrowseRequest::Collection("VLPLsynthetic".into()))
             .await
             .unwrap();
-        let bodies = bodies.lock().unwrap();
+        let bodies = bodies
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let sent: Vec<Value> = bodies
             .iter()
             .map(|body| serde_json::from_str(body).unwrap())
@@ -1996,7 +2001,9 @@ mod request_tests {
             let body = if request.starts_with("GET") {
                 r#"ytcfg.set({"INNERTUBE_CLIENT_VERSION":"fixture"});"#.into()
             } else {
-                seen.lock().unwrap().push(request.to_owned());
+                seen.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(request.to_owned());
                 if request.contains("/navigation/resolve_url") {
                     if request.contains("@missing") {
                         json!({"endpoint":{"urlEndpoint":{"url":"https://www.youtube.com/"}}})
@@ -2037,7 +2044,9 @@ mod request_tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("@missing"), "{error}");
-        let requests = requests.lock().unwrap();
+        let requests = requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let bodies: Vec<Value> = requests
             .iter()
             .map(|r| serde_json::from_str(r.split_once("\r\n\r\n").unwrap().1).unwrap())

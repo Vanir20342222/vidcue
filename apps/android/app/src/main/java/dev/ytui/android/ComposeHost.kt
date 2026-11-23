@@ -1180,11 +1180,12 @@ private fun BrowsePane(
     LaunchedEffect(feed.request) { SearchRequests.query(feed.request)?.let { query = it } }
     // Pages opened from another page (playlists, albums, channels) get a header; lists of results
     // and library feeds read as rows.
-    val collectionPage = SubPages.collectionId(feed.request) != null
+    val pageCollectionId = SubPages.collectionId(feed.request)
+    val collectionPage = pageCollectionId != null
     // Radio is a list of stations (cover, name, genre), dense like a music app's radio list.
     val compactList = tab == 0 || tab == 3 || searchResults || (collectionPage && tab == 1)
     val numberedTracks =
-        collectionPage && vm.collectionCard(SubPages.collectionId(feed.request)!!)?.kind == "album"
+        pageCollectionId != null && vm.collectionCard(pageCollectionId)?.kind == "album"
     // Side inset of full-width rows: Music and Radio grids already pad their content.
     val sideInset = if (tab in 2..3) 0.dp else MediaTokens.textInset
     val homeTopic = if (tab == 1) SearchRequests.topicName(feed.request) else null
@@ -1285,15 +1286,21 @@ private fun BrowsePane(
     DisposableEffect(Unit) { onDispose { PageChrome.washColors.value = null } }
     LaunchedEffect(grid, washed, noCovers) {
         val span = with(density) { 280.dp.toPx() }
+        // snapshotFlow reads in a read-only snapshot: writing state inside it throws
+        // ("Cannot modify a state object in a read-only snapshot"), so reset in collect.
         snapshotFlow {
                 when {
-                    !grid.canScrollBackward -> 0f.also { washScrolled.floatValue = 0f }
+                    !grid.canScrollBackward -> null
                     grid.firstVisibleItemIndex > 6 -> 1f
                     else -> washScrolled.floatValue / span
                 }
             }
-            // Pages without covers keep a quieter wash.
-            .collect { PageChrome.washFade.floatValue = maxOf(it.coerceIn(0f, 1f), if (noCovers) 0.4f else 0f) }
+            .collect { fade ->
+                if (fade == null) washScrolled.floatValue = 0f
+                // Pages without covers keep a quieter wash.
+                PageChrome.washFade.floatValue =
+                    maxOf((fade ?: 0f).coerceIn(0f, 1f), if (noCovers) 0.4f else 0f)
+            }
     }
     LaunchedEffect(searchActive, feed.request) { headerOffset.floatValue = 0f }
     LaunchedEffect(scrollToTop) {
@@ -1317,8 +1324,8 @@ private fun BrowsePane(
     // Remembers where a song was started from, for the player's "Playing from" header.
     fun playFrom(media: MediaCard, section: String = "") {
         when {
-            collectionPage ->
-                vm.collectionCard(SubPages.collectionId(feed.request)!!).let { card ->
+            pageCollectionId != null ->
+                vm.collectionCard(pageCollectionId).let { card ->
                     PlaybackSource.set("Playing from ${card?.kind ?: "playlist"}", card?.title ?: feed.title)
                 }
             searchResults -> PlaybackSource.set("Playing from search", SearchRequests.query(feed.request).orEmpty())
@@ -1600,19 +1607,23 @@ private fun BrowsePane(
                             RecentTiles("Jump back in", recentSongs, thumbnails, inset = sideInset) { vm.play(it) }
                         }
                     }
-                if (feed.notice != null && !noticeInEmptyState)
+                val pageNotice = feed.notice
+                if (pageNotice != null && !noticeInEmptyState)
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Text(
-                            feed.notice!!,
+                            pageNotice,
                             Modifier.padding(horizontal = MediaTokens.textInset),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                if (feed.error != null)
+                val pageError = feed.error
+                val pageErrorCode = feed.errorCode
+                // Captured here: a lazy item can recompose with a newer feed before it is removed.
+                if (pageError != null)
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         val needsAccount =
-                            feed.errorCode in listOf("auth_required", "consent_required")
+                            pageErrorCode in listOf("auth_required", "consent_required")
                         EmptyMediaState(
                             if (needsAccount) Glyph.Account else Glyph.Offline,
                             if (needsAccount) "Sign in to see this" else "This page didn't load",
@@ -1621,7 +1632,7 @@ private fun BrowsePane(
                             if (needsAccount)
                                 "Sign in to YouTube, or import a session from another browser, " +
                                     "to open this page."
-                            else feed.error!!,
+                            else pageError,
                             // Lower on the page, not pinned under the header.
                             Modifier.padding(top = emptyStateTop),
                         ) {

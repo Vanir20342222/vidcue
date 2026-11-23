@@ -51,8 +51,14 @@ impl Resolver {
         self.epoch.load(Ordering::Acquire)
     }
     pub fn clear(&self) {
-        let mut client = self.client.lock().expect("extractor client");
-        let mut entries = self.entries.lock().expect("resolution cache");
+        let mut client = self
+            .client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
         entries.clear();
         client.clear();
@@ -62,7 +68,10 @@ impl Resolver {
         key: &Key,
         create: impl FnOnce() -> Result<yt_dlp_rs::YoutubeDl>,
     ) -> Result<Arc<yt_dlp_rs::YoutubeDl>> {
-        let mut cache = self.client.lock().expect("extractor client");
+        let mut cache = self
+            .client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(index) = cache.iter().position(|(scope, _)| {
             scope.epoch == key.epoch
                 && scope.account == key.account
@@ -93,7 +102,10 @@ impl Resolver {
             key.epoch == self.epoch(),
             "Session or network changed during playback preparation"
         );
-        let mut cache = self.entries.lock().expect("resolution cache");
+        let mut cache = self
+            .entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         ensure!(
             key.epoch == self.epoch(),
             "Session or network changed during playback preparation"
@@ -124,7 +136,10 @@ impl Resolver {
             return Ok(value);
         }
         let flight = {
-            let mut flights = self.flights.lock().expect("resolution flights");
+            let mut flights = self
+                .flights
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             flights.retain(|_, lock| lock.strong_count() > 0);
             if let Some(lock) = flights.get(&key).and_then(Weak::upgrade) {
                 lock
@@ -168,7 +183,10 @@ impl Resolver {
             "Session or network changed during playback preparation"
         );
         {
-            let mut cache = self.entries.lock().expect("resolution cache");
+            let mut cache = self
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             ensure!(
                 key.epoch == self.epoch(),
                 "Session or network changed during playback preparation"
@@ -191,7 +209,10 @@ impl Resolver {
         if let Some(ttl) = lease_seconds(&value, now) {
             let bytes = value.to_string().len();
             if bytes <= 1024 * 1024 {
-                let mut cache = self.entries.lock().expect("resolution cache");
+                let mut cache = self
+                    .entries
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 ensure!(
                     key.epoch == self.epoch(),
                     "Session or network changed during playback preparation"
@@ -372,7 +393,13 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(cache.entries.lock().unwrap().is_empty());
+        assert!(
+            cache
+                .entries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+        );
     }
     #[tokio::test]
     async fn completed_lease_never_waits_for_an_unrelated_flight_holder() {
@@ -387,7 +414,7 @@ mod tests {
         cache
             .flights
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(key(), Arc::downgrade(&flight));
         let _held = flight.lock().await;
         let result = tokio::time::timeout(
@@ -424,8 +451,21 @@ mod tests {
             scope.account_index = n;
             cache.client(&scope, create).unwrap();
         }
-        assert_eq!(cache.client.lock().unwrap().len(), 4);
+        assert_eq!(
+            cache
+                .client
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .len(),
+            4
+        );
         cache.clear();
-        assert!(cache.client.lock().unwrap().is_empty());
+        assert!(
+            cache
+                .client
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty()
+        );
     }
 }
