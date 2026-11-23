@@ -19,8 +19,11 @@ tempfile.workspace = true
 url.workspace = true
 uuid.workspace = true
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+vidcue-sync = { path = "../vidcue-sync" }
+qrcode = { version = "0.14", default-features = false }
 yt-dlp-rs = { git = "https://github.com/aagedal/yt-dlp-rs", rev = "f67d96bdf98c5b821d0c9bf6175d328a0fa8ceab" }
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 [dev-dependencies]
 tempfile.workspace = true
+axum = { version = "0.8", features = ["ws"] }
