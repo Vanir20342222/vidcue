@@ -359,12 +359,22 @@ async fn session(
                     ServerEvent::PresenceSnapshot { rid, .. } => resolve(shared, *rid, Ok(raw.clone())),
                     _ => {}
                 }
+                // Replies to this client's own requests are not app events.
+                let reply = match &event {
+                    ServerEvent::Ack { .. } | ServerEvent::Pong { .. } => true,
+                    ServerEvent::Error { rid, .. } | ServerEvent::PresenceSnapshot { rid, .. } => {
+                        rid.is_some()
+                    }
+                    _ => false,
+                };
                 let revoked = match &event {
                     ServerEvent::DeviceRevoked { device_id: id } => *id == device_id,
                     ServerEvent::DevicesRevoked { keep } => *keep != Some(device_id),
                     _ => false,
                 };
-                let _ = events.send(event);
+                if !reply {
+                    let _ = events.send(event);
+                }
                 if revoked {
                     let _ = sink.close().await;
                     return Ended::SignedOut;

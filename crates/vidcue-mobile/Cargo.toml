@@ -27,3 +27,6 @@ jni = "0.21"
 [dev-dependencies]
 tempfile.workspace = true
 axum = { version = "0.8", features = ["ws"] }
+hmac = "0.12"
+sha1 = "0.10"
+data-encoding = "2"

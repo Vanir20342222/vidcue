@@ -46,8 +46,9 @@ pub const LOCAL_COLLECTIONS: [&str; 11] = [
     "playlist_entries",
     "offline_playlists",
     "subscriptions",
-    "settings",
+    // Presets before settings, so `equalizer` can name a synced custom preset.
     "eq_presets",
+    "settings",
     "filters",
     "secrets",
 ];
@@ -929,11 +930,11 @@ impl SyncEngine {
                 continue;
             }
             for (key, value, clock) in stores.snapshot(collection)? {
+                // Strictly newer only: a value applied from the server carries the
+                // server's clock and must not be echoed back on a device-id tie.
                 let newer = match remote.get(&(collection.to_owned(), key.clone())) {
                     None => true,
-                    Some((remote_clock, device)) => {
-                        local_wins(clock, self.session.device_id, *remote_clock, *device)
-                    }
+                    Some((remote_clock, _)) => clock > *remote_clock,
                 };
                 if !newer {
                     continue;

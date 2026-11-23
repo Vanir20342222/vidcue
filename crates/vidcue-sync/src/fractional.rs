@@ -129,7 +129,7 @@ pub fn spread(count: usize) -> Vec<String> {
     let mut previous = 0u128;
     for i in 1..=count as u128 {
         let mut n = (space * i / (count as u128 + 1)).max(previous + 1);
-        if n % u128::from(BASE) == 0 {
+        if n.is_multiple_of(u128::from(BASE)) {
             n += 1;
         }
         previous = n;

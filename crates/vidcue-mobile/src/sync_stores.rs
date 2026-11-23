@@ -105,6 +105,9 @@ pub struct SyncMeta {
     /// Pulled entries whose playlist header has not arrived yet (kept hidden).
     #[serde(default)]
     pub hidden_entries: HashMap<Uuid, Vec<LocalEntry>>,
+    /// A synced `equalizer` choice naming a custom preset that has not arrived yet.
+    #[serde(default)]
+    pub pending_equalizer: Option<String>,
 }
 
 /// One local register write for the outbox.
@@ -320,12 +323,7 @@ pub(crate) fn config_ops(meta: &mut SyncMeta, old: &Config, new: &Config) -> Vec
         return Vec::new();
     };
     let mut ops = Vec::new();
-    for field in PORTABLE_SETTINGS {
-        let value = setting_value(&new_value, field);
-        if setting_value(&old_value, field) != value {
-            ops.push(personal(meta, "settings", field, Some(value)));
-        }
-    }
+    // Presets first, so a device applying `equalizer` already knows the curve.
     for (name, gains) in &new.equalizer_custom {
         if old.equalizer_custom.get(name) != Some(gains) {
             ops.push(personal(
@@ -339,6 +337,12 @@ pub(crate) fn config_ops(meta: &mut SyncMeta, old: &Config, new: &Config) -> Vec
     for name in old.equalizer_custom.keys() {
         if !new.equalizer_custom.contains_key(name) {
             ops.push(personal(meta, "eq_presets", name, None));
+        }
+    }
+    for field in PORTABLE_SETTINGS {
+        let value = setting_value(&new_value, field);
+        if setting_value(&old_value, field) != value {
+            ops.push(personal(meta, "settings", field, Some(value)));
         }
     }
     ops
@@ -1138,7 +1142,23 @@ impl Stores<'_> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let mut draft = serde_json::to_value(&current)?;
+        let mut pending_cleared = false;
         match change.collection.as_str() {
+            "settings"
+                if change.key == "equalizer"
+                    && value.as_str().is_some_and(|name| {
+                        !vidcue_core::equalizer::is_builtin(name)
+                            && name != "off"
+                            && !current.equalizer_custom.contains_key(name)
+                    }) =>
+            {
+                // The preset is still on its way; select it when it arrives.
+                let name = value.as_str().map(str::to_owned);
+                return engine.mutate(|state| {
+                    state.sync_meta.pending_equalizer = name;
+                    Ok(())
+                });
+            }
             "settings" => {
                 ensure!(
                     PORTABLE_SETTINGS.contains(&change.key.as_str()),
@@ -1157,6 +1177,17 @@ impl Stores<'_> {
             _ => {
                 let gains = value["gains"].clone();
                 draft["equalizer_custom"][&change.key] = gains;
+                let pending = engine
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .sync_meta
+                    .pending_equalizer
+                    .clone();
+                if pending.as_deref() == Some(change.key.as_str()) {
+                    draft["equalizer"] = change.key.clone().into();
+                    pending_cleared = true;
+                }
             }
         }
         let mut next: Config = serde_json::from_value(draft)?;
@@ -1171,6 +1202,9 @@ impl Stores<'_> {
                 .sync_meta
                 .clocks
                 .insert(register(&change.collection, &change.key), change.clock);
+            if pending_cleared || change.key == "equalizer" {
+                state.sync_meta.pending_equalizer = None;
+            }
             Ok(())
         })
     }
@@ -1832,9 +1866,9 @@ mod tests {
             .collect();
         assert_eq!(
             keys,
-            ["settings/theme", "settings/download", "eq_presets/mine"]
+            ["eq_presets/mine", "settings/theme", "settings/download"]
         );
-        let LocalOp::Personal { value, .. } = &ops[1] else {
+        let LocalOp::Personal { value, .. } = &ops[2] else {
             panic!()
         };
         let download = value.as_ref().unwrap();

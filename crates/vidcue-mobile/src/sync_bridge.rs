@@ -28,6 +28,9 @@ use vidcue_sync::{
 
 /// Delay between a local edit and the push it triggers.
 pub const DEBOUNCE: Duration = Duration::from_secs(2);
+/// Playback progress (positions and play events, saved every 5 s while playing) is
+/// pushed at most this often unless something else triggers a sync.
+pub const PROGRESS_DEBOUNCE: Duration = Duration::from_secs(30);
 /// A hidden app keeps the socket this long (unless playing or in a Jam).
 pub const HIDDEN_GRACE: Duration = Duration::from_secs(60);
 const PRESENCE_MIN_GAP_MS: i64 = 2_000;
@@ -38,6 +41,7 @@ const KEY_POLL: Duration = Duration::from_secs(5);
 const JAM_PING: Duration = Duration::from_secs(60);
 const MAX_HANDOFF_QUEUE: usize = 25;
 /// Test builds keep emitted UI events for assertions (Android forwards them).
+#[cfg(not(target_os = "android"))]
 const MAX_KEPT_EVENTS: usize = 512;
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -173,6 +177,7 @@ pub(crate) struct Inner {
     key_task: Mutex<Option<JoinHandle<()>>>,
     trigger: Notify,
     urgent: AtomicBool,
+    lazy: AtomicBool,
     foreground: Mutex<Foreground>,
     events: Mutex<VecDeque<(String, String)>>,
     presence: Mutex<BTreeMap<Uuid, PresenceEntry>>,
@@ -220,6 +225,7 @@ impl SyncHandle {
             key_task: Mutex::new(None),
             trigger: Notify::new(),
             urgent: AtomicBool::new(false),
+            lazy: AtomicBool::new(false),
             foreground: Mutex::new(Foreground::default()),
             events: Mutex::new(VecDeque::new()),
             presence: Mutex::new(BTreeMap::new()),
@@ -265,6 +271,9 @@ impl SyncHandle {
         if ops.is_empty() {
             return;
         }
+        let progress_only = ops.iter().all(|op| {
+            matches!(op, LocalOp::Personal { collection, .. } if matches!(*collection, "positions" | "history"))
+        });
         let mut personal = Vec::new();
         let mut result = Ok(());
         for op in ops {
@@ -291,7 +300,11 @@ impl SyncHandle {
             result = Err(e);
         }
         *lock(&self.0.notice) = result.err().map(|e| e.to_string());
-        self.trigger(false);
+        if progress_only {
+            self.0.trigger_lazy();
+        } else {
+            self.trigger(false);
+        }
         self.0.emit_status();
     }
 
@@ -378,6 +391,13 @@ impl Inner {
         if urgent {
             self.urgent.store(true, Ordering::SeqCst);
         }
+        self.lazy.store(false, Ordering::SeqCst);
+        self.trigger.notify_one();
+    }
+
+    /// Like `trigger(false)` but waits [`PROGRESS_DEBOUNCE`] (playback progress only).
+    fn trigger_lazy(&self) {
+        self.lazy.store(true, Ordering::SeqCst);
         self.trigger.notify_one();
     }
 
@@ -707,8 +727,7 @@ async fn sync_loop(inner: Arc<Inner>, owner: Weak<Engine>) {
         tokio::select! {
             _ = inner.trigger.notified() => {
                 if !inner.urgent.swap(false, Ordering::SeqCst) {
-                    tokio::time::sleep(DEBOUNCE).await;
-                    inner.urgent.store(false, Ordering::SeqCst);
+                    debounce(&inner).await;
                 }
             }
             _ = tokio::time::sleep(wait.unwrap_or(Duration::from_secs(24 * 3600))) => {}
@@ -725,6 +744,30 @@ async fn sync_loop(inner: Arc<Inner>, owner: Weak<Engine>) {
             Err(_) => failures = failures.saturating_add(1).min(16),
         }
     }
+}
+
+/// Waits before a triggered run: 2 s after an edit, 30 s after playback progress only.
+/// An urgent trigger ends the wait; an edit during a progress wait shortens it to 2 s.
+async fn debounce(inner: &Inner) {
+    let mut lazy = inner.lazy.swap(false, Ordering::SeqCst);
+    let start = tokio::time::Instant::now();
+    let mut deadline = start + if lazy { PROGRESS_DEBOUNCE } else { DEBOUNCE };
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => break,
+            _ = inner.trigger.notified() => {
+                if inner.urgent.load(Ordering::SeqCst) {
+                    break;
+                }
+                if lazy && !inner.lazy.load(Ordering::SeqCst) {
+                    lazy = false;
+                    deadline = deadline.min(tokio::time::Instant::now() + DEBOUNCE);
+                }
+            }
+        }
+    }
+    inner.urgent.store(false, Ordering::SeqCst);
+    inner.lazy.store(false, Ordering::SeqCst);
 }
 
 async fn state_watch(inner: Arc<Inner>, mut state: tokio::sync::watch::Receiver<WsState>) {

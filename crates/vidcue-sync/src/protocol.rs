@@ -62,7 +62,7 @@ pub const PORTABLE_DOWNLOAD_FIELDS: &[&str] = &[
 ];
 
 /// The signed-in device, stored sealed under the `session` secret name.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionInfo {
     /// Canonical origin, `https://host[:port]`.
     pub server: String,
@@ -71,6 +71,19 @@ pub struct SessionInfo {
     pub device_id: Uuid,
     pub is_admin: bool,
     pub token: String,
+}
+
+impl std::fmt::Debug for SessionInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionInfo")
+            .field("server", &self.server)
+            .field("user_id", &self.user_id)
+            .field("username", &self.username)
+            .field("device_id", &self.device_id)
+            .field("is_admin", &self.is_admin)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 /// `{user_id, username}` as used in events and listings.
