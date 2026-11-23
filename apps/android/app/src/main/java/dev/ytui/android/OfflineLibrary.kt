@@ -701,32 +701,33 @@ internal fun OfflineLibrary(
             Text("The selected items will be removed from app storage and their saved folder copies. Your playlists keep their references.")
         }
     }
-    if (removing != null)
+    removing?.let { item ->
         MediaDialog(
             { removing = null },
             "Remove offline copy?",
             actions = {
                 QuietAction("Cancel") { removing = null }
                 QuietAction("Remove", destructive = true) {
-                    vm.effect("download_remove", "id" to removing!!.optString("id"))
+                    vm.effect("download_remove", "id" to item.optString("id"))
                     removing = null
                 }
             },
         ) {
             Text(
-                "${removing!!.optString("title")} will be removed from app storage and its saved folder copy. Your playlists keep their references.",
+                "${item.optString("title")} will be removed from app storage and its saved folder copy. Your playlists keep their references.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-    if (deleting != null)
+    }
+    deleting?.let { playlist ->
         MediaDialog(
             { deleting = null },
             "Delete playlist?",
             actions = {
                 QuietAction("Cancel") { deleting = null }
                 QuietAction("Delete", destructive = true) {
-                    vm.deleteOfflinePlaylist(deleting!!.optString("id"))
+                    vm.deleteOfflinePlaylist(playlist.optString("id"))
                     deleting = null
                     opened = ""
                 }
@@ -738,6 +739,7 @@ internal fun OfflineLibrary(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
 }
 
 @Composable

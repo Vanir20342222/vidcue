@@ -40,7 +40,10 @@ impl Engine {
     ) -> Result<Value> {
         // Lyrics have their own file so periodic resume/queue writes never clone
         // or re-serialize megabytes of text in the playback path.
-        let mut stored = self.lyrics.lock().expect("lyrics");
+        let mut stored = self
+            .lyrics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut draft = stored.clone();
         let result = update(&mut draft)?;
         let bytes = serde_json::to_vec(&draft)?;
@@ -58,7 +61,10 @@ impl Engine {
         vidcue_core::http_url(url)?;
         match r["op"].as_str().unwrap_or_default() {
             "lyrics_get" => {
-                let stored = self.lyrics.lock().expect("lyrics");
+                let stored = self
+                    .lyrics
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(document) = stored.get(url) {
                     Ok(json!({"document":document,"track":document.track()?}))
                 } else {

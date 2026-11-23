@@ -40,7 +40,10 @@ impl<T: Clone + Serialize> ResponseCache<T> {
         }
     }
     pub fn get(&self, key: &str) -> Option<T> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.clock += 1;
         let clock = state.clock;
         state
@@ -52,13 +55,19 @@ impl<T: Clone + Serialize> ResponseCache<T> {
         })
     }
     pub fn invalidate(&self, key: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.entries.remove(key);
         // An older in-flight result may finish after Refresh. It must not refill the cache.
         state.epoch = state.epoch.wrapping_add(1);
     }
     pub fn clear(&self) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.entries.clear();
         state.epoch = state.epoch.wrapping_add(1);
     }
@@ -83,7 +92,10 @@ impl<T: Clone + Serialize> ResponseCache<T> {
             return Ok(value);
         }
         let flight = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state.flights.retain(|_, flight| flight.strong_count() > 0);
             if let Some(flight) = state.flights.get(&key).and_then(Weak::upgrade) {
                 flight
@@ -97,11 +109,18 @@ impl<T: Clone + Serialize> ResponseCache<T> {
         if let Some(value) = self.get(&key) {
             return Ok(value);
         }
-        let epoch = self.state.lock().unwrap().epoch;
+        let epoch = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .epoch;
         let value = fetch().await?;
         let ttl = ttl(&value);
         let bytes = serde_json::to_vec(&value)?.len() + key.len();
-        let mut state = self.state.lock().unwrap();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.epoch == epoch && bytes <= self.max_bytes && self.capacity > 0 {
             state.clock += 1;
             let used = state.clock;

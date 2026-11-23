@@ -870,6 +870,20 @@ public final class PlaybackService extends MediaSessionService {
         // Register only now, so its first notification update sees BUFFERING
         // rather than the empty onCreate state.
         if (!getSessions().contains(session)) addSession(session);
+        // Media3 only goes foreground for a playing/buffering player. If the UI left
+        // between the bridge's policy check and here (Home, screen off), play() kept the
+        // item paused and startForegroundService's promise would never be kept: Android
+        // then kills the app (ForegroundServiceDidNotStartInTimeException). Settle it.
+        if (pausedByUser) {
+          startForeground(
+              NotificationIds.PLAYBACK,
+              new android.app.Notification.Builder(this, "ytui-playback")
+                  .setSmallIcon(R.drawable.ic_vidcue_notification)
+                  .setContentTitle("Playback paused")
+                  .setOnlyAlertOnce(true)
+                  .build());
+          stopForeground(STOP_FOREGROUND_REMOVE);
+        }
       } catch (Exception e) {
         error = "Invalid playback request";
         long rejectedToken = request == null ? 0 : request.optLong("startup_token");

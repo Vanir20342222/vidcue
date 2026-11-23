@@ -114,7 +114,10 @@ impl Engine {
     /// Explicit queues and finite playlists are intentional replays and stay untouched.
     fn exclude_watched_related(&self) {
         let watched = {
-            let state = self.state.lock().expect("state");
+            let state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             state
                 .recent
                 .iter()
@@ -125,7 +128,7 @@ impl Engine {
         if let Some(context) = self
             .playback_context
             .lock()
-            .expect("playback context")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_mut()
             .filter(|context| context.related)
         {
@@ -136,7 +139,10 @@ impl Engine {
     }
 
     pub fn activate_context(&self, id: Option<String>) {
-        let mut active = self.playback_context.lock().expect("playback context");
+        let mut active = self
+            .playback_context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if id
             .as_deref()
             .is_some_and(|id| active.as_ref().is_some_and(|c| c.id == id))
@@ -159,12 +165,21 @@ impl Engine {
     ) -> Result<image::DynamicImage> {
         let width = width.clamp(32, MAX_THUMBNAIL_PIXELS);
         let height = height.clamp(32, MAX_THUMBNAIL_PIXELS);
-        let cache = self.images.lock().expect("images").clone();
+        let cache = self
+            .images
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let url = vidcue_providers::images::thumbnail_url(media, width, height);
         cache.load_sized(&url, width, height).await
     }
     pub fn cancel(&self, id: u64) {
-        if let Some(c) = self.cancellations.lock().expect("cancellations").get(&id) {
+        if let Some(c) = self
+            .cancellations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+        {
             c.cancel();
         }
     }
@@ -196,7 +211,10 @@ impl Engine {
         let id = request["request_id"].as_u64().unwrap_or(0);
         let cancel = CancellationToken::new();
         if id > 0 {
-            let mut jobs = self.cancellations.lock().expect("cancellations");
+            let mut jobs = self
+                .cancellations
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             ensure!(jobs.len() < 32, "Too many pending requests");
             ensure!(!jobs.contains_key(&id), "Duplicate request ID");
             jobs.insert(id, cancel.clone());
@@ -209,11 +227,17 @@ impl Engine {
         let op = r["op"].as_str().context("Missing operation")?;
         match op {
             "settings" => Ok(serde_json::to_value(
-                self.config.lock().expect("config").clone(),
+                self.config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone(),
             )?),
             "equalizer_presets" => Ok(equalizer::catalog()),
             "save_settings" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let config: Config = serde_json::from_value(r["config"].clone())?;
                 config.validate()?;
                 if let Some(proxy) = &config.proxy {
@@ -225,7 +249,11 @@ impl Engine {
                         "Android supports an HTTP proxy without embedded credentials, or your system VPN"
                     );
                 }
-                let previous = self.config.lock().expect("config").clone();
+                let previous = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 atomic_write(
                     &self.root.join("config.json"),
                     &serde_json::to_vec(&config)?,
@@ -238,27 +266,46 @@ impl Engine {
                 {
                     let client = vidcue_providers::http_client(config.proxy.as_deref())?;
                     if proxy_changed || account_changed {
-                        let session = self.session.lock().expect("session").clone();
-                        *self.browser.lock().expect("browser") =
+                        let session = self
+                            .session
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .clone();
+                        *self
+                            .browser
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
                             Browser::new(client.clone(), session, config.account_index);
                         self.resolver.clear();
                     }
                     if proxy_changed || previous.radio_servers != config.radio_servers {
-                        *self.radio.lock().expect("radio") =
+                        *self
+                            .radio
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
                             Radio::new(client.clone(), config.radio_servers.clone())
                                 .with_cache(self.cache.join("radio"));
                     }
                     if proxy_changed {
-                        let mut images = self.images.lock().expect("images");
+                        let mut images = self
+                            .images
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         *images = images.with_client(client);
                     }
                 }
                 equalizer::configure(&config);
-                *self.config.lock().expect("config") = config;
+                *self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = config;
                 Ok(json!({"saved":true}))
             }
             "import_theme" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let text = r["text"].as_str().context("Missing palette document")?;
                 ensure!(
                     text.len() <= 2 * 1024 * 1024,
@@ -272,7 +319,10 @@ impl Engine {
                     &self.root.join("palette.json"),
                     &serde_json::to_vec(&palette)?,
                 )?;
-                let mut config = self.config.lock().expect("config");
+                let mut config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let mut draft = config.clone();
                 draft.theme = "custom".into();
                 atomic_write(&self.root.join("config.json"), &serde_json::to_vec(&draft)?)?;
@@ -298,7 +348,11 @@ impl Engine {
                 Ok(Value::Object(palettes))
             }
             "theme" => {
-                let config = self.config.lock().expect("config").clone();
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 let name = if config.theme == "system" {
                     if r["dark"].as_bool().unwrap_or(true) {
                         "vidcue-dark"
@@ -323,14 +377,21 @@ impl Engine {
                     query,
                     BrowseRequest::SavedMedia { .. } | BrowseRequest::Favorites
                 ) {
-                    let state = self.state.lock().expect("state");
+                    let state = self
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     Page {
                         title: "Saved locally".into(),
                         items: state.saved.clone(),
                         ..Default::default()
                     }
                 } else if tab == 3 {
-                    let radio = self.radio.lock().expect("radio").clone();
+                    let radio = self
+                        .radio
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     radio
                         .fetch(
                             &query,
@@ -338,7 +399,11 @@ impl Engine {
                         )
                         .await?
                 } else {
-                    let browser = self.browser.lock().expect("browser").clone();
+                    let browser = self
+                        .browser
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     browser.fetch(tab == 2, &query).await?
                 };
                 page.notice = page.notice.map(mobile_notice);
@@ -349,10 +414,18 @@ impl Engine {
                 Ok(serde_json::to_value(page)?)
             }
             "saved" => Ok(serde_json::to_value(
-                self.state.lock().expect("state").saved.clone(),
+                self.state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .saved
+                    .clone(),
             )?),
             "offline_playlists" => Ok(serde_json::to_value(
-                &self.state.lock().expect("state").offline_playlists,
+                &self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .offline_playlists,
             )?),
             "offline_playlist_create"
             | "offline_playlist_update"
@@ -426,7 +499,11 @@ impl Engine {
                 })
             }
             "queue" => Ok(serde_json::to_value(
-                self.state.lock().expect("state").queue.clone(),
+                self.state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .queue
+                    .clone(),
             )?),
             "enqueue" => {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
@@ -439,7 +516,10 @@ impl Engine {
             }
             "queue_peek" => {
                 self.exclude_watched_related();
-                let state = self.state.lock().expect("state");
+                let state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let index = if r["shuffle"].as_bool().unwrap_or(false) && !state.queue.is_empty() {
                     if let Some(index) = state
                         .queue
@@ -467,7 +547,10 @@ impl Engine {
                 if let Some(media) = explicit {
                     return Ok(media);
                 }
-                let context = self.playback_context.lock().expect("playback context");
+                let context = self
+                    .playback_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(context) = context
                     .as_ref()
                     .filter(|c| Some(c.id.as_str()) == r["context_id"].as_str())
@@ -496,9 +579,17 @@ impl Engine {
                 self.exclude_watched_related();
                 // Read-only view of what Next/autoplay will choose: the explicit queue,
                 // then the active playback context (playlist tail or related videos).
-                let queue = self.state.lock().expect("state").queue.clone();
+                let queue = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .queue
+                    .clone();
                 let limit = r["limit"].as_u64().unwrap_or(25).clamp(1, 100) as usize;
-                let context = self.playback_context.lock().expect("playback context");
+                let context = self
+                    .playback_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let context = context.as_ref().map(|c| {
                     json!({
                         "id": c.id,
@@ -512,7 +603,10 @@ impl Engine {
             }
             "queue_commit" => {
                 if r["context_entry"].as_bool().unwrap_or(false) {
-                    let mut context = self.playback_context.lock().expect("playback context");
+                    let mut context = self
+                        .playback_context
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let committed = if let Some(context) = context
                         .as_mut()
                         .filter(|c| Some(c.id.as_str()) == r["context_id"].as_str())
@@ -555,7 +649,10 @@ impl Engine {
                 })
             }
             "history_list" => {
-                let state = self.state.lock().expect("state");
+                let state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let recent = if state.recent.is_empty() {
                     &state.playback.items
                 } else {
@@ -570,10 +667,18 @@ impl Engine {
                 Ok(json!([]))
             }),
             "history_peek" => {
-                if !self.config.lock().expect("config").playback_history {
+                if !self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .playback_history
+                {
                     return Ok(json!({}));
                 }
-                let state = self.state.lock().expect("state");
+                let state = self
+                    .state
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let timeline = &state.playback;
                 // Skipping an unstarted history candidate must not record it as played.
                 let from = r["from_index"]
@@ -598,7 +703,12 @@ impl Engine {
                     .unwrap_or_else(|| json!({})))
             }
             "history_record" => {
-                if !self.config.lock().expect("config").playback_history {
+                if !self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .playback_history
+                {
                     return Ok(json!({"recorded":false}));
                 }
                 let media: Media = serde_json::from_value(r["media"].clone())?;
@@ -699,26 +809,42 @@ impl Engine {
                     })
                 } else {
                     Ok(
-                        json!({"milliseconds":self.state.lock().expect("state").positions.get(url).copied().unwrap_or(0)}),
+                        json!({"milliseconds":self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).positions.get(url).copied().unwrap_or(0)}),
                     )
                 }
             }
             "account" => Ok(
-                json!({"connected":self.session.lock().expect("session").is_some(),"notice":self.account_notice.lock().expect("account notice").clone()}),
+                json!({"connected":self.session.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_some(),"notice":self.account_notice.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()}),
             ),
             "reload_account" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 self.check_account_intent(r)?;
                 let stored=account::load(&self.root).unwrap_or_else(|_|account::Stored {
                     session:None,notice:Some("Stored account is unavailable; reconnect or disconnect it. Saved media and downloads are intact.".into()),
                 });
-                let config = self.config.lock().expect("config").clone();
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 let client = vidcue_providers::http_client(config.proxy.as_deref())?;
                 let session = stored.session.map(Arc::new);
-                *self.browser.lock().expect("browser") =
+                *self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Browser::new(client, session.clone(), config.account_index);
-                *self.session.lock().expect("session") = session.clone();
-                *self.account_notice.lock().expect("account notice") = stored.notice.clone();
+                *self
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = session.clone();
+                *self
+                    .account_notice
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = stored.notice.clone();
                 self.resolver.clear();
                 self.activate_context(None);
                 Ok(json!({"connected":session.is_some(),"notice":stored.notice}))
@@ -730,12 +856,21 @@ impl Engine {
                 else {
                     return Ok(json!({}));
                 };
-                let browser = self.browser.lock().expect("browser").clone();
+                let browser = self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 browser.watch_details(&id).await
             }
             "lyrics" => {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
-                let proxy = self.config.lock().expect("config").proxy.clone();
+                let proxy = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .proxy
+                    .clone();
                 let title = r["title"].as_str().unwrap_or(&media.title);
                 let artist = r["artist"].as_str().unwrap_or(&media.creator);
                 let tracks =
@@ -746,7 +881,12 @@ impl Engine {
                 // Opening lyrics for a song: YouTube Music's own lyrics by video ID, then LRCLIB
                 // by the song's title and artist. Neither request carries the account session.
                 let media: Media = serde_json::from_value(r["media"].clone())?;
-                let proxy = self.config.lock().expect("config").proxy.clone();
+                let proxy = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .proxy
+                    .clone();
                 let mut tracks = Vec::new();
                 if let Some(video) = vidcue_providers::music_lyrics::video_id(&media.id, &media.url)
                     && let Ok(Some(track)) = vidcue_providers::music_lyrics::lookup(
@@ -781,7 +921,10 @@ impl Engine {
             }
             "lyrics_get" | "lyrics_save" | "lyrics_remove" => self.local_lyrics(r),
             "import_cookie_file" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 self.check_account_intent(r)?;
                 let text = r["text"].as_str().context("Missing cookie document")?;
                 ensure!(
@@ -789,20 +932,36 @@ impl Engine {
                     "Cookie document exceeds limit"
                 );
                 let session = vidcue_providers::auth::parse_netscape(text)?;
-                let config = self.config.lock().expect("config").clone();
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 let client = vidcue_providers::http_client(config.proxy.as_deref())?;
                 let notice = account::save(&self.root, &session)?;
-                *self.account_notice.lock().expect("account notice") = notice.clone();
+                *self
+                    .account_notice
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = notice.clone();
                 let session = Arc::new(session);
-                *self.session.lock().expect("session") = Some(session.clone());
+                *self
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session.clone());
                 self.resolver.clear();
                 self.activate_context(None);
-                *self.browser.lock().expect("browser") =
+                *self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
                     Browser::new(client, Some(session), config.account_index);
                 Ok(json!({"connected":true,"notice":notice}))
             }
             "import_cookies" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 self.check_account_intent(r)?;
                 let cookies = if let Some(header) = r["header"].as_str() {
                     ensure!(
@@ -827,12 +986,25 @@ impl Engine {
                 };
                 let session = Arc::new(Session::new(cookies)?);
                 let notice = account::save(&self.root, &session)?;
-                *self.account_notice.lock().expect("account notice") = notice.clone();
-                *self.session.lock().expect("session") = Some(session.clone());
+                *self
+                    .account_notice
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = notice.clone();
+                *self
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(session.clone());
                 self.resolver.clear();
                 self.activate_context(None);
-                let config = self.config.lock().expect("config").clone();
-                *self.browser.lock().expect("browser") = Browser::new(
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                *self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Browser::new(
                     vidcue_providers::http_client(config.proxy.as_deref())?,
                     Some(session),
                     config.account_index,
@@ -840,15 +1012,31 @@ impl Engine {
                 Ok(json!({"connected":true,"notice":notice}))
             }
             "disconnect" => {
-                let _commit = self.settings_commit.lock().expect("settings commit");
+                let _commit = self
+                    .settings_commit
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 self.check_account_intent(r)?;
                 account::remove(&self.root)?;
-                *self.account_notice.lock().expect("account notice") = None;
-                *self.session.lock().expect("session") = None;
+                *self
+                    .account_notice
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                *self
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
                 self.resolver.clear();
                 self.activate_context(None);
-                let config = self.config.lock().expect("config").clone();
-                *self.browser.lock().expect("browser") = Browser::new(
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                *self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Browser::new(
                     vidcue_providers::http_client(config.proxy.as_deref())?,
                     None,
                     config.account_index,
@@ -892,7 +1080,10 @@ impl Engine {
                     .iter()
                     .position(|m| m.url == source)
                     .map_or(0, |i| i + 1);
-                let mut active = self.playback_context.lock().expect("playback context");
+                let mut active = self
+                    .playback_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if radio && let Some(context) = active.as_ref().filter(|c| c.id == id && c.prepared)
                 {
                     return Ok(json!({"prepared":true,"count":context.items.len()}));
@@ -918,7 +1109,10 @@ impl Engine {
                 }
             }
             "context_status" => {
-                let active = self.playback_context.lock().expect("playback context");
+                let active = self
+                    .playback_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 Ok(
                     json!({"active":active.as_ref().is_some_and(|c|Some(c.id.as_str())==r["context_id"].as_str())}),
                 )
@@ -930,7 +1124,7 @@ impl Engine {
                 if let Some(context) = self
                     .playback_context
                     .lock()
-                    .expect("playback context")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .as_ref()
                     .filter(|c| c.id == id && c.prepared)
                 {
@@ -939,7 +1133,7 @@ impl Engine {
                 if self
                     .playback_context
                     .lock()
-                    .expect("playback context")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .as_ref()
                     .is_none_or(|c| c.id != id)
                 {
@@ -958,16 +1152,28 @@ impl Engine {
                 );
                 let related = matches!(query, BrowseRequest::Related(_));
                 let items = if related {
-                    let browser = self.browser.lock().expect("browser").clone();
+                    let browser = self
+                        .browser
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     browser
                         .fetch(r["music"].as_bool().unwrap_or(false), &query)
                         .await?
                         .items
                 } else if matches!(query, BrowseRequest::CliampTracks(_)) {
-                    let radio = self.radio.lock().expect("radio").clone();
+                    let radio = self
+                        .radio
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     radio.fetch(&query, 0).await?.items
                 } else {
-                    let browser = self.browser.lock().expect("browser").clone();
+                    let browser = self
+                        .browser
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .clone();
                     vidcue_providers::watch::collect(
                         browser,
                         vidcue_core::watch::CollectionWatch {
@@ -1018,7 +1224,10 @@ impl Engine {
                             <= 16 * 1024 * 1024,
                     "Playback collection exceeds the memory budget"
                 );
-                let mut active = self.playback_context.lock().expect("playback context");
+                let mut active = self
+                    .playback_context
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(context) = active.as_mut().filter(|c| c.id == id) {
                     if !context.prepared {
                         context.related = related;
@@ -1037,7 +1246,11 @@ impl Engine {
             "collection" | "enqueue_collection" => {
                 let music = r["music"].as_bool().unwrap_or(false);
                 let request: BrowseRequest = serde_json::from_value(r["request"].clone())?;
-                let browser = self.browser.lock().expect("browser").clone();
+                let browser = self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 let watch = vidcue_core::watch::CollectionWatch {
                     id: uuid::Uuid::new_v4(),
                     title: "Mobile playlist".into(),
@@ -1074,11 +1287,21 @@ impl Engine {
                 }
             }
             "sponsor" => {
-                if self.config.lock().expect("config").playback_sponsorblock == "off" {
+                if self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .playback_sponsorblock
+                    == "off"
+                {
                     return Ok(json!([]));
                 }
                 let media: Media = serde_json::from_value(r["media"].clone())?;
-                let config = self.config.lock().expect("config").clone();
+                let config = self
+                    .config
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
                 Ok(json!(
                     vidcue_providers::sponsorblock::fetch(&config, &media).await?
                 ))
@@ -1110,7 +1333,10 @@ impl Engine {
         }
     }
     fn mutate<T>(&self, update: impl FnOnce(&mut MobileState) -> Result<T>) -> Result<T> {
-        let mut state = self.state.lock().expect("state");
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut draft = state.clone();
         let value = update(&mut draft)?;
         self.persist(&draft)?;
@@ -1129,10 +1355,19 @@ impl Engine {
         let started = std::time::Instant::now();
         let media: Media = serde_json::from_value(r["media"].clone())?;
         let url = vidcue_core::http_url(&media.url)?;
-        if let Some(session) = self.session.lock().expect("session").as_ref() {
+        if let Some(session) = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
             session.headers("https://www.youtube.com")?;
         }
-        let config = self.config.lock().expect("config").clone();
+        let config = self
+            .config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let audio = r["audio"].as_bool().unwrap_or(false);
         let language = r["audio_language"]
             .as_str()
@@ -1167,12 +1402,20 @@ impl Engine {
         let client_key = key.clone();
         let adaptive = quality == "auto" && !audio;
         let fresh = r["fresh"].as_bool().unwrap_or(false);
-        let radio = self.radio.lock().expect("radio").clone();
-        let cookies = self.session.lock().expect("session").clone();
+        let radio = self
+            .radio
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let cookies = self
+            .session
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         let visitor = self
             .browser
             .lock()
-            .expect("browser")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .playback_visitor(audio);
         let pool = self.resolver.clone();
         let mut value = self
@@ -1433,7 +1676,10 @@ mod format_tests {
         };
         for related in [true, false] {
             engine.activate_context(Some("test".into()));
-            *engine.playback_context.lock().unwrap() = Some(PlaybackContext {
+            *engine
+                .playback_context
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(PlaybackContext {
                 id: "test".into(),
                 items: [repeated.clone(), unseen.clone()].into(),
                 prepared: true,
@@ -1495,7 +1741,12 @@ mod format_tests {
                 pending.request(json!({"op":"resolve","request_id":id,"media":{"url":"https://www.youtube.com/watch?v=abcdefghijk","title":"Synthetic"}})).await
             });
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                while !engine.cancellations.lock().unwrap().contains_key(&id) {
+                while !engine
+                    .cancellations
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains_key(&id)
+                {
                     tokio::task::yield_now().await;
                 }
             })
@@ -1552,7 +1803,14 @@ mod format_tests {
     fn mobile_dark_default_does_not_replace_an_explicit_saved_theme() {
         let temp = tempfile::tempdir().unwrap();
         let engine = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
-        assert_eq!(engine.config.lock().unwrap().theme, "vidcue-dark");
+        assert_eq!(
+            engine
+                .config
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .theme,
+            "vidcue-dark"
+        );
         let saved = Config {
             theme: "catppuccin-latte".into(),
             ..Config::default()
@@ -1563,7 +1821,14 @@ mod format_tests {
         )
         .unwrap();
         let restored = Engine::new(temp.path(), &temp.path().join("cache")).unwrap();
-        assert_eq!(restored.config.lock().unwrap().theme, "catppuccin-latte");
+        assert_eq!(
+            restored
+                .config
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .theme,
+            "catppuccin-latte"
+        );
     }
 
     #[tokio::test]
@@ -1664,7 +1929,7 @@ mod format_tests {
             engine
                 .playback_context
                 .lock()
-                .unwrap()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .as_ref()
                 .unwrap()
                 .consumed
@@ -1716,7 +1981,10 @@ mod format_tests {
         assert_eq!(view["context"]["count"], 1);
         assert_eq!(view["context"]["items"].as_array().unwrap().len(), 1);
         assert_eq!(view["context"]["items"][0]["url"], "https://media.test/d");
-        let context = engine.playback_context.lock().unwrap();
+        let context = engine
+            .playback_context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let consumed = &context.as_ref().unwrap().consumed;
         assert!(
             consumed.contains("https://media.test/b") && consumed.contains("https://media.test/c")
@@ -1921,7 +2189,7 @@ impl Drop for RequestRegistration<'_> {
             self.engine
                 .cancellations
                 .lock()
-                .expect("cancellations")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .remove(&self.id);
         }
     }
@@ -2162,7 +2430,26 @@ pub fn initialize(root: &Path, cache: &Path) -> Result<()> {
         .set(Arc::new(Engine::new(root, cache)?))
         .map_err(|_| anyhow::anyhow!("Mobile engine already initialized"))
 }
+/// Stack for one request. Provider pages are walked recursively (up to serde_json's
+/// 128-level limit) inside a large async state machine; Java worker threads have ~1 MB,
+/// and a native stack overflow kills the app without any catchable error.
+const REQUEST_STACK_BYTES: usize = 8 << 20;
 pub fn call(raw: &str) -> String {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("vidcue-request".into())
+            .stack_size(REQUEST_STACK_BYTES)
+            .spawn_scoped(scope, || call_inline(raw))
+            .map(|thread| {
+                thread.join().unwrap_or_else(|_| {
+                    json!({"ok":false,"error":"Native operation failed"}).to_string()
+                })
+            })
+            // No thread available (resource limits): run here rather than fail.
+            .unwrap_or_else(|_| call_inline(raw))
+    })
+}
+fn call_inline(raw: &str) -> String {
     let result = (|| -> Result<Value> {
         ensure!(
             raw.len() <= 2 * 1024 * 1024,
@@ -2269,13 +2556,48 @@ mod android {
         objects::{JClass, JString},
         sys::{jlong, jstring},
     };
+    /// A panic must never cross `extern "system"`: Rust aborts the process there.
+    fn guard<R>(fallback: R, body: impl FnOnce() -> R) -> R {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)).unwrap_or(fallback)
+    }
+    /// Panics are otherwise invisible on Android (stderr is discarded); log their location.
+    fn install_panic_log() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            let previous = std::panic::take_hook();
+            std::panic::set_hook(Box::new(move |info| {
+                let location = info
+                    .location()
+                    .map(|l| format!("{}:{}", l.file(), l.line()))
+                    .unwrap_or_default();
+                let thread = std::thread::current();
+                // Location and thread only: panic messages may quote provider data.
+                let text = format!(
+                    "Rust panic at {location} on {}\0",
+                    thread.name().unwrap_or("unnamed")
+                );
+                unsafe extern "C" {
+                    fn __android_log_write(
+                        prio: std::ffi::c_int,
+                        tag: *const std::ffi::c_char,
+                        text: *const std::ffi::c_char,
+                    ) -> std::ffi::c_int;
+                }
+                // 6 = ANDROID_LOG_ERROR.
+                unsafe {
+                    __android_log_write(6, c"vidcue".as_ptr(), text.as_ptr().cast());
+                }
+                previous(info);
+            }));
+        });
+    }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_activateContext(
         mut env: JNIEnv,
         _class: JClass,
         id: JString,
     ) {
-        let result = (|| -> Result<()> {
+        let result = guard(Err(anyhow::anyhow!("panic")), || -> Result<()> {
             let id: String = env.get_string(&id)?.into();
             ensure!(id.len() <= 128, "Invalid playback context");
             ENGINE
@@ -2283,7 +2605,7 @@ mod android {
                 .context("Engine is not initialized")?
                 .activate_context((!id.is_empty()).then_some(id));
             Ok(())
-        })();
+        });
         if result.is_err() {
             let _ = env.throw_new(
                 "java/lang/IllegalArgumentException",
@@ -2298,12 +2620,16 @@ mod android {
         root: JString,
         cache: JString,
     ) -> jstring {
-        let result = (|| -> Result<()> {
-            crate::platform::initialize_bridge(&mut env)?;
-            let root: String = env.get_string(&root)?.into();
-            let cache: String = env.get_string(&cache)?.into();
-            initialize(Path::new(&root), Path::new(&cache))
-        })();
+        install_panic_log();
+        let result = guard(
+            Err(anyhow::anyhow!("Engine start failed")),
+            || -> Result<()> {
+                crate::platform::initialize_bridge(&mut env)?;
+                let root: String = env.get_string(&root)?.into();
+                let cache: String = env.get_string(&cache)?.into();
+                initialize(Path::new(&root), Path::new(&cache))
+            },
+        );
         let text = match result {
             Ok(()) => String::new(),
             Err(e) => vidcue_providers::diagnostic(&format!("{e:#}")),
@@ -2317,20 +2643,24 @@ mod android {
         _env: JNIEnv,
         _class: JClass,
     ) -> jlong {
-        ENGINE
-            .get()
-            .map(|e| e.begin_account_change() as jlong)
-            .unwrap_or(0)
+        guard(0, || {
+            ENGINE
+                .get()
+                .map(|e| e.begin_account_change() as jlong)
+                .unwrap_or(0)
+        })
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_accountIntent(
         _env: JNIEnv,
         _class: JClass,
     ) -> jlong {
-        ENGINE
-            .get()
-            .map(|e| e.account_intent() as jlong)
-            .unwrap_or(0)
+        guard(0, || {
+            ENGINE
+                .get()
+                .map(|e| e.account_intent() as jlong)
+                .unwrap_or(0)
+        })
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_thumbnail(
@@ -2420,10 +2750,12 @@ mod android {
         if channels < 1 {
             return 0;
         }
-        with_direct_pcm(&env, &buffer, offset, length, |bytes| {
-            crate::meter::pcm16(bytes, channels as usize) as jlong
+        guard(0, || {
+            with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+                crate::meter::pcm16(bytes, channels as usize) as jlong
+            })
+            .unwrap_or(0)
         })
-        .unwrap_or(0)
     }
     /// Writes `out.length` log-spaced band levels (0..=65535). Unusable windows write zeros.
     #[unsafe(no_mangle)]
@@ -2439,14 +2771,21 @@ mod android {
     ) {
         let mut bands = [0_i32; crate::meter::BANDS];
         if channels >= 1 && sample_rate > 0 {
-            with_direct_pcm(&env, &buffer, offset, length, |bytes| {
-                crate::meter::spectrum_pcm16(
-                    bytes,
-                    channels as usize,
-                    sample_rate as u32,
-                    &mut bands,
-                )
+            let computed = guard(None, || {
+                let mut out = [0_i32; crate::meter::BANDS];
+                with_direct_pcm(&env, &buffer, offset, length, |bytes| {
+                    crate::meter::spectrum_pcm16(
+                        bytes,
+                        channels as usize,
+                        sample_rate as u32,
+                        &mut out,
+                    )
+                })
+                .map(|_| out)
             });
+            if let Some(out) = computed {
+                bands = out;
+            }
         }
         let _ = env.set_int_array_region(&out, 0, &bands);
     }
@@ -2480,21 +2819,23 @@ mod android {
         let bytes = unsafe {
             std::slice::from_raw_parts_mut(pointer.add(offset as usize), length as usize)
         };
-        crate::equalizer::process_pcm16(bytes, channels as usize, sample_rate as u32);
+        guard((), || {
+            crate::equalizer::process_pcm16(bytes, channels as usize, sample_rate as u32)
+        });
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_equalizerEnabled(
         _env: JNIEnv,
         _class: JClass,
     ) -> jni::sys::jboolean {
-        crate::equalizer::enabled() as jni::sys::jboolean
+        guard(false, crate::equalizer::enabled) as jni::sys::jboolean
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_equalizerReset(
         _env: JNIEnv,
         _class: JClass,
     ) {
-        crate::equalizer::reset();
+        guard((), crate::equalizer::reset);
     }
     #[unsafe(no_mangle)]
     pub extern "system" fn Java_dev_ytui_android_NativeBridge_cancel(
@@ -2502,9 +2843,11 @@ mod android {
         _class: JClass,
         id: jlong,
     ) {
-        if let Some(engine) = ENGINE.get() {
-            engine.cancel(id as u64);
-        }
+        guard((), || {
+            if let Some(engine) = ENGINE.get() {
+                engine.cancel(id as u64);
+            }
+        });
     }
 }
 

@@ -106,7 +106,10 @@ impl ImageCache {
             Ok::<_, anyhow::Error>(stats)
         })
         .await??;
-        let mut memory = self.memory.lock().unwrap();
+        let mut memory = self
+            .memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         stats.memory_images = memory.images.len();
         stats.memory_bytes = memory
             .images
@@ -152,11 +155,19 @@ impl ImageCache {
         // Portrait art (movie posters) needs a tall box; callers pass the size they display.
         let (width, height) = (width.clamp(1, 1280), height.clamp(1, 1280));
         let key = hex::encode(Sha256::digest(format!("v2:{url}:{width}:{height}")));
-        if let Some(image) = self.memory.lock().unwrap().get(&key) {
+        if let Some(image) = self
+            .memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
             return Ok(image);
         }
         let flight = {
-            let mut flights = self.flights.lock().unwrap();
+            let mut flights = self
+                .flights
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             flights.retain(|_, v| v.strong_count() > 0);
             if let Some(flight) = flights.get(&key).and_then(Weak::upgrade) {
                 flight
@@ -167,14 +178,22 @@ impl ImageCache {
             }
         };
         let _flight = flight.lock().await;
-        if let Some(image) = self.memory.lock().unwrap().get(&key) {
+        if let Some(image) = self
+            .memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
             return Ok(image);
         }
         let _permit = self.permits.acquire().await?;
         let path = self.dir.join(&key);
         if let Ok(bytes) = tokio::fs::read(&path).await {
             if let Ok(image) = decode(bytes, width, height).await {
-                self.memory.lock().unwrap().insert(key, image.clone());
+                self.memory
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(key, image.clone());
                 return Ok(image);
             }
             let _ = tokio::fs::remove_file(&path).await;
@@ -229,7 +248,10 @@ impl ImageCache {
         }
         let image = decode(bytes, width, height).await?;
         // Displaying a valid image must not depend on an optional disk cache.
-        self.memory.lock().unwrap().insert(key, image.clone());
+        self.memory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, image.clone());
         // Optional persistence is bounded independently of fetch/decode. When busy,
         // retain the memory hit and skip disk caching rather than queueing bitmaps.
         if let Ok(permit) = self.maintenance.clone().try_acquire_owned() {
@@ -243,7 +265,9 @@ impl ImageCache {
                     #[cfg(test)]
                     if let Some(gate) = gate {
                         let (lock, wake) = &*gate;
-                        let mut open = lock.lock().unwrap();
+                        let mut open = lock
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         while !*open {
                             open = wake.wait(open).unwrap();
                         }
@@ -383,7 +407,10 @@ mod tests {
         let clear = tokio::spawn(async move { c.inspect(true).await });
         tokio::task::yield_now().await;
         assert!(!clear.is_finished());
-        *gate.0.lock().unwrap() = true;
+        *gate
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
         gate.1.notify_all();
         assert_eq!(loaded.unwrap().unwrap().width(), 16);
         clear.await.unwrap().unwrap();

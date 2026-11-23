@@ -76,6 +76,9 @@ public final class OfflineService extends DownloadService {
    */
   @Override
   public void onTimeout(int startId, int fgsType) {
+    // Leave foreground first: the download notification updater would otherwise call
+    // startForeground again after the limit, which throws.
+    stopForeground(STOP_FOREGROUND_REMOVE);
     stopSelf();
   }
 }
