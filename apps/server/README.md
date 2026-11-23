@@ -90,6 +90,53 @@ that signed in with a password posts an X25519 public key to `/api/keys/requests
 a trusted device shows a fingerprint of that key, the user compares it with the
 fingerprint on the new device, and the trusted device posts the key sealed to it.
 
+## API (B4)
+
+Friends, activity sharing, send-to-a-friend, shared playlists, presence, handoff,
+remote control and Jam. The wire format is `docs/backend/PROTOCOL.md` §1–§5. Objects
+the caller may not see answer 404, so ids cannot be probed. Media is always stored in
+the slim online form; local files are refused.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /api/friends` | `friends` (accepted), `incoming` and `outgoing` requests, by username |
+| `POST /api/friends/requests` `{username}` | `requested`, or `accepted` when they had already asked; unknown, inactive or own name → 404 |
+| `POST /api/friends/{user_id}/accept`, `DELETE /api/friends/{user_id}` | Accept; decline, cancel or remove. Removing a friend also drops each from the other's shared playlists and Jam room and withdraws Jam invites between them |
+| `GET`/`PUT /api/social/settings` `{share_activity: off\|now_playing\|history}` | Opt-in activity sharing (default `off`) |
+| `GET /api/friends/activity` | Opted-in friends: `now_playing` from live presence, plus the last 20 history events of 7 days for `history` |
+| `POST /api/inbox` `{to, media, note?}`, `GET /api/inbox?unread_only=`, `POST /api/inbox/{id}/read`, `DELETE /api/inbox/{id}` | Send to a friend; 200 items per inbox (oldest read items make room), notes ≤ 200 printable characters, kept 90 days |
+| `POST /api/shared-playlists` `{id, title}`, `GET /api/shared-playlists` | Create (idempotent per owner) and list shared playlists |
+| `PATCH`/`DELETE /api/shared-playlists/{id}` | Owner: rename or delete |
+| `POST /api/shared-playlists/{id}/members` `{user_id}`, `DELETE …/members/{user_id}` | Owner adds friends (≤ 20 members) or removes anyone; members leave |
+| `POST /api/shared-playlists/{id}/push` `{ops: [{id, entry_id, value?, clock}]}` | Per-entry registers like `playlist_entries`: later clock wins, op ids idempotent, ≤ 2000 entries |
+| `GET /api/shared-playlists/{id}/pull?since=&limit=` | Entry changes, `playlist`, `next`, `more`; a complete pull also moves `next` past title/member changes |
+| `POST /api/jam` `{title?, guests_can_control?}`, `GET /api/jam` | Start a room (ends your hosted room, leaves your current one); current room and open invites |
+| `GET`/`PATCH`/`DELETE /api/jam/{id}` | Room for members; host edits settings or ends it |
+| `POST /api/jam/{id}/invite` `{user_ids}`, `…/join`, `…/decline`, `…/leave`, `DELETE …/members/{user_id}` | Members invite their own friends; join needs an invite (≤ 10 members); host leaving ends the room; host removes members |
+| `POST /api/jam/{id}/queue` `{media}`, `DELETE …/queue/{item_id}`, `POST …/queue/{item_id}/vote` `{up}` | Anyone queues (≤ 200; the first item starts at once), host or adder removes, members vote (most votes first, then oldest) |
+| `POST /api/jam/{id}/playback` `{action: play\|pause\|seek\|next\|play_item\|ended\|rate, …}` | Host, or guests when `guests_can_control`; `ended` from any member advances once |
+
+Rooms end when the host ends or leaves them, after 30 minutes without a room action or
+`jam_ping`, or 12 hours after creation; ended rooms are deleted a day later.
+
+**WebSocket (client to server).** `hello` lists `features: ["realtime","social","jam"]`
+and `server_ms`. Text frames of at most 32 KiB, one JSON object with `type` and an
+optional `rid` (answered by exactly one `ack` or `error`): `ping {t0}` → `pong
+{t0, server_ms}` (Jam clock), `presence {state}`, `presence_query`, `handoff` and
+`remote` (to another connected device of the same user only), `jam_ping {room_id}`.
+Presence lives in memory. Limits per socket: one `presence` per 2 s, 20 other messages
+per 10 s; three malformed or unknown messages within a minute close the socket (1008),
+binary frames close it (1003). Server events: `presence`, `presence_gone`, `handoff`,
+`remote` (only on the target device), `friend_request`, `friend_added`,
+`friend_removed`, `friend_activity` (at most one per sharing user per 10 s; changes
+inside the window are coalesced into one event at its end), `inbox_item`,
+`shared_playlist_changed`, `shared_playlist_removed`, `jam_state`, `jam_changed`,
+`jam_invite`, `jam_ended`. A missed-event overflow sends `changed {seq, resync: true}`.
+
+**Throttling** (same table as B1, never forgiven): friend requests 20 / user / hour,
+inbox sends 60 / user / hour, Jam queue additions 30 / user / 10 min, Jam playback
+actions 60 / user / minute, Jam rooms 10 / user / hour.
+
 ## Tests
 
 `cargo test -p vidcue-server` runs offline unit tests. The end-to-end API test needs a
