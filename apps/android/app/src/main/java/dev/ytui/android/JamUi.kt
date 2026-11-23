@@ -140,7 +140,8 @@ private fun JamRoom(vm: YtuiViewModel, room: JSONObject, close: () -> Unit) {
         }
         // Queue: ordered by votes; a filled arrow marks your vote.
         val queue = room.optJSONArray("queue")?.objects().orEmpty()
-        val me = vm.sync.status.value.text("user_id")
+        val syncStatus by vm.sync.status.collectAsState()
+        val me = syncStatus.text("user_id")
         for (entry in queue) {
             val card = MediaCard(entry.optJSONObject("media") ?: JSONObject())
             val itemId = entry.text("item_id")
