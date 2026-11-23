@@ -1,0 +1,38 @@
+[package]
+name = "vidcue-server"
+description = "Self-hosted Vidcue backend: accounts, device pairing and offline-first sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "vidcue-server"
+path = "src/main.rs"
+
+[dependencies]
+vidcue-core = { path = "../../crates/vidcue-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-serde_json-1"] }
+deadpool-postgres = "0.14"
+argon2 = "0.5"
+aes-gcm = "0.10"
+hmac = "0.12"
+sha1 = "0.10"
+sha2 = "0.10"
+rand = "0.8"
+data-encoding = "2"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
