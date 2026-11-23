@@ -4,8 +4,11 @@ mod account;
 mod api;
 mod auth;
 mod db;
+mod jam;
 mod keys;
+mod presence;
 mod secrets;
+mod social;
 mod sync;
 #[cfg(test)]
 mod tests;

@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use std::net::SocketAddr;
 use tower::ServiceExt;
 
+mod social_realtime;
+
 #[derive(Clone)]
 struct Client {
     app: axum::Router,

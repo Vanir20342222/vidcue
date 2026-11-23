@@ -35,7 +35,8 @@ pub const DEVICE_IDLE_MS: i64 = 180 * 24 * 3_600_000;
 pub const MAX_DEVICES_PER_USER: i64 = 20;
 const MAX_OPEN_PAIRINGS: i64 = 5;
 const MAX_SOCKETS_PER_DEVICE: usize = 3;
-const MAX_WS_MESSAGE: usize = 16 * 1024;
+const MAX_WS_MESSAGE: usize = 32 * 1024;
+const HUB_CAPACITY: usize = 256;
 
 /// Argon2 uses ~19 MiB per hash; at most this many run at once so a login flood cannot
 /// exhaust memory. Requests that wait longer than `HASH_WAIT` get 503.
@@ -68,6 +69,8 @@ pub struct Inner {
     trusted_proxies: Vec<IpAddr>,
     proxies_only: bool,
     pub hub: Hub,
+    /// Presence of connected devices (in memory).
+    pub realtime: crate::presence::Realtime,
     /// Single-use WebSocket tickets: hash → (device, expiry).
     tickets: Mutex<HashMap<Vec<u8>, (Uuid, i64)>>,
     /// Serialises sync pushes per user before a database connection is taken.
@@ -85,6 +88,7 @@ impl AppState {
             trusted_proxies: settings.trusted_proxies,
             proxies_only: settings.proxies_only,
             hub: Hub::default(),
+            realtime: Default::default(),
             tickets: Mutex::default(),
             push_locks: Mutex::default(),
             clock: now_ms,
@@ -190,13 +194,21 @@ impl Hub {
         let mut map = self.channels.lock().expect("hub lock");
         map.retain(|_, tx| tx.receiver_count() > 0);
         map.entry(user)
-            .or_insert_with(|| broadcast::channel(64).0)
+            .or_insert_with(|| broadcast::channel(HUB_CAPACITY).0)
             .subscribe()
     }
     pub fn publish(&self, user: Uuid, event: Value) {
         if let Some(tx) = self.channels.lock().expect("hub lock").get(&user) {
             let _ = tx.send(event);
         }
+    }
+    /// Whether the device has at least one open WebSocket.
+    pub(crate) fn device_online(&self, device: Uuid) -> bool {
+        self.sockets
+            .lock()
+            .expect("hub sockets")
+            .get(&device)
+            .is_some_and(|n| *n > 0)
     }
     fn reserve_socket(&self, device: Uuid) -> Option<SocketSlot> {
         let mut sockets = self.sockets.lock().expect("hub sockets");
@@ -338,6 +350,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/admin/users", get(admin_users))
         .merge(crate::account::routes())
         .merge(crate::keys::routes())
+        .merge(crate::social::routes())
+        .merge(crate::jam::routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             network_guard,
@@ -1118,11 +1132,26 @@ async fn ws(
 }
 
 async fn ws_session(state: AppState, device: Device, _slot: SocketSlot, mut socket: WebSocket) {
+    use axum::extract::ws::CloseFrame;
+    let close = |code: u16| {
+        Message::Close(Some(CloseFrame {
+            code,
+            reason: "".into(),
+        }))
+    };
     let mut rx = state.0.hub.subscribe(device.user);
+    // Dropping the connection (any exit path) removes this socket's presence.
+    let mut conn = crate::presence::connected(&state, &device).await;
     let seq = sync::latest_seq(&state.0.db, device.user)
         .await
         .unwrap_or(0);
-    let hello = json!({ "type": "hello", "seq": seq, "device_id": device.device });
+    let hello = json!({
+        "type": "hello",
+        "seq": seq,
+        "device_id": device.device,
+        "server_ms": state.now(),
+        "features": crate::presence::FEATURES,
+    });
     if socket
         .send(Message::Text(hello.to_string().into()))
         .await
@@ -1142,19 +1171,36 @@ async fn ws_session(state: AppState, device: Device, _slot: SocketSlot, mut sock
                         let _ = socket.send(Message::Close(None)).await;
                         return;
                     }
+                    if !crate::presence::delivers(&event, device.device) { continue; }
                     if socket.send(Message::Text(event.to_string().into())).await.is_err() { return; }
                 }
-                // Missed events: tell the device to pull everything newer than it has.
+                // Missed events: tell the device to pull everything newer than it has and
+                // to refetch presence and any open Jam room.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let seq = sync::latest_seq(&state.0.db, device.user).await.unwrap_or(0);
-                    let msg = json!({ "type": "changed", "seq": seq });
+                    let msg = json!({ "type": "changed", "seq": seq, "resync": true });
                     if socket.send(Message::Text(msg.to_string().into())).await.is_err() { return; }
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
             incoming = socket.recv() => match incoming {
-                // The socket is server-to-client only; clients send nothing but control frames.
+                Some(Ok(Message::Text(text))) => {
+                    let outcome = crate::presence::on_message(&mut conn, &text).await;
+                    if let Some(reply) = outcome.reply
+                        && socket.send(Message::Text(reply.to_string().into())).await.is_err()
+                    {
+                        return;
+                    }
+                    if let Some(code) = outcome.close {
+                        let _ = socket.send(close(code)).await;
+                        return;
+                    }
+                }
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Binary(_))) => {
+                    let _ = socket.send(close(crate::presence::CLOSE_UNSUPPORTED)).await;
+                    return;
+                }
                 _ => return,
             },
             _ = ticker.tick() => {
@@ -1266,5 +1312,7 @@ pub async fn maintenance(db: &Pool, now: i64) -> anyhow::Result<()> {
             idle = now - DEVICE_IDLE_MS,
         ))
         .await?;
+    crate::social::maintenance(db, now).await?;
+    crate::jam::maintenance(db, now).await?;
     Ok(())
 }

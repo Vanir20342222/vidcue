@@ -374,7 +374,7 @@ fn title_ok(title: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn online_media(value: &Value) -> Result<vidcue_core::Media, String> {
+pub(crate) fn online_media(value: &Value) -> Result<vidcue_core::Media, String> {
     let media: vidcue_core::Media =
         serde_json::from_value(value.clone()).map_err(|e| format!("invalid media: {e}"))?;
     vidcue_core::http_url(&media.url).map_err(|_| "only online media syncs".to_owned())?;
@@ -390,7 +390,7 @@ fn slim_media(media: &mut Value) {
     }
 }
 
-fn slimmed(media: &vidcue_core::Media) -> Result<Value, String> {
+pub(crate) fn slimmed(media: &vidcue_core::Media) -> Result<Value, String> {
     let mut value = serde_json::to_value(media).map_err(|e| e.to_string())?;
     slim_media(&mut value);
     Ok(value)
