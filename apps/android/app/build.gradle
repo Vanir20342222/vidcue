@@ -112,3 +112,32 @@ dependencies {
     androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
+
+// Robolectric normally downloads its Android runtime jars from Maven Central at test time with
+// a plain HttpURLConnection, outside Gradle. On CI those downloads started failing on 2026-11-23
+// (IOException in MavenArtifactFetcher for most JVM tests), which kept main red. Resolve the
+// runtimes through Gradle instead (cached, retried, same repositories as every other dependency)
+// and run Robolectric offline against that directory. Update these versions together with
+// org.robolectric:robolectric.
+// One configuration per runtime: both are versions of the same module, and a single
+// configuration would keep only the newest after conflict resolution.
+def robolectricRuntimes = [
+    sdk35: 'org.robolectric:android-all-instrumented:15-robolectric-12650502-i7',
+    sdk21: 'org.robolectric:android-all-instrumented:5.0.2_r3-robolectric-r0-i7',
+]
+robolectricRuntimes.each { name, coordinates ->
+    configurations.create("robolectric${name.capitalize()}") { transitive = false }
+    dependencies.add("robolectric${name.capitalize()}", coordinates)
+}
+def robolectricRuntimeFiles = files(robolectricRuntimes.keySet().collect { configurations.getByName("robolectric${it.capitalize()}") })
+def robolectricRuntimeDir = layout.buildDirectory.dir('robolectric-runtime')
+def syncRobolectricRuntime = tasks.register('syncRobolectricRuntime', Sync) {
+    from robolectricRuntimeFiles
+    into robolectricRuntimeDir
+}
+tasks.withType(Test).configureEach {
+    dependsOn syncRobolectricRuntime
+    inputs.files(robolectricRuntimeFiles).withNormalizer(ClasspathNormalizer)
+    systemProperty 'robolectric.offline', 'true'
+    systemProperty 'robolectric.dependency.dir', robolectricRuntimeDir.get().asFile.absolutePath
+}
