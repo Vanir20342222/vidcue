@@ -161,21 +161,26 @@ async fn change_password(
     }
     reauth(&state, &device, &body.current_password, Some(&body.code)).await?;
     let new_hash = hash(&body.new_password).await?;
-    let client = state.0.db.get().await?;
-    client
-        .execute(
-            "UPDATE users SET password_hash = $2 WHERE id = $1",
-            &[&device.user, &new_hash],
-        )
-        .await?;
+    let mut client = state.0.db.get().await?;
+    let tx = client.transaction().await?;
+    tx.execute(
+        "UPDATE users SET password_hash = $2 WHERE id = $1",
+        &[&device.user, &new_hash],
+    )
+    .await?;
+    // A new password always ends /admin cookie sessions opened with the old one.
+    crate::admin_web::end_sessions(&tx, device.user).await?;
     let mut revoked = 0;
     if body.sign_out_others {
-        revoked = client
+        revoked = tx
             .execute(
                 "UPDATE devices SET revoked_at = $3 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL",
                 &[&device.user, &device.device, &state.now()],
             )
             .await?;
+    }
+    tx.commit().await?;
+    if body.sign_out_others {
         state.0.hub.publish(
             device.user,
             json!({ "type": "devices_revoked", "keep": device.device }),
@@ -258,6 +263,7 @@ async fn totp_confirm(
             &[&device.user, &(step as i64)],
         )
         .await?;
+    crate::admin_web::end_sessions(&state.0.db.get().await?, device.user).await?;
     state.forgive(&ids).await?;
     Ok(Json(json!({ "changed": true })))
 }
@@ -461,6 +467,7 @@ async fn reset_confirm(
             &[&user, &now],
         )
         .await?;
+    crate::admin_web::end_sessions(&tx, user).await?;
     tx.execute(
         "UPDATE account_resets SET used_at = $2 WHERE token_hash = $1",
         &[&token_hash, &now],

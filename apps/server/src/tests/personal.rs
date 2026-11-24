@@ -1077,7 +1077,7 @@ async fn admin_web_login_sessions_and_csrf() {
     let (_, _, page) = raw(&c, Method::GET, "/admin", &[("cookie", &cookie)], None).await;
     assert!(page.contains("action=\"/admin/login\""));
 
-    // Login throttle shares the /api/login limits under admin- keys.
+    // /admin/login and /api/login share one budget: the same throttle keys.
     let attacker = c.from("203.0.113.9");
     let mut last = StatusCode::OK;
     for _ in 0..6 {
@@ -1107,12 +1107,22 @@ async fn admin_web_login_sessions_and_csrf() {
         .map(|r| r.get(0))
         .collect();
     assert!(
-        keys.iter().any(|k| k == "admin-login:root:203.0.113.9"),
+        keys.iter().any(|k| k == "login:root:203.0.113.9"),
         "{keys:?}"
     );
-    assert!(keys.iter().all(|k| !k.starts_with("login")), "{keys:?}");
-    // The app login is unaffected.
+    assert!(keys.iter().all(|k| !k.starts_with("admin-")), "{keys:?}");
+    // The app login from the same address is now over the same limit too.
     let (status, _) = attacker
+        .post(
+            "/api/login",
+            None,
+            json!({"username": "root", "password": PW, "code": root.recovery[7]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    // Another address still signs in.
+    let (status, _) = c
+        .from("203.0.113.10")
         .post(
             "/api/login",
             None,
@@ -1387,4 +1397,68 @@ async fn admin_disable_enable_and_device_endpoints() {
         .await;
     assert_eq!(status, StatusCode::OK);
     let _ = bob_id;
+}
+
+#[tokio::test]
+async fn admin_sessions_end_with_password_change_and_sign_out_everywhere() {
+    let Some((pool, _guard)) = fresh_db().await else {
+        return;
+    };
+    let c = client(&pool);
+    let root = register(&c, &pool, "root", true).await;
+    let admin2 = register(&c, &pool, "second", true).await;
+    let sessions = || async {
+        pool.get()
+            .await
+            .unwrap()
+            .query_one("SELECT COUNT(*) FROM admin_sessions", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0)
+    };
+
+    // A password change ends every /admin cookie session of the account.
+    let (status, _, _) = admin_login(&c, "root", &root.recovery[0]).await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(sessions().await, 1);
+    let (status, body) = c
+        .post(
+            "/api/account/password",
+            Some(&root.token),
+            json!({"current_password": PW, "code": root.recovery[1],
+                   "new_password": "second password!", "sign_out_others": true}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(sessions().await, 0);
+
+    // "Sign out all devices" by another admin ends them as well.
+    let (status, headers, _) = post_form(
+        &c,
+        "/admin/login",
+        None,
+        &[
+            ("origin", "https://vidcue.test"),
+            ("sec-fetch-site", "same-origin"),
+        ],
+        &[
+            ("username", "root"),
+            ("password", "second password!"),
+            ("code", &root.recovery[2]),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(cookie_token(&headers).is_some());
+    assert_eq!(sessions().await, 1);
+    let root_id = user_id(&pool, "root").await;
+    let (status, body) = c
+        .post(
+            &format!("/api/admin/users/{root_id}/devices/revoke"),
+            Some(&admin2.token),
+            json!({"password": PW}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(sessions().await, 0);
 }

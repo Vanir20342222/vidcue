@@ -51,6 +51,21 @@ pub const JAM_CONTROL: Rule = Rule {
     limit: 60,
     window_ms: MINUTE,
 };
+/// Room edits per user: votes, queue removals, settings, invites and declines. Each one
+/// bumps the room version and notifies every member.
+pub const JAM_EDIT: Rule = Rule {
+    limit: 60,
+    window_ms: MINUTE,
+};
+/// Invite requests per user.
+pub const JAM_INVITE: Rule = Rule {
+    limit: 30,
+    window_ms: 10 * MINUTE,
+};
+/// A guest without control may report `ended` only this close to the item's end.
+pub const ENDED_TOLERANCE_MS: i64 = 5_000;
+/// With an unknown duration, a guest's `ended` needs this much played first.
+pub const ENDED_UNKNOWN_MIN_MS: i64 = 30_000;
 /// Rooms created per user.
 pub const JAM_CREATE: Rule = Rule {
     limit: 10,
@@ -120,6 +135,16 @@ impl Playback {
             return Err("position_ms must be within the media and at most 24 hours".into());
         }
         Ok(())
+    }
+
+    /// Whether a member without playback control may report the current item as ended:
+    /// only when it has (nearly) reached its end, so `ended` cannot be used to skip.
+    pub fn ended_plausible(&self, now: i64) -> bool {
+        let position = self.expected(now);
+        match self.duration_ms() {
+            Some(duration) => position >= duration - ENDED_TOLERANCE_MS,
+            None => position >= ENDED_UNKNOWN_MIN_MS,
+        }
     }
 
     /// `item` becomes current at 0 and plays.
@@ -299,6 +324,15 @@ pub fn routes() -> Router<AppState> {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// Records one room edit for `user` (before any work), refused over `JAM_EDIT`.
+async fn edit_attempt(state: &AppState, user: Uuid) -> ApiResult<()> {
+    let key = format!("jam-edit:{user}");
+    state
+        .attempt(&[(JAM_EDIT, &key)], "Too many Jam changes, slow down")
+        .await?;
+    Ok(())
+}
 
 fn no_room() -> ApiError {
     not_found("No such Jam")
@@ -802,6 +836,7 @@ async fn update(
     Path(id): Path<Uuid>,
     Json(body): Json<UpdateBody>,
 ) -> ApiResult {
+    edit_attempt(&state, device.user).await?;
     expire(&state, Scope::Room(id)).await?;
     let now = state.now();
     let mut client = state.0.db.get().await?;
@@ -867,6 +902,11 @@ async fn invite(
             "Invite at most {MAX_INVITE_BATCH} people at once"
         )));
     }
+    edit_attempt(&state, device.user).await?;
+    let key = format!("jam-invite:{}", device.user);
+    state
+        .attempt(&[(JAM_INVITE, &key)], "Too many invites, try again later")
+        .await?;
     expire(&state, Scope::Room(id)).await?;
     let now = state.now();
     let mut client = state.0.db.get().await?;
@@ -893,12 +933,18 @@ async fn invite(
             "At most {MAX_JAM_INVITES} open invites per Jam"
         )));
     }
+    // Someone with an open invite to this room is not invited (or notified) again.
+    let fresh: Vec<Uuid> = friends
+        .iter()
+        .copied()
+        .filter(|u| !open.contains(u))
+        .collect();
     let mut events = Events::new();
-    if !friends.is_empty() {
-        for user in &friends {
+    if !fresh.is_empty() {
+        for user in &fresh {
             tx.execute(
                 "INSERT INTO jam_invites (room_id, user_id, invited_by, created_at) VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (room_id, user_id) DO UPDATE SET invited_by = EXCLUDED.invited_by, created_at = EXCLUDED.created_at",
+                 ON CONFLICT (room_id, user_id) DO NOTHING",
                 &[&id, user, &device.user, &now],
             )
             .await?;
@@ -913,7 +959,7 @@ async fn invite(
             "title": title,
             "from": { "user_id": device.user, "username": device.username },
         });
-        events.extend(to_all(&friends, &event));
+        events.extend(to_all(&fresh, &event));
         let version = bump(&*tx, room.id, now).await?;
         events.extend(to_all(&members, &changed(id, version, &["members"])));
     }
@@ -965,6 +1011,7 @@ async fn join(State(state): State<AppState>, device: Device, Path(id): Path<Uuid
 }
 
 async fn decline(State(state): State<AppState>, device: Device, Path(id): Path<Uuid>) -> ApiResult {
+    edit_attempt(&state, device.user).await?;
     let now = state.now();
     let mut client = state.0.db.get().await?;
     let tx = client.transaction().await?;
@@ -1112,6 +1159,7 @@ async fn queue_remove(
     device: Device,
     Path((id, item)): Path<(Uuid, Uuid)>,
 ) -> ApiResult {
+    edit_attempt(&state, device.user).await?;
     expire(&state, Scope::Room(id)).await?;
     let now = state.now();
     let mut client = state.0.db.get().await?;
@@ -1154,6 +1202,7 @@ async fn vote(
     Path((id, item)): Path<(Uuid, Uuid)>,
     Json(body): Json<VoteBody>,
 ) -> ApiResult {
+    edit_attempt(&state, device.user).await?;
     expire(&state, Scope::Room(id)).await?;
     let now = state.now();
     let mut client = state.0.db.get().await?;
@@ -1222,8 +1271,15 @@ async fn playback(
     let tx = client.transaction().await?;
     let (room, role) = member_room(&*tx, id, device.user, now).await?;
     let ended = matches!(action, Action::Ended(_));
-    if role != "host" && !room.guests_can_control && !ended {
+    let controls = role == "host" || room.guests_can_control;
+    if !controls && !ended {
         return Err(forbidden("Only the host can control playback"));
+    }
+    if !controls && ended && !room.playback.ended_plausible(now) {
+        // A guest without control cannot use `ended` to skip: the item is not near its
+        // end yet, so the current playback stays.
+        tx.commit().await?;
+        return Ok(Json(room.playback));
     }
     let pb = &room.playback;
     let bad = ApiError::bad;
@@ -1342,9 +1398,6 @@ pub(crate) async fn ping(state: &AppState, user: Uuid, room: Uuid) -> Result<(),
         tracing::warn!("jam ping: {e}");
         WsError::new(crate::presence::INVALID, "try again later")
     };
-    expire(state, Scope::Room(room))
-        .await
-        .map_err(|e| internal(&e.1))?;
     let now = state.now();
     let client = state.0.db.get().await.map_err(|e| internal(&e))?;
     let member = client
@@ -1359,14 +1412,25 @@ pub(crate) async fn ping(state: &AppState, user: Uuid, room: Uuid) -> Result<(),
     if !member {
         return Err(WsError::new(NOT_FOUND, "Not in this Jam"));
     }
+    // Writes (expiry and the keep-alive) only when due: at most once per room per
+    // `JAM_PING_WRITE_MS`, whatever the message rate.
     if state.0.realtime.jam_ping_due(room, now) {
-        client
+        drop(client);
+        expire(state, Scope::Room(room))
+            .await
+            .map_err(|e| internal(&e.1))?;
+        let client = state.0.db.get().await.map_err(|e| internal(&e))?;
+        let alive = client
             .execute(
                 "UPDATE jam_rooms SET last_active = GREATEST(last_active, $2) WHERE id = $1 AND ended_at IS NULL",
                 &[&room, &now],
             )
             .await
             .map_err(|e| internal(&e))?;
+        if alive == 0 {
+            // It just expired (and its members were told).
+            return Err(WsError::new(NOT_FOUND, "Not in this Jam"));
+        }
     }
     Ok(())
 }
@@ -1417,6 +1481,24 @@ mod tests {
             rate,
             version: 3,
         }
+    }
+
+    #[test]
+    fn ended_needs_the_item_near_its_end() {
+        // 300 s item playing from 0 at t=0.
+        let pb = playing(0, 0, 1.0);
+        assert!(!pb.ended_plausible(1_000));
+        assert!(!pb.ended_plausible(294_000));
+        assert!(pb.ended_plausible(295_000));
+        assert!(pb.ended_plausible(400_000));
+        // Paused early never counts as ended.
+        let paused = pb.pause(Some(10_000), 0).unwrap();
+        assert!(!paused.ended_plausible(1_000_000));
+        // Unknown duration: at least 30 s played.
+        let mut unknown = playing(0, 0, 1.0);
+        unknown.item = Some(item(None));
+        assert!(!unknown.ended_plausible(29_000));
+        assert!(unknown.ended_plausible(30_000));
     }
 
     #[test]

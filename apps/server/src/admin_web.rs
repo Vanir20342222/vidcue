@@ -103,11 +103,24 @@ pub async fn revoke_devices(
             revoked.extend(revoke_tree(state, user, root).await?);
         }
     }
+    // "Sign out everywhere" also ends the user's /admin cookie sessions.
+    end_sessions(&state.0.db.get().await?, user).await?;
     state
         .0
         .hub
         .publish(user, json!({ "type": "devices_revoked" }));
     Ok(revoked)
+}
+
+/// Ends every /admin cookie session of `user`. Runs with device revocation, password
+/// and authenticator changes, account resets and disabling.
+pub async fn end_sessions(
+    client: &impl deadpool_postgres::GenericClient,
+    user: Uuid,
+) -> Result<u64, tokio_postgres::Error> {
+    client
+        .execute("DELETE FROM admin_sessions WHERE user_id = $1", &[&user])
+        .await
 }
 
 /// Disables `target`: refused for oneself and for the last enabled admin. Signs out
@@ -155,12 +168,8 @@ pub async fn disable_user(state: &AppState, actor: Uuid, target: Uuid) -> ApiRes
         &[&target, &now],
     )
     .await?;
-    for table in [
-        "pairings",
-        "account_resets",
-        "key_requests",
-        "admin_sessions",
-    ] {
+    end_sessions(&tx, target).await?;
+    for table in ["pairings", "account_resets", "key_requests"] {
         tx.execute(
             &format!("DELETE FROM {table} WHERE user_id = $1"),
             &[&target],
@@ -817,9 +826,10 @@ async fn login_inner(state: &AppState, ip: ClientIp, form: LoginForm) -> ApiResu
     let now = state.now();
     let username = auth::normalize_username(&form.username).unwrap_or_default();
     let (ip_key, user_ip_key, user_key) = (
-        format!("admin-login-ip:{}", ip.0),
-        format!("admin-login:{username}:{}", ip.0),
-        format!("admin-login:{username}"),
+        // The same keys as /api/login: both entry points share one budget.
+        format!("login-ip:{}", ip.0),
+        format!("login:{username}:{}", ip.0),
+        format!("login:{username}"),
     );
     let mut ids = state
         .attempt(
@@ -859,7 +869,7 @@ async fn login_inner(state: &AppState, ip: ClientIp, form: LoginForm) -> ApiResu
     else {
         return Ok(None);
     };
-    let factor_key = format!("admin-factor:{user}");
+    let factor_key = format!("factor:{user}");
     ids.extend(
         state
             .attempt(

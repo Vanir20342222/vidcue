@@ -1061,6 +1061,14 @@ async fn jam_rooms_queue_votes_and_permissions() {
         same["item"]["item_id"], first["item_id"],
         "not current: no change"
     );
+    // A guest without control cannot skip the current item with an early `ended`.
+    let (s, early) = control(
+        &bob.token,
+        json!({"action": "ended", "item_id": first["item_id"]}),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(early, same, "early ended from a guest changes nothing");
     let version = same["version"].as_i64().unwrap();
     let (s, room) = c
         .call(
@@ -1379,6 +1387,24 @@ async fn jam_rooms_expire_after_twelve_hours_and_count_actions() {
         )
         .await;
     assert_eq!(s, StatusCode::TOO_MANY_REQUESTS);
+    // Votes (and other room edits) are throttled per user as well.
+    let (_, view) = c
+        .get(&queue.replace("/queue", ""), Some(&alice.token))
+        .await;
+    let item = view["queue"][0]["item_id"].as_str().unwrap().to_owned();
+    let vote = format!("{queue}/{item}/vote");
+    let mut refused = None;
+    for i in 0..80 {
+        let (s, _) = c
+            .post(&vote, Some(&alice.token), json!({"up": i % 2 == 0}))
+            .await;
+        if s == StatusCode::TOO_MANY_REQUESTS {
+            refused = Some(i);
+            break;
+        }
+        assert_eq!(s, StatusCode::OK);
+    }
+    assert_eq!(refused, Some(60), "60 edits per minute");
 }
 
 #[tokio::test]
@@ -1536,6 +1562,14 @@ async fn websocket_presence_handoff_remote_and_jam() {
     .await;
     let invite = expect(&mut bob_ws, "jam_invite").await;
     assert_eq!(invite["from"]["username"], "alice");
+    // Inviting again while the invite is open does not notify again.
+    c.post(
+        &format!("/api/jam/{room_id}/invite"),
+        Some(&alice.token),
+        json!({"user_ids": [bob.id]}),
+    )
+    .await;
+    assert!(!types(&drain(&mut bob_ws, 300).await).contains(&"jam_invite".to_owned()));
     c.post(
         &format!("/api/jam/{room_id}/join"),
         Some(&bob.token),

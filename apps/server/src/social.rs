@@ -426,19 +426,35 @@ async fn friend_remove(
         .ok_or_else(|| not_found("No such friend"))?;
     let mut events: Events = Vec::new();
     if removed.get::<_, Option<i64>>(0).is_some() {
-        // Neither keeps access to the other's shared playlists or Jam room.
+        // Neither keeps access to the other's shared playlists or Jam room. The playlist
+        // locks come first (in id order), then the member rows: the same order as
+        // deleting a playlist or removing a member, so the two cannot deadlock.
+        let affected: Vec<Uuid> = tx
+            .query(
+                "SELECT DISTINCT m.playlist_id FROM shared_playlist_members m
+                 JOIN shared_playlists p ON p.id = m.playlist_id
+                 WHERE (p.owner = $1 AND m.user_id = $2) OR (p.owner = $2 AND m.user_id = $1)
+                 ORDER BY m.playlist_id",
+                &[&device.user, &other],
+            )
+            .await?
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        for playlist in &affected {
+            lock_playlist(&*tx, *playlist).await?;
+        }
         let dropped = tx
             .query(
                 "DELETE FROM shared_playlist_members m USING shared_playlists p
-                 WHERE m.playlist_id = p.id
+                 WHERE m.playlist_id = p.id AND m.playlist_id = ANY($3)
                    AND ((p.owner = $1 AND m.user_id = $2) OR (p.owner = $2 AND m.user_id = $1))
                  RETURNING m.playlist_id, m.user_id",
-                &[&device.user, &other],
+                &[&device.user, &other, &affected],
             )
             .await?;
         for row in dropped {
             let (playlist, user): (Uuid, Uuid) = (row.get(0), row.get(1));
-            lock_playlist(&*tx, playlist).await?;
             events.push((
                 user,
                 json!({ "type": "shared_playlist_removed", "playlist_id": playlist }),
