@@ -65,6 +65,9 @@ fi
 
 install -m 644 "$here/vidcue-server.service" /etc/systemd/system/vidcue-server.service
 install -m 755 "$here/vidcue-backup.sh" /usr/local/sbin/vidcue-backup
+install -m 755 "$here/vidcue-offsite-send.sh" /usr/local/sbin/vidcue-offsite-send
+# Off-site copies are age-encrypted; see vidcue-backup.sh.
+command -v age >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq age >/dev/null
 cat > /etc/systemd/system/vidcue-backup.service <<'EOF'
 [Unit]
 Description=Back up the Vidcue database
