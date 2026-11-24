@@ -3,10 +3,12 @@ package dev.ytui.android
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.size
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 
-internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
+internal fun mediaInformation(media: JSONObject, settings: JSONObject, includeAge: Boolean = true): String {
     val details = mutableListOf<String>()
     // Off unless chosen in Card details: cards stay lean (channel and age).
     if (settings.optBoolean("show_views", false)) {
@@ -16,19 +18,28 @@ internal fun mediaInformation(media: JSONObject, settings: JSONObject): String {
             else media.optString("views_text").takeUnless { it == "null" }?.let(::compactViewsText) ?: ""
         if (views.isNotBlank()) details += views
     }
-    // Off unless chosen in Card details, as the view count: cards stay lean (channel only).
-    if (settings.optBoolean("show_upload_date", false)) {
-        val date = media.optString("upload_date").takeIf { it.matches(UPLOAD_DATE) }
-        val text =
-            date?.let(::relativeUploadDate)
-                ?: media.optString("published_text").takeUnless { it == "null" }?.let(::spelledAge)
-                ?: ""
+    if (includeAge && settings.optBoolean("show_upload_date", false)) {
+        val text = uploadAge(media)
         if (text.isNotBlank()) details += text
     }
     if (settings.optBoolean("show_likes") && media.optLong("like_count", -1) >= 0)
         details +=
             "${compactCount(media.optLong("like_count"))} likes"
     return details.joinToString(" · ")
+}
+
+/**
+ * How long ago [media] was uploaded: "3 hours ago", "5 years ago". The provider's own text is
+ * finer than a day, so it wins over an upload date of today; blank when neither is known.
+ */
+internal fun uploadAge(media: JSONObject): String {
+    val published = media.optString("published_text").takeUnless { it == "null" }.orEmpty().trim()
+    val date = media.optString("upload_date").takeIf { it.matches(UPLOAD_DATE) }?.let(::relativeUploadDate)
+    return when {
+        date != null && (date != "Today" || published.isBlank()) -> date
+        published.isNotBlank() -> spelledAge(published)
+        else -> ""
+    }
 }
 
 /** Reuse details learned during playback on matching Home/search cards. */
@@ -138,8 +149,9 @@ internal fun MediaInformation(
     /** Shown first on the same line, as YouTube does: "Channel · 240K views · 6 days ago". */
     lead: String = "",
     leadModifier: Modifier = Modifier,
+    includeAge: Boolean = true,
 ) {
-    val text = listOf(lead, mediaInformation(media, settings)).filter { it.isNotBlank() }.joinToString(" · ")
+    val text = listOf(lead, mediaInformation(media, settings, includeAge)).filter { it.isNotBlank() }.joinToString(" · ")
     if (text.isNotBlank())
         Text(
             text,
@@ -159,7 +171,19 @@ internal fun CardInformation(
     lead: String = "",
     leadModifier: Modifier = Modifier,
 ) {
-    MediaInformation(media, settings, lead, leadModifier)
+    // The age gets its own line with a clock, so it reads at a glance under the channel.
+    MediaInformation(media, settings, lead, leadModifier, includeAge = false)
+    val age = if (settings.optBoolean("show_upload_date", false)) uploadAge(media) else ""
+    if (age.isNotBlank())
+        androidx.compose.foundation.layout.Row(
+            Modifier.testTag("card-age"),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp),
+        ) {
+            val ink = MaterialTheme.colorScheme.onSurfaceVariant
+            MediaIcon(Glyph.Clock, Modifier.size(12.dp), ink)
+            Text(age, style = MaterialTheme.typography.bodySmall, color = ink, maxLines = 1)
+        }
     for ((key, field) in listOf("show_description" to "description", "show_section" to "section")) {
         val text = media.optString(field).takeUnless { it == "null" }.orEmpty()
         if (settings.optBoolean(key) && text.isNotBlank())

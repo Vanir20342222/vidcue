@@ -761,7 +761,12 @@ internal class YtuiViewModel(
             else
                 FeedState(
                     request = request,
-                    categories = if (categoryNavigation) previous.categories else emptyList(),
+                    // A refresh of the same page keeps its chip strip while it reloads; clearing
+                    // it made Music's categories blink out for a second.
+                    categories =
+                        if (categoryNavigation || previous.request.toString() == request.toString())
+                            previous.categories
+                        else emptyList(),
                     loading = true,
                     generation = generation,
                     needsLoad = false,

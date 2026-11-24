@@ -213,6 +213,8 @@ internal enum class Glyph {
     PlayNext,
     /** Up-left arrow: put a suggestion into the search field to edit it. */
     FillQuery,
+    /** A clock face: how long ago a video was uploaded. */
+    Clock,
     /** A monitor with a phone in front: this account's other devices. */
     Devices,
     /** Two heads and shoulders: friends. */
@@ -307,15 +309,32 @@ internal fun MediaIcon(
                     drawPath(door, if (filled) cutout else tint, style = ink)
                 }
                 Glyph.Music -> {
-                    // Two beamed notes, drawn like the lyrics note: ring heads, stems on their edge.
-                    for (head in listOf(Offset(6.5f, 18f), Offset(16.5f, 16f))) drawCircle(
+                    // Two beamed eighth notes: tilted oval heads, stems on their right edge and a
+                    // slanted beam, as printed music draws them. Filled, the heads and beam are
+                    // solid; outlined, the heads are rings and the beam a single thick stroke.
+                    val ink = Stroke(1.8f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                    for (head in listOf(Offset(7f, 17.6f), Offset(17f, 15.6f)))
+                        rotate(-24f, head) {
+                            drawOval(
+                                tint,
+                                Offset(head.x - 3.1f, head.y - 2.3f),
+                                Size(6.2f, 4.6f),
+                                style = if (filled) Fill else ink,
+                            )
+                        }
+                    line(9.8f, 16.6f, 9.8f, 6.4f)
+                    line(19.8f, 14.6f, 19.8f, 4.4f)
+                    drawPath(
+                        Path().apply {
+                            moveTo(9.8f, 5.6f)
+                            lineTo(19.8f, 3.6f)
+                            lineTo(19.8f, 6.8f)
+                            lineTo(9.8f, 8.8f)
+                            close()
+                        },
                         tint,
-                        2.5f,
-                        head,
-                        style = if (filled) Fill else Stroke(1.8f),
+                        style = if (filled) Fill else ink,
                     )
-                    outline(9f to 18f, 9f to 6.5f, 19f to 4.5f, 19f to 16f)
-                    line(9f, 10f, 19f, 8f)
                 }
                 Glyph.Radio -> {
                     drawRoundRect(
@@ -569,16 +588,45 @@ internal fun MediaIcon(
                     )
                 }
                 Glyph.Refresh -> {
+                    // A clockwise circle that stops short of its start, with a solid arrowhead
+                    // on the end pointing along the turn (the old open chevron sat off the arc
+                    // and read as a broken ring).
+                    val radius = 7f
+                    val start = 20f
+                    val sweep = 290f
                     drawArc(
                         tint,
-                        -60f,
-                        300f,
+                        start,
+                        sweep,
                         false,
-                        Offset(4f, 4f),
-                        Size(16f, 16f),
-                        style = Stroke(1.8f, cap = StrokeCap.Round),
+                        Offset(12f - radius, 12f - radius),
+                        Size(radius * 2, radius * 2),
+                        style = Stroke(1.8f, cap = StrokeCap.Butt),
                     )
-                    outline(14.5f to 3f, 17f to 6.2f, 13.2f to 7.8f)
+                    val end = Math.toRadians((start + sweep).toDouble())
+                    val cx = 12f + radius * kotlin.math.cos(end).toFloat()
+                    val cy = 12f + radius * kotlin.math.sin(end).toFloat()
+                    // Clockwise tangent and the outward normal at the arc's end.
+                    val tx = -kotlin.math.sin(end).toFloat()
+                    val ty = kotlin.math.cos(end).toFloat()
+                    val nx = -ty
+                    val ny = tx
+                    drawPath(
+                        Path().apply {
+                            moveTo(cx + tx * 3.6f, cy + ty * 3.6f)
+                            lineTo(cx - nx * 3f, cy - ny * 3f)
+                            lineTo(cx + nx * 3f, cy + ny * 3f)
+                            close()
+                        },
+                        tint,
+                        style = Fill,
+                    )
+                }
+                Glyph.Clock -> {
+                    drawCircle(tint, 8.5f, Offset(12f, 12f), style = if (filled) Fill else Stroke(1.8f))
+                    val hands = if (filled) cutout else tint
+                    drawLine(hands, Offset(12f, 12f), Offset(12f, 7f), 1.8f, StrokeCap.Round)
+                    drawLine(hands, Offset(12f, 12f), Offset(15.2f, 14f), 1.8f, StrokeCap.Round)
                 }
                 Glyph.Drag ->
                     for (x in listOf(9f, 15f)) for (y in listOf(6f, 12f, 18f)) drawCircle(

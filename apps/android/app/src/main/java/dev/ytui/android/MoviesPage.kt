@@ -43,6 +43,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.update
@@ -306,55 +307,94 @@ private fun AlphaNotice(accept: () -> Unit) {
     }
 }
 
-/** Full-width featured title: artwork with a deep scrim, title, meta and two actions. */
+/**
+ * Full-width featured title. Artwork carries it: a bold title, a row of small tags (year, length
+ * or seasons, rating-style genre tags, the episode to resume and the time left) and one play
+ * button with a round details button. No synopsis or captions; a resume shows as a bar along the
+ * bottom edge, as streaming apps mark it.
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun Hero(title: MovieTitle, resumeOf: Pair<MoviePick, MovieResume>?, onPlay: () -> Unit, onDetails: () -> Unit) {
-    val height = (LocalConfiguration.current.screenHeightDp * 0.34f).dp.coerceIn(220.dp, 340.dp)
-    val background = MaterialTheme.colorScheme.background
-    // Inset and rounded like the artwork on the other tabs rather than a full-bleed banner.
+    val height = (LocalConfiguration.current.screenHeightDp * 0.36f).dp.coerceIn(230.dp, 360.dp)
+    val ink = Color.White
+    val pick = resumeOf?.first
+    val resume = resumeOf?.second
+    val tags =
+        buildList {
+            if (pick?.season != null && pick.episode != null) add("S${pick.season} · E${pick.episode}" to Glyph.Play)
+            if (resume != null && resume.durationMs > 0) {
+                val left = ((resume.durationMs - resume.positionMs) / 60_000L).coerceAtLeast(1L).toInt()
+                add("${movieRuntime(left)} left" to Glyph.Clock)
+            } else if (!title.series) movieRuntime(title.runtimeMinutes).takeIf { it.isNotBlank() }?.let { add(it to Glyph.Clock) }
+            title.year.takeIf { it > 0 }?.let { add(it.toString() to null) }
+            if (title.series && pick?.season == null)
+                title.seasons.size.takeIf { it > 0 }?.let { add((if (it == 1) "1 season" else "$it seasons") to Glyph.Playlist) }
+            title.genres.take(2).forEach { add(it to null) }
+        }
     Box(
         Modifier.padding(horizontal = MediaTokens.textInset)
             .fillMaxWidth()
             .height(height)
             .clip(MediaTokens.medium)
+            .clickable(role = Role.Button, onClickLabel = "Details", onClick = onDetails)
             .testTag("movies-hero")
     ) {
         MoviePoster(title, Modifier.fillMaxSize(), shape = null)
+        // Dark at the foot and along the left, so white type reads on any artwork.
         Box(
             Modifier.fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to background.copy(alpha = 0.1f),
-                        0.45f to background.copy(alpha = 0.35f),
-                        1f to background,
+                        0f to Color.Black.copy(alpha = 0.05f),
+                        0.5f to Color.Black.copy(alpha = 0.25f),
+                        1f to Color.Black.copy(alpha = 0.88f),
                     )
                 )
+                .background(
+                    Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.45f), 0.7f to Color.Transparent)
+                )
         )
+        if (title.series)
+            Text(
+                "SERIES",
+                Modifier.align(Alignment.TopStart)
+                    .padding(14.dp)
+                    .clip(MediaTokens.chip)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.4.sp),
+                fontWeight = FontWeight.Bold,
+                color = ink,
+            )
         Column(
-            Modifier.align(Alignment.BottomStart).padding(16.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier.align(Alignment.BottomStart)
+                .padding(start = 18.dp, end = 18.dp, bottom = if (resume != null) 22.dp else 18.dp)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                if (resumeOf != null) "Continue watching" else "Featured",
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // Reading type, like a playing title elsewhere; the display face is kept for page names.
-            Text(
                 title.title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = ink,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                listOf(movieMeta(title), title.synopsis).filter { it.isNotBlank() }.joinToString(" · "),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+            if (tags.isNotEmpty())
+                androidx.compose.foundation.layout.FlowRow(
+                    Modifier.testTag("movies-hero-tags"),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    maxLines = 1,
+                ) {
+                    for ((text, glyph) in tags) HeroTag(text, glyph)
+                }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 2.dp),
+            ) {
                 Pill(
                     if (resumeOf != null) "Resume" else if (title.series) "Episodes" else "Play",
                     Modifier.testTag("movies-hero-play"),
@@ -362,11 +402,45 @@ private fun Hero(title: MovieTitle, resumeOf: Pair<MoviePick, MovieResume>?, onP
                     glyph = Glyph.Play,
                     onClick = onPlay,
                 )
-                Pill("Details", glyph = Glyph.Info, onClick = onDetails)
+                RoundIconButton(
+                    Glyph.Info,
+                    "Details",
+                    Modifier.testTag("movies-hero-details"),
+                    size = 44.dp,
+                    iconSize = 22.dp,
+                    container = Color.White.copy(alpha = 0.16f),
+                    tint = ink,
+                    action = onDetails,
+                )
             }
-            if (resumeOf != null)
-                MediaProgressBar(resumeOf.second.fraction, Modifier.widthIn(max = 240.dp), thickness = 3.dp)
         }
+        if (resume != null)
+            MediaProgressBar(
+                resume.fraction,
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                track = Color.White.copy(alpha = 0.22f),
+                thickness = 4.dp,
+            )
+    }
+}
+
+/** A small translucent tag on the hero: an optional glyph and a few words. */
+@Composable
+private fun HeroTag(text: String, glyph: Glyph?) {
+    Row(
+        Modifier.clip(MediaTokens.chip)
+            .background(Color.White.copy(alpha = 0.14f))
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (glyph != null) MediaIcon(glyph, Modifier.size(13.dp), Color.White.copy(alpha = 0.9f))
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium,
+            color = Color.White.copy(alpha = 0.92f),
+            maxLines = 1,
+        )
     }
 }
 

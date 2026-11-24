@@ -21,6 +21,8 @@ final class MobileSettings {
           "gestures",
           "background_playback",
           "show_channel",
+          // How long ago a video went up, with a clock under the channel (owner, 2026-11-24).
+          "show_upload_date",
           "show_duration",
           "auto_save_folders",
           "animate_cards",
@@ -36,9 +38,8 @@ final class MobileSettings {
     for (String key :
         new String[] {
           "preload_mobile",
-          // View counts and upload dates are off by default: cards stay lean (the channel).
+          // View counts are off by default: cards stay lean (channel and age).
           "show_views",
-          "show_upload_date",
           "show_description",
           "show_section",
           "show_likes",
