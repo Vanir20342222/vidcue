@@ -710,6 +710,7 @@ internal fun CollectionHeader(
                     vm.save(opened)
                 }
             if (opened != null) MediaIconButton(Glyph.MoreHorizontal, "More options for ${opened.title}", "collection-more") { onMore(opened) }
+            if (opened != null && person) FollowButton(vm, id, opened.title, opened.channelThumbnail.ifBlank { opened.value.optString("thumbnail") })
             Spacer(Modifier.weight(1f))
             if (playable.size > 1)
                 RoundIconButton(

@@ -444,6 +444,8 @@ internal class YtuiViewModel(
     }
     val account = MutableStateFlow(JSONObject())
     val player = MutableStateFlow(PlayerState())
+    /** Account sync, friends, Jam and the other server features (docs/backend/PROTOCOL.md §9). */
+    val sync = SyncController(this, viewModelScope)
     val downloads = MutableStateFlow<List<JSONObject>>(emptyList())
     val offlinePlaylists = MutableStateFlow<List<JSONObject>>(emptyList())
     val queue = MutableStateFlow<List<MediaCard>>(emptyList())
@@ -509,9 +511,30 @@ internal class YtuiViewModel(
     val sharedQuery = MutableStateFlow("")
     private var initialized = false
 
+    /** Set while the root UI is STARTED and its own loop drains the snapshot. */
+    @Volatile var uiStarted = false
+
+    /**
+     * While the UI is stopped, sync events (handoff, remote, Jam, inbox) and the player hooks
+     * (Jam end-of-item, presence) still need the snapshot: the socket stays open in the
+     * background exactly while audio plays or a Jam runs. Runs only when there is work.
+     */
+    private fun backgroundPump() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                if (uiStarted) continue
+                val work =
+                    MediaBridge.events.isNotEmpty() || player.value.playing || sync.jam.room.value != null
+                if (work) runCatching { snapshot() }
+            }
+        }
+    }
+
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
+        backgroundPump()
         viewModelScope.launch {
             runCatching {
                     withContext(Dispatchers.IO) { EngineStartup.current.await() }
@@ -579,6 +602,7 @@ internal class YtuiViewModel(
                         lastPlayer = raw
                         player.value = PlayerState(it, preparing.takeUnless { accepted })
                     }
+                    sync.onPlayer(player.value)
                     // A refreshed feed can need the same details even while playback is paused.
                     player.value.media?.let { media ->
                         val details = watchDetails.value?.takeIf { found ->
@@ -595,6 +619,7 @@ internal class YtuiViewModel(
                     }
                 }
                 value.optJSONArray("events")?.objects()?.forEach { event ->
+                    if (sync.onEvent(event)) return@forEach
                     val text = event.optString("text")
                     when (event.optString("kind")) {
                         "storage_updated" -> {

@@ -220,7 +220,7 @@ pub fn validate(name: &str, custom: &BTreeMap<String, Vec<f64>>) -> Result<()> {
     Ok(())
 }
 
-fn valid_name(name: &str) -> bool {
+pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 24
         && name

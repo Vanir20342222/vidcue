@@ -358,6 +358,16 @@ public final class PlaybackService extends MediaSessionService {
                     .equals(media.optString("url"))) {
               firstFrameMs = Math.max(1, at - startupAt);
               StartupTimings.stage(startupToken, "decoder", firstFrameMs);
+              if (!currentRequest.optBoolean("preview")) {
+                try {
+                  recordHealth(
+                      new JSONObject()
+                          .put("kind", "start")
+                          .put("category", "ok")
+                          .put("duration_ms", Math.min(firstFrameMs, 600_000L)));
+                } catch (JSONException ignored) {
+                }
+              }
               publish();
             }
           }
@@ -584,6 +594,18 @@ public final class PlaybackService extends MediaSessionService {
               reconnect();
             } else {
               StartupTimings.ended(startupToken, "failed", SystemClock.elapsedRealtime());
+              // The engine classifies this text into a category and discards it.
+              try {
+                recordHealth(
+                    new JSONObject()
+                        .put("kind", "error")
+                        .put(
+                            "error_text",
+                            e.getErrorCodeName()
+                                + (httpStatus(e) == 0 ? "" : " HTTP " + httpStatus(e))
+                                + (e.getMessage() == null ? "" : " " + e.getMessage())));
+              } catch (JSONException ignored) {
+              }
               error =
                   rateLimited(e)
                       ? "Service rate limit; wait before retrying"
@@ -616,15 +638,18 @@ public final class PlaybackService extends MediaSessionService {
                 PlaybackRecovery.clear();
                 if (historyEnabled) {
                   JSONObject media = currentRequest.optJSONObject("media");
+                  long endedDuration = player.getDuration();
                   if (media != null)
                     positions.execute(
                         () -> {
                           try {
-                            rpc(
+                            JSONObject ended =
                                 new JSONObject()
                                     .put("op", "position")
                                     .put("url", media.optString("url"))
-                                    .put("milliseconds", 0));
+                                    .put("milliseconds", 0);
+                            if (endedDuration > 0) ended.put("duration_ms", endedDuration);
+                            rpc(ended);
                           } catch (Exception ignored) {
                           }
                         });
@@ -653,6 +678,8 @@ public final class PlaybackService extends MediaSessionService {
             }
             scheduleTicker();
             if (!playing) checkpoint(true);
+            // While the UI is hidden only this listener sees play-state changes.
+            if (!MediaBridge.uiVisible) SyncLifecycle.playing(playing);
             publish();
           }
 
@@ -1223,8 +1250,17 @@ public final class PlaybackService extends MediaSessionService {
     checkpoint(true);
     startMs = SystemClock.elapsedRealtime() - startupAt;
     StartupTimings.started(startupToken, SystemClock.elapsedRealtime());
-    if (currentRequest.optBoolean("audio"))
+    if (currentRequest.optBoolean("audio")) {
       StartupTimings.output(startupToken, SystemClock.elapsedRealtime(), false);
+      try {
+        recordHealth(
+            new JSONObject()
+                .put("kind", "start")
+                .put("category", "ok")
+                .put("duration_ms", Math.min(Math.max(1, startMs), 600_000L)));
+      } catch (JSONException ignored) {
+      }
+    }
     try {
       JSONObject started = new JSONObject(currentRequest.toString());
       JSONObject acceptedRequest = currentRequest;
@@ -1485,6 +1521,21 @@ public final class PlaybackService extends MediaSessionService {
     return out;
   }
 
+  /** Playback health (docs/backend/PROTOCOL.md §7.7): buffered by the engine only when enabled. */
+  void recordHealth(JSONObject report) {
+    try {
+      report.put("op", "health_record");
+      positions.execute(
+          () -> {
+            try {
+              rpc(report);
+            } catch (Exception ignored) {
+            }
+          });
+    } catch (JSONException | RejectedExecutionException ignored) {
+    }
+  }
+
   static JSONObject rpc(JSONObject data) throws Exception {
     EngineStartup.current.await();
     JSONObject response = new JSONObject(NativeBridge.request(data.toString()));
@@ -1575,7 +1626,13 @@ public final class PlaybackService extends MediaSessionService {
         float speed = (float) Math.max(0.25, Math.min(4, command.optDouble("value", 1)));
         heldSpeedRestore = null;
         player.setPlaybackSpeed(speed);
-        prefs.edit().putFloat("speed", speed).apply();
+        // A Jam room's rate applies while in the room and is never saved as the user's speed.
+        if (!command.optBoolean("transient")) prefs.edit().putFloat("speed", speed).apply();
+        break;
+      case "speed_restore":
+        if (currentRequest.optBoolean("preview")) break;
+        heldSpeedRestore = null;
+        player.setPlaybackSpeed(prefs.getFloat("speed", 1f));
         break;
       case "speed_hold":
         // Press-and-hold fast playback: temporary, never saved as the user's speed.
@@ -2284,15 +2341,18 @@ public final class PlaybackService extends MediaSessionService {
             position)) return;
     lastPositionSave = SystemClock.elapsedRealtime();
     String url = media.optString("url");
+    long duration = player.getDuration();
     try {
       positions.execute(
           () -> {
             try {
-              rpc(
+              JSONObject saved =
                   new JSONObject()
                       .put("op", "position")
                       .put("url", url)
-                      .put("milliseconds", position));
+                      .put("milliseconds", position);
+              if (duration > 0) saved.put("duration_ms", duration);
+              rpc(saved);
             } catch (Exception ignored) {
             }
           });

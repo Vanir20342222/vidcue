@@ -144,6 +144,7 @@ public final class FullscreenActivity extends ComponentActivity {
   @Override
   protected void onStart() {
     super.onStart();
+    SyncLifecycle.foreground(true);
     PlaybackService service = PlaybackService.current;
     if (view != null && service != null) {
       frames.bind(service.controlsPlayer);
@@ -172,6 +173,8 @@ public final class FullscreenActivity extends ComponentActivity {
       MediaBridge.uiVisible = false;
       if (!isChangingConfigurations() && PlaybackService.current != null)
         PlaybackService.current.pauseForBackground();
+      // RustActivity skipped this while full screen was showing: the app is hidden now.
+      if (!isChangingConfigurations()) SyncLifecycle.foreground(false);
     }
     super.onStop();
   }

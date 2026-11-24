@@ -19,6 +19,9 @@ mod indexed_playback;
 mod lyrics;
 mod movies;
 mod resolution;
+mod social_ops;
+mod sync_bridge;
+mod sync_stores;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -26,9 +29,19 @@ pub struct MobileState {
     pub saved: Vec<Media>,
     pub offline_playlists: Vec<vidcue_core::offline::OfflinePlaylist>,
     pub queue: Vec<Media>,
+    /// Pre-sync resume positions keyed by raw URL; migrated into `resume` on load.
     pub positions: HashMap<String, u64>,
     pub playback: vidcue_core::PlaybackQueue,
     pub recent: Vec<Media>,
+    /// Resume positions by media key (`positions` collection).
+    pub resume: HashMap<String, sync_stores::ResumeEntry>,
+    /// Play events, newest last (`history` collection).
+    pub plays: Vec<sync_stores::PlayEvent>,
+    pub playlists: Vec<sync_stores::LocalPlaylist>,
+    /// Channels followed inside Vidcue (`subscriptions` collection).
+    pub follows: Vec<sync_stores::Follow>,
+    pub filters: Vec<vidcue_sync::filters::Filter>,
+    pub sync_meta: sync_stores::SyncMeta,
 }
 struct PlaybackContext {
     id: String,
@@ -54,6 +67,7 @@ pub struct Engine {
     playback_context: Mutex<Option<PlaybackContext>>,
     lyrics: Mutex<HashMap<String, lyrics::Document>>,
     resolver: Arc<resolution::Resolver>,
+    sync: sync_bridge::SyncHandle,
 }
 /// Android's theme picker: every shared built-in except "terminal", which only means
 /// "inherit the terminal's colours" on desktop. A saved "terminal" value still resolves.
@@ -63,22 +77,31 @@ fn mobile_themes() -> impl Iterator<Item = &'static str> {
         .copied()
         .filter(|name| *name != "terminal")
 }
+/// The configuration of a fresh install.
+pub(crate) fn mobile_default_config() -> Config {
+    Config {
+        theme: "vidcue-dark".into(), // Owner-approved mobile default; existing config wins.
+        auth_store: "file".into(),
+        notifications: true,
+        download: vidcue_core::DownloadOptions {
+            quality: "1080".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 impl Engine {
     pub fn new(root: &Path, cache: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         std::fs::create_dir_all(cache)?;
-        let config: Config = read_json(&root.join("config.json"))?.unwrap_or_else(|| Config {
-            theme: "vidcue-dark".into(), // Owner-approved mobile default; existing config wins.
-            auth_store: "file".into(),
-            notifications: true,
-            download: vidcue_core::DownloadOptions {
-                quality: "1080".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+        let config: Config =
+            read_json(&root.join("config.json"))?.unwrap_or_else(mobile_default_config);
         config.validate()?;
-        let state = read_json(&root.join("library.json"))?.unwrap_or_default();
+        let mut state: MobileState = read_json(&root.join("library.json"))?.unwrap_or_default();
+        if sync_stores::migrate(&mut state) {
+            atomic_write(&root.join("library.json"), &serde_json::to_vec(&state)?)?;
+        }
         let stored=account::load(root).unwrap_or_else(|_|account::Stored {
             session:None,notice:Some("Stored account is unavailable; reconnect or disconnect it. Saved media and downloads are intact.".into()),
         });
@@ -108,7 +131,18 @@ impl Engine {
             cancellations: Mutex::new(HashMap::new()),
             playback_context: Mutex::new(None),
             lyrics: Mutex::new(read_json(&root.join("lyrics.json"))?.unwrap_or_default()),
+            sync: sync_bridge::SyncHandle::new(root),
         })
+    }
+    /// Starts background sync work (debounced pushes, retries, the server connection)
+    /// once the engine is shared. `initialize` calls it on Android.
+    pub fn start_sync(self: &Arc<Self>) {
+        self.sync.start(self);
+    }
+    /// UI events emitted by sync on non-Android builds, oldest first (for tests).
+    #[doc(hidden)]
+    pub fn take_sync_events(&self) -> Vec<(String, String)> {
+        self.sync.take_events()
     }
     /// Re-check at selection time: a context may have been prepared before history changed.
     /// Explicit queues and finite playlists are intentional replays and stay untouched.
@@ -254,51 +288,17 @@ impl Engine {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .clone();
-                atomic_write(
-                    &self.root.join("config.json"),
-                    &serde_json::to_vec(&config)?,
-                )?;
-                let proxy_changed = previous.proxy != config.proxy;
-                let account_changed = previous.account_index != config.account_index;
-                if proxy_changed
-                    || account_changed
-                    || previous.radio_servers != config.radio_servers
-                {
-                    let client = vidcue_providers::http_client(config.proxy.as_deref())?;
-                    if proxy_changed || account_changed {
-                        let session = self
-                            .session
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .clone();
-                        *self
-                            .browser
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                            Browser::new(client.clone(), session, config.account_index);
-                        self.resolver.clear();
-                    }
-                    if proxy_changed || previous.radio_servers != config.radio_servers {
-                        *self
-                            .radio
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                            Radio::new(client.clone(), config.radio_servers.clone())
-                                .with_cache(self.cache.join("radio"));
-                    }
-                    if proxy_changed {
-                        let mut images = self
-                            .images
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        *images = images.with_client(client);
-                    }
+                self.commit_config(config.clone())?;
+                // Sync bookkeeping never fails a saved configuration.
+                if let Ok(ops) = self.mutate(|state| {
+                    Ok(sync_stores::config_ops(
+                        &mut state.sync_meta,
+                        &previous,
+                        &config,
+                    ))
+                }) {
+                    self.sync_ops(ops);
                 }
-                equalizer::configure(&config);
-                *self
-                    .config
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = config;
                 Ok(json!({"saved":true}))
             }
             "import_theme" => {
@@ -407,6 +407,11 @@ impl Engine {
                     browser.fetch(tab == 2, &query).await?
                 };
                 page.notice = page.notice.map(mobile_notice);
+                if sync_stores::filtered_feed(&query, tab)
+                    && let Some(filters) = self.filter_set()
+                {
+                    page.items.retain(|m| !filters.hides(m));
+                }
                 ensure!(
                     page.retained_bytes() <= 16 * 1024 * 1024,
                     "Feed response exceeds memory budget"
@@ -430,73 +435,86 @@ impl Engine {
             "offline_playlist_create"
             | "offline_playlist_update"
             | "offline_playlist_delete"
-            | "offline_playlist_download" => self.mutate(|state| {
-                match r["op"].as_str().unwrap_or_default() {
-                    "offline_playlist_download" => {
-                        let playlist = vidcue_core::offline::OfflinePlaylist {
-                            id: r["id"].as_str().unwrap_or_default().into(),
-                            title: r["title"].as_str().unwrap_or_default().trim().into(),
-                            items: serde_json::from_value(r["items"].clone())?,
-                        };
-                        playlist.validate()?;
-                        if let Some(existing) = state
-                            .offline_playlists
-                            .iter_mut()
-                            .find(|p| p.id == playlist.id)
-                        {
-                            *existing = playlist;
-                        } else {
-                            state.offline_playlists.push(playlist);
-                        }
-                    }
-                    "offline_playlist_create" => {
-                        state
-                            .offline_playlists
-                            .push(vidcue_core::offline::OfflinePlaylist {
-                                id: uuid::Uuid::new_v4().to_string(),
+            | "offline_playlist_download" => {
+                let (value, ops) = self.mutate(|state| {
+                    let before = state.offline_playlists.clone();
+                    match r["op"].as_str().unwrap_or_default() {
+                        "offline_playlist_download" => {
+                            let playlist = vidcue_core::offline::OfflinePlaylist {
+                                id: r["id"].as_str().unwrap_or_default().into(),
                                 title: r["title"].as_str().unwrap_or_default().trim().into(),
-                                items: r
-                                    .get("items")
-                                    .map(|items| serde_json::from_value(items.clone()))
-                                    .transpose()?
-                                    .unwrap_or_default(),
-                            });
-                    }
-                    "offline_playlist_update" => {
-                        let playlist = state
+                                items: serde_json::from_value(r["items"].clone())?,
+                            };
+                            playlist.validate()?;
+                            if let Some(existing) = state
+                                .offline_playlists
+                                .iter_mut()
+                                .find(|p| p.id == playlist.id)
+                            {
+                                *existing = playlist;
+                            } else {
+                                state.offline_playlists.push(playlist);
+                            }
+                        }
+                        "offline_playlist_create" => {
+                            state
+                                .offline_playlists
+                                .push(vidcue_core::offline::OfflinePlaylist {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    title: r["title"].as_str().unwrap_or_default().trim().into(),
+                                    items: r
+                                        .get("items")
+                                        .map(|items| serde_json::from_value(items.clone()))
+                                        .transpose()?
+                                        .unwrap_or_default(),
+                                });
+                        }
+                        "offline_playlist_update" => {
+                            let playlist = state
+                                .offline_playlists
+                                .iter_mut()
+                                .find(|p| Some(p.id.as_str()) == r["id"].as_str())
+                                .context("Offline playlist is no longer available")?;
+                            if let Some(title) = r["title"].as_str() {
+                                playlist.title = title.trim().into();
+                            }
+                            if let Some(items) = r.get("items") {
+                                playlist.items = serde_json::from_value(items.clone())?;
+                            }
+                        }
+                        _ => state
                             .offline_playlists
-                            .iter_mut()
-                            .find(|p| Some(p.id.as_str()) == r["id"].as_str())
-                            .context("Offline playlist is no longer available")?;
-                        if let Some(title) = r["title"].as_str() {
-                            playlist.title = title.trim().into();
-                        }
-                        if let Some(items) = r.get("items") {
-                            playlist.items = serde_json::from_value(items.clone())?;
-                        }
+                            .retain(|p| Some(p.id.as_str()) != r["id"].as_str()),
                     }
-                    _ => state
-                        .offline_playlists
-                        .retain(|p| Some(p.id.as_str()) != r["id"].as_str()),
-                }
-                vidcue_core::offline::validate_library(&state.offline_playlists)?;
-                Ok(serde_json::to_value(&state.offline_playlists)?)
-            }),
+                    vidcue_core::offline::validate_library(&state.offline_playlists)?;
+                    let ops = sync_stores::offline_ops(
+                        &mut state.sync_meta,
+                        &before,
+                        &state.offline_playlists,
+                    );
+                    Ok((serde_json::to_value(&state.offline_playlists)?, ops))
+                })?;
+                self.sync_ops(ops);
+                Ok(value)
+            }
             "save_media" => {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
                 ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
-                self.mutate(|state| {
+                let (value, ops) = self.mutate(|state| {
                     let saved = if let Some(i) = state.saved.iter().position(|m| m.url == media.url)
                     {
                         state.saved.remove(i);
                         false
                     } else {
                         ensure!(state.saved.len() < 2000, "Saved library is full");
-                        state.saved.push(media);
+                        state.saved.push(media.clone());
                         true
                     };
-                    Ok(json!({"count":state.saved.len(),"saved":saved}))
-                })
+                    let ops = sync_stores::saved_op(&mut state.sync_meta, &media, saved);
+                    Ok((json!({"count":state.saved.len(),"saved":saved}), ops))
+                })?;
+                self.sync_ops(ops);
+                Ok(value)
             }
             "queue" => Ok(serde_json::to_value(
                 self.state
@@ -586,17 +604,25 @@ impl Engine {
                     .queue
                     .clone();
                 let limit = r["limit"].as_u64().unwrap_or(25).clamp(1, 100) as usize;
+                let filters = self.filter_set();
                 let context = self
                     .playback_context
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let context = context.as_ref().map(|c| {
+                    // Related suggestions respect the user's filters; playlists do not.
+                    let items = c
+                        .items
+                        .iter()
+                        .filter(|m| !c.related || filters.as_ref().is_none_or(|f| !f.hides(m)))
+                        .take(limit)
+                        .collect::<Vec<_>>();
                     json!({
                         "id": c.id,
                         "related": c.related,
                         "prepared": c.prepared,
                         "count": c.items.len(),
-                        "items": c.items.iter().take(limit).collect::<Vec<_>>(),
+                        "items": items,
                     })
                 });
                 Ok(json!({"queue":queue.iter().take(100).collect::<Vec<_>>(),"context":context}))
@@ -660,12 +686,16 @@ impl Engine {
                 };
                 Ok(json!(recent.iter().rev().collect::<Vec<_>>()))
             }
-            "history_clear" => self.mutate(|state| {
-                state.playback = Default::default();
-                state.recent.clear();
-                state.positions.clear();
+            "history_clear" => {
+                let ops = self.mutate(|state| {
+                    state.playback = Default::default();
+                    state.recent.clear();
+                    state.positions.clear();
+                    Ok(sync_stores::clear_history(state))
+                })?;
+                self.sync_ops(ops);
                 Ok(json!([]))
-            }),
+            }
             "history_peek" => {
                 if !self
                     .config
@@ -714,7 +744,8 @@ impl Engine {
                 let media: Media = serde_json::from_value(r["media"].clone())?;
                 ensure!(media.retained_bytes() <= 256 * 1024, "Media is too large");
                 vidcue_core::http_url(&media.url)?;
-                self.mutate(|state| {
+                let url = media.url.clone();
+                let (value, play, ops) = self.mutate(|state| {
                     if state.recent.is_empty() {
                         state.recent = state.playback.items.clone();
                     }
@@ -747,6 +778,7 @@ impl Engine {
                         bytes = bytes.saturating_sub(timeline.items.remove(0).retained_bytes());
                         timeline.current = timeline.current.map(|i| i.saturating_sub(1));
                     }
+                    let (play, ops) = sync_stores::record_play(state, &accepted);
                     state.recent.retain(|m| m.url != accepted.url);
                     state.recent.push(accepted);
                     let mut bytes = state
@@ -757,8 +789,11 @@ impl Engine {
                     while state.recent.len() > 100 || bytes > 2 * 1024 * 1024 {
                         bytes = bytes.saturating_sub(state.recent.remove(0).retained_bytes());
                     }
-                    Ok(json!({"recorded":true}))
-                })
+                    Ok((json!({"recorded":true}), play, ops))
+                })?;
+                self.sync.set_current_play(&url, play);
+                self.sync_ops(ops);
+                Ok(value)
             }
             "queue_remove" => {
                 let i = r["index"].as_u64().context("Missing queue index")? as usize;
@@ -797,19 +832,36 @@ impl Engine {
                 ensure!(url.len() <= 8192, "Media URL exceeds limit");
                 if let Some(ms) = r["milliseconds"].as_u64() {
                     ensure!(ms <= 7 * 24 * 3600 * 1000, "Invalid media position");
-                    self.mutate(|state| {
-                        if state.positions.len() >= 2000
-                            && !state.positions.contains_key(url)
-                            && let Some(key) = state.positions.keys().next().cloned()
-                        {
-                            state.positions.remove(&key);
-                        }
-                        state.positions.insert(url.into(), ms);
-                        Ok(json!({"saved":true}))
-                    })
+                    // Positions are keyed by media identity, so watch/music/short URLs of
+                    // one video share their resume point across devices.
+                    let media: Option<Media> = r
+                        .get("media")
+                        .filter(|m| !m.is_null())
+                        .map(|m| serde_json::from_value(m.clone()))
+                        .transpose()?;
+                    ensure!(
+                        media
+                            .as_ref()
+                            .is_none_or(|m| m.retained_bytes() <= 256 * 1024),
+                        "Media is too large"
+                    );
+                    let duration_ms = r["duration_ms"].as_u64();
+                    let play = self.sync.current_play(url);
+                    let ops = self.mutate(|state| {
+                        Ok(sync_stores::record_position(
+                            state,
+                            url,
+                            ms,
+                            duration_ms,
+                            media.as_ref(),
+                            play,
+                        ))
+                    })?;
+                    self.sync_ops(ops);
+                    Ok(json!({"saved":true}))
                 } else {
                     Ok(
-                        json!({"milliseconds":self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).positions.get(url).copied().unwrap_or(0)}),
+                        json!({"milliseconds":sync_stores::resume_ms(&self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner), url)}),
                     )
                 }
             }
@@ -939,6 +991,7 @@ impl Engine {
                     .clone();
                 let client = vidcue_providers::http_client(config.proxy.as_deref())?;
                 let notice = account::save(&self.root, &session)?;
+                self.hook_session(&session);
                 *self
                     .account_notice
                     .lock()
@@ -986,6 +1039,7 @@ impl Engine {
                 };
                 let session = Arc::new(Session::new(cookies)?);
                 let notice = account::save(&self.root, &session)?;
+                self.hook_session(&session);
                 *self
                     .account_notice
                     .lock()
@@ -1043,7 +1097,14 @@ impl Engine {
                 );
                 Ok(json!({"connected":false}))
             }
-            "resolve" => self.resolve(r).await,
+            "resolve" => {
+                let started = std::time::Instant::now();
+                let result = self.resolve(r).await;
+                if !r["speculative"].as_bool().unwrap_or(false) {
+                    self.sync.health_resolve(&result, started.elapsed());
+                }
+                result
+            }
             "resolve_cache_clear" => {
                 self.resolver.clear();
                 Ok(json!({"cleared":true}))
@@ -1209,6 +1270,7 @@ impl Engine {
                             .context("Selected song is no longer present in the collection")?,
                     )
                 };
+                let filters = if related { self.filter_set() } else { None };
                 let tail = items
                     .into_iter()
                     .skip(selected.map_or(0, |i| i + 1))
@@ -1216,6 +1278,7 @@ impl Engine {
                         !m.live
                             && !m.collection()
                             && Some(m.url.as_str()) != r["source_url"].as_str()
+                            && filters.as_ref().is_none_or(|f| !f.hides(m))
                     })
                     .collect::<std::collections::VecDeque<_>>();
                 ensure!(
@@ -1329,8 +1392,61 @@ impl Engine {
             "movie_cinecat_providers" => {
                 movies::cinecat_providers(r, &CancellationToken::new()).await
             }
+            op if sync_bridge::handles(op) => sync_bridge::dispatch(self, op, r).await,
             _ => anyhow::bail!("Unknown mobile operation"),
         }
+    }
+    /// Writes and activates a validated configuration (shared by `save_settings` and
+    /// settings applied from sync). Callers hold `settings_commit`.
+    fn commit_config(&self, config: Config) -> Result<()> {
+        let previous = self
+            .config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        atomic_write(
+            &self.root.join("config.json"),
+            &serde_json::to_vec(&config)?,
+        )?;
+        let proxy_changed = previous.proxy != config.proxy;
+        let account_changed = previous.account_index != config.account_index;
+        if proxy_changed || account_changed || previous.radio_servers != config.radio_servers {
+            let client = vidcue_providers::http_client(config.proxy.as_deref())?;
+            if proxy_changed || account_changed {
+                let session = self
+                    .session
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                *self
+                    .browser
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Browser::new(client.clone(), session, config.account_index);
+                self.resolver.clear();
+            }
+            if proxy_changed || previous.radio_servers != config.radio_servers {
+                *self
+                    .radio
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Radio::new(client.clone(), config.radio_servers.clone())
+                        .with_cache(self.cache.join("radio"));
+            }
+            if proxy_changed {
+                let mut images = self
+                    .images
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                *images = images.with_client(client);
+            }
+        }
+        equalizer::configure(&config);
+        *self
+            .config
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = config;
+        Ok(())
     }
     fn mutate<T>(&self, update: impl FnOnce(&mut MobileState) -> Result<T>) -> Result<T> {
         let mut state = self
@@ -2426,9 +2542,12 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
 }
 static ENGINE: OnceLock<Arc<Engine>> = OnceLock::new();
 pub fn initialize(root: &Path, cache: &Path) -> Result<()> {
+    let engine = Arc::new(Engine::new(root, cache)?);
     ENGINE
-        .set(Arc::new(Engine::new(root, cache)?))
-        .map_err(|_| anyhow::anyhow!("Mobile engine already initialized"))
+        .set(engine.clone())
+        .map_err(|_| anyhow::anyhow!("Mobile engine already initialized"))?;
+    engine.start_sync();
+    Ok(())
 }
 /// Stack for one request. Provider pages are walked recursively (up to serde_json's
 /// 128-level limit) inside a large async state machine; Java worker threads have ~1 MB,

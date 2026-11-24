@@ -1,0 +1,52 @@
+[Unit]
+Description=Vidcue backend (accounts, pairing, sync)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=vidcue
+Group=vidcue
+EnvironmentFile=/etc/vidcue/server.env
+# Root-only server key, handed to the service without making the file readable to it.
+LoadCredential=secret.key:/etc/vidcue/secret.key
+ExecStart=/usr/local/bin/vidcue-server serve
+Restart=on-failure
+RestartSec=3
+
+# Resource limits: password hashing is bounded in the app; this caps the rest so the
+# service cannot starve PostgreSQL in the same container.
+MemoryMax=768M
+TasksMax=256
+LimitNOFILE=4096
+
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

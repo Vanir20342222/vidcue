@@ -66,3 +66,27 @@ pub(crate) fn account_cipher(method: &str, text: &str) -> Result<String> {
         anyhow::anyhow!("Android Keystore could not access the account; reconnect or disconnect it")
     })
 }
+
+/// Forwards a UI event to the static, package-private `MediaBridge.event(String, String)`
+/// (JNI ignores Java access). Failures are dropped: events are refresh hints only.
+pub(crate) fn ui_event(kind: &str, text: &str) {
+    let _ = (|| -> Result<()> {
+        let (vm, class) = BRIDGE.get().context("Missing Android bridge")?;
+        let mut env = vm.attach_current_thread()?;
+        let class: &JClass = class.as_obj().into();
+        let kind = env.new_string(kind)?;
+        let text = env.new_string(text)?;
+        if env
+            .call_static_method(
+                class,
+                "event",
+                "(Ljava/lang/String;Ljava/lang/String;)V",
+                &[JValue::Object(&kind), JValue::Object(&text)],
+            )
+            .is_err()
+        {
+            let _ = env.exception_clear();
+        }
+        Ok(())
+    })();
+}
