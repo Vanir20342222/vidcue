@@ -77,20 +77,26 @@ fn mobile_themes() -> impl Iterator<Item = &'static str> {
         .copied()
         .filter(|name| *name != "terminal")
 }
+/// The configuration of a fresh install.
+pub(crate) fn mobile_default_config() -> Config {
+    Config {
+        theme: "vidcue-dark".into(), // Owner-approved mobile default; existing config wins.
+        auth_store: "file".into(),
+        notifications: true,
+        download: vidcue_core::DownloadOptions {
+            quality: "1080".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
 impl Engine {
     pub fn new(root: &Path, cache: &Path) -> Result<Self> {
         std::fs::create_dir_all(root)?;
         std::fs::create_dir_all(cache)?;
-        let config: Config = read_json(&root.join("config.json"))?.unwrap_or_else(|| Config {
-            theme: "vidcue-dark".into(), // Owner-approved mobile default; existing config wins.
-            auth_store: "file".into(),
-            notifications: true,
-            download: vidcue_core::DownloadOptions {
-                quality: "1080".into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
+        let config: Config =
+            read_json(&root.join("config.json"))?.unwrap_or_else(mobile_default_config);
         config.validate()?;
         let mut state: MobileState = read_json(&root.join("library.json"))?.unwrap_or_default();
         if sync_stores::migrate(&mut state) {

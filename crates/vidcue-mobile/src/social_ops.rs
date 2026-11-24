@@ -18,6 +18,7 @@ const OPS: &[&str] = &[
     "shared_playlist_share",
     "shared_playlist_leave",
     "shared_playlist_members",
+    "shared_playlist_info",
     "jam_create",
     "jam_current",
     "jam_room",
@@ -216,6 +217,16 @@ pub(crate) async fn dispatch(engine: &Engine, op: &str, r: &Value) -> Result<Val
             engine.unshare_local(id)?;
             engine.sync.emit("library_changed", "playlists");
             Ok(response)
+        }
+        "shared_playlist_info" => {
+            // The server's view of one shared playlist (members included), so the share
+            // dialog starts from the real member list.
+            let id = uuid_field(r, "playlist_id")?;
+            let listing = inner.net(api.shared_playlists().await)?;
+            Ok(listing["playlists"]
+                .as_array()
+                .and_then(|all| all.iter().find(|p| p["id"] == json!(id)).cloned())
+                .unwrap_or(Value::Null))
         }
         "shared_playlist_members" => {
             let id = uuid_field(r, "playlist_id")?;

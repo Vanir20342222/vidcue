@@ -295,6 +295,8 @@ async fn engine_against_the_real_server() {
     let c = Device::new();
     c.call(json!({"op": "sync_pair_claim", "uri": pairing["uri"], "device_name": "Paired"}))
         .await;
+    c.call(json!({"op": "sync_pair_confirm", "secrets": true}))
+        .await;
     let status = c.call(json!({"op": "sync_now"})).await;
     clean(&status);
     assert_eq!(status["key_state"], "ok");

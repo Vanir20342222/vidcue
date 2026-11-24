@@ -61,6 +61,8 @@ pub struct Data {
     pub health: Vec<Value>,
     /// Status returned by the next push requests (e.g. 503), consumed one per call.
     pub fail_push: Vec<u16>,
+    /// Status returned by the next shared playlist rename.
+    pub fail_rename: Option<u16>,
     pub features_404: bool,
     pub jam: Option<Value>,
     pub log: Vec<String>,
@@ -153,6 +155,10 @@ impl Mock {
             .route(
                 "/api/shared-playlists",
                 get(shared_list).post(shared_create),
+            )
+            .route(
+                "/api/shared-playlists/{id}",
+                axum::routing::patch(shared_rename).delete(shared_delete),
             )
             .route("/api/shared-playlists/{id}/members", post(shared_member))
             .route(
@@ -795,6 +801,48 @@ async fn shared_member_remove(
     };
     p.members.retain(|m| *m != user);
     Json(json!({"removed": true})).into_response()
+}
+
+async fn shared_rename(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+    Json(body): Json<Value>,
+) -> Response {
+    let d = match device(&s, &headers) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+    let mut data = s.data.lock().unwrap();
+    if let Some(status) = data.fail_rename.take() {
+        return err(status, "Unavailable");
+    }
+    data.seq += 1;
+    let seq = data.seq;
+    let Some(p) = data.shared.get_mut(&id).filter(|p| p.owner == d.user) else {
+        return err(404, "No such playlist");
+    };
+    p.title = body["title"].as_str().unwrap_or_default().into();
+    p.seq = seq;
+    let p = p.clone();
+    Json(shared_json(&data, id, &p, d.user)).into_response()
+}
+
+async fn shared_delete(
+    State(s): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Response {
+    let d = match device(&s, &headers) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+    let mut data = s.data.lock().unwrap();
+    if !data.shared.get(&id).is_some_and(|p| p.owner == d.user) {
+        return err(404, "No such playlist");
+    }
+    data.shared.remove(&id);
+    Json(json!({"deleted": true})).into_response()
 }
 
 /// The Jam room the mock starts: one current item playing from 10 s at server time now.

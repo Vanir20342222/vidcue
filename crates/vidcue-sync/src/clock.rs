@@ -39,12 +39,21 @@ impl OffsetEstimator {
         }
         let offset = server_ms - (t0 + rtt / 2);
         self.round.push((rtt, offset));
-        // Keep the offset of the sample with the smallest round trip in this round.
-        if let Some(&(rtt, offset)) = self.round.iter().min_by_key(|(rtt, _)| *rtt) {
+        // Mid-round, the active estimate only improves: a sample replaces it when its
+        // round trip is no worse. `end_round` adopts the round's best either way.
+        if self.rtt.is_none_or(|current| rtt <= current) || self.offset.is_none() {
             self.offset = Some(offset);
             self.rtt = Some(rtt);
         }
         true
+    }
+    /// Ends a sampling round: the sample with the smallest round trip becomes the
+    /// estimate (so the offset can follow clock drift between rounds).
+    pub fn end_round(&mut self) {
+        if let Some(&(rtt, offset)) = self.round.iter().min_by_key(|(rtt, _)| *rtt) {
+            self.offset = Some(offset);
+            self.rtt = Some(rtt);
+        }
     }
     /// Uses the `hello`/`pong` server time without a round trip, when nothing better exists.
     pub fn seed(&mut self, local_ms: i64, server_ms: i64) {
@@ -196,8 +205,14 @@ mod tests {
         assert_eq!(clock.rtt(), Some(20));
         assert_eq!(clock.server_now(10_000), 14_003);
         clock.begin_round();
-        assert!(clock.sample(5000, 5200, 9500)); // a new round replaces the estimate
-        assert_eq!(clock.offset(), Some(4400));
+        // A slow first sample of a new round does not replace a better estimate...
+        assert!(clock.sample(5000, 5900, 9850)); // rtt 900, offset 4400
+        assert_eq!(clock.offset(), Some(4003));
+        assert!(clock.sample(6000, 6200, 10_500)); // rtt 200, offset 4400
+        assert_eq!(clock.offset(), Some(4003));
+        // ...until the round ends, when its best sample is adopted.
+        clock.end_round();
+        assert_eq!((clock.offset(), clock.rtt()), (Some(4400), Some(200)));
         let mut seeded = OffsetEstimator::default();
         seeded.seed(100, 600);
         assert_eq!(seeded.offset(), Some(500));

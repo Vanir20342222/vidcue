@@ -288,7 +288,7 @@ fn follow_value(follow: &Follow) -> Value {
     value
 }
 
-fn title_ok(title: &str) -> Result<String> {
+pub(crate) fn title_ok(title: &str) -> Result<String> {
     let title = title.trim();
     ensure!(
         !title.is_empty()
@@ -653,6 +653,20 @@ impl Engine {
     }
 
     /// Local library ops of §8.1 (playlists, follows, filters).
+    /// The server id of a local playlist that is shared and owned here, if any.
+    pub(crate) fn owned_shared_id(&self, playlist: Uuid) -> Option<Uuid> {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .playlists
+            .iter()
+            .find(|p| p.id == playlist)
+            .filter(|p| p.role.as_deref() != Some("member"))
+            .and_then(|p| p.shared_id)
+    }
+
     pub(crate) fn library_op(&self, op: &str, r: &Value) -> Result<Value> {
         let uuid = |field: &str| -> Result<Uuid> {
             r[field]
@@ -737,7 +751,7 @@ impl Engine {
             "playlist_rename" => {
                 let id = uuid("id")?;
                 let title = title_ok(r["title"].as_str().unwrap_or_default())?;
-                let (value, shared, ops) = self.mutate(|state| {
+                let (value, ops) = self.mutate(|state| {
                     let meta = &mut state.sync_meta;
                     let playlist = state
                         .playlists
@@ -759,12 +773,11 @@ impl Engine {
                     } else {
                         Vec::new()
                     };
-                    Ok((playlist_json(playlist), playlist.shared_id, ops))
+                    Ok((playlist_json(playlist), ops))
                 })?;
+                // A shared playlist's title was already changed on the server
+                // (`dispatch` renames it there first, so a failure is reported).
                 self.sync_ops(ops);
-                if let Some(shared) = shared {
-                    self.sync.rename_shared(shared, title);
-                }
                 Ok(value)
             }
             "playlist_delete" => {
@@ -1506,6 +1519,10 @@ impl vidcue_sync::LocalStores for Stores<'_> {
                     .collect());
             }
             let value = serde_json::to_value(&config)?;
+            let defaults = [
+                serde_json::to_value(crate::mobile_default_config())?,
+                serde_json::to_value(Config::default())?,
+            ];
             return Ok(PORTABLE_SETTINGS
                 .iter()
                 .map(|field| {
@@ -1514,6 +1531,11 @@ impl vidcue_sync::LocalStores for Stores<'_> {
                         setting_value(&value, field),
                         clock_of(&meta, "settings", field),
                     )
+                })
+                // A field never changed here (no clock) that still holds a default is
+                // not a choice of this device: it must not override other devices.
+                .filter(|(field, value, clock)| {
+                    *clock > 0 || !defaults.iter().any(|d| setting_value(d, field) == *value)
                 })
                 .collect());
         }
@@ -1652,30 +1674,7 @@ impl vidcue_sync::LocalStores for Stores<'_> {
         self.0.mutate(|state| {
             let ids: HashSet<Uuid> = playlists.iter().map(|p| p.id).collect();
             for playlist in playlists {
-                match state.playlists.iter_mut().find(|p| p.id == playlist.id) {
-                    Some(local) => {
-                        if local.title != playlist.title
-                            || local.shared_id != Some(playlist.id)
-                            || local.role.as_deref() != Some(playlist.role.as_str())
-                        {
-                            local.title = playlist.title.clone();
-                            local.shared_id = Some(playlist.id);
-                            local.role = Some(playlist.role.clone());
-                            changed = true;
-                        }
-                    }
-                    None => {
-                        state.playlists.push(LocalPlaylist {
-                            id: playlist.id,
-                            title: playlist.title.clone(),
-                            created_at: playlist.updated_at,
-                            shared_id: Some(playlist.id),
-                            role: Some(playlist.role.clone()),
-                            entries: Vec::new(),
-                        });
-                        changed = true;
-                    }
-                }
+                changed |= upsert_shared(state, playlist);
             }
             // Playlists this user no longer belongs to: members lose the copy, an
             // owner's other devices keep it as a normal playlist.
@@ -1693,9 +1692,19 @@ impl vidcue_sync::LocalStores for Stores<'_> {
                     .position(|p| p.id == id)
                     .expect("listed");
                 if state.playlists[index].role.as_deref() == Some("owner") {
+                    // Entries the owner re-pushed as personal ones when sharing stopped
+                    // were kept aside while this copy was still shared.
+                    let hidden = state.sync_meta.hidden_entries.remove(&id);
                     let local = &mut state.playlists[index];
                     local.shared_id = None;
                     local.role = None;
+                    for entry in hidden.unwrap_or_default() {
+                        local.entries.retain(|e| e.id != entry.id);
+                        if local.entries.len() < MAX_PLAYLIST_ENTRIES {
+                            local.entries.push(entry);
+                        }
+                    }
+                    sort_entries(&mut local.entries);
                 } else {
                     state.playlists.remove(index);
                 }
@@ -1710,6 +1719,12 @@ impl vidcue_sync::LocalStores for Stores<'_> {
 
     fn apply_shared(&self, playlist: &SharedPlaylist, changes: &[SharedChange]) -> Result<()> {
         self.0.mutate(|state| {
+            // A `shared_playlist_changed` event can arrive before the first listing that
+            // creates the local copy: create it from the page, or the pulled entries
+            // would be skipped while the cursor moves past them.
+            if !playlist.role.is_empty() && state.playlists.len() < MAX_PLAYLISTS {
+                upsert_shared(state, playlist);
+            }
             let Some(local) = state
                 .playlists
                 .iter_mut()
@@ -1741,6 +1756,37 @@ impl vidcue_sync::LocalStores for Stores<'_> {
             .sync
             .emit("shared_playlist_changed", &playlist.id.to_string());
         Ok(())
+    }
+}
+
+/// Makes the local copy of a listed shared playlist (or marks an existing one as
+/// shared); returns whether anything changed.
+fn upsert_shared(state: &mut MobileState, playlist: &SharedPlaylist) -> bool {
+    match state.playlists.iter_mut().find(|p| p.id == playlist.id) {
+        Some(local) => {
+            if local.title != playlist.title
+                || local.shared_id != Some(playlist.id)
+                || local.role.as_deref() != Some(playlist.role.as_str())
+            {
+                local.title = playlist.title.clone();
+                local.shared_id = Some(playlist.id);
+                local.role = Some(playlist.role.clone());
+                true
+            } else {
+                false
+            }
+        }
+        None => {
+            state.playlists.push(LocalPlaylist {
+                id: playlist.id,
+                title: playlist.title.clone(),
+                created_at: playlist.updated_at,
+                shared_id: Some(playlist.id),
+                role: Some(playlist.role.clone()),
+                entries: Vec::new(),
+            });
+            true
+        }
     }
 }
 

@@ -462,7 +462,10 @@ CREATE TABLE jam_votes (
 open per room, a user hosts ≤ 1 active room and is a member of ≤ 1 active room (joining
 another room leaves the current one; hosting a new one ends the old one).
 Throttles: `JAM_ADD` 30 queue adds / user / 10 min, `JAM_CONTROL` 60 playback actions /
-user / min, `JAM_CREATE` 10 rooms / user / hour. A room **ends** when the host ends or
+user / min, `JAM_EDIT` 60 room edits (vote, queue removal, settings, invite, decline) / user
+/ min, `JAM_INVITE` 30 invite requests / user / 10 min, `JAM_CREATE` 10 rooms / user / hour.
+Inviting someone who already has an open invite to the room neither re-invites nor
+notifies them again. A room **ends** when the host ends or
 leaves it, when no member has had an open WebSocket for 30 min (`last_active` is bumped
 by any room action and by `jam_ping` §5.5), or 12 h after creation. Ended rooms are
 answered with 404 and deleted by `maintenance` after 1 day. Expiry is checked lazily on
@@ -528,7 +531,10 @@ in `queue`. `online` = the member has ≥ 1 open socket (`Realtime`).
 | `rate` | `rate` (0.5..=2.0) | changes rate, re-anchors position |
 
 Permission: host always; guests only when `guests_can_control`, except `ended`, which
-any member may send. Otherwise 403 `Only the host can control playback`.
+any member may send. Otherwise 403 `Only the host can control playback`. A guest without
+control can only end an item that is (nearly) over: expected position ≥ duration − 5 s,
+or ≥ 30 s played when the duration is unknown; an earlier `ended` returns the current
+playback unchanged.
 `position_ms` must be ≤ media duration (when known, in ms) and ≤ 24 h.
 Each accepted action: bump `version`, store playback, publish `jam_state`.
 
@@ -1036,13 +1042,14 @@ with `request_id` for cancellation like other long ops.
 | `sync_sign_in` **net** | `server`, `username`, `password`, `code`, `device_name` | SyncStatus |
 | `sync_sign_out` | `forget_data: bool` (false keeps local library) | SyncStatus — local only: deletes `session`/`e2e_key`/outbox/state, stops ws (does **not** revoke on the server; the UI offers "remove this device" via `sync_revoke` with own id first) |
 | `sync_pair_start` **net** | `password` | `{"uri":"vidcue://pair?…#k=…","qr":["0101…",…],"expires_at":…}` — `qr` rows of `0`/`1` (1 = dark), quiet zone included (4 modules), EC level M; fails with "No account key yet" when the key state is not `ok` |
-| `sync_pair_claim` **net** | `uri`, `device_name` | SyncStatus; stores `K` from `#k` (verified against `keycheck` after the first pull; mismatch → key state `mismatch`) |
-| `sync_pair_inspect` | `uri` | `{"server":"https://…","host":"vidcue.example.org","has_key":true}` or error (for the confirm sheet before claiming) |
+| `sync_pair_claim` **net** | `uri`, `device_name` | SyncStatus with `awaiting_confirmation: true`; stores `K` from `#k` (verified against `keycheck` after the first pull; mismatch → key state `mismatch`). A link can come from anyone: nothing syncs and no socket opens until `sync_pair_confirm`, and the `secrets` collection is switched off |
+| `sync_pair_confirm` | `secrets?: bool` (default false) | SyncStatus — the user confirmed the account and server shown after the claim; `secrets` switches on syncing the YouTube sign-in. Starts syncing and the socket |
+| `sync_pair_inspect` | `uri` | `{"server":"https://…","host":"vidcue.example.org","secure":true,"has_key":true}` or error (for the confirm sheet before claiming; the sheet shows the full `server` origin). Pairing links naming a plain-`http` local server are accepted only by development builds |
 | `sync_devices` **net** | — | `{"devices":[{"id","name","created_at","last_seen","paired_by","current","online","now_playing":Media\|null}]}` (`online`/`now_playing` from presence) |
 | `sync_revoke` **net** | `device_id` | `{"revoked":true}`; own id → also signs out locally |
 | `sync_now` **net** | — | SyncStatus after one `sync_once` |
 | `sync_settings` | `collections`: `{name: bool}` partial, `health_reports?: bool` | SyncStatus |
-| `sync_foreground` | `visible: bool` | `{}` — visible: connect ws if signed in; hidden: close ws after 60 s unless audio is playing (`playing: bool` optional field keeps it open) or the device is in a Jam |
+| `sync_foreground` | `visible?: bool`, `playing?: bool` | `{}` — visible: connect ws if signed in; hidden: close ws after 60 s unless audio is playing (`playing`) or the device is in a Jam. Without `visible` (PlaybackService reporting a play-state change while the UI is hidden) only `playing` is updated: starting playback reconnects, stopping re-arms the 60 s close |
 | `key_requests` **net** | — | `{"requests":[{"id","device_id","device_name","fingerprint","created_at"}]}` (fingerprint computed locally from the posted public key) |
 | `key_grant` **net** | `id` | `{"granted":true}` (user confirmed the fingerprint in UI) |
 | `key_request_start` **net** | — | `{"id","fingerprint","expires_at"}` (requester side; engine then waits for `key_granted`) |
@@ -1070,12 +1077,13 @@ unchanged unless noted)
 | `shared_playlist_share` | `playlist_id` (local), `user_ids` | creates the server playlist with id = local playlist id if not shared yet, pushes all entries, adds members; marks local `shared_id` |
 | `shared_playlist_leave` | `playlist_id` | owner: DELETE playlist (local copy becomes a normal playlist); member: remove self (local copy deleted) |
 | `shared_playlist_members` | `playlist_id`, `add?: [user_id]`, `remove?: [user_id]` | member endpoints |
+| `shared_playlist_info` | `playlist_id` | the playlist's entry of `GET /api/shared-playlists` (members included) or `null` — seeds the share dialog |
 
 **Presence, handoff, remote**
 
 | op | Request | Response |
 | --- | --- | --- |
-| `presence_update` | `media` (Media\|null), `playing`, `position_ms`, `duration_ms?`, `volume?`, `queue_len?` | `{}`; engine rate-limits to 1 per 2 s and only sends on change of media key/playing/seek (> 3 s jump) or every 30 s while playing; never sends local-file media |
+| `presence_update` | `media` (Media\|null), `playing`, `position_ms`, `duration_ms?`, `volume?`, `queue_len?` | `{}`; engine rate-limits to 1 per 2.5 s (headroom over the server's 2 s for jitter), re-sends the last state after every `hello` and only sends on change of media key/playing/seek (> 3 s jump) or every 30 s while playing; never sends local-file media |
 | `presence_devices` | — | `{"devices":[{"device_id","device_name","state","server_at"}]}` (cached from events; sends `presence_query` when connected) |
 | `handoff_send` | `to_device`, `media`, `position_ms`, `playing`, `queue` (≤ 25, trimmed) | `{"sent":true}` or error "device offline" |
 | `remote_send` | `to_device`, `command`, `position_ms?`, `volume?` | `{"sent":true}` |
@@ -1095,7 +1103,7 @@ unchanged unless noted)
 | `jam_queue_remove` | `room_id`, `item_id` | server JSON |
 | `jam_vote` | `room_id`, `item_id`, `up` | server JSON |
 | `jam_control` | `room_id`, `action`, `position_ms?`, `item_id?`, `rate?` | JamPlayback |
-| `jam_target` | `player_media_key?`, `player_position_ms?`, `player_playing?` | `{"in_room":true,"media":Media\|null,"media_key","playing":bool,"target_ms":51234,"action":"none"\|"load"\|"play"\|"pause"\|"seek","seek_ms":51384}` — pure local computation with the clock offset and drift rule of §5.5 |
+| `jam_target` | `player_media_key?`, `player_position_ms?`, `player_playing?` | `{"in_room":true,"media":Media\|null,"media_key","playing":bool,"target_ms":51234,"action":"none"\|"load"\|"play"\|"pause"\|"seek","seek_ms":51384,"rate":1.0}` — pure local computation with the clock offset and drift rule of §5.5; Android applies `rate` to the player without saving it as the user's speed. Stored room playback is only replaced by an equal or newer `version` |
 
 **Personal and admin** (all **net**)
 
@@ -1169,6 +1177,7 @@ Events to the UI via `platform::ui_event(kind, text)` → `MediaBridge.event`:
 | `sync_key_request` | `{"id","device_id","device_name","fingerprint"}` | `key_request` event from another device |
 | `sync_key_state` | `ok`\|`missing`\|`mismatch`\|`waiting` | key state changed |
 | `presence_changed` | "" | presence event/gone |
+| `presence_reset` | "" | after `hello`: the UI presence throttle starts over |
 | `handoff_received` | `{"from_name","media","position_ms","playing","queue"}` | handoff to this device |
 | `remote_command` | `{"from_name","command","position_ms"?,"volume"?}` | remote to this device |
 | `friends_changed` | "" | friend_request/added/removed |
@@ -1181,6 +1190,10 @@ Events to the UI via `platform::ui_event(kind, text)` → `MediaBridge.event`:
 | `jam_ended` | `{"room_id","reason"}` | jam_ended |
 
 Android-side kind (sent by `RustActivity`, not Rust): `sync_pair_link` with the full URI.
+Android stamps every queued event with its queue time; `handoff_received` and `remote_command`
+older than 10 s are dropped instead of replayed. While the UI is stopped the view model keeps
+draining events (and running the Jam and presence player hooks) whenever events are queued,
+audio plays or a Jam room is open.
 
 ### 8.3 Local stores and collection mapping
 

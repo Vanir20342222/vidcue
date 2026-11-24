@@ -182,6 +182,7 @@ async fn local_changes_queue_the_expected_ops_and_sync_now_pushes_them() {
     let mut config = device.call(json!({"op": "settings"})).await;
     config["theme"] = json!("vidcue-light");
     config["proxy"] = json!("http://127.0.0.1:9");
+    config["download"]["quality"] = json!("720");
     device
         .call(json!({"op": "save_settings", "config": config}))
         .await;
@@ -230,6 +231,8 @@ async fn local_changes_queue_the_expected_ops_and_sync_now_pushes_them() {
     // Device-local settings never leave the device.
     assert!(get("settings", "proxy").is_none());
     assert!(get("settings", "download").is_some_and(|d| d.get("directory").is_none()));
+    // Untouched defaults are not pushed: they must not override other devices' choices.
+    assert!(get("settings", "seek_seconds").is_none());
     assert!(get("offline_playlists", offline[0]["id"].as_str().unwrap()).is_some());
     // Deletions are tombstones.
     device
@@ -464,6 +467,16 @@ async fn synced_youtube_sessions_wait_for_the_key_relay() {
         b.call(json!({"op": "key_fingerprint"})).await,
         json!({"state": "waiting", "fingerprint": fingerprint})
     );
+    // A hears about the request over the WebSocket (fingerprint computed locally),
+    // before anything is granted.
+    let mut a_events = Vec::new();
+    eventually(async || {
+        a_events.extend(a.events());
+        a_events
+            .iter()
+            .any(|(k, t)| k == "sync_key_request" && t.contains(&fingerprint))
+    })
+    .await;
     let requests = a.call(json!({"op": "key_requests"})).await;
     assert_eq!(requests["requests"][0]["fingerprint"], fingerprint);
     assert_eq!(requests["requests"][0]["device_name"], "Tablet");
@@ -482,14 +495,6 @@ async fn synced_youtube_sessions_wait_for_the_key_relay() {
         events
             .iter()
             .any(|(k, t)| k == "sync_key_state" && t == "ok")
-    );
-    // A heard about the request over the WebSocket (fingerprint computed locally).
-    let a_events = a.events();
-    assert!(
-        a_events
-            .iter()
-            .any(|(k, t)| k == "sync_key_request" && t.contains(&fingerprint)),
-        "{a_events:?}"
     );
     // The key and token are stored apart from the YouTube account and never in plain
     // library files.
@@ -524,10 +529,31 @@ async fn qr_pairing_handoff_presence_and_revocation() {
     let b = Device::new();
     let inspect = b.call(json!({"op": "sync_pair_inspect", "uri": uri})).await;
     assert_eq!(inspect["host"], "127.0.0.1");
+    assert_eq!(
+        inspect["server"],
+        mock.origin.as_str(),
+        "the full origin is shown"
+    );
+    assert_eq!(inspect["secure"], false);
     assert_eq!(inspect["has_key"], true);
     assert!(b.engine.request(json!({"op": "sync_pair_inspect", "uri": "vidcue://pair?server=http%3A%2F%2Fevil.example&code=ABCDEFGH23"})).await.is_err());
-    b.call(json!({"op": "sync_pair_claim", "uri": uri, "device_name": "Phone"}))
+    let claimed = b
+        .call(json!({"op": "sync_pair_claim", "uri": uri, "device_name": "Phone"}))
         .await;
+    // Nothing syncs (and no socket opens) until the user confirms the account.
+    assert_eq!(claimed["awaiting_confirmation"], true);
+    assert_eq!(claimed["username"], "alice");
+    assert_eq!(claimed["collections"]["secrets"], false);
+    let requests = mock.log().len();
+    let status = b.call(json!({"op": "sync_now"})).await;
+    assert_eq!(status["last_success"], 0);
+    assert_eq!(mock.log().len(), requests);
+    let confirmed = b.call(json!({"op": "sync_pair_confirm"})).await;
+    assert_eq!(confirmed["awaiting_confirmation"], false);
+    assert_eq!(
+        confirmed["collections"]["secrets"], false,
+        "stays off unless chosen"
+    );
     let status = b.call(json!({"op": "sync_now"})).await;
     assert_eq!(status["key_state"], "ok");
     for device in [&a, &b] {
@@ -719,6 +745,7 @@ async fn jam_target_follows_the_room_clock_and_drift_rule() {
     assert_eq!(target["in_room"], true);
     assert_eq!(target["action"], "load");
     assert_eq!(target["media"]["url"], mock::JAM_MEDIA);
+    assert_eq!(target["rate"], 1.0);
     let at = target["target_ms"].as_u64().unwrap();
     // Within clock-estimate error of 10 s plus the time since the room was created.
     assert!((9_000..15_000).contains(&at), "{at}");
@@ -753,4 +780,226 @@ async fn jam_target_follows_the_room_clock_and_drift_rule() {
         device.call(json!({"op": "jam_target"})).await["in_room"],
         false
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shared_playlist_event_before_the_first_listing_keeps_its_entries() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let bob = mock.add_user("bob", "pw");
+    let a = Device::new();
+    a.sign_in(&mock, "alice").await;
+    a.call(json!({"op": "sync_now"})).await;
+    let b = Device::new();
+    b.sign_in(&mock, "bob").await;
+    b.call(json!({"op": "sync_now"})).await;
+    b.call(json!({"op": "sync_foreground", "visible": true}))
+        .await;
+    eventually(async || b.call(json!({"op": "sync_status"})).await["connected"] == true).await;
+
+    let playlist = a
+        .call(json!({"op": "playlist_create", "title": "Road", "media": media("aaaaaaaaaaa")}))
+        .await;
+    let id = playlist["id"].as_str().unwrap().to_owned();
+    a.call(json!({"op": "playlist_add", "id": id, "media": media("bbbbbbbbbbb")}))
+        .await;
+    a.call(json!({"op": "sync_now"})).await;
+    a.call(json!({"op": "shared_playlist_share", "playlist_id": id, "user_ids": [bob]}))
+        .await;
+    a.call(json!({"op": "sync_now"})).await;
+    let uuid: Uuid = id.parse().unwrap();
+    let seq = {
+        let data = mock.data.lock().unwrap();
+        assert_eq!(data.shared[&uuid].entries.len(), 2);
+        data.seq
+    };
+    // The member add announces the playlist to Bob before he has listed it.
+    let _ = mock.hub.send((
+        bob,
+        json!({"type": "shared_playlist_changed", "playlist_id": id, "seq": seq, "device_id": Uuid::new_v4()}),
+    ));
+    eventually(async || {
+        let listed = b.call(json!({"op": "playlists"})).await;
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == id.as_str() && p["count"] == 2)
+    })
+    .await;
+    // The next listing keeps the entries (the cursor did not skip them).
+    b.call(json!({"op": "sync_now"})).await;
+    let entries = b.call(json!({"op": "playlist_entries", "id": id})).await;
+    assert_eq!(entries.as_array().unwrap().len(), 2);
+    let listed = b.call(json!({"op": "playlists"})).await;
+    assert_eq!(listed[0]["role"], "member");
+    let _ = alice;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn owner_stopping_sharing_keeps_late_entries_on_other_owner_devices() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let bob = mock.add_user("bob", "pw");
+    let a = Device::new();
+    a.sign_in(&mock, "alice").await;
+    a.call(json!({"op": "sync_now"})).await;
+    let playlist = a
+        .call(json!({"op": "playlist_create", "title": "Road", "media": media("aaaaaaaaaaa")}))
+        .await;
+    let id = playlist["id"].as_str().unwrap().to_owned();
+    a.call(json!({"op": "sync_now"})).await;
+    a.call(json!({"op": "shared_playlist_share", "playlist_id": id, "user_ids": [bob]}))
+        .await;
+    a.call(json!({"op": "sync_now"})).await;
+    // Alice's tablet has the shared copy.
+    let tablet = Device::new();
+    tablet.sign_in(&mock, "alice").await;
+    tablet.call(json!({"op": "sync_now"})).await;
+    let listed = tablet.call(json!({"op": "playlists"})).await;
+    assert_eq!(
+        (listed[0]["role"].clone(), listed[0]["count"].clone()),
+        (json!("owner"), json!(1))
+    );
+    // Let the run triggered by the sign-in finish, so the next run does the personal
+    // pull before the listing (the order that loses the entries).
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    eventually(async || tablet.call(json!({"op": "sync_status"})).await["state"] == "idle").await;
+    // The phone adds an entry and stops sharing before the tablet pulls it.
+    a.call(json!({"op": "playlist_add", "id": id, "media": media("bbbbbbbbbbb")}))
+        .await;
+    a.call(json!({"op": "shared_playlist_leave", "playlist_id": id}))
+        .await;
+    a.call(json!({"op": "sync_now"})).await;
+    assert_eq!(a.call(json!({"op": "playlists"})).await[0]["count"], 2);
+    tablet.call(json!({"op": "sync_now"})).await;
+    let listed = tablet.call(json!({"op": "playlists"})).await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(listed[0]["shared"], false, "{listed}");
+    assert_eq!(listed[0]["count"], 2, "{listed}");
+    let _ = alice;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_shared_rename_is_reported_and_not_applied() {
+    let mock = Mock::start().await;
+    let bob = mock.add_user("bob", "pw");
+    mock.add_user("alice", "pw");
+    let a = Device::new();
+    a.sign_in(&mock, "alice").await;
+    a.call(json!({"op": "sync_now"})).await;
+    let playlist = a
+        .call(json!({"op": "playlist_create", "title": "Road"}))
+        .await;
+    let id = playlist["id"].as_str().unwrap().to_owned();
+    a.call(json!({"op": "shared_playlist_share", "playlist_id": id, "user_ids": [bob]}))
+        .await;
+    a.call(json!({"op": "sync_now"})).await;
+    mock.data.lock().unwrap().fail_rename = Some(503);
+    assert!(
+        a.engine
+            .request(json!({"op": "playlist_rename", "id": id, "title": "Trip"}))
+            .await
+            .is_err()
+    );
+    assert_eq!(a.call(json!({"op": "playlists"})).await[0]["title"], "Road");
+    a.call(json!({"op": "playlist_rename", "id": id, "title": "Trip"}))
+        .await;
+    let uuid: Uuid = id.parse().unwrap();
+    assert_eq!(mock.data.lock().unwrap().shared[&uuid].title, "Trip");
+    a.call(json!({"op": "sync_now"})).await;
+    assert_eq!(a.call(json!({"op": "playlists"})).await[0]["title"], "Trip");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_older_jam_playback_never_replaces_a_newer_one() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let device = Device::new();
+    device.sign_in(&mock, "alice").await;
+    device
+        .call(json!({"op": "sync_foreground", "visible": true}))
+        .await;
+    eventually(async || device.call(json!({"op": "sync_status"})).await["connected"] == true).await;
+    let room = device.call(json!({"op": "jam_create"})).await;
+    let item = room["playback"]["item"].clone();
+    let state = |version: i64, state: &str, position: u64| {
+        json!({"type": "jam_state", "room_id": room["id"], "server_ms": vidcue_sync::now_ms(),
+               "playback": {"item": item, "state": state, "position_ms": position,
+                            "at_server_ms": vidcue_sync::now_ms(), "rate": 1.0, "version": version}})
+    };
+    // A newer state over the socket (version 5: paused at 1 s).
+    let _ = mock.hub.send((alice, state(5, "paused", 1_000)));
+    eventually(async || {
+        let target = device.call(json!({"op": "jam_target"})).await;
+        target["playing"] == false && target["target_ms"] == 1_000
+    })
+    .await;
+    // An older socket event and a refetch that started earlier (version 1) are ignored.
+    let _ = mock.hub.send((alice, state(3, "playing", 50_000)));
+    device.call(json!({"op": "jam_current"})).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let target = device.call(json!({"op": "jam_target"})).await;
+    assert_eq!(
+        (target["playing"].clone(), target["target_ms"].clone()),
+        (json!(false), json!(1_000))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn presence_is_sent_again_after_a_reconnect() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let device = Device::new();
+    device.sign_in(&mock, "alice").await;
+    device
+        .call(json!({"op": "sync_foreground", "visible": true}))
+        .await;
+    eventually(async || device.call(json!({"op": "sync_status"})).await["connected"] == true).await;
+    // A play-state report from the hidden app (no `visible`) keeps the socket.
+    device
+        .call(json!({"op": "sync_foreground", "playing": true}))
+        .await;
+    assert_eq!(
+        device.call(json!({"op": "sync_status"})).await["connected"],
+        true
+    );
+    let mut seen = mock.hub.subscribe();
+    device
+        .call(json!({"op": "presence_update", "media": media("eeeeeeeeeee"), "playing": false, "position_ms": 7000}))
+        .await;
+    let presence = |seen: &mut tokio::sync::broadcast::Receiver<(Uuid, Value)>| {
+        let mut found = None;
+        while let Ok((user, event)) = seen.try_recv() {
+            if user == alice && event["type"] == "presence" {
+                found = Some(event);
+            }
+        }
+        found
+    };
+    let mut first = None;
+    eventually(async || {
+        first = first.take().or_else(|| presence(&mut seen));
+        first.is_some()
+    })
+    .await;
+    // The server forgets presence when the socket closes; a new `hello` re-sends it.
+    device.engine.take_sync_events();
+    let _ = mock.hub.send((alice, json!({"type": "hello", "seq": 0, "device_id": Uuid::new_v4(), "server_ms": vidcue_sync::now_ms(), "features": ["realtime"]})));
+    let mut again = None;
+    eventually(async || {
+        again = again.take().or_else(|| presence(&mut seen));
+        again.is_some()
+    })
+    .await;
+    let again = again.unwrap();
+    assert_eq!(again["state"]["media"]["url"], media("eeeeeeeeeee")["url"]);
+    assert_eq!(
+        (
+            again["state"]["playing"].clone(),
+            again["state"]["position_ms"].clone()
+        ),
+        (json!(false), json!(7000))
+    );
+    assert!(device.events().iter().any(|(k, _)| k == "presence_reset"));
 }

@@ -143,6 +143,55 @@ async fn first_sync_unions_both_sides_and_creates_the_key() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn first_sync_keeps_and_pushes_newer_local_registers() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let other = Uuid::new_v4();
+    // Remote values written earlier by another device.
+    mock.put(
+        alice,
+        "settings",
+        "theme",
+        Some(json!("remote-old")),
+        100,
+        other,
+    );
+    mock.put(
+        alice,
+        "filters",
+        "F",
+        Some(json!({"kind": "remote"})),
+        100,
+        other,
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(MemoryStore::default());
+    let engine = sign_in(&mock, dir.path(), store.clone(), "alice").await;
+    let local = Fake::default();
+    // Edited here later (while signed out or with the collection off).
+    local.set("settings", "theme", json!("local-new"), 200);
+    local.set("filters", "F", json!({"kind": "local"}), 200);
+    // Never edited here (clock 0) and missing remotely: pushed with the lowest clock.
+    local.set("settings", "volume", json!(80), 0);
+    engine.sync_once(&local).await.unwrap();
+    assert_eq!(
+        local.value("settings", "theme").unwrap(),
+        json!("local-new")
+    );
+    assert_eq!(
+        local.value("filters", "F").unwrap(),
+        json!({"kind": "local"})
+    );
+    let theme = mock.get(alice, "settings", "theme").unwrap();
+    assert_eq!((theme.value, theme.clock), (Some(json!("local-new")), 200));
+    assert_eq!(
+        mock.get(alice, "filters", "F").unwrap().value,
+        Some(json!({"kind": "local"}))
+    );
+    assert_eq!(mock.get(alice, "settings", "volume").unwrap().clock, 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pending_local_writes_win_conflicts_and_the_cursor_persists() {
     let mock = Mock::start().await;
     let alice = mock.add_user("alice", "pw");
@@ -333,6 +382,21 @@ async fn key_relay_moves_the_key_and_unlocks_pending_secrets() {
         .await
         .unwrap();
     let local_c = Fake::default();
+    // A link sign-in syncs nothing until confirmed, and the YouTube sign-in stays off
+    // unless the user switches it on.
+    assert!(c.awaiting_confirmation());
+    assert!(!c.enabled("secrets"));
+    let requests = mock.log().len();
+    c.sync_once(&local_c).await.unwrap();
+    assert_eq!(
+        mock.log().len(),
+        requests,
+        "nothing sent before confirmation"
+    );
+    assert_eq!(c.state().cursor, 0);
+    assert_eq!(c.status().last_success, 0);
+    c.confirm_pairing(true).unwrap();
+    assert!(!c.awaiting_confirmation());
     c.sync_once(&local_c).await.unwrap();
     assert_eq!(c.key_state(), KeyState::Ok);
     assert!(local_c.value("secrets", "youtube").is_some());
@@ -359,6 +423,7 @@ async fn a_wrong_pairing_key_is_a_mismatch_and_queues_no_secrets() {
     let c = SyncEngine::claim(dir.path(), Arc::new(MemoryStore::default()), &parsed, "C")
         .await
         .unwrap();
+    c.confirm_pairing(true).unwrap();
     // Provisionally usable until the first pull contradicts it.
     let local = Fake::default();
     local.set("secrets", "youtube", json!({"c": 1}), 5);
@@ -369,6 +434,55 @@ async fn a_wrong_pairing_key_is_a_mismatch_and_queues_no_secrets() {
     assert!(c.adopt_key([9u8; 32]).is_err());
     assert!(c.adopt_key(a.account_key().unwrap()).is_ok());
     assert_eq!(c.key_state(), KeyState::Ok);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_secret_that_does_not_open_waits_for_the_right_key() {
+    let mock = Mock::start().await;
+    let alice = mock.add_user("alice", "pw");
+    let dir_a = tempfile::tempdir().unwrap();
+    let a = sign_in(
+        &mock,
+        dir_a.path(),
+        Arc::new(MemoryStore::default()),
+        "alice",
+    )
+    .await;
+    let local_a = Fake::default();
+    local_a.set("secrets", "youtube", json!({"cookies": ["synthetic"]}), 50);
+    a.sync_once(&local_a).await.unwrap();
+    // The key check is written again after the session: a device holding a wrong key
+    // meets the session before the check contradicts its key.
+    let check = mock.get(alice, "secrets", "keycheck").unwrap();
+    mock.put(
+        alice,
+        "secrets",
+        "keycheck",
+        check.value,
+        check.clock,
+        check.device,
+    );
+    let pairing = a.pairing("pw").await.unwrap();
+    let mut parsed =
+        vidcue_sync::pairing::parse_pairing_uri(pairing["uri"].as_str().unwrap()).unwrap();
+    parsed.key = Some([9u8; 32]);
+    let dir = tempfile::tempdir().unwrap();
+    let c = SyncEngine::claim(dir.path(), Arc::new(MemoryStore::default()), &parsed, "C")
+        .await
+        .unwrap();
+    c.confirm_pairing(true).unwrap();
+    let local = Fake::default();
+    c.sync_once(&local).await.unwrap();
+    assert_eq!(c.key_state(), KeyState::Mismatch);
+    assert!(local.value("secrets", "youtube").is_none());
+    assert!(c.state().pending_secrets.contains_key("youtube"));
+    c.adopt_key(a.account_key().unwrap()).unwrap();
+    c.sync_once(&local).await.unwrap();
+    assert_eq!(
+        local.value("secrets", "youtube").unwrap(),
+        json!({"cookies": ["synthetic"]})
+    );
+    assert!(c.state().pending_secrets.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread")]

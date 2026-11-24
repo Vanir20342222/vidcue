@@ -190,6 +190,10 @@ pub struct SyncState {
     pub server_features: Vec<String>,
     #[serde(default)]
     pub last_clock: i64,
+    /// Set by a pairing-link sign-in: nothing is synced until the user confirms the
+    /// account and server it signed in to (a link can come from anyone).
+    #[serde(default)]
+    pub awaiting_confirmation: bool,
 }
 
 impl Default for SyncState {
@@ -210,6 +214,7 @@ impl Default for SyncState {
             resend_secrets: false,
             server_features: Vec::new(),
             last_clock: 0,
+            awaiting_confirmation: false,
         }
     }
 }
@@ -321,7 +326,34 @@ impl SyncEngine {
     ) -> Result<Self> {
         let api = Api::new(&pairing.server, None)?;
         let claim = api.pairing_claim(&pairing.code, device_name).await?;
-        Self::finish_sign_in(dir, secrets, &api, &pairing.server, &claim, pairing.key).await
+        let engine =
+            Self::finish_sign_in(dir, secrets, &api, &pairing.server, &claim, pairing.key).await?;
+        {
+            // A link names the server, the account and (with `#k=`) the key: until the user
+            // confirms them, nothing leaves the device, and the YouTube sign-in stays off
+            // until it is switched on explicitly.
+            let mut state = lock(&engine.state);
+            state.awaiting_confirmation = true;
+            state.collections.insert("secrets".into(), false);
+        }
+        engine.save_state()?;
+        Ok(engine)
+    }
+
+    /// Whether a pairing-link sign-in still waits for [`Self::confirm_pairing`].
+    pub fn awaiting_confirmation(&self) -> bool {
+        lock(&self.state).awaiting_confirmation
+    }
+
+    /// The user confirmed the account and server of a pairing-link sign-in; `secrets`
+    /// also turns on syncing the YouTube sign-in.
+    pub fn confirm_pairing(&self, secrets: bool) -> Result<()> {
+        {
+            let mut state = lock(&self.state);
+            state.awaiting_confirmation = false;
+            state.collections.insert("secrets".into(), secrets);
+        }
+        self.save_state()
     }
 
     async fn finish_sign_in(
@@ -698,6 +730,10 @@ impl SyncEngine {
             !self.is_signed_out(),
             "This device was signed out of the server"
         );
+        if self.awaiting_confirmation() {
+            // Nothing is sent before the user confirms a pairing-link sign-in.
+            return Ok(());
+        }
         let _run = self.run.lock().await;
         *lock(&self.run_state) = (RunState::Syncing, None);
         let result = self.run_inner(stores).await;
@@ -759,30 +795,38 @@ impl SyncEngine {
         }
         let first = !lock(&self.state).first_sync_done;
         if first {
-            let remote = self.pull(stores, true).await?;
+            // The local registers are taken before the pull: applying a remote value
+            // would otherwise replace a newer local one before the union sees it.
+            let local = self.first_snapshot(stores)?;
+            let clocks: HashMap<(String, String), i64> = local
+                .iter()
+                .map(|(collection, key, _, clock)| ((collection.clone(), key.clone()), *clock))
+                .collect();
+            let remote = self.pull(stores, Some(&clocks)).await?;
             self.resolve_key_after_first_pull()?;
-            self.union(stores, &remote.unwrap_or_default())?;
+            self.union(local, &remote.unwrap_or_default())?;
             lock(&self.state).first_sync_done = true;
             self.save_state()?;
         }
         self.apply_pending_secrets(stores)?;
         self.resend_secrets(stores)?;
         self.push().await?;
-        self.pull(stores, false).await?;
+        self.pull(stores, None).await?;
         self.apply_pending_secrets(stores)?;
         self.sync_shared(stores).await?;
         self.flush_health().await?;
         Ok(())
     }
 
-    /// Pulls from the cursor while `more`. With `record`, returns every remote register's
-    /// `(clock, device)` for the first-sync union.
+    /// Pulls from the cursor while `more`. With `first` (the local clocks taken before a
+    /// first sync), returns every remote register's `(clock, device)` for the union and
+    /// leaves a local register that is strictly newer than the remote one in place.
     async fn pull(
         &self,
         stores: &dyn LocalStores,
-        record: bool,
+        first: Option<&HashMap<(String, String), i64>>,
     ) -> Result<Option<HashMap<(String, String), (i64, Uuid)>>> {
-        let mut remote = record.then(HashMap::new);
+        let mut remote = first.map(|_| HashMap::new());
         loop {
             let since = lock(&self.state).cursor;
             let page = self.api.pull(since, PULL_LIMIT).await?;
@@ -793,6 +837,16 @@ impl SyncEngine {
                         (change.collection.clone(), change.key.clone()),
                         (change.clock, change.device_id),
                     );
+                }
+                let local_newer = first.is_some_and(|local| {
+                    change.key != crypto::KEYCHECK
+                        && local
+                            .get(&(change.collection.clone(), change.key.clone()))
+                            .is_some_and(|clock| *clock > change.clock)
+                });
+                if local_newer {
+                    // The union pushes the local value instead.
+                    continue;
                 }
                 if self.apply_remote(stores, change)? && !touched.contains(&change.collection) {
                     touched.push(change.collection.clone());
@@ -863,12 +917,40 @@ impl SyncEngine {
                 return Ok(false);
             };
             let Ok(plain) = crypto::open_secret(&key, &change.key, envelope) else {
-                // Sealed with an older key; the owner re-pushes after a relay.
+                // Sealed with another key: an older one (the owner re-pushes after a
+                // relay) or the right one while this device still holds a wrong key.
+                // Kept, so it is tried again after `adopt_key`.
+                let mut state = lock(&self.state);
+                if state
+                    .pending_secrets
+                    .get(&change.key)
+                    .is_none_or(|p| p.seq <= change.seq)
+                {
+                    state.pending_secrets.insert(
+                        change.key.clone(),
+                        PendingSecret {
+                            value: change.value.clone(),
+                            clock: change.clock,
+                            device_id: change.device_id,
+                            seq: change.seq,
+                        },
+                    );
+                }
                 return Ok(false);
             };
             let Ok(value) = serde_json::from_slice::<Value>(&plain) else {
                 return Ok(false);
             };
+            {
+                let mut state = lock(&self.state);
+                if state
+                    .pending_secrets
+                    .get(&change.key)
+                    .is_some_and(|p| p.seq <= change.seq)
+                {
+                    state.pending_secrets.remove(&change.key);
+                }
+            }
             out.value = Some(value);
         }
         // A value the app cannot apply (for example a setting from a newer app version)
@@ -916,20 +998,36 @@ impl SyncEngine {
         self.save_outbox()
     }
 
-    /// First-sync union: local registers missing remotely or newer locally are queued.
-    fn union(
+    /// Every register of the enabled collections, as `(collection, key, value, clock)`.
+    fn first_snapshot(
         &self,
         stores: &dyn LocalStores,
-        remote: &HashMap<(String, String), (i64, Uuid)>,
-    ) -> Result<()> {
+    ) -> Result<Vec<(String, String, Value, i64)>> {
+        let mut out = Vec::new();
         for collection in LOCAL_COLLECTIONS {
             if !self.enabled(collection) {
                 continue;
             }
+            for (key, value, clock) in stores.snapshot(collection)? {
+                out.push((collection.to_owned(), key, value, clock));
+            }
+        }
+        Ok(out)
+    }
+
+    /// First-sync union of the registers taken before the first pull: local registers
+    /// missing remotely or strictly newer locally are queued.
+    fn union(
+        &self,
+        local: Vec<(String, String, Value, i64)>,
+        remote: &HashMap<(String, String), (i64, Uuid)>,
+    ) -> Result<()> {
+        for (collection, key, value, clock) in local {
+            let collection = collection.as_str();
             if collection == "secrets" && self.usable_key().is_none() {
                 continue;
             }
-            for (key, value, clock) in stores.snapshot(collection)? {
+            {
                 // Strictly newer only: a value applied from the server carries the
                 // server's clock and must not be echoed back on a device-id tie.
                 let newer = match remote.get(&(collection.to_owned(), key.clone())) {
@@ -939,7 +1037,9 @@ impl SyncEngine {
                 if !newer {
                     continue;
                 }
-                let clock = if clock > 0 { clock } else { self.next_clock() };
+                // Clock 0 means never edited here (a default, or migrated data): it
+                // goes out with the lowest valid clock, so any real edit elsewhere wins.
+                let clock = clock.max(1);
                 if collection == "secrets" {
                     if key != crypto::KEYCHECK {
                         self.enqueue_secret(&key, &value, clock)?;

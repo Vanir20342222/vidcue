@@ -6,6 +6,8 @@ use url::Url;
 pub const MAX_URI_LEN: usize = 512;
 /// Hosts that may use plain `http` (local development and the Android emulator).
 const LOCAL_HOSTS: &[&str] = &["localhost", "127.0.0.1", "10.0.2.2"];
+/// Whether pairing links may name a local `http` server (development builds only).
+pub const LOCAL_HTTP_LINKS: bool = cfg!(debug_assertions);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pairing {
@@ -88,6 +90,12 @@ pub fn parse_pairing_uri(raw: &str) -> Result<Pairing> {
         *slot = Some(value.into_owned());
     }
     let server = server_origin(&server.ok_or_else(invalid)?)?;
+    // A link can come from any web page or app: plain http (to a local host) only in
+    // development builds. Typed addresses keep the local http rule.
+    ensure!(
+        LOCAL_HTTP_LINKS || server.starts_with("https://"),
+        "The server must use https"
+    );
     let code = code.ok_or_else(invalid)?.to_ascii_uppercase();
     ensure!(
         code.len() == 10
@@ -180,9 +188,10 @@ mod tests {
         ] {
             assert!(parse_pairing_uri(&bad).is_err(), "{bad}");
         }
-        assert!(
+        assert_eq!(
             parse_pairing_uri("vidcue://pair?server=http%3A%2F%2F10.0.2.2%3A8080&code=ABCDEFGH23")
-                .is_ok()
+                .is_ok(),
+            LOCAL_HTTP_LINKS
         );
         assert_eq!(
             origin_host("https://vidcue.example.org:8443"),

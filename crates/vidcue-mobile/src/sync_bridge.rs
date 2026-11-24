@@ -33,7 +33,9 @@ pub const DEBOUNCE: Duration = Duration::from_secs(2);
 pub const PROGRESS_DEBOUNCE: Duration = Duration::from_secs(30);
 /// A hidden app keeps the socket this long (unless playing or in a Jam).
 pub const HIDDEN_GRACE: Duration = Duration::from_secs(60);
-const PRESENCE_MIN_GAP_MS: i64 = 2_000;
+/// The server accepts one presence per 2 s; the extra half second absorbs network
+/// jitter between two sends so the second one is not refused on arrival.
+const PRESENCE_MIN_GAP_MS: i64 = 2_500;
 const PRESENCE_REFRESH_MS: i64 = 30_000;
 const PRESENCE_SEEK_JUMP_MS: i64 = 3_000;
 const STATUS_GAP_MS: i64 = 1_000;
@@ -123,6 +125,29 @@ struct PresenceOut {
     sent_at: i64,
     pending: Option<PresenceState>,
     timer: Option<JoinHandle<()>>,
+    /// The last state handed to the socket, re-sent after a reconnect (the server
+    /// forgets a device's presence when its last socket closes).
+    last: Option<PresenceState>,
+}
+
+/// Whether `new` may replace the stored room playback: server versions only increase,
+/// so an older one (an HTTP reply overtaken by a socket event) is ignored.
+pub(crate) fn playback_newer(current: Option<&JamPlayback>, new: &JamPlayback) -> bool {
+    current.is_none_or(|current| new.version >= current.version)
+}
+
+/// `state` brought forward to `now`: a playing position advances by the elapsed time.
+fn presence_at(mut state: PresenceState, now: i64) -> PresenceState {
+    if state.playing {
+        let elapsed = (now - state.at).max(0) as u64;
+        let mut position = state.position_ms.saturating_add(elapsed);
+        if let Some(duration) = state.duration_ms {
+            position = position.min(duration);
+        }
+        state.position_ms = position;
+    }
+    state.at = now;
+    state
 }
 
 #[derive(Default)]
@@ -324,15 +349,6 @@ impl SyncHandle {
         }
     }
 
-    pub(crate) fn rename_shared(&self, playlist: Uuid, title: String) {
-        let Some(engine) = self.engine() else {
-            return;
-        };
-        crate::runtime().spawn(async move {
-            let _ = engine.api().shared_rename(playlist, &title).await;
-        });
-    }
-
     /// Remembers the play event of a URL so position saves update it.
     pub(crate) fn set_current_play(&self, url: &str, id: Uuid) {
         let mut plays = lock(&self.0.plays);
@@ -465,6 +481,7 @@ impl Inner {
             "key_state": status.key_state.name(),
             "collections": status.collections,
             "health_reports": status.health_reports,
+            "awaiting_confirmation": engine.awaiting_confirmation(),
             "notice": lock(&self.notice).clone().or(status.last_error),
         })
     }
@@ -551,7 +568,10 @@ impl Inner {
     }
 
     fn connect(self: &Arc<Self>) -> Result<()> {
-        let Some(engine) = self.engine().filter(|e| !e.is_signed_out()) else {
+        let Some(engine) = self
+            .engine()
+            .filter(|e| !e.is_signed_out() && !e.awaiting_confirmation())
+        else {
             return Ok(());
         };
         let mut connection = lock(&self.connection);
@@ -609,8 +629,16 @@ impl Inner {
         lock(&self.jam).room.is_some()
     }
 
-    fn set_foreground(self: &Arc<Self>, visible: bool, playing: bool) -> Result<()> {
+    /// `visible: None` only updates the play state (PlaybackService reports it while the
+    /// UI is hidden), so the socket follows playback that starts or stops later.
+    fn set_foreground(self: &Arc<Self>, visible: Option<bool>, playing: bool) -> Result<()> {
         let mut foreground = lock(&self.foreground);
+        let only_playing = visible.is_none();
+        let visible = visible.unwrap_or(foreground.visible);
+        if only_playing && (visible || foreground.playing == playing) {
+            foreground.playing = playing;
+            return Ok(());
+        }
         foreground.visible = visible;
         foreground.playing = playing;
         if let Some(timer) = foreground.close_timer.take() {
@@ -621,6 +649,12 @@ impl Inner {
             self.connect()?;
             self.trigger(true);
             return Ok(());
+        }
+        if only_playing && playing {
+            // Playback started from the notification while hidden: handoff and remote
+            // need the socket again.
+            drop(foreground);
+            return self.connect();
         }
         let inner = self.clone();
         foreground.close_timer = Some(crate::runtime().spawn(async move {
@@ -638,10 +672,31 @@ impl Inner {
     }
 
     fn send_presence(&self, state: PresenceState) {
+        lock(&self.presence_out).last = Some(state.clone());
         let Some(client) = self.realtime() else {
             return;
         };
         client.send(&ClientMessage::Presence { state });
+    }
+
+    /// After `hello`: the new socket has no presence on the server yet, so the last state
+    /// goes out again (brought forward) and the throttle starts over.
+    fn resend_presence(&self) {
+        let now = vidcue_sync::now_ms();
+        let last = {
+            let mut out = lock(&self.presence_out);
+            if let Some(timer) = out.timer.take() {
+                timer.abort();
+            }
+            let last = out.pending.take().or_else(|| out.last.take());
+            out.sent_at = if last.is_some() { now } else { 0 };
+            last
+        };
+        if let Some(state) = last {
+            self.send_presence(presence_at(state, now));
+        }
+        // The UI-side throttle starts over too, so the next player snapshot is sent.
+        self.emit("presence_reset", "");
     }
 
     /// Room bookkeeping after create/join/fetch: clock sampling and `jam_ping`.
@@ -655,12 +710,16 @@ impl Inner {
         if let Some(server_ms) = server_ms {
             jam.clock.seed(vidcue_sync::now_ms(), server_ms);
         }
-        if let Some(playback) = playback {
-            jam.playback = Some(playback);
-        }
         if jam.room == Some(room) {
+            // A fetch that started before a newer `jam_state` must not roll it back.
+            if let Some(playback) = playback
+                && playback_newer(jam.playback.as_ref(), &playback)
+            {
+                jam.playback = Some(playback);
+            }
             return;
         }
+        jam.playback = playback;
         for task in jam.tasks.drain(..) {
             task.abort();
         }
@@ -825,6 +884,7 @@ fn on_event(inner: &Arc<Inner>, event: ServerEvent) {
             if let Some(client) = inner.realtime() {
                 client.send(&ClientMessage::PresenceQuery);
             }
+            inner.resend_presence();
             let room = lock(&inner.jam).room;
             if let Some(room) = room {
                 // Resample after reconnecting and refetch the room.
@@ -936,7 +996,7 @@ fn on_event(inner: &Arc<Inner>, event: ServerEvent) {
             room_id, playback, ..
         } => {
             let mut jam = lock(&inner.jam);
-            if jam.room != Some(room_id) {
+            if jam.room != Some(room_id) || !playback_newer(jam.playback.as_ref(), &playback) {
                 return;
             }
             jam.playback = Some(playback.clone());
@@ -977,6 +1037,7 @@ async fn sample_clock(inner: &Arc<Inner>, count: usize) {
             lock(&inner.jam).clock.sample(t0, t1, server_ms);
         }
     }
+    lock(&inner.jam).clock.end_round();
 }
 
 async fn clock_sampler(weak: Weak<Inner>) {
@@ -1046,6 +1107,7 @@ const OPS: &[&str] = &[
     "sync_pair_start",
     "sync_pair_claim",
     "sync_pair_inspect",
+    "sync_pair_confirm",
     "sync_devices",
     "sync_revoke",
     "sync_now",
@@ -1097,9 +1159,22 @@ pub(crate) async fn dispatch(engine: &Engine, op: &str, r: &Value) -> Result<Val
             .context("Sign in to a Vidcue server first")
     };
     match op {
-        "playlists" | "playlist_create" | "playlist_rename" | "playlist_delete"
-        | "playlist_entries" | "playlist_add" | "playlist_remove" | "playlist_move" | "follows"
-        | "follow_toggle" | "filters" | "filter_add" | "filter_remove" => engine.library_op(op, r),
+        "playlist_rename" => {
+            // A shared playlist is renamed on the server first: a failed rename is
+            // reported instead of being undone silently by the next listing.
+            if let Some(shared) = uuid_field(r, "id")
+                .ok()
+                .and_then(|id| engine.owned_shared_id(id))
+            {
+                let sync = signed_in()?;
+                let title = crate::sync_stores::title_ok(r["title"].as_str().unwrap_or_default())?;
+                inner.net(sync.api().shared_rename(shared, &title).await)?;
+            }
+            engine.library_op(op, r)
+        }
+        "playlists" | "playlist_create" | "playlist_delete" | "playlist_entries"
+        | "playlist_add" | "playlist_remove" | "playlist_move" | "follows" | "follow_toggle"
+        | "filters" | "filter_add" | "filter_remove" => engine.library_op(op, r),
         "sync_status" => Ok(inner.status()),
         "sync_sign_in" => {
             let new = SyncEngine::sign_in(
@@ -1117,9 +1192,12 @@ pub(crate) async fn dispatch(engine: &Engine, op: &str, r: &Value) -> Result<Val
         }
         "sync_pair_inspect" => {
             let pairing = pairing::parse_pairing_uri(text(r, "uri")?)?;
+            // `server` is the full origin (scheme, host and port): the confirm sheet
+            // shows all of it, since the link may come from anyone.
             Ok(json!({
                 "server": pairing.server,
                 "host": pairing::origin_host(&pairing.server),
+                "secure": pairing.server.starts_with("https://"),
                 "has_key": pairing.key.is_some(),
             }))
         }
@@ -1129,6 +1207,14 @@ pub(crate) async fn dispatch(engine: &Engine, op: &str, r: &Value) -> Result<Val
                 SyncEngine::claim(&inner.dir, inner.secrets.clone(), &pairing, &device_name(r))
                     .await?;
             inner.install(new)?;
+            Ok(inner.status())
+        }
+        "sync_pair_confirm" => {
+            let sync = signed_in()?;
+            sync.confirm_pairing(r["secrets"].as_bool().unwrap_or(false))?;
+            inner.connect()?;
+            inner.trigger(true);
+            inner.emit_status();
             Ok(inner.status())
         }
         "sync_sign_out" => {
@@ -1197,8 +1283,10 @@ pub(crate) async fn dispatch(engine: &Engine, op: &str, r: &Value) -> Result<Val
             Ok(inner.status())
         }
         "sync_foreground" => {
-            let visible = r["visible"].as_bool().context("Missing visible")?;
-            inner.set_foreground(visible, r["playing"].as_bool().unwrap_or(false))?;
+            inner.set_foreground(
+                r["visible"].as_bool(),
+                r["playing"].as_bool().unwrap_or(false),
+            )?;
             Ok(json!({}))
         }
         "key_requests" => {
@@ -1464,7 +1552,8 @@ impl Inner {
     pub(crate) fn jam_playback(&self, room: Uuid, playback: &Value) {
         let mut jam = lock(&self.jam);
         if jam.room == Some(room)
-            && let Ok(playback) = serde_json::from_value(playback.clone())
+            && let Ok(playback) = serde_json::from_value::<JamPlayback>(playback.clone())
+            && playback_newer(jam.playback.as_ref(), &playback)
         {
             jam.playback = Some(playback);
         }
@@ -1496,6 +1585,7 @@ impl Inner {
             "target_ms": target,
             "action": action.name(),
             "seek_ms": seek_ms,
+            "rate": playback.rate,
         })
     }
 
