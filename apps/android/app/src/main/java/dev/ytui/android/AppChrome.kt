@@ -296,6 +296,10 @@ internal object PageChrome {
 
     /** Window y of the screen's top edge, where the wash starts. */
     val washTop = androidx.compose.runtime.mutableFloatStateOf(0f)
+
+    /** Window x and width of the layer the wash spans, so narrower panes can match it. */
+    val washLeft = androidx.compose.runtime.mutableFloatStateOf(0f)
+    val washWidth = androidx.compose.runtime.mutableFloatStateOf(0f)
 }
 
 /**
@@ -331,12 +335,12 @@ private fun Color.toArgbInt(): Int =
 internal val WASH_REACH = 520.dp
 
 /** The two soft glows of the top wash: one from the top left, one from the top right. */
-private fun washGlows(width: Float, originY: Float, reach: Float) =
+private fun washGlows(width: Float, originX: Float, originY: Float, reach: Float) =
     listOf(
-        androidx.compose.ui.geometry.Offset(width * 0.12f, -originY - reach * 0.08f) to reach,
-        androidx.compose.ui.geometry.Offset(width * 0.95f, -originY + reach * 0.02f) to reach * 0.8f,
+        androidx.compose.ui.geometry.Offset(width * 0.12f - originX, -originY - reach * 0.08f) to reach,
+        androidx.compose.ui.geometry.Offset(width * 0.95f - originX, -originY + reach * 0.02f) to reach * 0.8f,
         // A softer third glow lower down, so the wash has depth rather than one straight fade.
-        androidx.compose.ui.geometry.Offset(width * 0.55f, -originY + reach * 0.38f) to reach * 0.6f,
+        androidx.compose.ui.geometry.Offset(width * 0.55f - originX, -originY + reach * 0.38f) to reach * 0.6f,
     )
 
 // Two covers' colours side by side at moderate strength: each reads as its own glow instead of
@@ -348,18 +352,22 @@ internal fun fallbackWash(accent: Color): Pair<Color, Color> =
     washPair(androidx.compose.ui.graphics.lerp(accent, Color(0xFF6B5B95), 0.5f))
 
 /**
- * Draws the top wash into this layer, whose top edge is [originY] px below the screen's top.
- * The page and its header draw the same wash, so the header has no seam over it.
+ * Draws the top wash into this layer, whose top-left corner is ([originX], [originY]) px from
+ * the wash's top-left and which spans a wash [width] px wide. The page and its header draw the
+ * same wash, so the header has no seam over it, even when it is a narrower pane (tablet rail
+ * and side player) than the page.
  */
 internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTopWash(
     colors: Pair<Color, Color>,
     fade: Float,
     originY: Float,
+    originX: Float = 0f,
+    width: Float = size.width,
 ) {
     val strength = 1f - fade.coerceIn(0f, 1f)
     if (strength <= 0f) return
     val reach = WASH_REACH.toPx()
-    washGlows(size.width, originY, reach).forEachIndexed { i, (centre, radius) ->
+    washGlows(width, originX, originY, reach).forEachIndexed { i, (centre, radius) ->
         val colour = if (i == 1) colors.second else colors.first
         val alpha = washAlpha(i) * strength
         drawRect(
@@ -374,12 +382,12 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTopWash(
     }
 }
 
-/** The page colour with the wash over it at ([x], [y]) of a layer [originY] below the top. */
-internal fun washedColour(page: Color, colors: Pair<Color, Color>?, fade: Float, width: Float, x: Float, y: Float, originY: Float, reachPx: Float): Color {
+/** The page colour with the wash over it at ([x], [y]) of a layer at ([originX], [originY]) in a wash [width] wide. */
+internal fun washedColour(page: Color, colors: Pair<Color, Color>?, fade: Float, width: Float, x: Float, y: Float, originY: Float, reachPx: Float, originX: Float = 0f): Color {
     if (colors == null) return page
     val strength = 1f - fade.coerceIn(0f, 1f)
     var out = page
-    washGlows(width, originY, reachPx).forEachIndexed { i, (centre, radius) ->
+    washGlows(width, originX, originY, reachPx).forEachIndexed { i, (centre, radius) ->
         val d = (androidx.compose.ui.geometry.Offset(x, y) - centre).getDistance() / radius
         val t = d.coerceIn(0f, 1f)
         val stop = if (t < 0.55f) 1f - t / 0.55f * 0.55f else 0.45f * (1f - (t - 0.55f) / 0.45f)

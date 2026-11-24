@@ -84,7 +84,10 @@ internal object MediaTokens {
     val sheet = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val dialog = RoundedCornerShape(28.dp)
     /** Side sheet over fullscreen video: rounded only on its inner (start) edge. */
-    val sideSheet = RoundedCornerShape(topStart = 28.dp, bottomStart = 28.dp)
+    val sideSheet = RoundedCornerShape(28.dp)
+
+    /** Gap around the fullscreen side sheet so it floats clear of the rounded display corners. */
+    val sideSheetInset = 12.dp
     /** Small framed artwork inside rows and transfer chips. */
     val thumb = RoundedCornerShape(8.dp)
     /** Duration and live badges over artwork. */

@@ -617,7 +617,8 @@ private fun MovieOptions(
                 else slideOutHorizontally(tween(160)) { it / 3 } + fadeOut(tween(120)),
         ) {
             Surface(
-                Modifier.width(sheetWidth)
+                Modifier.padding(MediaTokens.sideSheetInset)
+                    .width(sheetWidth)
                     .fillMaxHeight()
                     .testTag("movie-menu")
                     .semantics { paneTitle = "Playback options" },
