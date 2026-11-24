@@ -14,6 +14,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_channel  # noqa: E402
 
 STABLE_CERT = release_channel.CERT_SHA256
+# Gradle 8.14 runs on JDK 17-24; CI builds with 21. Newer default JDKs (e.g. 27) fail late in
+# the build with "Unsupported class file major version", so check before touching the key.
+SUPPORTED_JDK = range(17, 25)
+
+
+def java_major(version_output):
+    """Major version from `java -version` stderr, e.g. '17.0.9' -> 17, '1.8.0_392' -> 8."""
+    for line in version_output.splitlines():
+        if " version " in line and '"' in line:
+            parts = line.split('"')[1].split(".")
+            major = parts[1] if parts[0] == "1" and len(parts) > 1 else parts[0]
+            return int("".join(ch for ch in major if ch.isdigit()) or 0)
+    return 0
+
+
+def require_supported_jdk(env):
+    home = env.get("JAVA_HOME")
+    java = str(Path(home) / "bin" / "java") if home else "java"
+    result = subprocess.run([java, "-version"], capture_output=True, text=True, env=env)
+    major = java_major(result.stderr or result.stdout)
+    if major not in SUPPORTED_JDK:
+        sys.exit(
+            f"JDK {major or 'unknown'} cannot run this Gradle build; set JAVA_HOME to a JDK "
+            f"{SUPPORTED_JDK.start}-{SUPPORTED_JDK.stop - 1} (CI uses 21) and run again."
+        )
 
 
 def private_path(path, directory=False):
@@ -46,6 +71,7 @@ def main():
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=root).strip():
         raise ValueError("Commit or stash changes before signing a traceable release")
     env = os.environ.copy()
+    require_supported_jdk(env)
     env.update(
         YTUI_ANDROID_VARIANT="release",
         YTUI_ANDROID_KEYSTORE=str(keystore),

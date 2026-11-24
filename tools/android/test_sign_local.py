@@ -14,6 +14,15 @@ spec.loader.exec_module(sign)
 
 
 class SigningBoundary(unittest.TestCase):
+    def test_java_major_parses_vendor_version_strings(self):
+        self.assertEqual(sign.java_major('openjdk version "17.0.9" 2023-10-17\n'), 17)
+        self.assertEqual(sign.java_major('openjdk version "21" 2023-09-19\n'), 21)
+        self.assertEqual(sign.java_major('openjdk version "27.0.1.1" 2026-10-20\n'), 27)
+        self.assertEqual(sign.java_major('java version "1.8.0_392"\n'), 8)
+        self.assertEqual(sign.java_major("garbage"), 0)
+        self.assertIn(21, sign.SUPPORTED_JDK)
+        self.assertNotIn(27, sign.SUPPORTED_JDK)
+
     def test_rejects_shared_files_and_symlinks(self):
         with tempfile.TemporaryDirectory() as folder:
             private = Path(folder) / "credentials.json"

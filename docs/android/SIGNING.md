@@ -49,6 +49,14 @@ signing key prevents further in-place updates. No key, password or SSH private
 key belongs in chat, Git, a public release asset or an Actions artifact. This local
 signing flow needs no GitHub signing secrets.
 
+## Build machine JDK
+
+`sign-local.py` stops before the build unless `java` (or `$JAVA_HOME/bin/java`) is JDK 17–24;
+Gradle 8.14 does not run on newer JDKs (CI builds with 21). If the machine default is newer,
+point `JAVA_HOME` at a supported JDK for the release command, e.g.
+`JAVA_HOME=$HOME/.tooling/java17 python3 tools/android/sign-local.py …` (beta.13–beta.15 were
+signed that way).
+
 ## Version ordering
 
 `python3 tools/android/release_channel.py code 0.3.0-beta.1` yields `30001`.
