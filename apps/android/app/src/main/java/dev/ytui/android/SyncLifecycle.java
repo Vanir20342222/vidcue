@@ -25,17 +25,26 @@ final class SyncLifecycle {
     boolean playing = false;
     PlaybackService service = PlaybackService.current;
     if (service != null && service.player != null) playing = service.player.isPlaying();
-    final boolean audio = playing;
+    send(visible, playing);
+  }
+
+  /**
+   * The play state changed while the UI is hidden (notification, headset, end of queue): the
+   * engine keeps the socket while audio plays and closes it a minute after playback stops.
+   */
+  static void playing(boolean playing) {
+    send(null, playing);
+  }
+
+  private static void send(Boolean visible, boolean playing) {
     worker.execute(
         () -> {
           try {
             EngineStartup.current.await();
-            NativeBridge.request(
-                new JSONObject()
-                    .put("op", "sync_foreground")
-                    .put("visible", visible)
-                    .put("playing", audio)
-                    .toString());
+            JSONObject request =
+                new JSONObject().put("op", "sync_foreground").put("playing", playing);
+            if (visible != null) request.put("visible", visible.booleanValue());
+            NativeBridge.request(request.toString());
           } catch (Exception | LinkageError ignored) {
             // No engine (start failed) or no sync support: nothing to keep open.
           }

@@ -121,6 +121,25 @@ class SyncControllerTest {
     }
 
     @Test
+    fun queuedHandoffsAndRemoteCommandsExpire() {
+        val now = 100_000L
+        assertFalse(SyncEvents.stale("handoff_received", now - 2_000, now))
+        assertTrue(SyncEvents.stale("handoff_received", now - SyncEvents.STALE_COMMAND_MS - 1, now))
+        assertTrue(SyncEvents.stale("remote_command", now - 60_000, now))
+        // Other kinds keep their meaning however late they are handled.
+        assertFalse(SyncEvents.stale("inbox_item", now - 60_000, now))
+        assertFalse(SyncEvents.stale("jam_state", now - 60_000, now))
+        // Unstamped events (tests, older builds) are never stale.
+        assertFalse(SyncEvents.stale("remote_command", 0, now))
+    }
+
+    @Test
+    fun onlyASignedOutReplyEndsBackgroundSync() {
+        assertTrue(SyncWorker.signedOut(JSONObject().put("signed_in", false)))
+        assertFalse(SyncWorker.signedOut(JSONObject().put("signed_in", true)))
+    }
+
+    @Test
     fun keyRequestsNeedAnIdAndAWellFormedFingerprint() {
         val sync = controller()
         sync.onEvent(event("sync_key_request", """{"id":"r1","device_id":"d","device_name":"Tab","fingerprint":"12345"}"""))

@@ -68,7 +68,9 @@ public final class MediaBridge {
               .put("kind", kind)
               .put("text", text == null ? "" : text)
               .put("request_token", token)
-              .put("account_intent", accountIntent));
+              .put("account_intent", accountIntent)
+              // Queue time: sync commands that waited too long are dropped, not replayed.
+              .put("at", android.os.SystemClock.elapsedRealtime()));
       ComposeHost.changed();
     } catch (JSONException ignored) {
     }

@@ -172,8 +172,10 @@ internal fun PlaylistSheet(vm: YtuiViewModel, id: String, close: () -> Unit) {
                 QuietAction(if (owner) "Delete" else "Leave", Modifier.testTag("playlist-delete-confirm"), destructive = true) {
                     deleting = false
                     vm.sync.act {
+                        // An owner's "Delete" removes the server copy for everyone and then
+                        // the local playlist (leaving alone would keep it as a normal one).
                         if (shared) vm.sync.obj("shared_playlist_leave", "playlist_id" to id)
-                        else vm.sync.obj("playlist_delete", "id" to id)
+                        if (owner) vm.sync.obj("playlist_delete", "id" to id)
                         vm.sync.playlists.value = vm.sync.list("playlists")
                     }
                     close()
@@ -215,7 +217,20 @@ private fun ShareDialog(vm: YtuiViewModel, playlist: JSONObject, close: () -> Un
     val id = playlist.text("id")
     val shared = playlist.optBoolean("shared")
     var members by remember(id) { mutableStateOf<Set<String>>(emptySet()) }
-    LaunchedEffect(id) { runCatching { vm.sync.refreshFriends() } }
+    // Shared already: start from the server's member list (taps add or remove from it).
+    var loaded by remember(id) { mutableStateOf(!shared) }
+    LaunchedEffect(id) {
+        runCatching { vm.sync.refreshFriends() }
+        if (shared) {
+            runner.run {
+                val info = vm.sync.obj("shared_playlist_info", "playlist_id" to id)
+                val owner = info.optJSONObject("owner")?.text("user_id").orEmpty()
+                members =
+                    info.optJSONArray("members")?.objects().orEmpty().map { it.text("user_id") }.filter { it.isNotBlank() && it != owner }.toSet()
+                loaded = true
+            }
+        }
+    }
     MediaDialog(close, playlist.text("title"), actions = { QuietAction("Done", Modifier.testTag("playlist-share-done")) { close() } }) {
         if (friends.isEmpty())
             Text("Add friends first", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -226,7 +241,7 @@ private fun ShareDialog(vm: YtuiViewModel, playlist: JSONObject, close: () -> Un
                 Column(
                     Modifier.width(64.dp)
                         .clip(MediaTokens.medium)
-                        .clickable(enabled = !runner.busy, role = Role.Checkbox) {
+                        .clickable(enabled = loaded && !runner.busy, role = Role.Checkbox) {
                             runner.run {
                                 if (!shared && members.isEmpty())
                                     vm.sync.obj("shared_playlist_share", "playlist_id" to id, "user_ids" to org.json.JSONArray(listOf(user)))
@@ -258,28 +273,26 @@ private fun ShareDialog(vm: YtuiViewModel, playlist: JSONObject, close: () -> Un
 internal fun AddToPlaylistSheet(vm: YtuiViewModel, media: MediaCard, close: () -> Unit) {
     val playlists by vm.sync.playlists.collectAsState()
     var title by remember { mutableStateOf("") }
+    val runner = rememberSyncRunner()
     LaunchedEffect(Unit) { runCatching { vm.sync.playlists.value = vm.sync.list("playlists") } }
-    fun added() {
-        Notices.show(Notice("Added", Glyph.Playlist))
-        close()
-    }
+    // Confirms only after the engine accepted the change; a failure stays in the sheet.
+    fun add(block: suspend () -> Unit) =
+        runner.run {
+            block()
+            vm.sync.playlists.value = vm.sync.list("playlists")
+            Notices.show(Notice("Added", Glyph.Playlist))
+            close()
+        }
     Panel("", close) {
         ActionSheetHeader(media, thumbnailsOn(vm))
+        ErrorLine(runner.error)
         NewPlaylistRow(title, { title = it }) {
             val name = title.trim()
-            vm.sync.act {
-                vm.sync.obj("playlist_create", "title" to name, "media" to media.value)
-                vm.sync.playlists.value = vm.sync.list("playlists")
-            }
-            added()
+            add { vm.sync.obj("playlist_create", "title" to name, "media" to media.value) }
         }
         for (playlist in playlists)
             PlaylistRow(vm, playlist) {
-                vm.sync.act {
-                    vm.sync.obj("playlist_add", "id" to playlist.text("id"), "media" to media.value)
-                    vm.sync.playlists.value = vm.sync.list("playlists")
-                }
-                added()
+                add { vm.sync.obj("playlist_add", "id" to playlist.text("id"), "media" to media.value) }
             }
     }
 }

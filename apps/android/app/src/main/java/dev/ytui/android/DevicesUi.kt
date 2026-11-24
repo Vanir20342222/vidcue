@@ -8,6 +8,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.json.JSONArray
@@ -125,7 +127,7 @@ private fun RemotePad(vm: YtuiViewModel, device: JSONObject, back: () -> Unit) {
                 Slider(
                     volume,
                     { volume = it },
-                    Modifier.weight(1f).testTag("remote-volume"),
+                    Modifier.weight(1f).testTag("remote-volume").semantics { contentDescription = "Volume" },
                     valueRange = 0f..100f,
                     onValueChangeFinished = { send("volume", "volume" to volume.toInt()) },
                 )

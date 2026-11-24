@@ -21,8 +21,9 @@ internal class SyncWorker(context: Context, params: WorkerParameters) : Worker(c
         if (!awaitEngine(ENGINE_WAIT_MS, { EngineStartup.current.isReady() }, { EngineStartup.current.error() != null }))
             return if (EngineStartup.current.error() != null) Result.failure() else Result.retry()
         return try {
-            val status = request("sync_status")
-            if (status?.optBoolean("signed_in") != true) {
+            // A failed status call is not a sign-out: keep the schedule and try next time.
+            val status = request("sync_status") ?: return Result.success()
+            if (signedOut(status)) {
                 cancel(applicationContext)
                 return Result.success()
             }
@@ -41,6 +42,9 @@ internal class SyncWorker(context: Context, params: WorkerParameters) : Worker(c
 
     companion object {
         const val WORK = "vidcue-sync"
+
+        /** Only an engine reply that says so ends the schedule. */
+        internal fun signedOut(status: JSONObject): Boolean = !status.optBoolean("signed_in")
         const val ENGINE_WAIT_MS = 20_000L
 
         fun schedule(context: Context) {

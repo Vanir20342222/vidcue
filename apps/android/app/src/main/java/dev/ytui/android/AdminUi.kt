@@ -144,7 +144,8 @@ private fun AdminUserSheet(vm: YtuiViewModel, user: JSONObject, close: () -> Uni
     var action by remember { mutableStateOf("") }
     var revision by remember { mutableIntStateOf(0) }
     LaunchedEffect(revision) { runCatching { devices = vm.sync.list("admin_devices", "user_id" to id) } }
-    val disabled = user.optBoolean("disabled")
+    // Follows the last successful disable/enable, so the row shows the new state at once.
+    var disabled by remember(id) { mutableStateOf(user.optBoolean("disabled")) }
     Panel(user.text("username"), close) {
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Monogram(user.text("username"), 72.dp) }
         ValueRow("Reset link", Modifier.testTag("admin-reset"), glyph = Glyph.Link) { action = "reset" }
@@ -170,7 +171,9 @@ private fun AdminUserSheet(vm: YtuiViewModel, user: JSONObject, close: () -> Uni
     when {
         action == "reset" -> AdminResetDialog(vm, id) { action = "" }
         action.isNotEmpty() ->
-            AdminConfirmDialog(vm, id, action) {
+            AdminConfirmDialog(vm, id, action) { succeeded ->
+                if (succeeded && action == "disable") disabled = true
+                if (succeeded && action == "enable") disabled = false
                 action = ""
                 revision++
             }
@@ -209,7 +212,7 @@ private fun AdminResetDialog(vm: YtuiViewModel, userId: String, close: () -> Uni
 
 /** Password confirmation for revoke, disable and enable (`revoke`, `revoke:<device>`, `disable`, `enable`). */
 @Composable
-private fun AdminConfirmDialog(vm: YtuiViewModel, userId: String, action: String, close: () -> Unit) {
+private fun AdminConfirmDialog(vm: YtuiViewModel, userId: String, action: String, close: (succeeded: Boolean) -> Unit) {
     val runner = rememberSyncRunner()
     var password by remember { mutableStateOf("") }
     val title =
@@ -219,10 +222,10 @@ private fun AdminConfirmDialog(vm: YtuiViewModel, userId: String, action: String
             else -> "Remove"
         }
     MediaDialog(
-        close,
+        { close(false) },
         title,
         actions = {
-            QuietAction("Cancel") { close() }
+            QuietAction("Cancel") { close(false) }
             QuietAction(title, Modifier.testTag("admin-confirm"), enabled = password.isNotEmpty() && !runner.busy, destructive = action != "enable") {
                 runner.run {
                     when {
@@ -233,7 +236,7 @@ private fun AdminConfirmDialog(vm: YtuiViewModel, userId: String, action: String
                             vm.sync.obj("admin_revoke", "user_id" to userId, "password" to password, "device_id" to action.removePrefix("revoke:"))
                     }
                     password = ""
-                    close()
+                    close(true)
                 }
             }
         },

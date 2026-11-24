@@ -678,6 +678,8 @@ public final class PlaybackService extends MediaSessionService {
             }
             scheduleTicker();
             if (!playing) checkpoint(true);
+            // While the UI is hidden only this listener sees play-state changes.
+            if (!MediaBridge.uiVisible) SyncLifecycle.playing(playing);
             publish();
           }
 
@@ -1624,7 +1626,13 @@ public final class PlaybackService extends MediaSessionService {
         float speed = (float) Math.max(0.25, Math.min(4, command.optDouble("value", 1)));
         heldSpeedRestore = null;
         player.setPlaybackSpeed(speed);
-        prefs.edit().putFloat("speed", speed).apply();
+        // A Jam room's rate applies while in the room and is never saved as the user's speed.
+        if (!command.optBoolean("transient")) prefs.edit().putFloat("speed", speed).apply();
+        break;
+      case "speed_restore":
+        if (currentRequest.optBoolean("preview")) break;
+        heldSpeedRestore = null;
+        player.setPlaybackSpeed(prefs.getFloat("speed", 1f));
         break;
       case "speed_hold":
         // Press-and-hold fast playback: temporary, never saved as the user's speed.

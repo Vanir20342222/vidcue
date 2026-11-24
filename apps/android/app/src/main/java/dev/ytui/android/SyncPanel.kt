@@ -111,7 +111,7 @@ private fun SignedIn(vm: YtuiViewModel, status: JSONObject) {
         Column(Modifier.weight(1f)) {
             Text(status.text("username"), style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                StatusDot(stateColor(status), Modifier.testTag("sync-state-${status.optString("state")}"))
+                StatusDot(stateColor(status), Modifier.testTag("sync-state-${status.optString("state")}"), stateLabel(status))
                 Text(
                     listOf(
                             hostOf(status.text("server")),
@@ -197,12 +197,23 @@ private fun SignedIn(vm: YtuiViewModel, status: JSONObject) {
 internal fun hostOf(server: String): String =
     runCatching { java.net.URI(server).host }.getOrNull().orEmpty()
 
+@Composable
 private fun stateColor(status: JSONObject): Color =
     when (status.optString("state")) {
         "idle" -> SyncColors.online
         "syncing" -> SyncColors.online.copy(alpha = 0.6f)
-        "offline" -> Color.Gray
+        "offline" -> SyncColors.offline
         else -> SyncColors.warning
+    }
+
+/** The sync state in words, for TalkBack (the dot alone is only a colour). */
+private fun stateLabel(status: JSONObject): String =
+    when (status.optString("state")) {
+        "idle" -> "Synced"
+        "syncing" -> "Syncing"
+        "offline" -> "Offline"
+        "signed_out" -> "Signed out"
+        else -> "Sync error"
     }
 
 internal data class TileSpec(val glyph: Glyph, val label: String, val badge: Int = 0, val action: () -> Unit)

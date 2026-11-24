@@ -20,6 +20,8 @@ internal data class JamTarget(
     val playing: Boolean,
     val targetMs: Long,
     val seekMs: Long,
+    /** The room's playback rate (0.5 to 2.0). */
+    val rate: Double = 1.0,
 ) {
     companion object {
         fun from(reply: JSONObject) =
@@ -31,6 +33,7 @@ internal data class JamTarget(
                 playing = reply.optBoolean("playing"),
                 targetMs = reply.optLong("target_ms").coerceAtLeast(0),
                 seekMs = reply.optLong("seek_ms").coerceAtLeast(0),
+                rate = reply.optDouble("rate", 1.0).takeIf { it.isFinite() }?.coerceIn(0.5, 2.0) ?: 1.0,
             )
     }
 }
@@ -93,6 +96,34 @@ internal object JamSteps {
     /** Members may steer playback when they host, or when the host allows guests to. */
     fun canControl(room: JSONObject?): Boolean =
         room != null && (room.optString("role") == "host" || room.optBoolean("guests_can_control"))
+
+    /**
+     * Whether [next] may replace the stored room playback: the server's versions only grow, so an
+     * HTTP reply overtaken by a newer `jam_state` (or a refetch started earlier) is ignored.
+     */
+    fun newer(current: JSONObject?, next: JSONObject): Boolean =
+        current == null || next.optLong("version") >= current.optLong("version")
+
+    /**
+     * What the user did to the local player since the last tick that this controller did not
+     * cause: "play" or "pause" on the room's item, "media" for another item, or null. Nothing
+     * counts while the room itself changed, a step of ours is settling or a start is running.
+     */
+    fun userChange(
+        before: JamPlayerView?,
+        now: JamPlayerView,
+        roomKey: String,
+        roomUnchanged: Boolean,
+        settling: Boolean,
+    ): String? {
+        if (before == null || !roomUnchanged || settling || now.busy || before.busy) return null
+        if (before.mediaKey != roomKey) return null
+        return when {
+            now.mediaKey == before.mediaKey && now.playing != before.playing -> if (now.playing) "play" else "pause"
+            now.mediaKey != null && now.mediaKey != before.mediaKey -> "media"
+            else -> null
+        }
+    }
 }
 
 /**
@@ -114,6 +145,11 @@ internal class JamController(
     private val tickLock = Mutex()
     private var pendingLoad: Pair<String, Long>? = null
     private var endedSent: String? = null
+    /** The local player as the last tick left it, the room version then, and our last step. */
+    private var observed: JamPlayerView? = null
+    private var observedVersion = -1L
+    private var stepped = false
+    private var rateApplied = false
 
     val roomId: String
         get() = room.value?.text("id").orEmpty()
@@ -124,12 +160,19 @@ internal class JamController(
     }
 
     private fun setRoom(value: JSONObject?) {
+        val sameRoom = value != null && value.text("id") == roomId
         room.value = value
-        playback.value = value?.optJSONObject("playback")
+        val next = value?.optJSONObject("playback")
+        if (!sameRoom || next == null || JamSteps.newer(playback.value, next)) playback.value = next
         if (value == null) {
             loop?.cancel()
             loop = null
             pendingLoad = null
+            observed = null
+            if (rateApplied) {
+                rateApplied = false
+                vm.command("speed_restore")
+            }
         } else if (loop?.isActive != true)
             loop =
                 scope.launch {
@@ -158,7 +201,7 @@ internal class JamController(
             "jam_changed" -> if (text.isNotBlank() && text == roomId) sync.quiet { reload() }
             "jam_state" -> {
                 val state = SyncEvents.payload(text) ?: return
-                if (room.value == null) return
+                if (room.value == null || !JamSteps.newer(playback.value, state)) return
                 playback.value = state
                 sync.quiet { tick() }
             }
@@ -242,7 +285,7 @@ internal class JamController(
         val id = roomId.ifBlank { return }
         val state =
             sync.obj("jam_control", "room_id" to id, "action" to action, "position_ms" to positionMs, "item_id" to itemId)
-        if (state.length() > 0) playback.value = state
+        if (state.length() > 0 && JamSteps.newer(playback.value, state)) playback.value = state
         if (action == "play_item") reload()
         tick()
     }
@@ -281,7 +324,41 @@ internal class JamController(
                     media != null && player.playing,
                     busy = player.preparing != null || player.value.optBoolean("navigation_pending"),
                 )
-            when (val step = JamSteps.decide(target, view, pendingLoad, clock())) {
+            // Local transport changes the user made (lock screen, notification, another video)
+            // are forwarded when this member may steer the room, otherwise explained.
+            val version = playback.value?.optLong("version", -1L) ?: -1L
+            val loading = pendingLoad?.let { clock() - it.second < JamSteps.LOAD_GRACE_MS } == true
+            val change = JamSteps.userChange(observed, view, target.mediaKey, version == observedVersion, stepped || loading)
+            observed = view
+            observedVersion = version
+            stepped = false
+            if (change == "play" || change == "pause") {
+                if (JamSteps.canControl(room.value)) {
+                    val state =
+                        sync.obj(
+                            "jam_control",
+                            "room_id" to roomId,
+                            "action" to change,
+                            "position_ms" to (player.position * 1000).toLong().coerceAtLeast(0),
+                        )
+                    if (state.length() > 0 && JamSteps.newer(playback.value, state)) {
+                        playback.value = state
+                        observedVersion = state.optLong("version", -1L)
+                    }
+                    return@withLock
+                }
+                Notices.show(Notice("Playback follows the Jam", Glyph.Jam))
+            } else if (change == "media")
+                Notices.show(Notice("Playback follows the Jam", Glyph.Jam, "Leave", { sync.quiet { leave() } }))
+            // The room's rate, applied without changing the user's saved speed.
+            val speed = player.value.optDouble("speed", 1.0)
+            if (target.inRoom && media != null && kotlin.math.abs(speed - target.rate) > 0.01) {
+                rateApplied = true
+                vm.command("speed", "value" to target.rate, "transient" to true)
+            }
+            val step = JamSteps.decide(target, view, pendingLoad, clock())
+            stepped = step != null
+            when (step) {
                 is JamStep.Load -> {
                     pendingLoad = target.mediaKey to clock()
                     RemoteControl.startAt(sync, vm, MediaCard(step.media), step.atMs, step.playing)

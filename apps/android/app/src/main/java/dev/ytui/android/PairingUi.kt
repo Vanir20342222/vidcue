@@ -115,8 +115,10 @@ internal fun PairHelpSheet(vm: YtuiViewModel, close: () -> Unit) {
 }
 
 /**
- * Confirms an incoming `vidcue://pair` link before anything is sent: the server host is always
- * shown, with a key mark when the link carries the account key, and joining needs a tap.
+ * Confirms an incoming `vidcue://pair` link before anything is sent: the full server origin
+ * (scheme, host and port) is always shown, with a key mark when the link carries the account
+ * key, and joining needs a tap. Links can come from any page or app, so after the claim
+ * [PairAccountSheet] asks again, naming the account, before anything syncs.
  */
 @Composable
 internal fun PairConfirmSheet(vm: YtuiViewModel) {
@@ -144,13 +146,20 @@ internal fun PairConfirmSheet(vm: YtuiViewModel) {
             found == null -> MediaSpinner()
             else -> {
                 Text(
-                    found.text("host"),
+                    found.text("server").ifBlank { found.text("host") },
                     Modifier.testTag("pair-host"),
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.titleLarge,
                     textAlign = TextAlign.Center,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (!found.optBoolean("secure", true))
+                    Text(
+                        "Not encrypted",
+                        Modifier.testTag("pair-insecure"),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 if (found.optBoolean("has_key"))
                     MediaIcon(Glyph.Key, Modifier.size(28.dp).testTag("pair-has-key"), SyncColors.online)
                 val busySignedIn = status.optBoolean("signed_in")
@@ -167,6 +176,52 @@ internal fun PairConfirmSheet(vm: YtuiViewModel) {
                         runner.run { vm.sync.claimPairing(uri) }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * After a pairing link signed this device in: names the account and server and asks before
+ * the library is copied there. The YouTube sign-in is only synced when switched on here.
+ */
+@Composable
+internal fun PairAccountSheet(vm: YtuiViewModel) {
+    val status by vm.sync.status.collectAsState()
+    if (!status.optBoolean("awaiting_confirmation") || !status.optBoolean("signed_in")) return
+    val runner = rememberSyncRunner()
+    var youtube by remember { mutableStateOf(false) }
+    val cancel = { runner.run { vm.sync.signOut(removeDevice = true, forgetData = false) } }
+    SecureDialog({ cancel() }, "pair-account", secure = false) {
+        Monogram(status.text("username"), 64.dp)
+        Text(
+            status.text("username"),
+            Modifier.testTag("pair-account-user"),
+            style = MaterialTheme.typography.headlineSmall,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            status.text("server"),
+            Modifier.testTag("pair-account-server"),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            "Your library will sync to this account",
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+        )
+        SyncToggle("YouTube sign-in", youtube, "pair-account-youtube", Glyph.Key) { youtube = it }
+        ErrorLine(runner.error)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            QuietAction("Cancel", Modifier.testTag("pair-account-cancel"), enabled = !runner.busy) { cancel() }
+            Action("Sync", "pair-account-confirm", enabled = !runner.busy) {
+                runner.run { vm.sync.confirmPairing(youtube) }
             }
         }
     }

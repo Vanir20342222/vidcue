@@ -511,9 +511,30 @@ internal class YtuiViewModel(
     val sharedQuery = MutableStateFlow("")
     private var initialized = false
 
+    /** Set while the root UI is STARTED and its own loop drains the snapshot. */
+    @Volatile var uiStarted = false
+
+    /**
+     * While the UI is stopped, sync events (handoff, remote, Jam, inbox) and the player hooks
+     * (Jam end-of-item, presence) still need the snapshot: the socket stays open in the
+     * background exactly while audio plays or a Jam runs. Runs only when there is work.
+     */
+    private fun backgroundPump() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1_000)
+                if (uiStarted) continue
+                val work =
+                    MediaBridge.events.isNotEmpty() || player.value.playing || sync.jam.room.value != null
+                if (work) runCatching { snapshot() }
+            }
+        }
+    }
+
     fun initialize(dark: Boolean) {
         if (initialized) return
         initialized = true
+        backgroundPump()
         viewModelScope.launch {
             runCatching {
                     withContext(Dispatchers.IO) { EngineStartup.current.await() }

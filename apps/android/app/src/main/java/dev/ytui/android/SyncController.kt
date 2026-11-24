@@ -78,7 +78,19 @@ internal object SyncEvents {
             "jam_state",
             "jam_ended",
             "sync_pair_link",
+            "presence_reset",
         )
+
+    /** Handoff and remote commands queued longer than this are dropped, not replayed. */
+    const val STALE_COMMAND_MS = 10_000L
+
+    /**
+     * True for a handoff or remote command that waited too long in the event queue (for example
+     * while no UI collected events): acting on it later would surprise the user.
+     */
+    fun stale(kind: String, queuedAt: Long, now: Long): Boolean =
+        (kind == "handoff_received" || kind == "remote_command") &&
+            queuedAt > 0 && now - queuedAt > STALE_COMMAND_MS
 
     /** Existing kinds whose handlers stay in YtuiViewModel. */
     val OBSERVED = setOf("history_updated", "offline_playlists_changed", "account_updated")
@@ -299,7 +311,9 @@ internal class SyncController(
                 false
             }
             SyncRoute.Handle -> {
-                handle(kind, text)
+                val queuedAt = event.optLong("at", 0)
+                val stale = queuedAt > 0 && SyncEvents.stale(kind, queuedAt, android.os.SystemClock.elapsedRealtime())
+                if (!stale) handle(kind, text)
                 true
             }
         }
@@ -349,6 +363,8 @@ internal class SyncController(
             }
             "jam_invite", "jam_changed", "jam_state", "jam_ended" -> jam.onEvent(kind, text)
             "sync_pair_link" -> if (PairLinks.recognize(text)) pairLink.value = text
+            // A new socket: the server has no presence for this device until it is sent again.
+            "presence_reset" -> presenceThrottle.reset()
         }
     }
 
@@ -431,6 +447,9 @@ internal class SyncController(
         applyStatus(obj("sync_pair_claim", "uri" to uri, "device_name" to deviceName()))
         pairLink.value = null
     }
+
+    /** Confirms the account a pairing link signed in to; nothing synced before this. */
+    suspend fun confirmPairing(youtube: Boolean) = applyStatus(obj("sync_pair_confirm", "secrets" to youtube))
 
     fun deviceName(): String =
         listOf(android.os.Build.MANUFACTURER, android.os.Build.MODEL)

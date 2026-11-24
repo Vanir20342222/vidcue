@@ -296,15 +296,25 @@ internal fun Monogram(name: String, size: Dp = 40.dp, online: Boolean? = null) {
     }
 }
 
+/** Status colours taken from the active palette (custom and imported themes included). */
 internal object SyncColors {
-    val online = Color(0xff2fbf71)
-    val warning = Color(0xffe0a030)
+    val online: Color
+        @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.primary
+    val warning: Color
+        @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.error
+    val offline: Color
+        @Composable @ReadOnlyComposable get() = MaterialTheme.colorScheme.outline
 }
 
-/** A small coloured dot for a state. */
+/** A small coloured dot for a state; [label] names the state for TalkBack. */
 @Composable
-internal fun StatusDot(color: Color, modifier: Modifier = Modifier) {
-    Box(modifier.size(10.dp).background(color, CircleShape))
+internal fun StatusDot(color: Color, modifier: Modifier = Modifier, label: String? = null) {
+    Box(
+        modifier
+            .size(10.dp)
+            .background(color, CircleShape)
+            .then(if (label != null) Modifier.semantics { contentDescription = label } else Modifier)
+    )
 }
 
 /** Inline error under a form; quiet, never an overlay. */

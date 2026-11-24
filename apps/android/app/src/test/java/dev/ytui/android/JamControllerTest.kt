@@ -20,6 +20,41 @@ class JamControllerTest {
         JamPlayerView(key, playing, busy)
 
     @Test
+    fun olderPlaybackVersionsNeverReplaceNewerOnes() {
+        val v10 = JSONObject().put("version", 10)
+        assertTrue(JamSteps.newer(null, v10))
+        assertTrue(JamSteps.newer(v10, JSONObject().put("version", 11)))
+        assertTrue("same version: idempotent", JamSteps.newer(v10, JSONObject().put("version", 10)))
+        assertFalse(JamSteps.newer(JSONObject().put("version", 11), v10))
+    }
+
+    @Test
+    fun userTransportChangesAreToldApartFromOurOwnSteps() {
+        val key = "youtube:synthetic01"
+        val playing = player(playing = true)
+        val paused = player(playing = false)
+        // The user paused the room's item from the lock screen.
+        assertEquals("pause", JamSteps.userChange(playing, paused, key, roomUnchanged = true, settling = false))
+        assertEquals("play", JamSteps.userChange(paused, playing, key, roomUnchanged = true, settling = false))
+        // Another video was started.
+        assertEquals("media", JamSteps.userChange(playing, player(key = "youtube:other"), key, true, false))
+        // Not the user: the room changed, our own step is settling, or a start is running.
+        assertNull(JamSteps.userChange(playing, paused, key, roomUnchanged = false, settling = false))
+        assertNull(JamSteps.userChange(playing, paused, key, roomUnchanged = true, settling = true))
+        assertNull(JamSteps.userChange(playing, player(playing = false, busy = true), key, true, false))
+        // Before the first tick or while the local player was on another item, nothing counts.
+        assertNull(JamSteps.userChange(null, paused, key, true, false))
+        assertNull(JamSteps.userChange(player(key = "youtube:other"), paused, key, true, false))
+    }
+
+    @Test
+    fun theRoomRateIsRead() {
+        assertEquals(1.5, JamTarget.from(JSONObject().put("rate", 1.5)).rate, 0.0)
+        assertEquals(1.0, JamTarget.from(JSONObject()).rate, 0.0)
+        assertEquals(2.0, JamTarget.from(JSONObject().put("rate", 9.0)).rate, 0.0)
+    }
+
+    @Test
     fun readsTheEngineTargetReply() {
         val reply =
             JSONObject("""{"in_room":true,"media":{"url":"https://x.test/v"},"media_key":"youtube:abc","playing":true,"target_ms":51234,"action":"seek","seek_ms":51384}""")

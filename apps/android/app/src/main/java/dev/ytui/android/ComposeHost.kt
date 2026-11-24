@@ -367,6 +367,8 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
     LaunchedEffect(dark) { vm.systemTheme(dark) }
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            vm.uiStarted = true
+            try {
             coroutineScope {
                 launch { ComposeHost.signals.collect { vm.snapshot() } }
                 launch {
@@ -375,6 +377,9 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         vm.snapshot()
                     }
                 }
+            }
+            } finally {
+                vm.uiStarted = false
             }
         }
     }
@@ -786,10 +791,13 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                 }
                 if (!onboarding) {
                     SyncSheetHost(vm)
-                    PairConfirmSheet(vm)
-                    KeyRequestSheet(vm)
                     if (!fullscreen) JamInviteBanner(vm)
                 }
+                // Dialog windows above everything, onboarding included: a pairing QR is
+                // usually scanned on a fresh install, which starts in onboarding.
+                PairConfirmSheet(vm)
+                PairAccountSheet(vm)
+                KeyRequestSheet(vm)
                 if (!onboarding && !fullscreen)
                     DownloadFlightHost(
                         config.optBoolean("thumbnails", true),

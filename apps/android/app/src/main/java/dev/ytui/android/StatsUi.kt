@@ -1,5 +1,6 @@
 package dev.ytui.android
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -61,6 +62,8 @@ internal fun StatsSheet(vm: YtuiViewModel, close: () -> Unit) {
         }
         if (vm.sync.has("health")) health = runCatching { vm.sync.obj("health_summary", "days" to minOf(days, 90)) }.getOrNull()
     }
+    // An inline page, not a sheet window: system Back must close it, not what is behind it.
+    BackHandler { close() }
     Panel("Stats", close, page = true, actions = {
         Pill(Calendar.getInstance().get(Calendar.YEAR).toString(), Modifier.testTag("stats-wrapped"), PillStyle.Tonal) {
             vm.sync.open(SyncSheet.Wrapped)
@@ -173,6 +176,7 @@ internal fun WrappedSheet(vm: YtuiViewModel, close: () -> Unit) {
             error = SyncText.message(failure)
         }
     }
+    BackHandler { close() }
     Panel(year.toString(), close, page = true, scroll = false, actions = {
         for (option in listOf(thisYear - 1, thisYear))
             MediaChip(option.toString(), option == year, Modifier.testTag("wrapped-year-$option")) { year = option }
