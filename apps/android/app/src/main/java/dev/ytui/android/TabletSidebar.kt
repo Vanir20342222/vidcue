@@ -43,7 +43,7 @@ private val SIDEBAR_LIBRARY =
 private val RowShape = RoundedCornerShape(12.dp)
 
 /**
- * Tablet navigation: a full-height sidebar attached to the window's edge, with named destinations,
+ * Tablet navigation: a full-height floating sidebar beside the window's edge, with named destinations,
  * a Library group for the queue, history and sleep timer, and account and settings at the foot.
  * [compact] narrows it to icons with short labels underneath for windows without room for names
  * beside them.
@@ -62,9 +62,13 @@ internal fun TabletSidebar(
     val dark = colors.background.luminance() < 0.4f
     val surface = lerp(colors.background, colors.surfaceContainer, 0.6f)
     Row(Modifier.fillMaxHeight()) {
+        // A floating rounded panel, inset like the player panel on the other side, so it clears
+        // the display's rounded corners instead of running square into them.
         Column(
-            Modifier.width(if (compact) 92.dp else 248.dp)
+            Modifier.padding(start = 20.dp, end = 12.dp, bottom = 20.dp)
+                .width(if (compact) 92.dp else 248.dp)
                 .fillMaxHeight()
+                .clip(MediaTokens.dock)
                 .background(surface)
                 .testTag("navigation-rail")
         ) {

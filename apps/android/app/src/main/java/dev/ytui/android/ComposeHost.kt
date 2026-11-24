@@ -452,7 +452,12 @@ private fun YtuiApp(activity: RustActivity, vm: YtuiViewModel = viewModel()) {
                         .background(background)
                         // Home, Music and Radio: the colour wash across the top, under the status
                         // bar too (see PageChrome.washColors).
-                        .onGloballyPositioned { PageChrome.washTop.floatValue = it.positionInWindow().y }
+                        .onGloballyPositioned {
+                            val at = it.positionInWindow()
+                            PageChrome.washTop.floatValue = at.y
+                            PageChrome.washLeft.floatValue = at.x
+                            PageChrome.washWidth.floatValue = it.size.width.toFloat()
+                        }
                         .drawBehind {
                             PageChrome.washColors.value?.let { drawTopWash(it, PageChrome.washFade.floatValue, 0f) }
                         }
@@ -2020,20 +2025,31 @@ private fun BrowsePane(
             !searchMode && !subpage && !loneSource && (chips != null || tab in 1..3 || feed.categories.isNotEmpty())
         val headerPage = MaterialTheme.colorScheme.background
         var headerTop by remember { mutableFloatStateOf(0f) }
+        var headerLeft by remember { mutableFloatStateOf(0f) }
         Column(
             Modifier.fillMaxWidth()
                 .onSizeChanged {
                     headerHeight = it.height
                     if (it.height > 0) PageChrome.lastHeaderHeight = it.height
                 }
-                .onGloballyPositioned { headerTop = it.positionInWindow().y }
+                .onGloballyPositioned {
+                    val at = it.positionInWindow()
+                    headerTop = at.y
+                    headerLeft = at.x
+                }
                 .graphicsLayer { translationY = if (searchActive) 0f else -headerOffset.floatValue }
                 // The page colour with the same top wash as the page behind, so there is no seam.
                 .drawBehind {
                     drawRect(headerPage)
                     val shift = if (searchActive) 0f else headerOffset.floatValue
                     PageChrome.washColors.value?.let {
-                        drawTopWash(it, PageChrome.washFade.floatValue, headerTop - shift - PageChrome.washTop.floatValue)
+                        drawTopWash(
+                            it,
+                            PageChrome.washFade.floatValue,
+                            headerTop - shift - PageChrome.washTop.floatValue,
+                            originX = headerLeft - PageChrome.washLeft.floatValue,
+                            width = PageChrome.washWidth.floatValue.takeIf { w -> w > 0f } ?: size.width,
+                        )
                     }
                 }
                 // Content scrolling up under the header fades out instead of being cut mid-line.
@@ -2049,11 +2065,12 @@ private fun BrowsePane(
                             headerPage,
                             PageChrome.washColors.value,
                             PageChrome.washFade.floatValue,
-                            size.width,
+                            PageChrome.washWidth.floatValue.takeIf { w -> w > 0f } ?: size.width,
                             size.width / 2f,
                             size.height,
                             headerTop - shift - PageChrome.washTop.floatValue,
                             WASH_REACH.toPx(),
+                            originX = headerLeft - PageChrome.washLeft.floatValue,
                         )
                     drawRect(
                         androidx.compose.ui.graphics.Brush.verticalGradient(

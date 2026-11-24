@@ -188,7 +188,8 @@ private fun FullscreenOptionsLayer(vm: YtuiViewModel, view: PlayerView, exit: ()
                         else slideOutHorizontally(motion.exit(160)) { it / 3 } + fadeOut(motion.exit(120)),
                 ) {
                     Surface(
-                        Modifier.width(sheetWidth)
+                        Modifier.padding(MediaTokens.sideSheetInset)
+                            .width(sheetWidth)
                             .fillMaxHeight()
                             .testTag("fullscreen-options")
                             .semantics { paneTitle = "Playback options" },
