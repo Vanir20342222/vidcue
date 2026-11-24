@@ -27,7 +27,10 @@ class CardInformationUiTest {
         compose.setContent {
             MaterialTheme { Column { CardInformation(media, settings.value) } }
         }
-        compose.onNodeWithText("12K views · 3 days ago · 2 likes").assertIsDisplayed()
+        // The age has its own line with a clock under the counts.
+        compose.onNodeWithText("12K views · 2 likes").assertIsDisplayed()
+        compose.onNodeWithTag("card-age").assertIsDisplayed()
+        compose.onNodeWithText("3 days ago").assertIsDisplayed()
         compose.onNodeWithText("A fixture description").assertIsDisplayed()
         compose.onNodeWithText("Recommended").assertIsDisplayed()
 
@@ -43,6 +46,7 @@ class CardInformationUiTest {
         }
         compose.runOnIdle { settings.value = snapshot(false) }
         compose.onNodeWithTag("video-information").assertDoesNotExist()
+        compose.onNodeWithTag("card-age").assertDoesNotExist()
         compose.onNodeWithTag("card-description").assertDoesNotExist()
         compose.onNodeWithTag("card-section").assertDoesNotExist()
     }

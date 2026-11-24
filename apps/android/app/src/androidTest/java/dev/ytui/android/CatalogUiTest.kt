@@ -218,7 +218,8 @@ class CatalogUiTest {
                 vm.feeds[1].value = vm.feeds[1].value.copy(cards = listOf(MediaCard(media)) + cards.drop(1))
             }
             MediaRuntimeTest.await("Card switches committed") { keys.all { vm.mobile.value.optBoolean(it) } }
-            visibleText("1.2K views · 2 days ago · 2.8K likes")
+            visibleText("1.2K views · 2.8K likes")
+            visibleText("2 days ago")
             review.visibleText("A quiet journey through light, colour", exact = false)
             visibleText("Picked for you")
             visibleText("0:30")

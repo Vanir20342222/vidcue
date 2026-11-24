@@ -81,6 +81,35 @@ class CategoryNavigationTest {
     }
 
     @Test
+    fun refreshingAPageKeepsItsCategoryChipsWhileItReloads() = checkNavigation {
+        val response = CompletableDeferred<JSONObject>()
+        var calls = 0
+        val model =
+            YtuiViewModel(
+                browsePage = { _, _, _ ->
+                    calls++
+                    val chips = JSONArray().put(json("title" to "Chill", "request" to request("Chill")))
+                    (if (calls == 1) page("Home") else response.await()).put("categories", chips)
+                }
+            )
+        val store = ViewModelStore().apply { put("categories", model) }
+        try {
+            model.navigate(2, "Home", remember = false)
+            withTimeout(5_000) { while (model.feeds[2].value.loading) delay(1) }
+            assertEquals(listOf("Chill"), model.feeds[2].value.categories.map { it.optString("title") })
+            // Pull to refresh: the same request again, not remembered.
+            model.navigate(2, "Home", remember = false)
+            assertTrue(model.feeds[2].value.loading)
+            assertEquals(listOf("Chill"), model.feeds[2].value.categories.map { it.optString("title") })
+            response.complete(page("Home"))
+            withTimeout(5_000) { while (model.feeds[2].value.loading) delay(1) }
+            assertEquals(listOf("Chill"), model.feeds[2].value.categories.map { it.optString("title") })
+        } finally {
+            store.clear()
+        }
+    }
+
+    @Test
     fun lateReplyCannotReplaceTheMostRecentlySelectedCategory() = checkNavigation {
         val sizing = StandardTestDispatcher()
         val response = CompletableDeferred<JSONObject>()

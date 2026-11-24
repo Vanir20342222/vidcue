@@ -229,8 +229,26 @@ public final class MediaBridge {
                 PrepareWorker.enqueue(request);
                 break;
               case "download":
-                OfflineStore.add(request.getJSONObject("request"));
-                break;
+                {
+                  // The download manager opens on the UI thread (once); the rest (index reads,
+                  // the free-space query, which can take seconds) runs on the offline worker so
+                  // the download animation and the player keep their frames.
+                  OfflineStore.manager();
+                  JSONObject job = request.getJSONObject("request");
+                  OfflineStore.IO.execute(
+                      () -> {
+                        try {
+                          OfflineStore.add(job);
+                        } catch (IllegalArgumentException refused) {
+                          event("error", refused.getMessage());
+                        } catch (Exception error) {
+                          event(
+                              "error",
+                              "Android operation failed: " + error.getClass().getSimpleName());
+                        }
+                      });
+                  break;
+                }
               case "offline":
                 OfflineStore.IO.execute(
                     () -> {

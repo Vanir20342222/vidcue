@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
@@ -15,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -24,6 +27,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
@@ -509,48 +513,38 @@ internal fun RecentTiles(
     }
 }
 
-/** The page's focal point on Home: the last video you watched, ready to resume. */
+/**
+ * The last video you watched, as a chip beside For you and Subscriptions: its cover with a play
+ * mark, nothing more. It replaced a full-width hero that pushed the feed below the fold.
+ */
 @Composable
-internal fun ContinueHero(media: MediaCard, thumbnails: Boolean, onResume: () -> Unit) {
+internal fun ResumeChip(media: MediaCard, thumbnails: Boolean, onResume: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val source = remember { MutableInteractionSource() }
     Box(
-        Modifier.padding(horizontal = 12.dp)
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .clip(MediaTokens.card)
-            .combinedClickable(onClickLabel = "Resume", onClick = onResume)
-            .testTag("continue-hero")
+        Modifier.heightIn(min = 48.dp)
+            .pressScale(source, 0.95f)
+            .clickable(interactionSource = source, indication = null, onClickLabel = "Resume", onClick = onResume)
+            .semantics { contentDescription = "Resume ${media.title}" }
+            .testTag("continue-chip"),
+        contentAlignment = Alignment.Center,
     ) {
-        Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.card)
-        Box(
-            Modifier.matchParentSize()
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.45f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.82f),
-                    )
-                )
-        )
-        Column(
-            Modifier.align(Alignment.BottomStart).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+        Row(
+            Modifier.height(32.dp)
+                .clip(MediaTokens.chip)
+                .background(colors.onBackground.copy(alpha = if (colors.background.luminance() < 0.4f) 0.11f else 0.06f))
+                .indication(source, SoftIndication)
+                .padding(start = 3.dp, end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text(
-                "Continue watching",
-                style = MaterialTheme.typography.labelLarge,
-                color = MediaTokens.videoInk.copy(alpha = 0.82f),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(
-                    media.title,
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MediaTokens.videoInk,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Pill("Resume", Modifier.testTag("continue-resume"), PillStyle.Primary, glyph = Glyph.Play, onClick = onResume)
+            Box(Modifier.size(width = 46.dp, height = 26.dp).clip(MediaTokens.chip)) {
+                CompositionLocalProvider(LocalArtworkPixels provides 0) {
+                    Artwork(media, Modifier.fillMaxSize(), thumbnails, shape = MediaTokens.chip)
+                }
+                Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.28f)))
             }
+            MediaIcon(Glyph.Play, Modifier.size(14.dp), colors.onSurface)
         }
     }
 }

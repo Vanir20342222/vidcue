@@ -1220,8 +1220,7 @@ private fun BrowsePane(
         if (tab == 2 && atHome && feed.error == null) history.filter { it.audio && it.url.isNotBlank() }.distinctBy { it.key }.take(6)
         else emptyList()
     val leadItems =
-        (if (resumeVideo != null) 1 else 0) +
-            (if (recentSongs.size >= 2) 1 else 0) +
+        (if (recentSongs.size >= 2) 1 else 0) +
             (if (collectionPage) 1 else 0)
     val focus = remember { FocusRequester() }
     // Dismissing the keyboard from an empty, unsubmitted search leaves search mode. Otherwise
@@ -1278,7 +1277,7 @@ private fun BrowsePane(
     // From the first covers on screen: "Jump back in" or the resume card when they lead the page.
     val washLeft =
         rememberArtworkTint(
-            (recentSongs.firstOrNull() ?: resumeVideo ?: feed.cards.firstOrNull())?.takeIf { washed },
+            (recentSongs.firstOrNull() ?: feed.cards.firstOrNull())?.takeIf { washed },
             washBase,
             thumbnails,
         )
@@ -1610,12 +1609,6 @@ private fun BrowsePane(
                             modifier = Modifier.padding(bottom = 12.dp),
                             onMore = { openCardMenu(it, true) },
                         )
-                    }
-                if (resumeVideo != null)
-                    item(span = { GridItemSpan(maxLineSpan) }, key = "continue", contentType = "continue") {
-                        CompositionLocalProvider(LocalArtworkPixels provides 0) {
-                            ContinueHero(resumeVideo, thumbnails) { vm.play(resumeVideo, resume = true) }
-                        }
                     }
                 if (recentSongs.size >= 2)
                     item(span = { GridItemSpan(maxLineSpan) }, key = "recent", contentType = "recent") {
@@ -2160,6 +2153,14 @@ private fun BrowsePane(
                 contentPadding = PaddingValues(horizontal = MediaTokens.textInset),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                // The last video, as a small chip beside the feeds (signed out: before the topics).
+                val resumeChip: androidx.compose.foundation.lazy.LazyListScope.() -> Unit = {
+                    if (resumeVideo != null)
+                        item(key = "resume") {
+                            ResumeChip(resumeVideo, thumbnails) { vm.play(resumeVideo, resume = true) }
+                        }
+                }
+                if (tab == 1 && !connected) resumeChip()
                 // Signed out, Home's chips are topics: each shows what is popular this week.
                 if (tab == 1 && !connected)
                     items(SearchRequests.topics) { topic ->
@@ -2189,6 +2190,7 @@ private fun BrowsePane(
                             vm.navigate(tab, request)
                         }
                     }
+                if (tab == 1 && connected) resumeChip()
                 if (tab == 3) {
                     // "Saved", as the Library tile that opens the same saved items.
                     items(listOf("Featured" to "Cliamp", "Saved" to "Favorites")) { (label, request) ->

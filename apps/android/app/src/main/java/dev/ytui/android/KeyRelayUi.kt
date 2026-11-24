@@ -63,6 +63,14 @@ internal fun KeyRelaySheet(vm: YtuiViewModel, close: () -> Unit) {
         GlyphBadge(Glyph.Key, 64.dp, if (key.optString("state") == "ok") SyncColors.online else MaterialTheme.colorScheme.onSurface)
         when {
             key.optString("state") == "ok" -> {
+                // With the key here there is no fingerprint to compare (that belongs to a pending
+                // request), so say so instead of leaving the sheet as a lone key icon.
+                Text(
+                    "Key on this device",
+                    Modifier.testTag("key-own-ready"),
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
                 FingerprintText(key.text("fingerprint"), "key-own-fingerprint")
                 KeyRequestsList(vm)
             }
@@ -84,7 +92,19 @@ internal fun KeyRelaySheet(vm: YtuiViewModel, close: () -> Unit) {
 @Composable
 private fun KeyRequestsList(vm: YtuiViewModel) {
     var requests by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
-    LaunchedEffect(Unit) { runCatching { requests = vm.sync.list("key_requests") } }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        runCatching { requests = vm.sync.list("key_requests") }
+        loaded = true
+    }
+    if (loaded && requests.isEmpty())
+        Text(
+            "Your other devices can request it here.",
+            Modifier.testTag("key-requests-empty"),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
     for (request in requests)
         ValueRow(
             request.text("device_name").ifBlank { "Device" },
