@@ -4,12 +4,15 @@ pub mod account;
 pub mod browse;
 pub mod dock;
 pub mod library;
+pub mod library_local;
 pub mod lyrics_panel;
 pub mod movies;
 pub mod music;
 pub mod onboarding;
 pub mod settings;
+pub mod shelves;
 pub mod sidebar;
+pub mod sync;
 pub mod topbar;
 pub mod update;
 pub mod watch;
@@ -34,6 +37,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         Route::Downloads => crate::downloads::view(app, cx),
         Route::Library(tab) => library::view(app, cx, *tab),
         Route::OfflinePlaylist(id) => library::playlist_view(app, cx, id),
+        Route::LocalPlaylist(id) => library_local::playlist_view(app, cx, id),
         Route::Movies => movies::view(app, cx),
         Route::Settings(section) => settings::view(app, cx, *section),
         Route::Account => account::view(app, cx),
@@ -79,7 +83,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
                 .child(main),
         );
     }
-    let bottom = if show_dock { sz::DOCK + 20.0 } else { 28.0 };
+    let bottom = if show_dock { sz::DOCK_ROOM + 8.0 } else { 28.0 };
     root = root.child(widgets::toasts(app, bottom));
     if let Some(m) = widgets::menu_layer(app) {
         root = root.child(m);
@@ -99,6 +103,7 @@ pub fn route_key(r: &Route) -> String {
         Route::Downloads => "downloads".into(),
         Route::Library(t) => format!("library-{t:?}"),
         Route::OfflinePlaylist(id) => format!("offline-{id}"),
+        Route::LocalPlaylist(id) => format!("playlist-{id}"),
         Route::Movies => "movies".into(),
         Route::Settings(_) => "settings".into(),
         Route::Account => "account".into(),

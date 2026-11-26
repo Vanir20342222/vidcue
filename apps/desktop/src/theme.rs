@@ -44,6 +44,8 @@ pub struct Theme {
     pub bg: Color,
     /// The sidebar and other chrome a step below the page.
     pub chrome: Color,
+    /// Floating panels (the sidebar, the Now Playing side panel): a step above the page.
+    pub panel: Color,
     pub surface: Color,
     pub raised: Color,
     pub overlay: Color,
@@ -60,8 +62,6 @@ pub struct Theme {
     pub hairline: Color,
     pub hover: Color,
     pub scrim: Color,
-    /// Frosted glass tint drawn over a backdrop blur.
-    pub glass: Color,
     pub shadow: Color,
     /// The palette as authored, for effects that take raw colours.
     pub palette: Palette,
@@ -90,11 +90,13 @@ impl Theme {
             shift(bg, -0.02)
         };
         let faint = muted.mix(bg, 0.35);
+        let panel = shift(bg, if dark { 0.03 } else { -0.025 });
         Self {
             dark,
             dot_matrix: p.dot_matrix(),
             bg,
             chrome,
+            panel,
             surface,
             raised,
             overlay,
@@ -111,7 +113,6 @@ impl Theme {
             hairline: text.alpha(if dark { 0.07 } else { 0.09 }),
             hover: text.alpha(if dark { 0.07 } else { 0.06 }),
             scrim: Color::BLACK.alpha(if dark { 0.55 } else { 0.35 }),
-            glass: if dark { bg.alpha(0.62) } else { bg.alpha(0.7) },
             shadow: Color::BLACK.alpha(if dark { 0.45 } else { 0.18 }),
             palette: p.clone(),
         }
@@ -189,10 +190,16 @@ pub mod sz {
     /// Panels, dialogs, heroes and the player.
     pub const R_PANEL: f32 = 18.0;
     pub const R_PILL: f32 = 999.0;
-    pub const SIDEBAR: f32 = 232.0;
-    pub const SIDEBAR_COMPACT: f32 = 76.0;
+    /// The floating sidebar panel, as the Android tablet's.
+    pub const R_SIDEBAR: f32 = 24.0;
+    pub const SIDEBAR: f32 = 224.0;
+    pub const SIDEBAR_COMPACT: f32 = 68.0;
+    /// The gap between a floating panel and the window edge.
+    pub const PANEL_INSET: f32 = 12.0;
     pub const TOPBAR: f32 = 64.0;
-    pub const DOCK: f32 = 84.0;
+    /// The floating capsule player, and the room pages keep free under it.
+    pub const DOCK: f32 = 64.0;
+    pub const DOCK_ROOM: f32 = DOCK + 28.0;
     pub const PAGE_PAD: f32 = 32.0;
 }
 

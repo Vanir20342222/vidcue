@@ -54,6 +54,8 @@ pub struct SettingsUi {
 }
 
 pub fn enter(app: &mut App) {
+    crate::ui::library_local::refresh(app);
+    crate::ui::sync::enter(app);
     let c = app.config.clone();
     let s = &mut app.settings;
     s.proxy.replace_text(c.proxy.clone().unwrap_or_default());
@@ -79,6 +81,8 @@ fn icon_for(sec: SettingsSection) -> &'static Icon {
     match sec {
         SettingsSection::Appearance => &ic::PALETTE,
         SettingsSection::Playback => &ic::PLAY,
+        SettingsSection::Feeds => &ic::HOME,
+        SettingsSection::Sync => &ic::REFRESH,
         SettingsSection::Audio => &ic::SLIDERS,
         SettingsSection::Downloads => &ic::DOWNLOAD,
         SettingsSection::Network => &ic::GLOBE,
@@ -89,9 +93,11 @@ fn icon_for(sec: SettingsSection) -> &'static Icon {
     }
 }
 
-pub const SECTIONS: [(SettingsSection, &str); 9] = [
+pub const SECTIONS: [(SettingsSection, &str); 11] = [
     (SettingsSection::Appearance, "Appearance"),
     (SettingsSection::Playback, "Playback"),
+    (SettingsSection::Feeds, "Feeds"),
+    (SettingsSection::Sync, "Sync"),
     (SettingsSection::Audio, "Audio"),
     (SettingsSection::Downloads, "Downloads"),
     (SettingsSection::Network, "Network"),
@@ -111,6 +117,8 @@ pub fn view(app: &App, cx: &mut Cx<App>, section: SettingsSection) -> El {
     let body = match section {
         SettingsSection::Appearance => appearance(app),
         SettingsSection::Playback => playback(app),
+        SettingsSection::Feeds => feeds(app),
+        SettingsSection::Sync => crate::ui::sync::settings(app),
         SettingsSection::Audio => audio::view(app),
         SettingsSection::Downloads => system::downloads(app),
         SettingsSection::Network => system::network(app),
@@ -140,8 +148,9 @@ pub fn view(app: &App, cx: &mut Cx<App>, section: SettingsSection) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .on_scroll_offset(crate::ui::topbar::track(app))
         .scroll_edge_fade(18.0)
-        .child(el().w_full().pr(8.0).pb(sz::DOCK + 48.0).child(panel));
+        .child(el().w_full().pr(8.0).pb(sz::DOCK_ROOM + 24.0).child(panel));
     let _ = cx;
     row()
         .w_full()
@@ -153,10 +162,22 @@ pub fn view(app: &App, cx: &mut Cx<App>, section: SettingsSection) -> El {
         .child(scroll)
 }
 
+/// Feed filters, kept in the engine and synced with the Vidcue account.
+fn feeds(app: &App) -> El {
+    let t = &app.theme;
+    group(
+        t,
+        "Filters",
+        vec![crate::ui::library_local::filters_settings(app)],
+    )
+}
+
 fn blurb(sec: SettingsSection) -> &'static str {
     match sec {
         SettingsSection::Appearance => "Themes, card details and visual effects.",
         SettingsSection::Playback => "Quality, resume, SponsorBlock and seeking.",
+        SettingsSection::Feeds => "What Home, Music and search leave out.",
+        SettingsSection::Sync => "Your Vidcue server: devices, and what syncs between them.",
         SettingsSection::Audio => "Equalizer curves and the video colour grade.",
         SettingsSection::Downloads => "Where files go and how they are made.",
         SettingsSection::Network => "Proxy, radio directories and custom stations.",
@@ -964,7 +985,7 @@ mod tests {
 
     #[test]
     fn every_section_has_a_label_and_icon() {
-        assert_eq!(SECTIONS.len(), 9);
+        assert_eq!(SECTIONS.len(), 11);
         for (s, l) in SECTIONS {
             assert!(!l.is_empty());
             let _ = icon_for(s);

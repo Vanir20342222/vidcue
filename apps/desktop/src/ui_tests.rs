@@ -116,9 +116,9 @@ fn sidebar_navigates_and_back_returns() {
 fn chips_swap_the_feed_in_place() {
     let mut rt = runtime(Some("home"));
     let depth = rt.state.back.len();
-    click(&mut rt, "chip-Watch later");
+    click(&mut rt, "chip-Subscriptions");
     assert!(
-        matches!(&rt.state.route, Route::Feed(f) if f.request == vidcue_core::BrowseRequest::WatchLater)
+        matches!(&rt.state.route, Route::Feed(f) if f.request == vidcue_core::BrowseRequest::Subscriptions)
     );
     assert_eq!(rt.state.back.len(), depth, "chips do not stack history");
 }

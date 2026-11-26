@@ -47,6 +47,40 @@ pub struct Images {
     waker: Option<Waker>,
     /// Synthetic pictures for headless scenes, by URL.
     pub fixtures: HashMap<String, Image>,
+    /// Two colours sampled from a picture (its left and right halves), for page washes.
+    swatches: HashMap<String, Swatch>,
+    wanted_swatches: RefCell<Vec<String>>,
+    swatches_inflight: HashSet<String>,
+    /// Pictures whose colours could not be sampled (kept apart from `failed`, so the
+    /// picture itself still loads).
+    swatches_failed: HashSet<String>,
+}
+
+/// The colours of a picture's left and right halves, as sRGB.
+pub type Swatch = ([u8; 3], [u8; 3]);
+
+/// Averages the left and right halves of a small RGBA picture.
+pub fn swatch_of(w: u32, h: u32, rgba: &[u8]) -> Option<Swatch> {
+    let (w, h) = (w as usize, h as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let mut sums = [[0u64; 4]; 2];
+    for y in 0..h {
+        for x in 0..w {
+            let p = &rgba[(y * w + x) * 4..][..4];
+            let side = usize::from(x * 2 >= w);
+            for c in 0..3 {
+                sums[side][c] += p[c] as u64;
+            }
+            sums[side][3] += 1;
+        }
+    }
+    let avg = |s: [u64; 4]| -> [u8; 3] {
+        let n = s[3].max(1);
+        [(s[0] / n) as u8, (s[1] / n) as u8, (s[2] / n) as u8]
+    };
+    Some((avg(sums[0]), avg(sums[1])))
 }
 
 impl Images {
@@ -64,6 +98,10 @@ impl Images {
             permits: Arc::new(Semaphore::new(MAX_INFLIGHT)),
             waker: None,
             fixtures: HashMap::new(),
+            swatches: HashMap::new(),
+            wanted_swatches: RefCell::default(),
+            swatches_inflight: HashSet::new(),
+            swatches_failed: HashSet::new(),
         };
         me.configure(be, None);
         me
@@ -115,8 +153,60 @@ impl Images {
         None
     }
 
+    /// A picture's two wash colours, once sampled; otherwise asks for them (an 8×8 decode).
+    pub fn swatch(&self, url: &str) -> Option<Swatch> {
+        if url.is_empty() {
+            return None;
+        }
+        if let Some(s) = self.swatches.get(url) {
+            return Some(*s);
+        }
+        if !self.swatches_failed.contains(url) && !self.swatches_inflight.contains(url) {
+            let mut w = self.wanted_swatches.borrow_mut();
+            if !w.iter().any(|u| u == url) {
+                w.push(url.to_owned());
+                if let Some(waker) = &self.waker {
+                    waker();
+                }
+            }
+        }
+        None
+    }
+
     /// Starts fetches the last view asked for. Returns false: answers wake the app themselves.
     pub fn pump(&mut self, be: &Backend) -> bool {
+        let swatches = std::mem::take(&mut *self.wanted_swatches.borrow_mut());
+        if !be.offline
+            && let Some(fetch) = self.fetch.clone()
+        {
+            for url in swatches {
+                if self.swatches.contains_key(&url) || !self.swatches_inflight.insert(url.clone()) {
+                    continue;
+                }
+                let fetch = fetch.clone();
+                let permits = self.permits.clone();
+                let key = url.clone();
+                be.task(
+                    async move {
+                        let _permit = permits.acquire_owned().await.ok();
+                        let img = fetch.load_sized(&url, 8, 8).await?.to_rgba8();
+                        swatch_of(img.width(), img.height(), img.as_raw())
+                            .ok_or_else(|| anyhow::anyhow!("empty picture"))
+                    },
+                    move |app: &mut App, out, _| {
+                        app.images.swatches_inflight.remove(&key);
+                        match out {
+                            Ok(s) => {
+                                app.images.swatches.insert(key, s);
+                            }
+                            Err(_) => {
+                                app.images.swatches_failed.insert(key);
+                            }
+                        }
+                    },
+                );
+            }
+        }
         let wanted = std::mem::take(&mut *self.wanted.borrow_mut());
         if be.offline {
             return false;
@@ -175,6 +265,9 @@ impl Images {
         if self.rune.is_none() {
             self.rune = Some(rune::ImageCache::new(std::sync::Arc::new(|| {})));
         }
+        if let Some(s) = swatch_of(w, h, &rgba) {
+            self.swatches.insert(url.to_owned(), s);
+        }
         if let Some(cache) = &self.rune {
             let image = cache.rgba(w, h, rgba);
             let _ = image.wait();
@@ -186,4 +279,18 @@ impl Images {
 /// The best thumbnail URL for a card of `size`.
 pub fn thumb_url(media: &vidcue_core::Media, size: Size) -> String {
     vidcue_providers::images::thumbnail_url(media, size.0, size.1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn swatches_average_each_half() {
+        // 2×1: a red pixel on the left, a blue one on the right.
+        let rgba = [255, 0, 0, 255, 0, 0, 255, 255];
+        assert_eq!(swatch_of(2, 1, &rgba), Some(([255, 0, 0], [0, 0, 255])));
+        assert_eq!(swatch_of(0, 0, &[]), None);
+        assert_eq!(swatch_of(2, 2, &rgba), None, "short buffers are refused");
+    }
 }

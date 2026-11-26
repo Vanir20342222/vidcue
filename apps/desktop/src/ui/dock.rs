@@ -1,4 +1,6 @@
-//! The now-playing dock: frosted, over the bottom of every page except Watch.
+//! The floating capsule player, as YouTube Music's and the Android mini player: centred over
+//! the bottom of every page except Now Playing, frosted, with its progress running along its
+//! lower edge. A press on its artwork or title opens Now Playing.
 
 use rune::{Color, Cx, El, SurfaceFit, Transition, col, el, icon, row, spacer, text};
 
@@ -10,22 +12,33 @@ use crate::player::session;
 use crate::theme::{sz, ty};
 use crate::ui::widgets::icon_button;
 
+/// The capsule's width in a page `room_w` wide.
+pub fn width(room_w: f32) -> f32 {
+    (room_w - 48.0).clamp(420.0, 880.0)
+}
+
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     let t = &app.theme;
     let p = &app.player;
     let Some(now) = &p.now else { return el() };
-    let w = cx.layout_size("dock").map(|s| s[0]).unwrap_or(1100.0);
+    let room = cx.layout_size("main").map(|s| s[0]).unwrap_or(1180.0);
+    let w = width(room);
+    let roomy = w >= 720.0;
 
     // Artwork, or the playing video itself, small.
     let video = !now.audio && p.has_video();
-    let (aw, ah) = if video { (128.0, 72.0) } else { (60.0, 60.0) };
+    let (aw, ah, ar) = if video {
+        (78.0, 44.0, 12.0)
+    } else {
+        (44.0, 44.0, 22.0)
+    };
     let mut art = el()
         .key("dock-art")
-        .label("Open the player")
+        .label("Open Now Playing")
         .w(aw)
         .h(ah)
-        .radius(sz::R_SM)
-        .clip_rounded(sz::R_SM)
+        .radius(ar)
+        .clip_rounded(ar)
         .fill(t.raised)
         .matched(format!("art-{}", now.media.url))
         .cursor(rune::Cursor::Pointer)
@@ -59,35 +72,52 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         } else {
             art = art
                 .center()
-                .child(icon(if now.audio { &ic::MUSIC } else { &ic::PLAY }, 22.0).color(t.faint));
+                .child(icon(if now.audio { &ic::MUSIC } else { &ic::PLAY }, 18.0).color(t.faint));
         }
     }
 
-    let mut words = col().gap(3.0).w(280.0).shrink();
     let title = p
         .snap
         .title
         .clone()
         .filter(|_| now.source == session::Source::Radio)
         .unwrap_or_else(|| now.media.title.clone());
-    words = words.child(
-        text(title)
-            .font(ty::BODY_STRONG)
-            .color(t.text)
-            .truncate_fade(),
-    );
     let sub = if now.source == session::Source::Radio {
         now.media.title.clone()
     } else {
         now.media.creator.clone()
     };
-    words = words.child(text(sub).font(ty::SMALL).color(t.muted).truncate());
+    let mut title_row = row().gap(8.0).center_y().child(
+        text(title)
+            .font(ty::BODY_STRONG)
+            .color(if now.error.is_some() { t.error } else { t.text })
+            .truncate_fade()
+            .shrink(),
+    );
+    if now.live {
+        title_row = title_row.child(crate::ui::widgets::badge(
+            "Live",
+            t.error.alpha(0.18),
+            t.error,
+        ));
+    }
+    let words = col()
+        .key("dock-words")
+        .gap(2.0)
+        .w(if roomy { 240.0 } else { 160.0 })
+        .shrink()
+        .role("button")
+        .label("Open Now Playing")
+        .cursor(rune::Cursor::Pointer)
+        .on_press(|s: &mut App| s.go(Route::Watch))
+        .child(title_row)
+        .child(text(sub).font(ty::SMALL).color(t.muted).truncate());
 
     let playing = !p.snap.paused && p.snap.loaded;
     let play = el()
         .key("dock-play")
-        .size(44.0, 44.0)
-        .radius(22.0)
+        .size(40.0, 40.0)
+        .radius(20.0)
         .center()
         .fill(t.text)
         .hover(t.text.mix(t.bg, 0.12))
@@ -96,139 +126,175 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .label(if playing { "Pause" } else { "Play" })
         .cursor(rune::Cursor::Pointer)
         .on_press(|s: &mut App| s.player.toggle_pause())
-        .child(icon(if playing { &ic::PAUSE } else { &ic::PLAY }, 18.0).color(t.bg));
-    let buttons = row()
-        .gap(6.0)
-        .center_y()
+        .child(icon(if playing { &ic::PAUSE } else { &ic::PLAY }, 17.0).color(t.bg));
+    let mut buttons = row().gap(6.0).center_y();
+    if roomy {
+        let shuffle = p.shuffle;
+        buttons = buttons.child(
+            icon_button(t, &ic::SHUFFLE, "Shuffle", 34.0)
+                .key("dock-shuffle")
+                .checked(shuffle)
+                .on_press(move |s: &mut App| s.player.shuffle = !shuffle)
+                .child(state_dot(t, shuffle)),
+        );
+    }
+    buttons = buttons
         .child(
-            icon_button(t, &ic::PREV, "Previous", 38.0)
+            icon_button(t, &ic::PREV, "Previous", 36.0)
+                .key("dock-prev")
                 .on_press(|s: &mut App| session::previous(s)),
         )
         .child(play)
         .child(
-            icon_button(t, &ic::NEXT, "Next", 38.0).on_press(|s: &mut App| session::next(s, false)),
+            icon_button(t, &ic::NEXT, "Next", 36.0)
+                .key("dock-next")
+                .on_press(|s: &mut App| session::next(s, false)),
         );
+    if roomy {
+        let (label, next, on) = match p.repeat {
+            session::Repeat::Off => ("Repeat off", session::Repeat::All, false),
+            session::Repeat::All => ("Repeat all", session::Repeat::One, true),
+            session::Repeat::One => ("Repeat one", session::Repeat::Off, true),
+        };
+        buttons = buttons.child(
+            icon_button(
+                t,
+                if p.repeat == session::Repeat::One {
+                    &ic::REPEAT_ONE
+                } else {
+                    &ic::REPEAT
+                },
+                label,
+                34.0,
+            )
+            .key("dock-repeat")
+            .checked(on)
+            .on_press(move |s: &mut App| s.player.repeat = next)
+            .child(state_dot(t, on)),
+        );
+    }
 
-    let bar_w = (w * 0.34).clamp(220.0, 520.0);
-    p.lives.bars[BAR_DOCK].set_width(
-        bar_w,
-        p.snap.duration.map_or(0.0, |d| (p.snap.time / d) as f32),
-    );
-    let progress = if now.live {
-        row()
-            .gap(8.0)
-            .center_y()
-            .child(el().size(8.0, 8.0).radius(4.0).fill(t.error))
-            .child(text("Live").font(ty::BADGE).color(t.error))
-    } else {
-        row()
-            .gap(10.0)
-            .center_y()
-            .child(
-                text("00:00:00")
-                    .live_text(&p.lives.time)
-                    .font(ty::NUM)
-                    .color(t.muted)
-                    .w(56.0)
-                    .align(rune::Align::End),
-            )
-            .child(
-                el().w(bar_w)
-                    .h(BAR_H)
-                    .radius(2.0)
-                    .fill(t.overlay)
-                    .cursor(rune::Cursor::Pointer)
-                    .child(
-                        el().absolute(0.0, 0.0)
-                            .h(BAR_H)
-                            .radius(2.0)
-                            .fill(t.accent)
-                            .live_rect(&p.lives.bars[BAR_DOCK].rect),
-                    )
-                    .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
-                        tx.instant();
-                        if d.phase == rune::Phase::Up
-                            && let Some(dur) = s.player.snap.duration
-                        {
-                            s.player
-                                .seek_to((d.x / d.w.max(1.0)).clamp(0.0, 1.0) as f64 * dur, true);
-                        }
-                    }),
-            )
-            .child(
-                text(
-                    p.snap
-                        .duration
-                        .map(crate::player::mpv::clock)
-                        .unwrap_or_default(),
-                )
-                .font(ty::NUM)
-                .color(t.muted)
-                .w(46.0),
-            )
-    };
-    let centre = col().gap(6.0).items_center().child(buttons).child(progress);
-
-    let mut right = row().gap(4.0).center_y();
+    let mut right = row().gap(2.0).center_y();
     if now.is_music() {
         right = right.child(
-            icon_button(t, &ic::LYRICS, "Lyrics", 36.0).on_press(|s: &mut App| {
+            icon_button(t, &ic::LYRICS, "Lyrics", 34.0).on_press(|s: &mut App| {
                 s.edit_prefs(|p| p.show_lyrics = true);
                 s.go(Route::Watch);
                 crate::lyrics::load(s, false);
             }),
         );
     }
+    right = right.child(
+        icon_button(t, &ic::QUEUE, "Queue", 34.0)
+            .on_press(|s: &mut App| s.go_root(Route::Library(LibraryTab::Queue))),
+    );
+    if roomy {
+        right = right
+            .child(
+                icon_button(
+                    t,
+                    if p.snap.muted { &ic::MUTE } else { &ic::VOLUME },
+                    if p.snap.muted { "Unmute" } else { "Mute" },
+                    34.0,
+                )
+                .on_press(|s: &mut App| s.player.toggle_mute()),
+            )
+            .child(crate::ui::watch_controls::volume_slider(
+                app, "vol-dock", 72.0,
+            ));
+    }
     right = right
         .child(
-            icon_button(t, &ic::QUEUE, "Queue", 36.0)
-                .on_press(|s: &mut App| s.go_root(Route::Library(LibraryTab::Queue))),
+            icon_button(t, &ic::UP, "Open Now Playing", 34.0)
+                .key("dock-open")
+                .on_press(|s: &mut App| s.go(Route::Watch)),
         )
-        .child(icon(if p.snap.muted { &ic::MUTE } else { &ic::VOLUME }, 17.0).color(t.muted))
-        .child(crate::ui::watch_controls::volume_slider(
-            app, "vol-dock", 96.0,
-        ))
         .child(
-            icon_button(t, &ic::UP, "Open player", 36.0).on_press(|s: &mut App| s.go(Route::Watch)),
-        )
-        .child(icon_button(t, &ic::CLOSE, "Stop", 36.0).on_press(|s: &mut App| session::stop(s)));
+            icon_button(t, &ic::CLOSE, "Stop", 34.0)
+                .key("dock-stop")
+                .on_press(|s: &mut App| session::stop(s)),
+        );
 
     let body = row()
         .key("dock")
         .w_full()
         .h(sz::DOCK)
-        .px(18.0)
-        .gap(16.0)
+        .pl(10.0)
+        .pr(12.0)
+        .gap(12.0)
         .center_y()
-        .child(
-            row()
-                .gap(14.0)
-                .center_y()
-                .w(380.0)
-                .shrink()
-                .child(art)
-                .child(words),
-        )
+        .child(art)
+        .child(words)
         .child(spacer())
-        .child(centre)
+        .child(buttons)
         .child(spacer())
         .child(right);
+
+    // Progress along the lower edge, inside the capsule's curve. A taller strip takes drags.
+    let bar_w = w - 64.0;
+    p.lives.bars[BAR_DOCK].set_width(
+        bar_w,
+        p.snap.duration.map_or(0.0, |d| (p.snap.time / d) as f32),
+    );
+    let progress = if now.live || p.snap.duration.is_none() {
+        el()
+    } else {
+        el().key("dock-seek")
+            .pin(Some(32.0), None, Some(32.0), Some(0.0))
+            .h(10.0)
+            .cursor(rune::Cursor::Pointer)
+            .label("Seek")
+            .on_drag(|s: &mut App, d: &mut rune::Drag, tx: &mut rune::Tx| {
+                tx.instant();
+                if d.phase == rune::Phase::Up
+                    && let Some(dur) = s.player.snap.duration
+                {
+                    s.player
+                        .seek_to((d.x / d.w.max(1.0)).clamp(0.0, 1.0) as f64 * dur, true);
+                }
+            })
+            .child(
+                el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                    .h(3.0)
+                    .radius(1.5)
+                    .clip_rounded(1.5)
+                    .fill(t.text.alpha(0.12))
+                    .child(
+                        el().absolute(0.0, 0.0)
+                            .h(BAR_H)
+                            .fill(if now.error.is_some() {
+                                t.error
+                            } else {
+                                t.accent
+                            })
+                            .live_rect(&p.lives.bars[BAR_DOCK].rect),
+                    ),
+            )
+    };
+
     el().key("dock-wrap")
-        .pin(Some(12.0), None, Some(12.0), Some(12.0))
-        .radius(20.0)
-        .backdrop_blur(26.0)
-        .fill(t.glass)
+        .pin(Some(((room - w) / 2.0).max(12.0)), None, None, Some(16.0))
+        .w(w)
+        .h(sz::DOCK)
+        .radius(sz::DOCK / 2.0)
+        .clip_rounded(sz::DOCK / 2.0)
+        .backdrop_blur(28.0)
+        .fill(t.overlay.alpha(if t.dark { 0.78 } else { 0.86 }))
         .border(1.0, t.border)
-        .shadow(16.0, 46.0, t.shadow)
+        .shadow(14.0, 40.0, t.shadow)
         .transition(Transition::offset(0.0, 40.0).combined(Transition::opacity()))
         .child(body)
-        .child(if now.error.is_some() {
-            el().pin(Some(0.0), Some(0.0), Some(0.0), None)
-                .h(2.0)
-                .fill(t.error)
-        } else {
-            el()
-        })
-        .opacity(1.0)
-        .fill(t.glass.mix(Color::TRANSPARENT, 0.0))
+        .child(progress)
+}
+
+/// The small dot under a shuffle or repeat glyph that says it is on (pink is for state).
+fn state_dot(t: &crate::theme::Theme, on: bool) -> El {
+    el().pin(None, None, None, Some(3.0))
+        .w_full()
+        .items_center()
+        .child(
+            el().size(4.0, 4.0)
+                .radius(2.0)
+                .fill(if on { t.accent } else { Color::TRANSPARENT }),
+        )
 }

@@ -417,12 +417,13 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .on_scroll_offset(crate::ui::topbar::track(app))
         .child(
             col()
                 .w_full()
                 .px(sz::PAGE_PAD)
                 .pt(sz::TOPBAR + 24.0)
-                .pb(sz::DOCK + 48.0)
+                .pb(sz::DOCK_ROOM + 24.0)
                 .gap(20.0)
                 .child(head)
                 .child(body),

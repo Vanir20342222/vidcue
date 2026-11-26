@@ -345,13 +345,13 @@ pub fn view(app: &App, _cx: &mut Cx<App>) -> El {
             .enter_delay(stagger.delay(i, n))
     });
 
-    col().key("account-page").w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).child(
+    col().key("account-page").w_full().h_full().scroll(ScrollSpec { stick_bottom: false }).on_scroll_offset(crate::ui::topbar::track(app)).child(
         col()
             .w_full()
             .max_w(920.0)
             .px(sz::PAGE_PAD)
             .pt(sz::TOPBAR + 24.0)
-            .pb(sz::DOCK + 48.0)
+            .pb(sz::DOCK_ROOM + 24.0)
             .gap(16.0)
             .child(hero(app))
             .child(

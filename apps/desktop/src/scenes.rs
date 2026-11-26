@@ -66,6 +66,67 @@ pub const SCENES: &[Scene] = &[
         a.saved_urls = a.library.saved.iter().map(|m| m.url.clone()).collect();
         a.route = Route::Library(LibraryTab::Saved);
     }),
+    ("library-playlists", |a| {
+        let covers = songs(4, 500, MediaKind::Song);
+        register(a, &covers, true);
+        let names = ["Road trip", "Focus", "Sunday morning", "Synth finds"];
+        a.library.local.playlists = covers
+            .iter()
+            .zip(names)
+            .enumerate()
+            .map(|(i, (m, n))| crate::ui::library_local::Playlist {
+                id: format!("00000000-0000-4000-8000-00000000000{i}"),
+                title: n.into(),
+                count: 3 + i * 4,
+                shared: i == 1,
+                role: None,
+                cover: Some(m.clone()),
+            })
+            .collect();
+        a.library.local.follows = CREATORS
+            .iter()
+            .take(5)
+            .enumerate()
+            .map(|(i, c)| crate::ui::library_local::Follow {
+                channel_id: format!("UCfixture{i:015}"),
+                title: (*c).into(),
+                thumbnail: String::new(),
+            })
+            .collect();
+        a.route = Route::Library(LibraryTab::Playlists);
+    }),
+    ("settings-feeds", |a| {
+        a.library.local.filters = vec![
+            crate::ui::library_local::FeedFilter {
+                id: "f1".into(),
+                kind: "shorts".into(),
+                value: None,
+            },
+            crate::ui::library_local::FeedFilter {
+                id: "f2".into(),
+                kind: "keyword".into(),
+                value: Some("reaction".into()),
+            },
+        ];
+        a.route = Route::Settings(SettingsSection::Feeds)
+    }),
+    ("settings-sync", |a| {
+        a.route = Route::Settings(SettingsSection::Sync)
+    }),
+    ("settings-sync-signed-in", |a| {
+        a.sync.status = serde_json::json!({
+            "signed_in": true, "username": "alex", "server": "https://vidcue.example.org",
+            "state": "idle", "connected": true, "last_success": 0, "pending": 0,
+            "collections": {"history": true, "secrets": false},
+        });
+        a.sync.devices = vec![
+            serde_json::json!({"id": "d1", "name": "Vidcue on desk", "current": true}),
+            serde_json::json!({"id": "d2", "name": "Galaxy Tab S9", "online": true,
+                "now_playing": {"title": "Midnight Drive"}}),
+            serde_json::json!({"id": "d3", "name": "Pixel 9", "last_seen": 0}),
+        ];
+        a.route = Route::Settings(SettingsSection::Sync)
+    }),
     ("settings", |a| {
         a.route = Route::Settings(SettingsSection::Appearance)
     }),
@@ -330,7 +391,16 @@ fn songs(n: usize, seed: u32, kind: MediaKind) -> Vec<Media> {
 }
 
 fn music(a: &mut App) {
-    let items = songs(14, 100, MediaKind::Album);
+    // YouTube Music's home: a Quick picks grid of songs, then shelves of albums.
+    let section = |mut list: Vec<Media>, name: &str| {
+        for m in &mut list {
+            m.section = name.into();
+        }
+        list
+    };
+    let mut items = section(songs(12, 100, MediaKind::Song), "Quick picks");
+    items.extend(section(songs(9, 120, MediaKind::Album), "Listen again"));
+    items.extend(section(songs(9, 140, MediaKind::Album), "Mixed for you"));
     register(a, &items, true);
     fill(a, FeedRoute::root(Tab::Music), items, "Music");
 }

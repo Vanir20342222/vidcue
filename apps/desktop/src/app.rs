@@ -89,6 +89,8 @@ pub enum LibraryTab {
 pub enum SettingsSection {
     Appearance,
     Playback,
+    Feeds,
+    Sync,
     Audio,
     Downloads,
     Network,
@@ -105,6 +107,8 @@ pub enum Route {
     Downloads,
     Library(LibraryTab),
     OfflinePlaylist(String),
+    /// A playlist from the engine's own (synced) library.
+    LocalPlaylist(String),
     Movies,
     Settings(SettingsSection),
     Account,
@@ -121,7 +125,7 @@ impl Route {
             },
             Route::Watch => "watch",
             Route::Downloads => "downloads",
-            Route::Library(_) | Route::OfflinePlaylist(_) => "library",
+            Route::Library(_) | Route::OfflinePlaylist(_) | Route::LocalPlaylist(_) => "library",
             Route::Movies => "movies",
             Route::Settings(_) => "settings",
             Route::Account => "account",
@@ -265,6 +269,12 @@ pub enum MenuAction {
     OpenInBrowser(String),
     AddToPlaylist(Box<Media>, String),
     NewPlaylistWith(Box<Media>),
+    PlayNext(Box<Media>),
+    /// Opens the playlist picker for an item.
+    PickPlaylist(Box<Media>),
+    AddToLocal(Box<Media>, String),
+    NewLocalWith(Box<Media>),
+    HideChannel(Box<Media>),
     Preview(Box<Media>),
 }
 
@@ -302,6 +312,12 @@ pub struct App {
     pub preview: crate::player::preview::Preview,
     /// Sparkle bursts by element key, with their start on the app clock.
     pub bursts: HashMap<String, f64>,
+    /// How far the top bar's backing has faded in (0 over the page top, 1 once scrolled).
+    pub topbar_k: rune::Live<f32>,
+    /// Where each shelf carousel is scrolled to, for its arrows.
+    pub shelf_offsets: crate::ui::shelves::Offsets,
+    /// The Vidcue account (self-hosted sync server).
+    pub sync: crate::ui::sync::SyncUi,
 }
 
 impl App {
@@ -352,6 +368,9 @@ impl App {
             scratch: HashMap::new(),
             preview: Default::default(),
             bursts: HashMap::new(),
+            topbar_k: rune::Live::new(0.0),
+            shelf_offsets: Default::default(),
+            sync: Default::default(),
             prefs,
             be,
         }
@@ -414,10 +433,21 @@ impl App {
 
     /// Starts whatever the new page needs.
     fn on_route(&mut self) {
+        // The new page starts at its top; its scroll viewport takes over from here.
+        self.topbar_k.set(0.0);
+        if self.route != Route::Settings(SettingsSection::Sync) {
+            crate::ui::sync::forget_secrets(self);
+        }
         match self.route.clone() {
-            Route::Feed(f) => crate::feed::ensure(self, &f, false),
+            Route::Feed(f) => {
+                if f == FeedRoute::root(Tab::Home) {
+                    crate::ui::library::refresh_history(self);
+                }
+                crate::feed::ensure(self, &f, false)
+            }
             Route::Library(tab) => crate::ui::library::enter(self, tab),
             Route::OfflinePlaylist(_) => crate::ui::library::enter(self, LibraryTab::Playlists),
+            Route::LocalPlaylist(id) => crate::ui::library_local::enter_playlist(self, &id),
             Route::Downloads => crate::downloads::enter(self),
             Route::Movies => crate::movies::enter(self),
             Route::Account => crate::ui::account::enter(self),
@@ -677,7 +707,7 @@ impl App {
     }
 
     pub fn run_menu(&mut self, action: MenuAction, tx: &mut Tx) {
-        self.menu = None;
+        let anchor = self.menu.take().map(|m| m.anchor);
         match action {
             MenuAction::Play(m) => crate::player::session::play(self, *m, Default::default()),
             MenuAction::PlayAudio(m) => crate::player::session::play(
@@ -712,6 +742,17 @@ impl App {
             MenuAction::AddToPlaylist(m, id) => crate::ui::library::add_to_playlist(self, &id, *m),
             MenuAction::NewPlaylistWith(m) => crate::ui::library::new_playlist_with(self, *m),
             MenuAction::Preview(m) => crate::player::preview::start(self, &m),
+            MenuAction::PlayNext(m) => crate::ui::library_local::play_next(self, &m),
+            MenuAction::PickPlaylist(m) => {
+                let items = crate::ui::widgets::playlist_menu(self, &m);
+                self.menu = anchor.map(|anchor| MenuState { anchor, items });
+            }
+            MenuAction::AddToLocal(m, id) => crate::ui::library_local::add(self, &id, *m),
+            MenuAction::NewLocalWith(m) => {
+                let title = m.title.chars().take(60).collect::<String>();
+                crate::ui::library_local::create(self, title, Some(*m))
+            }
+            MenuAction::HideChannel(m) => crate::ui::library_local::hide_channel(self, &m),
         }
     }
 }
@@ -767,6 +808,9 @@ fn start(app: &mut App) {
     app.refresh_saved();
     app.player.refresh_up_next(&app.be);
     crate::ui::account::refresh(app);
+    crate::ui::library_local::refresh(app);
+    crate::ui::library::refresh_history(app);
+    crate::ui::sync::refresh(app);
 }
 
 /// `AppSpec::poll`: land answers, tick the player, expire toasts.
@@ -786,6 +830,14 @@ pub fn poll(app: &mut App, clock: f64, tx: &mut Tx) -> bool {
     changed |= crate::downloads::tick(app);
     changed |= crate::player::preview::tick(app);
     changed |= crate::updater::tick(app, tx);
+    if !app.offline() {
+        changed |= crate::ui::sync::drain_events(app);
+        // The engine queues sync events without waking the window; look again shortly while
+        // an account is signed in. An idle check redraws nothing.
+        if app.sync.signed_in() {
+            tx.wake_after(Duration::from_secs(2));
+        }
+    }
     app.bursts.retain(|_, t0| clock - *t0 < 2.0);
     let before = app.toasts.len();
     app.toasts.retain(|t| t.until > clock);

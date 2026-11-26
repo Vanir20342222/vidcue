@@ -24,7 +24,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     let mut body = col()
         .w_full()
         .pt(sz::TOPBAR + 24.0)
-        .pb(sz::DOCK + 48.0)
+        .pb(sz::DOCK_ROOM + 24.0)
         .gap(28.0)
         .child(header(app));
     if !app.prefs.alpha_notice_accepted {
@@ -61,6 +61,7 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .on_scroll_offset(crate::ui::topbar::track(app))
         .child(body);
     let mut page = el().key("movies-page").w_full().h_full().child(scroller);
     if app.prefs.alpha_notice_accepted
@@ -668,7 +669,7 @@ fn sheet(app: &App, sel: &Title) -> El {
             None,
             Some(sz::TOPBAR + 8.0),
             Some(20.0),
-            Some(sz::DOCK + 20.0),
+            Some(sz::DOCK_ROOM),
         )
         .w(480.0)
         .radius(sz::R_PANEL + 6.0)

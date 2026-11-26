@@ -47,6 +47,8 @@ pub struct LibraryUi {
     pub rename: rune::TextEdit,
     pub confirm_clear: bool,
     pub confirm_delete: bool,
+    /// The engine's own playlists, followed channels and feed filters.
+    pub local: crate::ui::library_local::Local,
 }
 
 pub fn enter(app: &mut App, tab: LibraryTab) {
@@ -58,12 +60,12 @@ pub fn enter(app: &mut App, tab: LibraryTab) {
     match tab {
         LibraryTab::Saved => app.refresh_saved(),
         LibraryTab::History => refresh_history(app),
-        LibraryTab::Playlists => {}
+        LibraryTab::Playlists => crate::ui::library_local::refresh(app),
         LibraryTab::Queue => app.player.refresh_up_next(&app.be),
     }
 }
 
-fn refresh_history(app: &mut App) {
+pub fn refresh_history(app: &mut App) {
     app.be.call(op("history_list", json!({})), |app, r, _| {
         if let Ok(Value::Array(items)) = r {
             app.library.history = items
@@ -294,7 +296,7 @@ pub(super) fn section_title(t: &crate::theme::Theme, title: &str, detail: Option
 }
 
 pub(super) fn bottom_pad() -> El {
-    el().w_full().h(sz::DOCK + 48.0)
+    el().w_full().h(sz::DOCK_ROOM + 24.0)
 }
 
 fn banner(t: &crate::theme::Theme, message: &str, action: Option<El>) -> El {
@@ -327,6 +329,7 @@ fn banner(t: &crate::theme::Theme, message: &str, action: Option<El>) -> El {
 fn pick_tab(s: &mut App, i: usize) {
     let tab = TABS[i.min(TABS.len() - 1)].0;
     if s.route != Route::Library(tab) {
+        s.topbar_k.set(0.0);
         s.route = Route::Library(tab);
         s.menu = None;
         enter(s, tab);
@@ -361,6 +364,12 @@ pub fn view(app: &App, cx: &mut Cx<App>, tab: LibraryTab) -> El {
         LibraryTab::Saved => saved_body(app, cx),
         LibraryTab::History => history_body(app, cx),
         LibraryTab::Playlists => scroll_page(app)
+            .child(
+                crate::ui::library_local::overview(app)
+                    .px(sz::PAGE_PAD)
+                    .pt(8.0)
+                    .pb(16.0),
+            )
             .child(playlists::playlists_grid(app, cx).px(sz::PAGE_PAD).pt(8.0))
             .child(bottom_pad()),
         LibraryTab::Queue => scroll_page(app).child(queue::body(app)).child(bottom_pad()),
@@ -368,7 +377,7 @@ pub fn view(app: &App, cx: &mut Cx<App>, tab: LibraryTab) -> El {
     col().w_full().h_full().min_h(0.0).child(header).child(body)
 }
 
-fn scroll_page(_app: &App) -> El {
+fn scroll_page(app: &App) -> El {
     col()
         .key("lib-scroll")
         .w_full()
@@ -377,6 +386,7 @@ fn scroll_page(_app: &App) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .on_scroll_offset(crate::ui::topbar::track(app))
 }
 
 fn toolbar(app: &App, tab: LibraryTab) -> El {

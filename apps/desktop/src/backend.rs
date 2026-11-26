@@ -197,6 +197,20 @@ const LOCAL_OPS: &[&str] = &[
     "lyrics_remove",
     "account",
     "resolve_cache_clear",
+    "playlists",
+    "playlist_entries",
+    "playlist_create",
+    "playlist_rename",
+    "playlist_delete",
+    "playlist_add",
+    "playlist_remove",
+    "playlist_move",
+    "follows",
+    "follow_toggle",
+    "filters",
+    "filter_add",
+    "filter_remove",
+    "sync_status",
 ];
 
 #[derive(Clone)]
@@ -230,11 +244,17 @@ impl Backend {
             .context("Cannot start the engine runtime")?;
         let engine = {
             let _guard = rt.enter();
-            Engine::new(&paths.root, &paths.cache)?
+            let engine = Arc::new(Engine::new(&paths.root, &paths.cache)?);
+            // The Vidcue account's sync loop (debounced pushes, retries, the server
+            // connection); it stays idle until an account is signed in.
+            if !offline {
+                engine.start_sync();
+            }
+            engine
         };
         Ok(Self {
             rt: Arc::new(rt),
-            engine: Arc::new(engine),
+            engine,
             paths,
             inbox: Arc::default(),
             waker: Arc::default(),

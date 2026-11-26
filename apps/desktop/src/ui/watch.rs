@@ -13,7 +13,43 @@ use crate::theme::{sz, ty};
 use crate::ui::watch_controls;
 use crate::ui::widgets::{self, Kind, button};
 
-const SIDE_W: f32 = 400.0;
+/// The side panel beside a video, as YouTube's up-next column.
+const VIDEO_SIDE_W: f32 = 400.0;
+
+/// What the Now Playing side panel shows.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Panel {
+    UpNext,
+    Lyrics,
+    Chapters,
+}
+
+const PANEL_KEY: &str = "np-panel";
+
+fn panel(app: &App, now: &session::Now) -> Panel {
+    if now.is_music() && app.prefs.show_lyrics {
+        return Panel::Lyrics;
+    }
+    match app.scratch.get(PANEL_KEY).map(String::as_str) {
+        Some("chapters") if !now.media.chapters.is_empty() => Panel::Chapters,
+        _ => Panel::UpNext,
+    }
+}
+
+fn set_panel(s: &mut App, to: Panel) {
+    let lyrics = to == Panel::Lyrics;
+    if s.prefs.show_lyrics != lyrics {
+        s.edit_prefs(|p| p.show_lyrics = lyrics);
+    }
+    if lyrics {
+        crate::lyrics::load(s, false);
+    }
+    if to == Panel::Chapters {
+        s.scratch.insert(PANEL_KEY.into(), "chapters".into());
+    } else {
+        s.scratch.remove(PANEL_KEY);
+    }
+}
 
 pub fn view(app: &App, cx: &mut Cx<App>) -> El {
     let t = &app.theme;
@@ -49,55 +85,81 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
             .child(stage);
     }
 
-    let wide = win_w >= 1180.0 && !p.theater;
-    let content_w = if wide {
-        win_w - SIDE_W - sz::PAGE_PAD * 2.0 - 28.0
+    let music = now.is_music();
+    // Wide windows: the stage on the left, a floating tabbed panel on the right (YouTube
+    // Music's Now Playing, YouTube's up-next column). Narrow windows stack them.
+    let split = win_w >= 1000.0 && !p.theater;
+    let inset = sz::PANEL_INSET;
+    let side_w = if music {
+        (win_w * 0.36).clamp(340.0, 480.0)
+    } else {
+        VIDEO_SIDE_W
+    };
+    let left_w = if split {
+        win_w - side_w - inset - sz::PAGE_PAD - 24.0
     } else {
         win_w - sz::PAGE_PAD * 2.0
     };
-    let max_stage_h = if p.theater {
-        win_h - sz::TOPBAR - 40.0
+    let room_h = win_h - sz::TOPBAR - inset;
+
+    let mut left = col().w(left_w).gap(18.0);
+    if music {
+        let stage_h = if split {
+            (room_h - 72.0).max(360.0)
+        } else {
+            (left_w * 0.62).clamp(380.0, 620.0)
+        };
+        left = left
+            .child(crate::ui::music::stage(app, cx, left_w, stage_h))
+            .child(music_actions(app, now));
     } else {
-        (win_h - sz::TOPBAR - 160.0).max(320.0)
-    };
-    let (sw, sh) = fit_16_9(content_w, max_stage_h);
-    let stage = if now.is_music() {
-        crate::ui::music::stage(
-            app,
-            cx,
-            content_w,
-            (max_stage_h).min(content_w * 0.62).max(420.0),
-        )
-    } else {
-        watch_controls::stage(app, cx, sw, sh)
-    };
-    let main = col()
-        .w(content_w)
-        .gap(18.0)
-        .child(el().w_full().items_center().child(stage))
-        .child(details(app, now));
-    let lyrics_open = app.prefs.show_lyrics && now.is_music();
-    let side = if lyrics_open {
-        crate::ui::lyrics_panel::view(app, cx, SIDE_W)
-    } else {
-        up_next(app, SIDE_W)
-    };
-    let body = if wide {
-        row()
-            .w_full()
-            .px(sz::PAGE_PAD)
-            .gap(28.0)
-            .items_start()
-            .child(main)
-            .child(el().key("watch-side").w(SIDE_W).child(side))
-    } else {
-        col()
-            .w_full()
-            .px(sz::PAGE_PAD)
-            .gap(28.0)
-            .child(main)
-            .child(side)
-    };
+        let max_stage_h = if p.theater {
+            win_h - sz::TOPBAR - 40.0
+        } else {
+            (win_h - sz::TOPBAR - 160.0).max(320.0)
+        };
+        let (sw, sh) = fit_16_9(left_w, max_stage_h);
+        left = left
+            .child(
+                el().w_full()
+                    .items_center()
+                    .child(watch_controls::stage(app, cx, sw, sh)),
+            )
+            .child(details(app, now));
+    }
+
+    let which = panel(app, now);
+    if split {
+        let body_h = room_h - inset - 56.0;
+        let side = side_panel(app, cx, now, which, side_w, room_h - inset, body_h);
+        let left_scroll = col()
+            .key("watch-left")
+            .grow(1.0)
+            .min_w(0.0)
+            .h_full()
+            .scroll(ScrollSpec {
+                stick_bottom: false,
+            })
+            .on_scroll_offset(crate::ui::topbar::track(app))
+            .child(
+                col()
+                    .w_full()
+                    .pl(sz::PAGE_PAD)
+                    .pt(sz::TOPBAR + 4.0)
+                    .pb(if music { 12.0 } else { 80.0 })
+                    .child(left),
+            );
+        return el().key("watch-page").w_full().h_full().child(
+            row().w_full().h_full().gap(24.0).child(left_scroll).child(
+                el().key("watch-side")
+                    .pt(sz::TOPBAR)
+                    .pr(inset)
+                    .pb(inset)
+                    .child(side),
+            ),
+        );
+    }
+    let side = side_panel(app, cx, now, which, left_w, 640.0, 560.0);
     col()
         .key("watch-page")
         .w_full()
@@ -105,7 +167,201 @@ pub fn view(app: &App, cx: &mut Cx<App>) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
-        .child(col().w_full().pt(sz::TOPBAR + 18.0).pb(80.0).child(body))
+        .on_scroll_offset(crate::ui::topbar::track(app))
+        .child(
+            col()
+                .w_full()
+                .px(sz::PAGE_PAD)
+                .pt(sz::TOPBAR + 4.0)
+                .pb(80.0)
+                .gap(28.0)
+                .child(left)
+                .child(side),
+        )
+}
+
+/// The floating Now Playing panel: tabs, then the chosen list.
+fn side_panel(
+    app: &App,
+    cx: &mut Cx<App>,
+    now: &session::Now,
+    which: Panel,
+    w: f32,
+    h: f32,
+    body_h: f32,
+) -> El {
+    let t = &app.theme;
+    let mut tabs = row()
+        .key("np-tabs")
+        .w_full()
+        .h(56.0)
+        .px(20.0)
+        .gap(22.0)
+        .center_y()
+        .role("tablist");
+    let mut options = vec![(Panel::UpNext, "Up next")];
+    if now.is_music() {
+        options.push((Panel::Lyrics, "Lyrics"));
+    }
+    if !now.media.chapters.is_empty() {
+        options.push((Panel::Chapters, "Chapters"));
+    }
+    for (p, label) in options {
+        let on = p == which;
+        tabs = tabs.child(
+            col()
+                .key(format!("np-tab-{label}"))
+                .h_full()
+                .justify_center()
+                .role("tab")
+                .label(label)
+                .checked(on)
+                .focusable(true)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| set_panel(s, p))
+                .child(
+                    text(label)
+                        .font(ty::BODY_STRONG)
+                        .color(if on { t.text } else { t.muted }),
+                )
+                .child(
+                    el().pin(Some(0.0), None, Some(0.0), Some(0.0))
+                        .h(2.0)
+                        .radius(1.0)
+                        .fill(if on { t.text } else { Color::TRANSPARENT }),
+                ),
+        );
+    }
+    let inner_w = w - 24.0;
+    let body: El = match which {
+        Panel::Lyrics => el().w_full().grow(1.0).min_h(0.0).px(16.0).pb(12.0).child(
+            crate::ui::lyrics_panel::view(app, cx, inner_w - 8.0, body_h - 12.0),
+        ),
+        Panel::Chapters => scroll_body(chapters(app, &now.media, inner_w)),
+        Panel::UpNext => scroll_body(up_next(app, inner_w)),
+    };
+    col()
+        .key("np-panel")
+        .w(w)
+        .h(h)
+        .radius(sz::R_SIDEBAR)
+        .clip_rounded(sz::R_SIDEBAR)
+        .fill(t.panel)
+        .border(1.0, t.hairline)
+        .child(tabs)
+        .child(el().h(1.0).w_full().fill(t.hairline))
+        .child(body)
+}
+
+fn scroll_body(content: El) -> El {
+    col()
+        .key("np-scroll")
+        .w_full()
+        .grow(1.0)
+        .min_h(0.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .scroll_edge_fade(18.0)
+        .child(el().w_full().px(12.0).pt(10.0).pb(16.0).child(content))
+}
+
+/// Save, download, queue and share for a song or station, as icons under the stage.
+fn music_actions(app: &App, now: &session::Now) -> El {
+    let t = &app.theme;
+    let m = &now.media;
+    let saved = app.saved_urls.contains(&m.url);
+    let (save_m, q_m, dl_m, link) = (m.clone(), m.clone(), m.clone(), m.url.clone());
+    let mut r = row().w_full().gap(6.0).justify_center().center_y();
+    let mut save = widgets::icon_button(
+        t,
+        if saved {
+            &ic::BOOKMARK_FILLED
+        } else {
+            &ic::BOOKMARK
+        },
+        if saved { "Saved" } else { "Save" },
+        40.0,
+    )
+    .key("watch-save")
+    .on_press(move |s: &mut App| s.toggle_saved(&save_m));
+    if let Some(t0) = crate::fx::burst_at(app, &format!("save-{}", m.url)) {
+        save = save.child(
+            crate::fx::sparkles(t0, 22)
+                .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .radius(sz::R_PILL),
+        );
+    }
+    r = r.child(save);
+    if now.source != Source::Radio && !now.live && !matches!(now.source, Source::Movie(_)) {
+        r = r.child(
+            widgets::icon_button(t, &ic::DOWNLOAD, "Download", 40.0).on_press(
+                move |s: &mut App| {
+                    crate::downloads::add(s, &dl_m, s.player.now.as_ref().is_some_and(|n| n.audio))
+                },
+            ),
+        );
+    }
+    r = r
+        .child(
+            widgets::icon_button(t, &ic::QUEUE, "Add to queue", 40.0)
+                .on_press(move |s: &mut App| s.enqueue(&q_m)),
+        )
+        .child(
+            widgets::icon_button(t, &ic::LINK, "Copy link", 40.0).on_press_tx(
+                move |s: &mut App, tx: &mut Tx| {
+                    tx.copy(link.clone());
+                    s.toast(crate::app::ToastKind::Success, "Link copied");
+                },
+            ),
+        );
+    if !m.channel_id.is_empty() {
+        let media = m.clone();
+        r = r.child(
+            widgets::icon_button(t, &ic::USER, "Go to artist", 40.0)
+                .on_press(move |s: &mut App| s.open_channel(Tab::Music, &media)),
+        );
+    }
+    r
+}
+
+fn chapters(app: &App, m: &Media, w: f32) -> El {
+    let t = &app.theme;
+    let mut ch = col().w(w).gap(2.0);
+    let now_t = app.player.snap.time;
+    let current = m.chapters.iter().rposition(|c| c.start <= now_t);
+    for (i, chap) in m.chapters.iter().enumerate().take(200) {
+        let at = chap.start;
+        let on = current == Some(i);
+        ch = ch.child(
+            row()
+                .key(format!("chap-{i}"))
+                .label(format!("Chapter {}: {}", i + 1, chap.title))
+                .w_full()
+                .h(44.0)
+                .px(10.0)
+                .gap(12.0)
+                .center_y()
+                .radius(sz::R_MD)
+                .fill(if on { t.hover } else { Color::TRANSPARENT })
+                .hover(t.hover)
+                .cursor(rune::Cursor::Pointer)
+                .on_press(move |s: &mut App| s.player.seek_to(at, true))
+                .child(
+                    text(crate::player::mpv::clock(at))
+                        .font(ty::NUM)
+                        .color(if on { t.accent } else { t.muted })
+                        .w(56.0),
+                )
+                .child(
+                    text(&chap.title)
+                        .font(if on { ty::BODY_STRONG } else { ty::BODY })
+                        .color(t.text)
+                        .truncate(),
+                ),
+        );
+    }
+    ch
 }
 
 fn fit_16_9(w: f32, h: f32) -> (f32, f32) {
@@ -313,41 +569,7 @@ fn details(app: &App, now: &session::Now) -> El {
                 }),
         );
     }
-    if !m.chapters.is_empty() {
-        let mut ch = col()
-            .gap(2.0)
-            .pt(6.0)
-            .child(text("Chapters").font(ty::TITLE).color(t.text));
-        for (i, chap) in m.chapters.iter().enumerate().take(60) {
-            let at = chap.start;
-            ch = ch.child(
-                row()
-                    .key(format!("chap-{i}"))
-                    .label(format!("Chapter {}: {}", i + 1, chap.title))
-                    .h(34.0)
-                    .px(8.0)
-                    .gap(12.0)
-                    .center_y()
-                    .radius(8.0)
-                    .hover(t.hover)
-                    .cursor(rune::Cursor::Pointer)
-                    .on_press(move |s: &mut App| s.player.seek_to(at, true))
-                    .child(
-                        text(crate::player::mpv::clock(at))
-                            .font(ty::NUM)
-                            .color(t.accent)
-                            .w(56.0),
-                    )
-                    .child(text(&chap.title).font(ty::BODY).color(t.text).truncate()),
-            );
-        }
-        card = card.child(ch);
-    }
-    if m.description.is_empty()
-        && stats.is_empty()
-        && now.provenance.is_empty()
-        && m.chapters.is_empty()
-    {
+    if m.description.is_empty() && stats.is_empty() && now.provenance.is_empty() {
         return c;
     }
     c.child(card.transition(Transition::opacity()))
@@ -426,9 +648,8 @@ fn up_next(app: &App, w: f32) -> El {
             .pb(8.0)
             .gap(10.0)
             .center_y()
-            .child(text("Up next").font(ty::H3).color(t.text))
-            .child(spacer())
             .child(text("Autoplay").font(ty::SMALL).color(t.muted))
+            .child(spacer())
             .child(
                 widgets::switch(t, "autoplay", autoplay)
                     .on_press(move |s: &mut App| s.edit_config(|c| c.autoplay_related = !autoplay)),

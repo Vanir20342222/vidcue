@@ -1,7 +1,10 @@
 //! The frosted top bar over each page: back/forward, search (words or a pasted link), recent
 //! searches, and status shortcuts. Pages scroll underneath it, blurred.
 
-use rune::{Align, Cx, El, Side, Transition, Tx, col, el, icon, row, spacer, text, text_input};
+use rune::{
+    Align, Color, Cx, El, ScrollPos, Side, Transition, Tx, col, el, icon, row, spacer, text,
+    text_input,
+};
 
 use crate::app::{App, Route, SearchScope, Tab};
 use crate::icons as ic;
@@ -51,13 +54,17 @@ pub fn view(app: &App, _cx: &mut Cx<App>) -> El {
         .gap(10.0)
         .center_y()
         .radius(sz::R_PILL)
-        .fill(t.raised.alpha(0.85))
+        .fill(if app.search.focused {
+            t.overlay
+        } else {
+            t.text.alpha(if t.dark { 0.09 } else { 0.07 })
+        })
         .border(
             1.0,
             if app.search.focused {
-                t.accent.alpha(0.6)
+                t.text.alpha(0.28)
             } else {
-                t.border
+                Color::TRANSPARENT
             },
         )
         .motion(rune::tok::motion::SNAP)
@@ -84,8 +91,6 @@ pub fn view(app: &App, _cx: &mut Cx<App>) -> El {
         .px(20.0)
         .gap(6.0)
         .center_y()
-        .backdrop_blur(22.0)
-        .fill(t.glass)
         .window_drag()
         .child(back)
         .child(fwd)
@@ -141,46 +146,23 @@ pub fn view(app: &App, _cx: &mut Cx<App>) -> El {
                 }),
         );
     }
-    let account_glyph = el()
-        .size(34.0, 34.0)
-        .radius(17.0)
-        .center()
-        .fill(if app.account.connected {
-            t.accent_soft
-        } else {
-            t.raised
-        })
-        .child(icon(&ic::USER, 16.0).color(if app.account.connected {
-            t.accent
-        } else {
-            t.muted
-        }));
-    bar = bar.child(
-        el().key("topbar-account")
-            .radius(17.0)
-            .hover(t.hover)
-            .press_scale(0.94)
-            .role("button")
-            .label("Account")
-            .help(if app.account.connected {
-                "Signed in"
-            } else {
-                "Sign in"
-            })
-            .cursor(rune::Cursor::Pointer)
-            .on_press(|s: &mut App| s.go_root(Route::Account))
-            .child(account_glyph),
-    );
-
+    // Clear over the page's colour wash; the backing fades in as the page scrolls under it.
     let mut layer = el()
         .key("topbar-layer")
         .pin(Some(0.0), Some(0.0), Some(0.0), None)
-        .child(bar)
         .child(
-            el().pin(Some(0.0), Some(sz::TOPBAR - 1.0), Some(0.0), None)
-                .h(1.0)
-                .fill(t.hairline),
-        );
+            el().key("topbar-backing")
+                .pin(Some(0.0), Some(0.0), Some(0.0), None)
+                .h(sz::TOPBAR)
+                .fill(t.bg.alpha(0.96))
+                .live_opacity(&app.topbar_k)
+                .child(
+                    el().pin(Some(0.0), Some(sz::TOPBAR - 1.0), Some(0.0), None)
+                        .h(1.0)
+                        .fill(t.hairline),
+                ),
+        )
+        .child(bar);
     if app.search.focused
         && let Some(recents) = recents(app)
     {
@@ -249,4 +231,13 @@ fn recents(app: &App) -> Option<El> {
         c.anchored("search", Side::Bottom, Align::Start, 8.0)
             .transition(Transition::offset(0.0, -6.0).combined(Transition::opacity())),
     )
+}
+
+/// For a page's scroll viewport (`.on_scroll_offset(..)`): fades the top bar's backing in as
+/// content passes under it.
+pub fn track(app: &App) -> impl Fn(ScrollPos) + 'static {
+    let k = app.topbar_k.clone();
+    move |at: ScrollPos| {
+        k.set((at.offset[1] / 56.0).clamp(0.0, 1.0));
+    }
 }
