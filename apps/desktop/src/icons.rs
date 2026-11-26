@@ -173,6 +173,16 @@ stroke!(BACK, "vc-back", r#"<path d="M15 5l-7 7 7 7"/>"#);
 stroke!(FORWARD, "vc-forward", r#"<path d="m9 5 7 7-7 7"/>"#);
 stroke!(DOWN, "vc-down", r#"<path d="m6 9 6 6 6-6"/>"#);
 stroke!(UP, "vc-up", r#"<path d="m6 15 6-6 6 6"/>"#);
+stroke!(
+    CLOCK,
+    "vc-clock",
+    r#"<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>"#
+);
+stroke!(
+    GRID,
+    "vc-grid",
+    r#"<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>"#
+);
 solid!(
     MORE,
     "vc-more",
@@ -277,6 +287,28 @@ stroke!(
     PAUSE_OUTLINE,
     "vc-pause-outline",
     r#"<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>"#
+);
+
+// Filled forms of the destinations, for the selected sidebar row (as the Android dock).
+solid!(
+    HOME_FILLED,
+    "vc-home-filled",
+    r#"<path d="M11.36 2.23a1 1 0 0 1 1.28 0l9 7.5a1 1 0 0 1-1.28 1.54L20 10.97V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1v-9.03l-.36.3a1 1 0 0 1-1.28-1.54z"/>"#
+);
+solid!(
+    MUSIC_FILLED,
+    "vc-music-filled",
+    r#"<path d="M8 18V5a1 1 0 0 1 .82-.98l11-2A1 1 0 0 1 21 3v13h-2V7.2l-9 1.64V18z"/><circle cx="6" cy="18" r="3.4"/><circle cx="17" cy="16" r="3.4"/>"#
+);
+pub static RADIO_FILLED: Icon = Icon {
+    name: "vc-radio-filled",
+    view: 24.0,
+    body: r#"<circle cx="12" cy="12" r="3" fill="currentColor"/><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M8.2 8.2a5.4 5.4 0 0 0 0 7.6M15.8 8.2a5.4 5.4 0 0 1 0 7.6M5.3 5.3a9.5 9.5 0 0 0 0 13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/></g>"#,
+};
+solid!(
+    FILM_FILLED,
+    "vc-film-filled",
+    r#"<path fill-rule="evenodd" d="M5.5 3h13A2.5 2.5 0 0 1 21 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5v-13A2.5 2.5 0 0 1 5.5 3zM5 6.5v2h2v-2zm0 4.5v2h2v-2zm0 4.5v2h2v-2zm12-9v2h2v-2zm0 4.5v2h2v-2zm0 4.5v2h2v-2z"/>"#
 );
 
 /// The app mark, drawn in its own colours (same art as the Android launcher icon).

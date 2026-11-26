@@ -118,6 +118,30 @@ pub fn chip(t: &Theme, label: &str, selected: bool) -> El {
         )
 }
 
+/// A wash of a picture's colours behind the top of a page, as YouTube Music's: its two
+/// sampled colours across the top, fading into the page. Plain gradients, so scrolling over
+/// it costs nothing extra. `top` places it relative to its parent; a `height` of 0 fills the
+/// parent (with a little bleed below).
+pub fn wash(t: &Theme, swatch: crate::images::Swatch, top: f32, height: f32) -> El {
+    let rgb = |c: [u8; 3]| crate::theme::rgb((c[0], c[1], c[2]));
+    let strength = if t.dark { 0.5 } else { 0.32 };
+    let (a, b) = (rgb(swatch.0).alpha(strength), rgb(swatch.1).alpha(strength));
+    let mut w = el().key("page-wash");
+    w = if height > 0.0 {
+        w.pin(Some(0.0), Some(top), Some(0.0), None).h(height)
+    } else {
+        w.pin(Some(0.0), Some(top), Some(0.0), Some(-40.0))
+    };
+    w.child(
+        el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .linear_gradient(std::f32::consts::FRAC_PI_2, [(0.0, a), (1.0, b)]),
+    )
+    .child(
+        el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+            .gradient(t.bg.alpha(0.0), t.bg),
+    )
+}
+
 pub fn badge(text_: &str, bg: Color, fg: Color) -> El {
     row()
         .h(20.0)
@@ -406,6 +430,57 @@ pub fn duration_text(m: &Media) -> Option<String> {
 
 /// "Channel · 1.2M views · 3 years ago", by the user's card settings.
 pub fn meta_line(app: &App, m: &Media) -> String {
+    meta_parts(app, m, true)
+}
+
+/// How long ago an item was uploaded, as Android's cards say it ("3 days ago"). Provider text
+/// wins (it can be hour-precise); otherwise the upload date is counted from today.
+pub fn upload_age(m: &Media) -> Option<String> {
+    if !m.published_text.is_empty() {
+        return Some(m.published_text.clone());
+    }
+    let d = m
+        .upload_date
+        .as_deref()
+        .filter(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))?;
+    let (y, mo, da) = (
+        d[..4].parse::<i64>().ok()?,
+        d[4..6].parse::<i64>().ok()?,
+        d[6..].parse::<i64>().ok()?,
+    );
+    let today = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64
+        / 86_400;
+    Some(age_text(today - days_from_civil(y, mo, da)))
+}
+
+/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's algorithm).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+pub fn age_text(days: i64) -> String {
+    let (n, unit) = match days.max(0) {
+        0 => return "Today".into(),
+        1 => return "Yesterday".into(),
+        d if d < 7 => (d, "day"),
+        d if d < 31 => (d / 7, "week"),
+        d if d < 365 => (d / 30, "month"),
+        d => (d / 365, "year"),
+    };
+    let n = n.max(1);
+    format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
+}
+
+/// The meta line, with or without the upload age (cards give the age its own line).
+fn meta_parts(app: &App, m: &Media, with_age: bool) -> String {
     let info = &app.config.card_info;
     let mut parts: Vec<String> = Vec::new();
     if info.channel && !m.creator.is_empty() {
@@ -418,14 +493,11 @@ pub fn meta_line(app: &App, m: &Media) -> String {
             parts.push(format!("{} views", count(v)));
         }
     }
-    if info.upload_date {
-        if !m.published_text.is_empty() {
-            parts.push(m.published_text.clone());
-        } else if let Some(d) = &m.upload_date
-            && d.len() == 8
-        {
-            parts.push(format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]));
-        }
+    if info.upload_date
+        && with_age
+        && let Some(age) = upload_age(m)
+    {
+        parts.push(age);
     }
     if info.section && !m.section.is_empty() {
         parts.push(m.section.clone());
@@ -465,6 +537,7 @@ pub fn media_menu(app: &App, m: &Media) -> Vec<MenuItem> {
             ));
             items.push(item("Preview", &ic::MINI, MenuAction::Preview(b())));
         }
+        items.push(item("Play next", &ic::NEXT, MenuAction::PlayNext(b())));
         items.push(item("Add to queue", &ic::QUEUE, MenuAction::Enqueue(b())));
     }
     let saved = app.saved_urls.contains(&m.url);
@@ -491,17 +564,10 @@ pub fn media_menu(app: &App, m: &Media) -> Vec<MenuItem> {
             MenuAction::Download(b(), true),
         ));
         if !m.collection() {
-            for p in app.library.playlists.iter().take(6) {
-                items.push(item(
-                    &format!("Add to “{}”", p.title),
-                    &ic::PLUS,
-                    MenuAction::AddToPlaylist(b(), p.id.to_string()),
-                ));
-            }
             items.push(item(
-                "New offline playlist…",
+                "Add to playlist…",
                 &ic::PLUS,
-                MenuAction::NewPlaylistWith(b()),
+                MenuAction::PickPlaylist(b()),
             ));
         }
     }
@@ -510,6 +576,13 @@ pub fn media_menu(app: &App, m: &Media) -> Vec<MenuItem> {
             "Go to channel",
             &ic::USER,
             MenuAction::OpenChannel(b()),
+        ));
+    }
+    if m.kind != MediaKind::Station && (!m.channel_id.is_empty() || !m.creator.is_empty()) {
+        items.push(item(
+            "Hide this channel",
+            &ic::CLOSE,
+            MenuAction::HideChannel(b()),
         ));
     }
     items.push(item(
@@ -522,6 +595,48 @@ pub fn media_menu(app: &App, m: &Media) -> Vec<MenuItem> {
         &ic::EXTERNAL,
         MenuAction::OpenInBrowser(m.url.clone()),
     ));
+    items
+}
+
+/// The playlist picker: the library's playlists, a new one, then offline playlists.
+pub fn playlist_menu(app: &App, m: &Media) -> Vec<MenuItem> {
+    let b = || Box::new(m.clone());
+    let mut items = Vec::new();
+    for p in app
+        .library
+        .local
+        .playlists
+        .iter()
+        .filter(|p| !p.member() || p.shared)
+        .take(12)
+    {
+        items.push(MenuItem {
+            label: p.title.clone(),
+            icon: Some(&ic::LIBRARY),
+            action: MenuAction::AddToLocal(b(), p.id.clone()),
+            checked: false,
+        });
+    }
+    items.push(MenuItem {
+        label: "New playlist".into(),
+        icon: Some(&ic::PLUS),
+        action: MenuAction::NewLocalWith(b()),
+        checked: false,
+    });
+    for p in app.library.playlists.iter().take(8) {
+        items.push(MenuItem {
+            label: p.title.clone(),
+            icon: Some(&ic::DOWNLOAD),
+            action: MenuAction::AddToPlaylist(b(), p.id.to_string()),
+            checked: false,
+        });
+    }
+    items.push(MenuItem {
+        label: "New offline playlist".into(),
+        icon: Some(&ic::DOWNLOAD),
+        action: MenuAction::NewPlaylistWith(b()),
+        checked: false,
+    });
     items
 }
 
@@ -636,10 +751,22 @@ pub fn media_card(app: &App, m: &Media, cx: &CardCtx) -> El {
     art = art.child(more);
 
     let title = text(&m.title).font(ty::TITLE).color(t.text).max_lines(2);
-    let meta = meta_line(app, m);
+    let meta = meta_parts(app, m, false);
     let mut words = col().gap(4.0).w_full().shrink().child(title);
     if !meta.is_empty() {
         words = words.child(text(meta).font(ty::SMALL).color(t.muted).max_lines(1));
+    }
+    if app.config.card_info.upload_date
+        && !m.live
+        && let Some(age) = upload_age(m)
+    {
+        words = words.child(
+            row()
+                .gap(5.0)
+                .center_y()
+                .child(icon(&ic::CLOCK, 12.0).color(t.faint))
+                .child(text(age).font(ty::SMALL).color(t.muted).max_lines(1)),
+        );
     }
     if app.config.card_info.description && !m.description.is_empty() {
         words = words.child(
@@ -962,4 +1089,27 @@ pub fn value_row(_t: &Theme, glyph: &'static Icon, label: &str, value: &str) -> 
         .key(format!("vr-{label}"))
         .fill(Color::TRANSPARENT)
         .motion(motion::SNAP)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_ages_read_like_android_cards() {
+        assert_eq!(days_from_civil(1970, 1, 1), 0);
+        assert_eq!(days_from_civil(2000, 3, 1), 11_017);
+        assert_eq!(age_text(0), "Today");
+        assert_eq!(age_text(1), "Yesterday");
+        assert_eq!(age_text(3), "3 days ago");
+        assert_eq!(age_text(7), "1 week ago");
+        assert_eq!(age_text(45), "1 month ago");
+        assert_eq!(age_text(800), "2 years ago");
+        let m = Media {
+            published_text: "1 hour ago".into(),
+            upload_date: Some("20200101".into()),
+            ..Default::default()
+        };
+        assert_eq!(upload_age(&m).as_deref(), Some("1 hour ago"));
+    }
 }

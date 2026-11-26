@@ -196,36 +196,91 @@ pub fn more(app: &mut App, route: &FeedRoute) {
 /// The chips shown above a root feed, as Android shows them.
 pub fn chips(tab: Tab) -> Vec<(&'static str, BrowseRequest)> {
     match tab {
+        // Account lists (Liked, Watch later, playlists) live under Library, as on Android.
         Tab::Home => vec![
             ("For you", BrowseRequest::Home),
             ("Subscriptions", BrowseRequest::Subscriptions),
-            ("Watch later", BrowseRequest::WatchLater),
-            ("Liked", BrowseRequest::Liked),
-            ("My playlists", BrowseRequest::Playlists),
-            ("Library", BrowseRequest::Library),
-            (
-                "Saved locally",
-                BrowseRequest::SavedMedia {
-                    query: String::new(),
-                },
-            ),
         ],
         Tab::Music => vec![
             ("For you", BrowseRequest::Home),
-            ("My playlists", BrowseRequest::Playlists),
             ("Liked", BrowseRequest::Liked),
-            ("Library", BrowseRequest::Library),
-            (
-                "Saved locally",
-                BrowseRequest::SavedMedia {
-                    query: String::new(),
-                },
-            ),
         ],
         Tab::Radio => vec![
             ("Cliamp channels", BrowseRequest::Cliamp),
             ("Saved stations", BrowseRequest::Favorites),
         ],
+    }
+}
+
+/// YouTube's own search parameters for the video search filters ("" = All).
+const VIDEO_FILTERS: [(&str, &str); 4] = [
+    ("All", ""),
+    ("Videos", "EgIQAQ%3D%3D"),
+    ("Channels", "EgIQAg%3D%3D"),
+    ("Playlists", "EgIQAw%3D%3D"),
+];
+/// The engine's music search categories ("" = All).
+const MUSIC_FILTERS: [(&str, &str); 6] = [
+    ("All", ""),
+    ("Songs", "songs"),
+    ("Albums", "albums"),
+    ("Artists", "artists"),
+    ("Playlists", "playlists"),
+    ("Videos", "videos"),
+];
+
+/// The query of a search route of any kind (plain, filtered video, music category).
+pub fn search_query(request: &BrowseRequest) -> Option<String> {
+    match request {
+        BrowseRequest::Search(q) => Some(q.clone()),
+        BrowseRequest::MusicSearch { query, .. } => Some(query.clone()),
+        BrowseRequest::Category { endpoint, payload } if endpoint == "search" => {
+            payload["query"].as_str().map(str::to_owned)
+        }
+        _ => None,
+    }
+}
+
+/// The filter chips of a search, as Android's: (label, request, selected). Radio has none.
+pub fn search_filters(
+    tab: Tab,
+    request: &BrowseRequest,
+) -> Vec<(&'static str, BrowseRequest, bool)> {
+    let Some(query) = search_query(request) else {
+        return Vec::new();
+    };
+    match tab {
+        Tab::Home => VIDEO_FILTERS
+            .iter()
+            .map(|(label, params)| {
+                let req = if params.is_empty() {
+                    BrowseRequest::Search(query.clone())
+                } else {
+                    BrowseRequest::Category {
+                        endpoint: "search".into(),
+                        payload: serde_json::json!({ "query": query, "params": params }),
+                    }
+                };
+                let on = req == *request;
+                (*label, req, on)
+            })
+            .collect(),
+        Tab::Music => MUSIC_FILTERS
+            .iter()
+            .map(|(label, category)| {
+                let req = if category.is_empty() {
+                    BrowseRequest::Search(query.clone())
+                } else {
+                    BrowseRequest::MusicSearch {
+                        query: query.clone(),
+                        category: (*category).into(),
+                    }
+                };
+                let on = req == *request;
+                (*label, req, on)
+            })
+            .collect(),
+        Tab::Radio => Vec::new(),
     }
 }
 
@@ -237,6 +292,30 @@ pub fn is_chip(route: &FeedRoute) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_filters_keep_the_query_and_mark_the_active_one() {
+        let all = BrowseRequest::Search("lofi".into());
+        let video = search_filters(Tab::Home, &all);
+        assert_eq!(video.len(), 4);
+        assert!(video[0].2 && !video[1].2);
+        assert_eq!(search_query(&video[2].1).as_deref(), Some("lofi"));
+        let songs = BrowseRequest::MusicSearch {
+            query: "lofi".into(),
+            category: "songs".into(),
+        };
+        let music = search_filters(Tab::Music, &songs);
+        assert_eq!(
+            music
+                .iter()
+                .filter(|f| f.2)
+                .map(|f| f.0)
+                .collect::<Vec<_>>(),
+            ["Songs"]
+        );
+        assert!(search_filters(Tab::Radio, &all).is_empty());
+        assert!(search_filters(Tab::Home, &BrowseRequest::Home).is_empty());
+    }
 
     #[test]
     fn route_keys_separate_tabs_and_requests() {

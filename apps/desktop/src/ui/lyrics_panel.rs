@@ -1,22 +1,17 @@
 //! The lyrics side panel: timed lines that follow playback (click one to seek), a per-song
 //! offset, candidate picker, LRCLIB search, LRC paste import and a local copy.
 
-use rune::{Cx, El, ScrollSpec, Spring, Tx, col, el, icon, row, spacer, text};
+use rune::{Cx, El, ScrollSpec, Spring, Tx, col, el, icon, row, text};
 use vidcue_providers::lyrics::Track;
 
 use crate::app::App;
 use crate::icons as ic;
 use crate::player::session::Now;
-use crate::theme::{sz, ty};
+use crate::theme::ty;
 use crate::ui::widgets::{self, Kind};
 
 const SCROLL: &str = "lyrics-scroll";
 const CENTERED: &str = "lyrics-centered";
-
-/// Panel height for a window height: tracks the music stage beside it.
-pub fn panel_height(win_h: f32) -> f32 {
-    (win_h - sz::TOPBAR - 160.0).clamp(420.0, 720.0)
-}
 
 /// Where a lyric source came from. Saved copies are local; otherwise tracks with a duration
 /// come from LRCLIB and those without from YouTube Music.
@@ -49,20 +44,15 @@ pub fn line_tone(i: usize, active: Option<usize>) -> (f32, bool) {
     }
 }
 
-pub fn view(app: &App, cx: &mut Cx<App>, w: f32) -> El {
+/// The Lyrics tab of Now Playing: `w` × `h` of panel room, under the panel's tab row.
+pub fn view(app: &App, _cx: &mut Cx<App>, w: f32, h: f32) -> El {
     let t = &app.theme;
-    let win_h = cx.layout_size("watch-page").map_or(800.0, |s| s[1]);
-    let h = panel_height(win_h);
     let l = &app.player.lyrics;
     let Some(now) = &app.player.now else {
         return el();
     };
 
-    let mut header = row()
-        .w_full()
-        .gap(10.0)
-        .center_y()
-        .child(text("Lyrics").font(ty::H2).color(t.text));
+    let mut header = row().w_full().gap(10.0).center_y();
     if let Some(track) = l.track() {
         header = header.child(widgets::badge(
             source_label(l.local, track),
@@ -70,12 +60,6 @@ pub fn view(app: &App, cx: &mut Cx<App>, w: f32) -> El {
             t.accent,
         ));
     }
-    header = header.child(spacer()).child(
-        widgets::icon_button(t, &ic::CLOSE, "Close lyrics", 34.0).on_press(|s: &mut App| {
-            s.scratch.remove(CENTERED);
-            s.edit_prefs(|p| p.show_lyrics = false);
-        }),
-    );
 
     let body: El = if l.loading && l.tracks.is_empty() {
         col()
@@ -95,18 +79,7 @@ pub fn view(app: &App, cx: &mut Cx<App>, w: f32) -> El {
         empty(app, l.error.as_deref())
     };
 
-    let mut card = col()
-        .key("lyrics-panel")
-        .w(w)
-        .h(h)
-        .radius(sz::R_PANEL)
-        .clip_rounded(sz::R_PANEL)
-        .fill(t.glass)
-        .border(1.0, t.hairline)
-        .shadow(10.0, 36.0, t.shadow)
-        .p_card()
-        .gap(12.0)
-        .child(header);
+    let mut card = col().key("lyrics-panel").w(w).h(h).gap(12.0).child(header);
     if l.tracks.len() > 1 {
         card = card.child(picker(app));
     }
@@ -115,15 +88,6 @@ pub fn view(app: &App, cx: &mut Cx<App>, w: f32) -> El {
         card = card.child(import_form(app));
     }
     card
-}
-
-trait Pad {
-    fn p_card(self) -> Self;
-}
-impl Pad for El {
-    fn p_card(self) -> Self {
-        self.px(18.0).py(16.0)
-    }
 }
 
 fn picker(app: &App) -> El {
@@ -373,6 +337,5 @@ mod tests {
         t.duration = 180.0;
         assert_eq!(source_label(false, &t), "LRCLIB");
         assert_eq!(source_label(true, &t), "On this computer");
-        assert!(panel_height(300.0) >= 420.0 && panel_height(3000.0) <= 720.0);
     }
 }

@@ -14,6 +14,7 @@ use crate::feed::{self, FeedState};
 use crate::icons as ic;
 use crate::images::{Size, thumb_url};
 use crate::theme::{sz, ty};
+use crate::ui::shelves;
 use crate::ui::widgets::{self, CardCtx, Kind, button, chip};
 
 const GAP: f32 = 20.0;
@@ -68,23 +69,43 @@ pub fn view(app: &App, cx: &mut Cx<App>, route: &FeedRoute) -> El {
     let empty = FeedState::default();
     let state = app.feeds.get(route).unwrap_or(&empty);
     let square_hint = route.tab != Tab::Home;
-    let layout = layout_for(&state.items, width, app.prefs.grid_dense, square_hint);
+    // Provider sections become shelves; "Show all" opens one shelf as a grid.
+    let grouped = shelves::group(route, &state.items);
+    let open = grouped.as_ref().and_then(|list| {
+        let title = app.scratch.get(&shelves::open_key(route))?;
+        list.iter().find(|s| &s.title == title).cloned()
+    });
+    let items: Rc<Vec<Media>> = Rc::new(match &open {
+        Some(shelf) => shelf.items.clone(),
+        None => state.items.clone(),
+    });
+    let layout = layout_for(&items, width, app.prefs.grid_dense, square_hint);
     let loading_first =
         state.items.is_empty() && (state.loading || !state.loaded()) && state.error.is_none();
+    // Rows before the grid: the opened shelf's heading.
+    let lead = usize::from(open.is_some());
+    let shelf_rows = grouped.filter(|_| open.is_none()).map(Rc::new);
     let body_rows = if loading_first {
         3
+    } else if let Some(list) = &shelf_rows {
+        list.len()
     } else {
-        rows_for(layout, state.items.len())
+        lead + rows_for(layout, items.len())
     };
     let total = body_rows + 2;
     let key = route.key();
     let r = route.clone();
     let r2 = route.clone();
-    let est = match layout {
-        Layout::Grid { card_w, .. } => card_w * 9.0 / 16.0 + 96.0,
-        Layout::List => 68.0,
+    let est = if shelf_rows.is_some() {
+        320.0
+    } else {
+        match layout {
+            Layout::Grid { card_w, .. } => card_w * 9.0 / 16.0 + 96.0,
+            Layout::List => 68.0,
+        }
     };
-    let items_rc = Rc::new(state.items.clone());
+    let open_title = open.as_ref().map(|s| s.title.clone());
+    let version_open = open_title.clone().unwrap_or_default();
     let rows = col()
         .key("feed-rows")
         .w_full()
@@ -102,8 +123,14 @@ pub fn view(app: &App, cx: &mut Cx<App>, route: &FeedRoute) -> El {
                     footer(s, &r, state)
                 } else if loading_first {
                     skeleton_row(s, layout, i - 1, square_hint)
+                } else if let Some(list) = &shelf_rows {
+                    list.get(i - 1)
+                        .map(|shelf| shelves::shelf_row(s, &r, shelf, i - 1, width))
+                        .unwrap_or_else(el)
+                } else if lead == 1 && i == 1 {
+                    shelves::open_heading(s, &r, open_title.as_deref().unwrap_or_default())
                 } else {
-                    body_row(s, &r, state, layout, i - 1, &items_rc)
+                    body_row(s, &r, layout, i - 1 - lead, &items)
                 }
             },
         )
@@ -113,6 +140,7 @@ pub fn view(app: &App, cx: &mut Cx<App>, route: &FeedRoute) -> El {
             state.generation,
             layout == Layout::List,
             body_rows,
+            version_open,
         ));
     col()
         .key("feed-scroll")
@@ -121,6 +149,7 @@ pub fn view(app: &App, cx: &mut Cx<App>, route: &FeedRoute) -> El {
         .scroll(ScrollSpec {
             stick_bottom: false,
         })
+        .on_scroll_offset(crate::ui::topbar::track(app))
         .scroll_anchor()
         .on_at_bottom(move |s: &mut App, at: bool| {
             if at {
@@ -157,22 +186,22 @@ fn skeleton_row(app: &App, layout: Layout, i: usize, square: bool) -> El {
 fn body_row(
     app: &App,
     route: &FeedRoute,
-    state: &FeedState,
     layout: Layout,
     i: usize,
     siblings: &Rc<Vec<Media>>,
 ) -> El {
+    let items: &[Media] = siblings;
     match layout {
         Layout::Grid { cols, card_w } => {
             let start = i * cols;
-            let end = (start + cols).min(state.items.len());
+            let end = (start + cols).min(items.len());
             let mut r = row()
                 .w_full()
                 .px(sz::PAGE_PAD)
                 .pb(30.0)
                 .gap(GAP)
                 .items_start();
-            for (n, m) in state.items[start.min(end)..end].iter().enumerate() {
+            for (n, m) in items[start.min(end)..end].iter().enumerate() {
                 let cx = CardCtx {
                     key: format!("card-{}-{}", start + n, short_hash(&m.url)),
                     width: card_w,
@@ -184,7 +213,7 @@ fn body_row(
             r
         }
         Layout::List => {
-            let Some(m) = state.items.get(i) else {
+            let Some(m) = items.get(i) else {
                 return el();
             };
             let index = text(format!("{}", i + 1))
@@ -219,7 +248,11 @@ fn footer(app: &App, route: &FeedRoute, state: &FeedState) -> El {
     let t = &app.theme;
     let more = state.continuation.is_some() || state.radio_more;
     let r = route.clone();
-    let mut f = col().w_full().py(28.0).pb(sz::DOCK + 40.0).items_center();
+    let mut f = col()
+        .w_full()
+        .py(28.0)
+        .pb(sz::DOCK_ROOM + 16.0)
+        .items_center();
     if state.loading_more {
         f = f.child(
             row()
@@ -259,39 +292,73 @@ fn route_clone(r: &Route) -> Option<FeedRoute> {
 
 fn header(app: &App, route: &FeedRoute, state: &FeedState, width: f32) -> El {
     let t = &app.theme;
-    let mut h = col().w_full().pt(sz::TOPBAR + 20.0).gap(18.0).pb(22.0);
     let root = feed::is_chip(route);
+    let mut h = col()
+        .w_full()
+        .pt(sz::TOPBAR + if root { 4.0 } else { 20.0 })
+        .gap(18.0)
+        .pb(22.0);
     let collection = matches!(
         route.request,
         BrowseRequest::Collection(_) | BrowseRequest::CliampTracks(_)
     );
     if root {
-        h = h.child(el().px(sz::PAGE_PAD).child(widgets::page_title(
-            t,
-            title_for(route),
-            subtitle_for(route),
-        )));
+        // The sidebar names the page; the chips sit right under the search bar, as YouTube's.
         h = h.child(chips(app, route));
+        // The Vidcue server's recommendations, when switched on (Android's "For you" shelf).
+        if route.request == BrowseRequest::Home
+            && route.tab == Tab::Home
+            && !app.sync.recs.is_empty()
+        {
+            let shelf = shelves::Shelf {
+                title: "For you".into(),
+                items: app.sync.recs.clone(),
+            };
+            h = h.child(shelves::shelf_row(app, route, &shelf, 99, width));
+        }
     } else if collection {
         h = h.child(collection_header(app, route, state, width));
     } else {
         let title = if state.title.is_empty()
-            || matches!(
-                route.request,
-                BrowseRequest::Search(_) | BrowseRequest::RadioSearch(_)
-            ) {
+            || feed::search_query(&route.request).is_some()
+            || matches!(route.request, BrowseRequest::RadioSearch(_))
+        {
             route.title.clone()
         } else {
             state.title.clone()
         };
-        let sub = match &route.request {
-            BrowseRequest::Search(_) | BrowseRequest::RadioSearch(_) => Some("Search results"),
-            _ => None,
-        };
+        let sub = None;
         h = h.child(
             el().px(sz::PAGE_PAD)
                 .child(widgets::page_title(t, &title, sub)),
         );
+        let filters = feed::search_filters(route.tab, &route.request);
+        if !filters.is_empty() {
+            let mut r = row()
+                .key("search-filters")
+                .w_full()
+                .px(sz::PAGE_PAD)
+                .gap(8.0)
+                .role("tablist")
+                .focus_group();
+            for (label, req, on) in filters {
+                let (tab, title) = (route.tab, route.title.clone());
+                r = r.child(chip(t, label, on).key(format!("filter-{label}")).on_press(
+                    move |s: &mut App| {
+                        // Filters swap the results in place, as the feed chips do.
+                        s.route = Route::Feed(FeedRoute {
+                            tab,
+                            request: req.clone(),
+                            title: title.clone(),
+                        });
+                        if let Route::Feed(f) = s.route.clone() {
+                            crate::feed::ensure(s, &f, false);
+                        }
+                    },
+                ));
+            }
+            h = h.child(r);
+        }
     }
     if !state.categories.is_empty() {
         let mut cats = row().w_full().px(sz::PAGE_PAD).gap(8.0).flex_wrap();
@@ -353,6 +420,19 @@ fn header(app: &App, route: &FeedRoute, state: &FeedState, width: f32) -> El {
             empty_hint(route),
         ));
     }
+    if root && let Some(first) = state.items.first() {
+        let size = if route.tab == Tab::Home {
+            Size::CARD
+        } else {
+            Size::SQUARE
+        };
+        if let Some(swatch) = app.images.swatch(&thumb_url(first, size)) {
+            return el()
+                .w_full()
+                .child(widgets::wash(t, swatch, 0.0, 420.0))
+                .child(h);
+        }
+    }
     h
 }
 
@@ -370,32 +450,6 @@ fn empty_hint(route: &FeedRoute) -> &'static str {
             "This list comes from your YouTube account. Sign in from Account to see it."
         }
         _ => "Try another search or come back later.",
-    }
-}
-
-fn title_for(route: &FeedRoute) -> &'static str {
-    match (route.tab, &route.request) {
-        (Tab::Radio, BrowseRequest::Favorites) => "Saved stations",
-        (Tab::Radio, _) => "Radio",
-        (Tab::Music, BrowseRequest::Home) => "Music",
-        (_, BrowseRequest::Home) => "Home",
-        (_, BrowseRequest::Subscriptions) => "Subscriptions",
-        (_, BrowseRequest::WatchLater) => "Watch later",
-        (_, BrowseRequest::Liked) => "Liked",
-        (_, BrowseRequest::Playlists) => "My playlists",
-        (_, BrowseRequest::Library) => "Library",
-        (_, BrowseRequest::SavedMedia { .. }) => "Saved locally",
-        _ => "",
-    }
-}
-
-fn subtitle_for(route: &FeedRoute) -> Option<&'static str> {
-    match (route.tab, &route.request) {
-        (Tab::Radio, BrowseRequest::Cliamp) => {
-            Some("Hand-picked channels from cliamp, and stations from around the world")
-        }
-        (Tab::Radio, BrowseRequest::Favorites) => Some("Stations you saved"),
-        _ => None,
     }
 }
 
@@ -427,6 +481,11 @@ fn chips(app: &App, route: &FeedRoute) -> El {
             },
         ));
     }
+    if route.tab == Tab::Home
+        && let Some(chip) = resume_chip(app)
+    {
+        r = r.child(chip);
+    }
     if route.tab == Tab::Radio {
         for (label, cc) in radio_countries(app) {
             let tab = route.tab;
@@ -439,6 +498,57 @@ fn chips(app: &App, route: &FeedRoute) -> El {
     r.child(spacer()).child(
         widgets::icon_button(t, &ic::REFRESH, "Refresh", 34.0)
             .on_press(move |s: &mut App| crate::feed::ensure(s, &refresh_route, true)),
+    )
+}
+
+/// The last video watched, as a small chip beside the feed chips: its cover and a play mark
+/// (Android's resume chip). Its name is in the tooltip, not on the chip.
+fn resume_chip(app: &App) -> Option<El> {
+    let t = &app.theme;
+    let m = app
+        .library
+        .history
+        .iter()
+        .find(|m| m.kind == MediaKind::Video && !m.live && !m.url.is_empty())?
+        .clone();
+    let mut cover = el()
+        .size(46.0, 26.0)
+        .radius(6.0)
+        .clip_rounded(6.0)
+        .fill(t.overlay)
+        .center();
+    if let Some(img) = app.images.get(&thumb_url(&m, Size::CARD), Size::CARD) {
+        cover = cover.child(
+            el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .pixels_fit(img.pixels(), rune::SurfaceFit::Fill),
+        );
+    }
+    cover = cover.child(
+        el().size(18.0, 18.0)
+            .radius(9.0)
+            .center()
+            .fill(Color::BLACK.alpha(0.55))
+            .child(icon(&ic::PLAY, 10.0).color(Color::WHITE)),
+    );
+    let label = format!("Continue “{}”", m.title);
+    Some(
+        row()
+            .key("chip-resume")
+            .h(34.0)
+            .px(4.0)
+            .center_y()
+            .radius(sz::R_PILL)
+            .fill(t.raised)
+            .hover(t.overlay)
+            .press_scale(0.95)
+            .role("button")
+            .label(label.as_str())
+            .help(label.as_str())
+            .cursor(rune::Cursor::Pointer)
+            .on_press(move |s: &mut App| {
+                crate::player::session::play(s, m.clone(), Default::default())
+            })
+            .child(cover.radius(15.0).clip_rounded(13.0)),
     )
 }
 
@@ -569,24 +679,14 @@ fn collection_header(app: &App, route: &FeedRoute, state: &FeedState, width: f32
                         let r = route.clone();
                         move |s: &mut App| crate::downloads::enqueue_collection(s, &r)
                     }),
-                ),
+                )
+                .child(follow_button(app, route, &title, first)),
         );
     // A wash of the artwork's colours behind the header.
-    let mut wash = el()
-        .pin(Some(0.0), Some(-sz::TOPBAR - 20.0), Some(0.0), Some(-40.0))
-        .clip_rounded(0.0);
-    if let Some(i) = &img {
-        wash = wash.child(
-            el().pin(Some(-60.0), Some(-60.0), Some(-60.0), Some(-60.0))
-                .pixels_fit(i.pixels(), rune::SurfaceFit::Fill)
-                .blur(64.0)
-                .opacity(0.45),
-        );
-    }
-    wash = wash.child(
-        el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .gradient(Color::TRANSPARENT, t.bg),
-    );
+    let wash = match first.and_then(|m| app.images.swatch(&thumb_url(m, size))) {
+        Some(s) => widgets::wash(t, s, -sz::TOPBAR - 20.0, 0.0),
+        None => el(),
+    };
     el().w_full().child(wash).child(
         row()
             .w(width)
@@ -599,6 +699,43 @@ fn collection_header(app: &App, route: &FeedRoute, state: &FeedState, width: f32
             )))
             .child(words),
     )
+}
+
+/// Follow or unfollow a channel page (kept in the engine's library and synced).
+fn follow_button(app: &App, route: &FeedRoute, title: &str, first: Option<&Media>) -> El {
+    let t = &app.theme;
+    let BrowseRequest::Collection(id) = &route.request else {
+        return el();
+    };
+    if !is_channel_id(id) {
+        return el();
+    }
+    let following = app.library.local.following(id);
+    let (id, title) = (id.clone(), title.to_owned());
+    let thumb = first
+        .map(|m| m.channel_thumbnail.clone())
+        .unwrap_or_default();
+    button(
+        t,
+        if following { "Following" } else { "Follow" },
+        Some(if following { &ic::CHECK } else { &ic::PLUS }),
+        if following {
+            Kind::Secondary
+        } else {
+            Kind::Primary
+        },
+    )
+    .key("follow-channel")
+    .on_press(move |s: &mut App| crate::ui::library_local::toggle_follow(s, &id, &title, &thumb))
+}
+
+/// YouTube channel ids: "UC" and 22 URL-safe characters.
+pub fn is_channel_id(id: &str) -> bool {
+    id.len() == 24
+        && id.starts_with("UC")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn human_duration(s: u64) -> String {
